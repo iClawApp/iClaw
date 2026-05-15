@@ -1,0 +1,51 @@
+name: Feature request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Please make sure the feature fits iClaude's scope (a local ChatGPT-style UI on top of OpenClaw). See [ROADMAP.md](../ROADMAP.md) and the "What we don't want" section in [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the user pain or missing capability — not the implementation
+      placeholder: When I have 30+ chats I can't find the one about my deploy script…
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Rough sketch of the UX. Mockups, screenshots, or prose all welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about and why they're worse
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Where does this belong?
+      options:
+        - iClaude (UI / local organization)
+        - OpenClaw (agent runtime / providers)
+        - Both
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: prereqs
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I've checked the [roadmap](../ROADMAP.md) and existing issues
+          required: true

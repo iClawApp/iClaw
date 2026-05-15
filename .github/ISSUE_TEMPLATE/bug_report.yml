@@ -1,0 +1,86 @@
+name: Bug report
+description: Something in iClaude is broken or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much as you can — empty bug reports get closed.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you see, what did you expect to see instead?
+      placeholder: |
+        I clicked "+ New chat" and typed a message. I expected an assistant reply, but instead I saw …
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open http://localhost:3000
+        2. Click "+ New chat"
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: iclaude-commit
+    attributes:
+      label: iClaude commit / version
+      description: Output of `git rev-parse --short HEAD` or release tag
+      placeholder: "eb35de7"
+    validations:
+      required: true
+
+  - type: input
+    id: openclaw-version
+    attributes:
+      label: OpenClaw Gateway version
+      description: Output of `openclaw --version` or what shows in the dashboard
+      placeholder: "2026.5.12"
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Output of `node --version`
+      placeholder: "v20.18.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - macOS
+        - Linux
+        - Windows (WSL)
+        - Windows (native)
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / errors
+      description: Any output from `npm run dev`, browser devtools console, or the network tab
+      render: shell
+
+  - type: checkboxes
+    id: prereqs
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I've enabled `gateway.http.endpoints.chatCompletions.enabled = true` in `~/.openclaw/openclaw.json`
+          required: true
+        - label: I've checked existing issues for duplicates
+          required: true
