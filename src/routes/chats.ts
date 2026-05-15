@@ -32,18 +32,10 @@ function normalizeAgentId(label: string): string {
   return label;
 }
 
-/** Tells real OpenClaw session keys (agent:main:dashboard:…) from old UUIDs. */
-function isRealOpenClawKey(key: string | null | undefined): boolean {
-  return typeof key === 'string' && key.startsWith('agent:');
-}
-
 /**
- * Returns a valid OpenClaw session key for this chat. If the chat was created
- * before the WS migration its `openclaw_session_id` is a plain UUID that
- * OpenClaw never saw — lazily create a real WS session and persist its key.
- *
- * After this call, chat.openclaw_session_id is guaranteed to be a real key
- * understood by chat.send / chat.history.
+ * Returns a valid OpenClaw session key for this chat, creating one on demand
+ * if the row doesn't carry a real (agent:…) key. There's no special legacy
+ * path — any non-OpenClaw value is treated as "no session yet" and replaced.
  */
 async function ensureOpenClawSession(chatId: number): Promise<{
   key: string;
@@ -52,11 +44,10 @@ async function ensureOpenClawSession(chatId: number): Promise<{
   const chat = chats.get(chatId);
   if (!chat) throw new Error(`chat ${chatId} not found`);
   const agentId = normalizeAgentId(chat.agent);
-  if (isRealOpenClawKey(chat.openclaw_session_id)) {
-    return { key: chat.openclaw_session_id, agentId };
+  const existing = chat.openclaw_session_id;
+  if (typeof existing === 'string' && existing.startsWith('agent:')) {
+    return { key: existing, agentId };
   }
-  // Lazy migrate: create a real session, swap the stored key. The previous
-  // UUID didn't carry any server-side state, so nothing is lost.
   const fresh = await openclawWs.createSession({ agentId });
   chats.replaceSessionKey(chatId, fresh.key);
   return { key: fresh.key, agentId };
@@ -68,8 +59,6 @@ async function getAgentsSafe(): Promise<{
 }> {
   try {
     const list = await openclawWs.listAgents();
-    // Expose them under the legacy "openclaw/<id>" namespace so the UI
-    // doesn't need to change. Add `openclaw/default` for parity.
     const items: { id: string }[] = [{ id: DEFAULT_AGENT }];
     for (const a of list) items.push({ id: `openclaw/${a.id}` });
     return { agents: items, error: null };

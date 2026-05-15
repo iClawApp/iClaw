@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { chats } from '../services/store';
 import { openclaw } from '../services/openclaw';
+import { openclawWs } from '../services/openclawWs';
 import { chatStatus } from '../services/chatStatus';
 
 export const indexRouter: Router = Router();
@@ -11,7 +12,8 @@ indexRouter.get('/', async (_req, res) => {
   let agents: { id: string }[] = [];
   let agentsError: string | null = null;
   try {
-    agents = await openclaw.listAgents();
+    const raw = await openclawWs.listAgents();
+    agents = [{ id: 'openclaw/default' }, ...raw.map((a) => ({ id: `openclaw/${a.id}` }))];
   } catch (err) {
     agentsError = err instanceof Error ? err.message : String(err);
   }

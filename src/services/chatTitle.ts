@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { openclaw } from './openclaw';
+import { openclawWs } from './openclawWs';
 
 export const TITLE_LIMIT = 60;
 /**
@@ -78,23 +77,39 @@ function sleep<T = null>(ms: number, value: T | null = null): Promise<T | null> 
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
 }
 
+/**
+ * `model` is the chat's agent label (e.g. "openclaw/default"). We strip the
+ * "openclaw/" prefix and create a throw-away session under that agent so the
+ * title call doesn't pollute the real chat's transcript.
+ */
+function modelToAgentId(model: string): string {
+  if (!model || model === 'openclaw' || model === 'openclaw/default') return 'main';
+  return model.startsWith('openclaw/') ? model.slice('openclaw/'.length) : model;
+}
+
 export async function suggestChatTitle(opts: {
   model: string;
   userMessage: string;
 }): Promise<string | null> {
+  const agentId = modelToAgentId(opts.model);
+  let sessionKey: string | null = null;
   try {
-    const result = await openclaw.chat({
-      model: opts.model,
-      // Independent session so it doesn't interfere with the real chat.
-      sessionKey: `iclaw-title-${randomUUID()}`,
-      maxTokens: 32,
-      messages: [{ role: 'user', content: buildTitlePrompt(opts.userMessage) }],
+    const session = await openclawWs.createSession({ agentId });
+    sessionKey = session.key;
+    let acc = '';
+    await openclawWs.runTurn({
+      sessionKey: session.key,
+      message: buildTitlePrompt(opts.userMessage),
+      onEvent: (ev) => {
+        if (ev.type === 'text-delta') acc += ev.text;
+        else if (ev.type === 'text-final') acc = ev.text || acc;
+      },
     });
-    const cleaned = normalizeSuggestedTitle(result.content);
+    const cleaned = normalizeSuggestedTitle(acc);
     if (!cleaned) {
       console.warn(
         '[chatTitle] rejected suggestion:',
-        JSON.stringify(result.content.slice(0, 120)),
+        JSON.stringify(acc.slice(0, 120)),
       );
       return null;
     }
@@ -102,6 +117,11 @@ export async function suggestChatTitle(opts: {
   } catch (err) {
     console.error('[chatTitle] suggest failed', err instanceof Error ? err.message : err);
     return null;
+  } finally {
+    if (sessionKey) {
+      // Best-effort cleanup so we don't pile up throw-away sessions.
+      openclawWs.deleteSession(sessionKey).catch(() => {});
+    }
   }
 }
 
