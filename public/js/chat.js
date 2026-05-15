@@ -27,8 +27,35 @@
   // tables, strikethrough, autolinks. Marked escapes raw HTML by default, so
   // inline `<script>` from an agent reply renders as literal text — safe enough
   // for a local-first app with a trusted gateway.
-  if (window.marked && typeof window.marked.setOptions === 'function') {
-    window.marked.setOptions({ breaks: true, gfm: true });
+  const VIDEO_EXT_RE = /\.(mp4|webm|ogg|mov|m4v)(\?[^#]*)?$/i;
+
+  if (window.marked) {
+    if (typeof window.marked.setOptions === 'function') {
+      window.marked.setOptions({ breaks: true, gfm: true });
+    }
+    if (typeof window.marked.use === 'function') {
+      // Auto-embed direct video URLs as <video> instead of <a>. We only handle
+      // the simple case where the link text equals the href (autolink) or the
+      // text doesn't contain HTML — for `[![poster](thumb)](video.mp4)` we
+      // fall through so the user gets a clickable poster image.
+      window.marked.use({
+        renderer: {
+          link(token) {
+            const href = (token && token.href) || '';
+            const text = (token && token.text) || '';
+            if (VIDEO_EXT_RE.test(href) && !/<img/i.test(text)) {
+              const safe = String(href).replace(/"/g, '&quot;');
+              return (
+                '<video controls preload="metadata" src="' + safe + '">' +
+                'Your browser does not support video.' +
+                '</video>'
+              );
+            }
+            return false; // fall back to marked's default renderer
+          },
+        },
+      });
+    }
   }
 
   function renderMarkdown(text) {

@@ -1,4 +1,5 @@
 :root {
+  /* Surfaces & text */
   --bg: #f9f9f9;
   --sidebar-bg: #f4f4f4;
   --surface: #ffffff;
@@ -8,12 +9,85 @@
   --text: #18181b;
   --muted: #71717a;
   --accent: #18181b;
+
+  /* Message bubbles */
   --user-bg: #f0f4ff;
+  --user-code-bg: #ffffff;
+  --user-code-border: #d4dcef;
   --assistant-bg: transparent;
   --system-bg: #f4f4f5;
+
+  /* Status accents */
   --danger: #dc2626;
   --ok: #16a34a;
   --down: #b91c1c;
+  --ok-soft-bg: #dcfce7;
+  --ok-soft-fg: #166534;
+  --down-soft-bg: #fef2f2;
+  --down-soft-border: #fecaca;
+  --ok-border: #bbf7d0;
+
+  /* Primary button (Send / submit) */
+  --btn-bg: #18181b;
+  --btn-fg: #ffffff;
+  --btn-bg-hover: #000000;
+
+  /* Markdown */
+  --md-link: #2563eb;
+  --md-link-hover: #1d4ed8;
+  --code-inline-bg: #f1f1f3;
+  --code-inline-border: #e8e8eb;
+  --code-inline-fg: #1f2937;
+  --code-block-bg: #0f172a;
+  --code-block-fg: #e2e8f0;
+  --th-bg: #f7f7f8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Surfaces & text */
+    --bg: #1a1a1a;
+    --sidebar-bg: #141414;
+    --surface: #232323;
+    --border: #2f2f2f;
+    --hover: #2a2a2a;
+    --active: #383838;
+    --text: #ececec;
+    --muted: #9ca3af;
+    --accent: #ececec;
+
+    /* Message bubbles */
+    --user-bg: #1f2638;
+    --user-code-bg: #2a3147;
+    --user-code-border: #3b465e;
+    --assistant-bg: transparent;
+    --system-bg: #262626;
+
+    /* Status accents */
+    --danger: #fca5a5;
+    --ok: #4ade80;
+    --down: #f87171;
+    --ok-soft-bg: #14361f;
+    --ok-soft-fg: #4ade80;
+    --down-soft-bg: #3a1d1d;
+    --down-soft-border: #7f1d1d;
+    --ok-border: #166534;
+
+    /* Primary button — invert for visibility on dark surfaces */
+    --btn-bg: #ececec;
+    --btn-fg: #18181b;
+    --btn-bg-hover: #ffffff;
+
+    /* Markdown */
+    --md-link: #60a5fa;
+    --md-link-hover: #93c5fd;
+    --code-inline-bg: #2a2a2a;
+    --code-inline-border: #3a3a3a;
+    --code-inline-fg: #e5e7eb;
+    --code-block-bg: #0a0f1c;
+    --code-block-fg: #e2e8f0;
+    --th-bg: #2a2a2a;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -45,7 +119,7 @@ input, select, textarea {
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85em;
-  background: #f4f4f5;
+  background: var(--code-inline-bg);
   padding: 1px 5px;
   border-radius: 3px;
 }
@@ -209,8 +283,8 @@ code {
   background: var(--surface);
   border: 1px solid var(--border);
 }
-.gateway.ok { color: var(--ok); border-color: #bbf7d0; }
-.gateway.down { color: var(--down); border-color: #fecaca; }
+.gateway.ok { color: var(--ok); border-color: var(--ok-border); }
+.gateway.down { color: var(--down); border-color: var(--down-soft-border); }
 
 /* ---------- Welcome / empty ---------- */
 
@@ -285,7 +359,7 @@ code {
   animation: pulse-dot 1.4s infinite;
 }
 .msg.assistant.stream-tool .stream-status {
-  color: #166534;
+  color: var(--ok-soft-fg);
   font-style: normal;
   font-weight: 500;
 }
@@ -310,7 +384,7 @@ code {
 }
 .msg.error {
   color: var(--danger);
-  background: #fef2f2;
+  background: var(--down-soft-bg);
 }
 .placeholder-text { display: inline; }
 
@@ -359,12 +433,12 @@ code {
 .msg-body ol ol { margin: 0.2em 0; }
 
 .msg-body a {
-  color: #2563eb;
+  color: var(--md-link);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
-.msg-body a:hover { color: #1d4ed8; }
+.msg-body a:hover { color: var(--md-link-hover); }
 
 .msg-body strong { font-weight: 600; }
 .msg-body em { font-style: italic; }
@@ -379,19 +453,19 @@ code {
 .msg-body :not(pre) > code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.88em;
-  background: #f1f1f3;
-  border: 1px solid #e8e8eb;
+  background: var(--code-inline-bg);
+  border: 1px solid var(--code-inline-border);
   padding: 0.1em 0.4em;
   border-radius: 4px;
-  color: #1f2937;
+  color: var(--code-inline-fg);
 }
 
 /* fenced code block */
 .msg-body pre {
   margin: 0.5em 0 1em;
   padding: 12px 14px;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--code-block-bg);
+  color: var(--code-block-fg);
   border-radius: 8px;
   overflow-x: auto;
   font-size: 0.85em;
@@ -416,6 +490,27 @@ code {
 }
 .msg-body blockquote > p { margin: 0.3em 0; }
 
+/* media — images/video returned by the agent */
+.msg-body img,
+.msg-body video {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  height: auto;
+  margin: 0.5em 0;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--system-bg);
+}
+.msg-body video {
+  width: 100%;
+  outline: none;
+}
+.msg-body a > img {
+  margin: 0; /* image inside a link (clickable poster) — no extra spacing */
+  cursor: pointer;
+}
+
 /* tables (GFM) */
 .msg-body table {
   border-collapse: collapse;
@@ -429,14 +524,14 @@ code {
   text-align: left;
 }
 .msg-body th {
-  background: #f7f7f8;
+  background: var(--th-bg);
   font-weight: 600;
 }
 
 /* User-side: inline code needs more contrast on the blue bubble */
 .msg.user .msg-body :not(pre) > code {
-  background: #ffffff;
-  border-color: #d4dcef;
+  background: var(--user-code-bg);
+  border-color: var(--user-code-border);
 }
 
 /* When the assistant body is the streaming target, keep our markdown rules */
@@ -477,8 +572,8 @@ code {
   border-radius: 999px;
 }
 .queue-item.queued .queue-status {
-  background: #f4f4f5;
-  color: #71717a;
+  background: var(--code-inline-bg);
+  color: var(--muted);
 }
 
 .queue-text {
@@ -517,14 +612,14 @@ code {
 }
 .composer button {
   padding: 12px 20px;
-  background: var(--accent);
-  color: white;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
   border: none;
   border-radius: 10px;
   cursor: pointer;
   font-weight: 500;
 }
-.composer button:hover { background: #000; }
+.composer button:hover { background: var(--btn-bg-hover); }
 .composer button:disabled {
   opacity: 0.4;
   cursor: progress;
@@ -546,19 +641,19 @@ code {
 }
 .stack button {
   padding: 8px 16px;
-  background: var(--accent);
-  color: white;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
   border: none;
   border-radius: 6px;
   cursor: pointer;
   align-self: flex-start;
 }
-.stack button:hover { background: #000; }
+.stack button:hover { background: var(--btn-bg-hover); }
 
 .error {
   color: var(--danger);
-  background: #fef2f2;
+  background: var(--down-soft-bg);
   padding: 10px 14px;
   border-radius: 6px;
-  border: 1px solid #fecaca;
+  border: 1px solid var(--down-soft-border);
 }
