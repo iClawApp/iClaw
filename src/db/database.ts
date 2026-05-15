@@ -3,53 +3,33 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS projects (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  name        TEXT NOT NULL,
-  description TEXT,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS tasks (
+CREATE TABLE IF NOT EXISTS chats (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-  project_id          INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  title               TEXT NOT NULL,
-  status              TEXT NOT NULL DEFAULT 'open',
-  openclaw_session_id TEXT,                  -- locally-generated session key (x-openclaw-session-key)
-  agent               TEXT,                  -- e.g. 'openclaw/default'
-  created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  title               TEXT NOT NULL DEFAULT 'New chat',
+  agent               TEXT NOT NULL,
+  openclaw_session_id TEXT NOT NULL,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
-CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
-
-CREATE TABLE IF NOT EXISTS notes (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  body       TEXT NOT NULL,
-  pinned     INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_notes_task ON notes(task_id);
 
 CREATE TABLE IF NOT EXISTS messages (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id      INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  role         TEXT NOT NULL,                -- 'user' | 'assistant' | 'system'
-  content      TEXT NOT NULL,
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id       INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  role          TEXT NOT NULL,
+  content       TEXT NOT NULL,
   finish_reason TEXT,
-  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id, id);
+CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, id);
+CREATE INDEX IF NOT EXISTS idx_chats_updated ON chats(updated_at DESC);
 `;
 
-function migrate(db: Database.Database): void {
-  const cols = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
-  const names = new Set(cols.map((c) => c.name));
-  if (!names.has('agent')) {
-    db.exec('ALTER TABLE tasks ADD COLUMN agent TEXT');
-  }
+function dropObsoleteTables(db: Database.Database): void {
+  // Earlier MVP had projects/tasks/notes. We're now flat: chats only.
+  db.exec('DROP TABLE IF EXISTS notes');
+  db.exec('DROP TABLE IF EXISTS tasks');
+  db.exec('DROP TABLE IF EXISTS projects');
 }
 
 const dbPath = resolve(process.cwd(), process.env.DB_PATH ?? './data/iclaude.db');
@@ -58,5 +38,5 @@ mkdirSync(dirname(dbPath), { recursive: true });
 export const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+dropObsoleteTables(db);
 db.exec(SCHEMA);
-migrate(db);

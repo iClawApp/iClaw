@@ -1,56 +1,22 @@
 <aside class="col col-left">
-  <header class="col-header">
-    <h2>Projects</h2>
-  </header>
+  <div class="sidebar-top">
+    <form method="post" action="/chats" class="new-chat-form">
+      <button type="submit" class="new-chat-btn">+ New chat</button>
+    </form>
+  </div>
 
-  <form method="post" action="/projects" class="inline-form">
-    <input name="name" placeholder="New project name" required />
-    <button type="submit">+</button>
-  </form>
-
-  <ul class="list">
-    <% projects.forEach(function (p) { %>
-      <li class="<%= project && project.id === p.id ? 'active' : '' %>">
-        <a href="/projects/<%= p.id %>"><%= p.name %></a>
-      </li>
-    <% }); %>
-    <% if (projects.length === 0) { %>
-      <li class="muted">No projects yet.</li>
+  <nav class="chat-list">
+    <% if (chats.length === 0) { %>
+      <p class="muted empty-list">No chats yet.</p>
     <% } %>
-  </ul>
-
-  <% if (project) { %>
-    <header class="col-header">
-      <h2>Tasks <span class="muted">in <%= project.name %></span></h2>
-    </header>
-
-    <form method="post" action="/tasks" class="inline-form">
-      <input type="hidden" name="project_id" value="<%= project.id %>" />
-      <input name="title" placeholder="New task title" required />
-      <button type="submit">+</button>
-    </form>
-
-    <ul class="list">
-      <% tasks.forEach(function (t) { %>
-        <li class="<%= activeTask && activeTask.id === t.id ? 'active' : '' %>">
-          <a href="/tasks/<%= t.id %>">
-            <span class="task-title"><%= t.title %></span>
-            <% if (t.openclaw_session_id) { %>
-              <span class="badge" title="Linked to OpenClaw session">●</span>
-            <% } %>
-            <span class="status status-<%= t.status %>"><%= t.status %></span>
-          </a>
-        </li>
-      <% }); %>
-      <% if (tasks.length === 0) { %>
-        <li class="muted">No tasks in this project.</li>
-      <% } %>
-    </ul>
-
-    <form method="post" action="/projects/<%= project.id %>/delete" class="inline-form danger">
-      <button type="submit" onclick="return confirm('Delete project and all its tasks?')">
-        Delete project
-      </button>
-    </form>
-  <% } %>
+    <% chats.forEach(function (c) { %>
+      <a
+        href="/chats/<%= c.id %>"
+        class="chat-item <%= activeChat && activeChat.id === c.id ? 'active' : '' %>"
+        title="<%= c.title %>"
+      >
+        <span class="chat-item-title"><%= c.title %></span>
+      </a>
+    <% }); %>
+  </nav>
 </aside>

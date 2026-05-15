@@ -3,33 +3,35 @@
 <div class="app">
   <%- include('partials/sidebar') %>
 
-  <main class="col col-center">
-    <header class="col-header app-header">
+  <main class="col col-main">
+    <header class="chat-header">
       <h1>iClaude</h1>
-      <span class="gateway <%= gatewayUp ? 'ok' : 'down' %>">
+      <span class="gateway <%= gatewayUp ? 'ok' : 'down' %>" title="<%= openclawBaseUrl %>">
         OpenClaw: <%= gatewayUp ? 'connected' : 'unreachable' %>
-        <span class="muted">(<%= openclawBaseUrl %>)</span>
       </span>
     </header>
 
     <section class="welcome">
-      <h2>Welcome</h2>
-      <p>
-        Create a project on the left, add a task, then link an OpenClaw session
-        to chat with your agent. Use the right column to pin context notes that
-        you want to reference during a task.
-      </p>
-      <p class="muted">
-        iClaude is just the UI layer — projects, tasks, and notes live in a local
-        SQLite file. Sessions and messages stay in OpenClaw.
-      </p>
+      <h2>Start a new chat</h2>
+      <% if (agentsError) { %>
+        <p class="error">Gateway unreachable: <code><%= agentsError %></code></p>
+      <% } else { %>
+        <form method="post" action="/chats" class="stack">
+          <label>
+            Agent
+            <select name="agent">
+              <% agents.forEach(function (a) { %>
+                <option value="<%= a.id %>" <%= a.id === defaultAgent ? 'selected' : '' %>>
+                  <%= a.id %>
+                </option>
+              <% }); %>
+            </select>
+          </label>
+          <button type="submit">New chat</button>
+        </form>
+      <% } %>
     </section>
   </main>
-
-  <aside class="col col-right">
-    <header class="col-header"><h2>Notes</h2></header>
-    <p class="muted">Open a task to see its pinned notes here.</p>
-  </aside>
 </div>
 
 <%- include('partials/foot') %>

@@ -1,0 +1,68 @@
+<%- include('partials/head', { title: activeChat.title + ' — iClaude' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main">
+    <header class="chat-header">
+      <form method="post" action="/chats/<%= activeChat.id %>/rename" class="rename-form">
+        <input
+          name="title"
+          value="<%= activeChat.title %>"
+          aria-label="Chat title"
+          onblur="if (this.value !== this.defaultValue) this.form.submit()"
+        />
+      </form>
+
+      <form method="post" action="/chats/<%= activeChat.id %>/agent" class="agent-form">
+        <select name="agent" onchange="this.form.submit()" aria-label="Agent">
+          <% agents.forEach(function (a) { %>
+            <option value="<%= a.id %>" <%= a.id === activeChat.agent ? 'selected' : '' %>>
+              <%= a.id %>
+            </option>
+          <% }); %>
+          <% if (agentsError && agents.length === 0) { %>
+            <option value="<%= activeChat.agent %>" selected><%= activeChat.agent %></option>
+          <% } %>
+        </select>
+      </form>
+
+      <form method="post" action="/chats/<%= activeChat.id %>/delete" class="delete-form">
+        <button type="submit" onclick="return confirm('Delete this chat?')" aria-label="Delete">
+          ×
+        </button>
+      </form>
+    </header>
+
+    <section
+      class="messages"
+      id="messages"
+      data-chat-id="<%= activeChat.id %>"
+    >
+      <% if (chatMessages.length === 0) { %>
+        <p class="muted empty-state">No messages yet. Say something.</p>
+      <% } else { %>
+        <% chatMessages.forEach(function (m) { %>
+          <div class="msg <%= m.role %>">
+            <div class="role"><%= m.role %></div><%= m.content %>
+          </div>
+        <% }); %>
+      <% } %>
+    </section>
+
+    <form id="send-form" class="composer">
+      <textarea
+        id="composer-input"
+        name="content"
+        placeholder="Message <%= activeChat.agent %>… (Enter to send, Shift+Enter for newline)"
+        rows="2"
+        required
+      ></textarea>
+      <button type="submit">Send</button>
+    </form>
+
+    <script src="/js/chat.js"></script>
+  </main>
+</div>
+
+<%- include('partials/foot') %>

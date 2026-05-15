@@ -4,7 +4,7 @@
   const input = document.getElementById('composer-input');
   if (!messagesEl || !form || !input) return;
 
-  const taskId = messagesEl.dataset.taskId;
+  const chatId = messagesEl.dataset.chatId;
 
   function escapeHtml(s) {
     return String(s)
@@ -38,7 +38,7 @@
     button.disabled = true;
 
     try {
-      const res = await fetch('/tasks/' + encodeURIComponent(taskId) + '/messages', {
+      const res = await fetch('/chats/' + encodeURIComponent(chatId) + '/messages', {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify({ content }),
