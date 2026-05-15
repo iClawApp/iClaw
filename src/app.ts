@@ -4,6 +4,7 @@ import path from 'node:path';
 import { indexRouter } from './routes/index';
 import { chatsRouter } from './routes/chats';
 import { agentsRouter } from './routes/sessions';
+import { mediaRouter } from './routes/media';
 
 export function createApp(): express.Express {
   const app = express();
@@ -18,6 +19,7 @@ export function createApp(): express.Express {
   app.use('/', indexRouter);
   app.use('/chats', chatsRouter);
   app.use('/api/agents', agentsRouter);
+  app.use('/media', mediaRouter);
 
   app.use(
     (

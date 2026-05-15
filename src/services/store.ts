@@ -47,6 +47,11 @@ export const chats = {
       | undefined;
     return Boolean(row?.title_manual);
   },
+  replaceSessionKey(id: number, sessionKey: string): void {
+    db.prepare(
+      "UPDATE chats SET openclaw_session_id = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(sessionKey, id);
+  },
   setAgent(id: number, agent: string): void {
     db.prepare('UPDATE chats SET agent = ?, updated_at = datetime(\'now\') WHERE id = ?').run(
       agent,

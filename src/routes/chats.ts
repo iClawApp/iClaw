@@ -1,10 +1,10 @@
 import { Router, type Request, type Response } from 'express';
 import { chats, messages } from '../services/store';
-import { openclaw, type ChatMessage } from '../services/openclaw';
+import { openclaw } from '../services/openclaw';
+import { openclawWs, type TurnEvent } from '../services/openclawWs';
 import { chatStatus } from '../services/chatStatus';
-import { beginSse, endSse, writeSse, type ClientStreamEvent } from '../services/sse';
-import { gatewayWs, type GatewayActivity } from '../services/gatewayWs';
-import { lifecycleActivityLabel, toolActivityLabel } from '../services/toolLabels';
+import { beginSse, endSse, writeSse } from '../services/sse';
+import { toolActivityLabel } from '../services/toolLabels';
 import { deriveTitle, suggestChatTitleWithTimeout } from '../services/chatTitle';
 import type { Message } from '../types';
 
@@ -16,31 +16,68 @@ function wantsStream(req: Request): boolean {
   return req.headers.accept?.includes('text/event-stream') ?? false;
 }
 
-async function getAgentsSafe(): Promise<{ agents: { id: string }[]; error: string | null }> {
+/**
+ * Map iClaw's "agent" string (kept in chat.agent for compat with the old
+ * OpenAI-compat path) into the agentId OpenClaw expects on the WS protocol.
+ *
+ *   "openclaw"          → "main"
+ *   "openclaw/default"  → "main"
+ *   "openclaw/code"     → "code"
+ *   "openclaw/main"     → "main"
+ *   any other id        → returned as-is
+ */
+function normalizeAgentId(label: string): string {
+  if (!label || label === 'openclaw' || label === 'openclaw/default') return 'main';
+  if (label.startsWith('openclaw/')) return label.slice('openclaw/'.length);
+  return label;
+}
+
+/** Tells real OpenClaw session keys (agent:main:dashboard:…) from old UUIDs. */
+function isRealOpenClawKey(key: string | null | undefined): boolean {
+  return typeof key === 'string' && key.startsWith('agent:');
+}
+
+/**
+ * Returns a valid OpenClaw session key for this chat. If the chat was created
+ * before the WS migration its `openclaw_session_id` is a plain UUID that
+ * OpenClaw never saw — lazily create a real WS session and persist its key.
+ *
+ * After this call, chat.openclaw_session_id is guaranteed to be a real key
+ * understood by chat.send / chat.history.
+ */
+async function ensureOpenClawSession(chatId: number): Promise<{
+  key: string;
+  agentId: string;
+}> {
+  const chat = chats.get(chatId);
+  if (!chat) throw new Error(`chat ${chatId} not found`);
+  const agentId = normalizeAgentId(chat.agent);
+  if (isRealOpenClawKey(chat.openclaw_session_id)) {
+    return { key: chat.openclaw_session_id, agentId };
+  }
+  // Lazy migrate: create a real session, swap the stored key. The previous
+  // UUID didn't carry any server-side state, so nothing is lost.
+  const fresh = await openclawWs.createSession({ agentId });
+  chats.replaceSessionKey(chatId, fresh.key);
+  return { key: fresh.key, agentId };
+}
+
+async function getAgentsSafe(): Promise<{
+  agents: { id: string }[];
+  error: string | null;
+}> {
   try {
-    return { agents: await openclaw.listAgents(), error: null };
+    const list = await openclawWs.listAgents();
+    // Expose them under the legacy "openclaw/<id>" namespace so the UI
+    // doesn't need to change. Add `openclaw/default` for parity.
+    const items: { id: string }[] = [{ id: DEFAULT_AGENT }];
+    for (const a of list) items.push({ id: `openclaw/${a.id}` });
+    return { agents: items, error: null };
   } catch (err) {
     return { agents: [], error: err instanceof Error ? err.message : String(err) };
   }
 }
 
-function historyForChat(chatId: number): ChatMessage[] {
-  return messages
-    .listByChat(chatId)
-    .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
-    .map((m) => ({ role: m.role as ChatMessage['role'], content: m.content }));
-}
-
-/**
- * Fire-and-forget title suggestion. Runs as a background sub-request to OpenClaw
- * (~30s through the agent), independent of the main turn. When it resolves with
- * a quality-validated title, we write it to the DB and emit an SSE update so
- * the sidebar swaps the placeholder. If it fails or returns garbage, the
- * placeholder (truncated user message) stays.
- *
- * Returns a Promise that the caller awaits BEFORE emitting `done`, so the
- * final title is visible to the client when the turn completes.
- */
 function backgroundTitleTask(
   res: Response,
   opts: { chatId: number; model: string; userMessage: string },
@@ -60,105 +97,86 @@ function backgroundTitleTask(
   });
 }
 
-function gatewayActivityToSse(ev: GatewayActivity): ClientStreamEvent | null {
-  if (ev.kind === 'tool') {
-    return {
-      type: 'tool',
-      phase: ev.phase,
-      name: ev.name,
-      label: toolActivityLabel(ev.name),
-    };
-  }
-  if (ev.kind === 'status') {
-    return { type: 'status', status: 'thinking' };
-  }
-  if (ev.kind === 'lifecycle') {
-    return {
-      type: 'lifecycle',
-      phase: ev.phase,
-      label: lifecycleActivityLabel(ev.phase),
-    };
-  }
-  return null;
-}
-
-async function runOpenClawStream(
+/**
+ * Run one turn via OpenClaw WS, forwarding TurnEvents to the client SSE
+ * stream and mirroring activity state into chatStatus so a reloaded page
+ * sees the same label.
+ */
+async function runTurnAndForward(
   res: Response,
-  opts: { chatId: number; model: string; sessionKey: string; messages: ChatMessage[] },
-): Promise<{ content: string; finishReason: string | null }> {
+  opts: { chatId: number; sessionKey: string; message: string },
+): Promise<{ content: string }> {
   writeSse(res, { type: 'status', status: 'thinking' });
   chatStatus.setActivity(opts.chatId, { kind: 'thinking', label: 'Thinking…' });
 
-  await gatewayWs.ensureConnected();
-
-  const unwatch = gatewayWs.watchSession(opts.sessionKey, (activity) => {
-    const sse = gatewayActivityToSse(activity);
-    if (sse) writeSse(res, sse);
-
-    // Mirror into chatStatus so a reloaded page can see the same label.
-    if (activity.kind === 'tool') {
-      if (activity.phase === 'start') {
+  let switchedToGenerating = false;
+  const handle = (ev: TurnEvent): void => {
+    if (ev.type === 'text-delta') {
+      if (!switchedToGenerating) {
+        switchedToGenerating = true;
         chatStatus.setActivity(opts.chatId, {
-          kind: 'tool',
-          name: activity.name,
-          label: toolActivityLabel(activity.name),
+          kind: 'generating',
+          label: 'Generating…',
         });
       }
-      // tool 'end' alone doesn't change the activity — the next event
-      // (another tool, lifecycle, or first text delta) will replace it.
-    } else if (activity.kind === 'lifecycle') {
+      writeSse(res, { type: 'delta', text: ev.text });
+    } else if (ev.type === 'tool-start') {
+      writeSse(res, {
+        type: 'tool',
+        phase: 'start',
+        name: ev.name,
+        label: ev.label,
+      });
+      chatStatus.setActivity(opts.chatId, {
+        kind: 'tool',
+        name: ev.name,
+        label: ev.label,
+      });
+    } else if (ev.type === 'tool-end') {
+      writeSse(res, {
+        type: 'tool',
+        phase: 'end',
+        name: ev.name,
+        label: toolActivityLabel(ev.name),
+      });
+    } else if (ev.type === 'lifecycle') {
+      writeSse(res, { type: 'lifecycle', phase: ev.phase, label: ev.label });
       chatStatus.setActivity(opts.chatId, {
         kind: 'lifecycle',
-        phase: activity.phase,
-        label: lifecycleActivityLabel(activity.phase),
+        phase: ev.phase,
+        label: ev.label,
       });
-    } else if (activity.kind === 'status') {
-      chatStatus.setActivity(opts.chatId, { kind: 'thinking', label: 'Thinking…' });
+    } else if (ev.type === 'attachment') {
+      // Forward as a delta-like event injecting markdown into the body.
+      // For now we just append a markdown image link to the running text.
+      // (Real handling — including a /media proxy — lands in Phase 4.)
+      const proxied = rewriteMediaUrlForProxy(ev.url);
+      const md = ev.mime.startsWith('video/')
+        ? `\n\n[![attachment](${proxied})](${proxied})\n`
+        : `\n\n![${ev.label ?? 'attachment'}](${proxied})\n`;
+      writeSse(res, { type: 'delta', text: md });
     }
+    // text-final is implicit — we already streamed all deltas
+  };
+
+  const { text } = await openclawWs.runTurn({
+    sessionKey: opts.sessionKey,
+    message: opts.message,
+    onEvent: handle,
   });
+  return { content: text };
+}
 
-  let content = '';
-  let finishReason: string | null = null;
-  let switchedToGenerating = false;
-
-  try {
-    for await (const ev of openclaw.chatStream({
-      model: opts.model,
-      sessionKey: opts.sessionKey,
-      messages: opts.messages,
-    })) {
-      if (ev.type === 'delta') {
-        if (!switchedToGenerating) {
-          switchedToGenerating = true;
-          chatStatus.setActivity(opts.chatId, { kind: 'generating', label: 'Generating…' });
-        }
-        content += ev.text;
-        writeSse(res, { type: 'delta', text: ev.text });
-      } else if (ev.type === 'tool') {
-        writeSse(res, {
-          type: 'tool',
-          phase: ev.phase,
-          name: ev.name,
-          label: toolActivityLabel(ev.name),
-        });
-        // The tool-call events from the chat stream are local-to-this-turn,
-        // distinct from gatewayWs session events. Mirror them too.
-        if (ev.phase === 'start') {
-          chatStatus.setActivity(opts.chatId, {
-            kind: 'tool',
-            name: ev.name,
-            label: toolActivityLabel(ev.name),
-          });
-        }
-      } else if (ev.type === 'finish') {
-        finishReason = ev.reason;
-      }
-    }
-  } finally {
-    unwatch();
-  }
-
-  return { content, finishReason };
+/**
+ * Rewrite `/api/chat/media/...` from OpenClaw into our local /media proxy so
+ * the browser can fetch it without the gateway bearer token. Anything that
+ * already looks absolute (http/https) passes through unchanged.
+ */
+function rewriteMediaUrlForProxy(url: string): string {
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith('/api/chat/media/')) return '/media' + url.slice('/api/chat/media'.length);
+  return url;
 }
 
 function streamError(res: Response, err: unknown): void {
@@ -171,34 +189,40 @@ function streamError(res: Response, err: unknown): void {
 // POST /chats — create a chat AND run the first turn atomically.
 chatsRouter.post('/', async (req, res, next) => {
   const content = String(req.body?.content ?? '').trim();
-  const agent = String(req.body?.agent ?? '').trim() || DEFAULT_AGENT;
+  const agentLabel = String(req.body?.agent ?? '').trim() || DEFAULT_AGENT;
   if (!content) {
     res.status(400).json({ error: 'content required' });
     return;
   }
 
-  const chat = chats.create(agent);
-
-  // Seed a placeholder title so the chat is fully usable even if the AI title
-  // task is slow / fails / gets rejected by quality gates.
+  const chat = chats.create(agentLabel);
   const placeholderTitle = deriveTitle(content);
   chats.trySetAutoTitle(chat.id, placeholderTitle);
+
+  // Build a real OpenClaw session before doing anything else.
+  let session: { key: string; agentId: string };
+  try {
+    session = await ensureOpenClawSession(chat.id);
+  } catch (err) {
+    next(err);
+    return;
+  }
 
   if (!wantsStream(req)) {
     try {
       const reply = await chatStatus.withLock(chat.id, async () => {
         messages.append(chat.id, 'user', content);
-        const result = await openclaw.chat({
-          model: chat.agent,
-          sessionKey: chat.openclaw_session_id,
-          messages: [{ role: 'user', content }],
+        // Buffer text for non-streaming clients.
+        let acc = '';
+        const { text } = await openclawWs.runTurn({
+          sessionKey: session.key,
+          message: content,
+          onEvent: (ev) => {
+            if (ev.type === 'text-delta') acc += ev.text;
+            else if (ev.type === 'text-final') acc = ev.text || acc;
+          },
         });
-        return messages.append(
-          chat.id,
-          'assistant',
-          result.content,
-          result.finish_reason,
-        );
+        return messages.append(chat.id, 'assistant', text || acc, null);
       });
       res.json({
         id: chat.id,
@@ -213,13 +237,7 @@ chatsRouter.post('/', async (req, res, next) => {
 
   beginSse(res);
   try {
-    // Tell the client immediately: chat exists, here's a usable title. The
-    // sidebar inserts the entry now; an AI-improved title may arrive later.
     writeSse(res, { type: 'title', id: chat.id, title: placeholderTitle });
-
-    // Fire the AI title sub-request in the background. We `await` it before
-    // emitting `done` so the client sees the upgraded title (if any) before
-    // the turn closes — but the main stream is not blocked by it.
     const titleTask = backgroundTitleTask(res, {
       chatId: chat.id,
       model: chat.agent,
@@ -228,13 +246,12 @@ chatsRouter.post('/', async (req, res, next) => {
 
     await chatStatus.withLock(chat.id, async () => {
       messages.append(chat.id, 'user', content);
-      const { content: reply, finishReason } = await runOpenClawStream(res, {
+      const { content: reply } = await runTurnAndForward(res, {
         chatId: chat.id,
-        model: chat.agent,
-        sessionKey: chat.openclaw_session_id,
-        messages: [{ role: 'user', content }],
+        sessionKey: session.key,
+        message: content,
       });
-      const stored = messages.append(chat.id, 'assistant', reply, finishReason);
+      const stored = messages.append(chat.id, 'assistant', reply, null);
       await titleTask;
       const finalTitle = chats.get(chat.id)?.title ?? placeholderTitle;
       writeSse(res, { type: 'done', id: chat.id, title: finalTitle, message: stored });
@@ -333,17 +350,28 @@ chatsRouter.post('/:id/messages', async (req, res, next) => {
     return;
   }
 
+  let session: { key: string; agentId: string };
+  try {
+    session = await ensureOpenClawSession(id);
+  } catch (err) {
+    next(err);
+    return;
+  }
+
   if (!wantsStream(req)) {
     try {
       const stored = await chatStatus.withLock(id, async () => {
-        const fresh = chats.get(id)!;
         messages.append(id, 'user', content);
-        const result = await openclaw.chat({
-          model: fresh.agent,
-          sessionKey: fresh.openclaw_session_id,
-          messages: historyForChat(id),
+        let acc = '';
+        const { text } = await openclawWs.runTurn({
+          sessionKey: session.key,
+          message: content,
+          onEvent: (ev) => {
+            if (ev.type === 'text-delta') acc += ev.text;
+            else if (ev.type === 'text-final') acc = ev.text || acc;
+          },
         });
-        return messages.append(id, 'assistant', result.content, result.finish_reason);
+        return messages.append(id, 'assistant', text || acc, null);
       });
       res.json(stored);
     } catch (err) {
@@ -355,16 +383,14 @@ chatsRouter.post('/:id/messages', async (req, res, next) => {
   beginSse(res);
   try {
     await chatStatus.withLock(id, async () => {
-      const fresh = chats.get(id)!;
       messages.append(id, 'user', content);
-      const { content: reply, finishReason } = await runOpenClawStream(res, {
+      const { content: reply } = await runTurnAndForward(res, {
         chatId: id,
-        model: fresh.agent,
-        sessionKey: fresh.openclaw_session_id,
-        messages: historyForChat(id),
+        sessionKey: session.key,
+        message: content,
       });
-      const stored: Message = messages.append(id, 'assistant', reply, finishReason);
-      const finalTitle = chats.get(id)?.title ?? fresh.title;
+      const stored: Message = messages.append(id, 'assistant', reply, null);
+      const finalTitle = chats.get(id)?.title ?? chat.title;
       writeSse(res, { type: 'done', id, title: finalTitle, message: stored });
     });
     endSse(res);
