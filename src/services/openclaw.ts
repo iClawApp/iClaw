@@ -19,7 +19,57 @@ export interface ChatResult {
 
 export type OpenClawStreamEvent =
   | { type: 'delta'; text: string }
+  | { type: 'tool'; phase: 'start' | 'end'; name: string }
   | { type: 'finish'; reason: string | null };
+
+type ToolCallDelta = {
+  index?: number;
+  id?: string;
+  function?: { name?: string; arguments?: string };
+};
+
+type CompletionChoice = {
+  delta?: {
+    content?: string;
+    tool_calls?: ToolCallDelta[];
+  };
+  finish_reason?: string | null;
+};
+
+function* eventsFromChoice(
+  choice: CompletionChoice,
+  toolState: Map<number, string>,
+): Generator<OpenClawStreamEvent> {
+  const delta = choice.delta;
+  if (delta?.content) {
+    yield { type: 'delta', text: delta.content };
+  }
+
+  if (delta?.tool_calls) {
+    for (const call of delta.tool_calls) {
+      const idx = call.index ?? 0;
+      const name = call.function?.name?.trim();
+      if (!name) continue;
+
+      const prev = toolState.get(idx);
+      if (prev && prev !== name) {
+        yield { type: 'tool', phase: 'end', name: prev };
+      }
+      if (prev !== name) {
+        toolState.set(idx, name);
+        yield { type: 'tool', phase: 'start', name };
+      }
+    }
+  }
+
+  if (choice.finish_reason) {
+    for (const name of toolState.values()) {
+      yield { type: 'tool', phase: 'end', name };
+    }
+    toolState.clear();
+    yield { type: 'finish', reason: choice.finish_reason };
+  }
+}
 
 const config: OpenClawConfig = loadOpenClawConfig();
 
@@ -38,6 +88,7 @@ async function* parseOpenAiSseStream(
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  const toolState = new Map<number, string>();
 
   try {
     while (true) {
@@ -59,9 +110,7 @@ async function* parseOpenAiSseStream(
           const data = trimmed.slice(5).trim();
           if (data === '[DONE]') return;
 
-          let json: {
-            choices?: { delta?: { content?: string }; finish_reason?: string | null }[];
-          };
+          let json: { choices?: CompletionChoice[] };
           try {
             json = JSON.parse(data) as typeof json;
           } catch {
@@ -69,12 +118,8 @@ async function* parseOpenAiSseStream(
           }
 
           const choice = json.choices?.[0];
-          if (choice?.delta?.content) {
-            yield { type: 'delta', text: choice.delta.content };
-          }
-          if (choice?.finish_reason) {
-            yield { type: 'finish', reason: choice.finish_reason };
-          }
+          if (!choice) continue;
+          yield* eventsFromChoice(choice, toolState);
         }
       }
     }

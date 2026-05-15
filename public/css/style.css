@@ -267,10 +267,42 @@ code {
 }
 .msg.pending { opacity: 0.5; font-style: italic; }
 .msg.assistant.streaming .stream-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 0.85em;
   color: var(--muted);
   font-style: italic;
   margin-bottom: 4px;
+}
+.msg.assistant.streaming .stream-status::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: pulse-dot 1.4s infinite;
+}
+.msg.assistant.stream-tool .stream-status {
+  color: #166534;
+  font-style: normal;
+  font-weight: 500;
+}
+.msg.assistant.stream-generating .stream-body::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  opacity: 0.7;
+  animation: caret-blink 1s step-end infinite;
+}
+@keyframes caret-blink {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 0; }
 }
 .msg.assistant .stream-body {
   white-space: pre-wrap;

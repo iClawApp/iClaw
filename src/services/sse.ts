@@ -2,6 +2,8 @@ import type { Response } from 'express';
 
 export type ClientStreamEvent =
   | { type: 'status'; status: 'thinking' }
+  | { type: 'tool'; phase: 'start' | 'end'; name: string; label: string }
+  | { type: 'lifecycle'; phase: string; label: string }
   | { type: 'delta'; text: string }
   | { type: 'done'; id?: number; message: unknown }
   | { type: 'error'; error: string };

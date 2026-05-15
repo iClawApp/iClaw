@@ -2,7 +2,9 @@ import { Router, type Request, type Response } from 'express';
 import { chats, messages } from '../services/store';
 import { openclaw, type ChatMessage } from '../services/openclaw';
 import { chatStatus } from '../services/chatStatus';
-import { beginSse, endSse, writeSse } from '../services/sse';
+import { beginSse, endSse, writeSse, type ClientStreamEvent } from '../services/sse';
+import { gatewayWs, type GatewayActivity } from '../services/gatewayWs';
+import { lifecycleActivityLabel, toolActivityLabel } from '../services/toolLabels';
 import type { Message } from '../types';
 
 export const chatsRouter: Router = Router();
@@ -28,26 +30,66 @@ function historyForChat(chatId: number): ChatMessage[] {
     .map((m) => ({ role: m.role as ChatMessage['role'], content: m.content }));
 }
 
+function gatewayActivityToSse(ev: GatewayActivity): ClientStreamEvent | null {
+  if (ev.kind === 'tool') {
+    return {
+      type: 'tool',
+      phase: ev.phase,
+      name: ev.name,
+      label: toolActivityLabel(ev.name),
+    };
+  }
+  if (ev.kind === 'status') {
+    return { type: 'status', status: 'thinking' };
+  }
+  if (ev.kind === 'lifecycle') {
+    return {
+      type: 'lifecycle',
+      phase: ev.phase,
+      label: lifecycleActivityLabel(ev.phase),
+    };
+  }
+  return null;
+}
+
 async function runOpenClawStream(
   res: Response,
   opts: { model: string; sessionKey: string; messages: ChatMessage[] },
 ): Promise<{ content: string; finishReason: string | null }> {
   writeSse(res, { type: 'status', status: 'thinking' });
 
+  await gatewayWs.ensureConnected();
+
+  const unwatch = gatewayWs.watchSession(opts.sessionKey, (activity) => {
+    const sse = gatewayActivityToSse(activity);
+    if (sse) writeSse(res, sse);
+  });
+
   let content = '';
   let finishReason: string | null = null;
 
-  for await (const ev of openclaw.chatStream({
-    model: opts.model,
-    sessionKey: opts.sessionKey,
-    messages: opts.messages,
-  })) {
-    if (ev.type === 'delta') {
-      content += ev.text;
-      writeSse(res, { type: 'delta', text: ev.text });
-    } else if (ev.type === 'finish') {
-      finishReason = ev.reason;
+  try {
+    for await (const ev of openclaw.chatStream({
+      model: opts.model,
+      sessionKey: opts.sessionKey,
+      messages: opts.messages,
+    })) {
+      if (ev.type === 'delta') {
+        content += ev.text;
+        writeSse(res, { type: 'delta', text: ev.text });
+      } else if (ev.type === 'tool') {
+        writeSse(res, {
+          type: 'tool',
+          phase: ev.phase,
+          name: ev.name,
+          label: toolActivityLabel(ev.name),
+        });
+      } else if (ev.type === 'finish') {
+        finishReason = ev.reason;
+      }
     }
+  } finally {
+    unwatch();
   }
 
   return { content, finishReason };

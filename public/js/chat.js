@@ -44,7 +44,7 @@
 
   function beginAssistantStream(userNode) {
     const div = document.createElement('div');
-    div.className = 'msg assistant streaming';
+    div.className = 'msg assistant streaming stream-waiting';
     div.innerHTML =
       '<div class="role">assistant</div>' +
       '<div class="stream-status">Thinking…</div>' +
@@ -52,6 +52,75 @@
     userNode.insertAdjacentElement('afterend', div);
     scrollMessagesToBottom();
     return div;
+  }
+
+
+  function createStreamContext(assistantEl) {
+    return {
+      assistantEl,
+      statusEl: assistantEl.querySelector('.stream-status'),
+      bodyEl: assistantEl.querySelector('.stream-body'),
+      gotDelta: false,
+      activeTool: null,
+      donePayload: null,
+    };
+  }
+
+  function onFirstDelta(ctx) {
+    if (ctx.gotDelta) return;
+    ctx.gotDelta = true;
+    ctx.activeTool = null;
+    ctx.assistantEl.classList.remove('stream-waiting', 'stream-tool');
+    ctx.assistantEl.classList.add('stream-generating');
+    if (ctx.statusEl) ctx.statusEl.hidden = true;
+  }
+
+  function handleStreamEvent(ev, ctx) {
+    if (ev.type === 'status' && ctx.statusEl && !ctx.gotDelta) {
+      ctx.statusEl.hidden = false;
+      ctx.statusEl.textContent = 'Thinking…';
+      ctx.assistantEl.classList.add('stream-waiting');
+      ctx.assistantEl.classList.remove('stream-tool', 'stream-generating');
+    } else if (
+      (ev.type === 'tool' || ev.type === 'lifecycle') &&
+      ctx.statusEl &&
+      !ctx.gotDelta
+    ) {
+      if (ev.type === 'lifecycle') {
+        ctx.activeTool = null;
+        ctx.statusEl.hidden = false;
+        ctx.statusEl.textContent = ev.label || ev.phase;
+        ctx.assistantEl.classList.remove('stream-generating');
+        ctx.assistantEl.classList.add('stream-tool');
+      } else if (ev.phase === 'start') {
+        ctx.activeTool = ev.name;
+        ctx.statusEl.hidden = false;
+        ctx.statusEl.textContent = ev.label || ev.name;
+        ctx.assistantEl.classList.remove('stream-waiting', 'stream-generating');
+        ctx.assistantEl.classList.add('stream-tool');
+      } else if (ev.phase === 'end' && ctx.activeTool === ev.name) {
+        ctx.activeTool = null;
+        // Keep the last tool label until text deltas arrive (fast exec can finish in ms).
+      }
+    } else if (ev.type === 'delta' && ctx.bodyEl) {
+      onFirstDelta(ctx);
+      ctx.bodyEl.textContent += ev.text;
+      scrollMessagesToBottom();
+    } else if (ev.type === 'done') {
+      ctx.donePayload = ev;
+    } else if (ev.type === 'error') {
+      throw new Error(ev.error || 'Stream error');
+    }
+  }
+
+  function finalizeStream(ctx) {
+    ctx.assistantEl.classList.remove(
+      'streaming',
+      'stream-waiting',
+      'stream-tool',
+      'stream-generating',
+    );
+    if (!ctx.gotDelta && ctx.statusEl) ctx.statusEl.hidden = true;
   }
 
   function insertErrorAfter(userNode, msg) {
@@ -83,16 +152,49 @@
     return item;
   }
 
-  function promoteDraftToChat(id) {
+  function deriveTitle(content) {
+    const t = String(content).trim();
+    if (!t) return 'New chat';
+    return t.length > 60 ? t.slice(0, 59) + '…' : t;
+  }
+
+  function promoteDraftToChat(id, title) {
     activeChatId = id;
     messagesEl.dataset.chatId = String(id);
     delete messagesEl.dataset.draft;
     history.replaceState(null, '', '/chats/' + id);
+    if (startedOnDraft) syncSidebarAfterCreate(id, title);
   }
 
-  function maybeRedirectWhenIdle() {
-    if (!startedOnDraft || waitingItems.length > 0 || inFlight || !activeChatId) return;
-    window.location.assign('/chats/' + activeChatId);
+  function syncSidebarAfterCreate(id, title) {
+    const list = document.getElementById('chat-list');
+    if (!list) return;
+
+    list.querySelector('.empty-list')?.remove();
+    document.querySelector('.new-chat-btn')?.classList.remove('active');
+    list.querySelectorAll('.chat-item.active').forEach((el) => el.classList.remove('active'));
+
+    let link = list.querySelector('.chat-item[data-chat-id="' + id + '"]');
+    if (!link) {
+      link = document.createElement('a');
+      link.href = '/chats/' + id;
+      link.className = 'chat-item active';
+      link.dataset.chatId = String(id);
+      link.innerHTML =
+        '<span class="working-dot" aria-hidden="true"></span>' +
+        '<span class="chat-item-title"></span>';
+      list.prepend(link);
+    } else {
+      link.classList.add('active');
+    }
+
+    link.title = title;
+    const titleEl = link.querySelector('.chat-item-title');
+    if (titleEl) titleEl.textContent = title;
+
+    const draftLabel = document.querySelector('.draft-label');
+    if (draftLabel) draftLabel.textContent = title;
+    document.title = title + ' — iClaude';
   }
 
   function parseSseBlocks(buffer, onEvent) {
@@ -117,11 +219,7 @@
 
   async function consumeSseResponse(res, userNode) {
     if (!res.body) throw new Error('No response body');
-    const assistantEl = beginAssistantStream(userNode);
-    const statusEl = assistantEl.querySelector('.stream-status');
-    const bodyEl = assistantEl.querySelector('.stream-body');
-    let gotDelta = false;
-    let donePayload = null;
+    const ctx = createStreamContext(beginAssistantStream(userNode));
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -131,41 +229,14 @@
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      buffer = parseSseBlocks(buffer, (ev) => {
-        if (ev.type === 'status' && statusEl) {
-          statusEl.textContent = ev.status === 'thinking' ? 'Thinking…' : ev.status;
-        } else if (ev.type === 'delta' && bodyEl) {
-          if (!gotDelta) {
-            gotDelta = true;
-            if (statusEl) statusEl.remove();
-            assistantEl.classList.remove('streaming');
-          }
-          bodyEl.textContent += ev.text;
-          scrollMessagesToBottom();
-        } else if (ev.type === 'done') {
-          donePayload = ev;
-        } else if (ev.type === 'error') {
-          throw new Error(ev.error || 'Stream error');
-        }
-      });
+      buffer = parseSseBlocks(buffer, (ev) => handleStreamEvent(ev, ctx));
     }
 
     buffer += decoder.decode();
-    parseSseBlocks(buffer + '\n\n', (ev) => {
-      if (ev.type === 'delta' && bodyEl) {
-        if (!gotDelta) {
-          gotDelta = true;
-          if (statusEl) statusEl.remove();
-          assistantEl.classList.remove('streaming');
-        }
-        bodyEl.textContent += ev.text;
-      } else if (ev.type === 'done') donePayload = ev;
-      else if (ev.type === 'error') throw new Error(ev.error || 'Stream error');
-    });
+    parseSseBlocks(buffer + '\n\n', (ev) => handleStreamEvent(ev, ctx));
 
-    if (!gotDelta && statusEl) statusEl.remove();
-    assistantEl.classList.remove('streaming');
-    return donePayload;
+    finalizeStream(ctx);
+    return ctx.donePayload;
   }
 
   async function streamCreateFirst(item, agent) {
@@ -176,8 +247,9 @@
     });
     if (!res.ok) throw new Error(await res.text());
     const done = await consumeSseResponse(res, item.userNode);
-    if (done?.id) promoteDraftToChat(done.id);
-    else if (done?.message?.chat_id) promoteDraftToChat(done.message.chat_id);
+    const title = deriveTitle(item.content);
+    if (done?.id) promoteDraftToChat(done.id, title);
+    else if (done?.message?.chat_id) promoteDraftToChat(done.message.chat_id, title);
   }
 
   async function streamMessageTurn(item, id) {
@@ -213,7 +285,6 @@
 
     inFlight = null;
     pumping = false;
-    maybeRedirectWhenIdle();
     pumpQueue();
   }
 
