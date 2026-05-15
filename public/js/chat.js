@@ -1,147 +1,157 @@
 (function () {
   const messagesEl = document.getElementById('messages');
+  const queueEl = document.getElementById('queue');
   const form = document.getElementById('send-form');
   const input = document.getElementById('composer-input');
   const button = form?.querySelector('button');
-  if (!messagesEl || !form || !input || !button) return;
+  if (!messagesEl || !queueEl || !form || !input || !button) return;
 
   const rawId = messagesEl.dataset.chatId;
-  const isDraft = messagesEl.dataset.draft === '1' || !rawId;
-  const chatId = isDraft ? null : Number(rawId);
+  const startedOnDraft = messagesEl.dataset.draft === '1' || !rawId;
+  let activeChatId = startedOnDraft ? null : Number(rawId);
 
-  // Local pending placeholders, in submit order. Each fetch closes over its own
-  // pending node, so we don't strictly need this array for correctness — but we
-  // do use its length to label queued placeholders.
-  const pending = [];
+  /** Shown in the queue panel — not yet sent to the server. */
+  /** @type {{ el: HTMLElement, content: string }[]} */
+  const waitingItems = [];
+  /** Currently in flight (shown in the message thread only). */
+  /** @type {{ content: string, userNode: HTMLElement | null } | null} */
+  let inFlight = null;
+  let pumping = false;
 
   function escapeHtml(s) {
     return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
   }
 
-  function appendMessage(role, content) {
+  function clearEmptyState() {
     const empty = messagesEl.querySelector('.empty-state');
     if (empty) empty.remove();
+  }
+
+  function appendUserMessage(content) {
+    clearEmptyState();
     const div = document.createElement('div');
-    div.className = 'msg ' + role;
-    div.innerHTML = '<div class="role">' + escapeHtml(role) + '</div>' + escapeHtml(content);
+    div.className = 'msg user';
+    div.innerHTML = '<div class="role">user</div>' + escapeHtml(content);
     messagesEl.appendChild(div);
     messagesEl.scrollTop = messagesEl.scrollHeight;
     return div;
   }
 
-  function updateQueuedLabels() {
-    pending.forEach((node, idx) => {
-      const isHead = idx === 0;
-      const label = isHead ? '…thinking…' : '…queued (#' + (idx + 1) + ')…';
-      node.querySelector('.placeholder-text').textContent = label;
+  function insertAssistantAfter(userNode, content) {
+    const div = document.createElement('div');
+    div.className = 'msg assistant';
+    div.innerHTML = '<div class="role">assistant</div>' + escapeHtml(content);
+    userNode.insertAdjacentElement('afterend', div);
+    if (userNode.nextElementSibling === div && div.nextElementSibling === null) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+    return div;
+  }
+
+  function insertErrorAfter(userNode, msg) {
+    const div = document.createElement('div');
+    div.className = 'msg system error';
+    div.innerHTML = '<div class="role">error</div>' + escapeHtml(msg);
+    userNode.insertAdjacentElement('afterend', div);
+    return div;
+  }
+
+  function renderWaitingQueue() {
+    queueEl.replaceChildren();
+    waitingItems.forEach((item, idx) => {
+      const el = document.createElement('div');
+      el.className = 'queue-item queued';
+      const preview = item.content.length > 80 ? item.content.slice(0, 79) + '…' : item.content;
+      el.innerHTML =
+        '<span class="queue-status">Queued #' + (idx + 1) + '</span>' +
+        '<span class="queue-text">' + escapeHtml(preview) + '</span>';
+      queueEl.appendChild(el);
+      item.el = el;
     });
   }
 
-  function appendPending() {
-    const empty = messagesEl.querySelector('.empty-state');
-    if (empty) empty.remove();
-    const div = document.createElement('div');
-    div.className = 'msg assistant pending';
-    div.innerHTML =
-      '<div class="role">assistant</div><span class="placeholder-text">…thinking…</span>';
-    messagesEl.appendChild(div);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-    pending.push(div);
-    updateQueuedLabels();
-    return div;
+  function enqueueWaiting(content) {
+    const item = { content, el: null };
+    waitingItems.push(item);
+    renderWaitingQueue();
+    return item;
   }
 
-  function resolvePending(node, htmlContent) {
-    node.classList.remove('pending');
-    node.innerHTML = '<div class="role">assistant</div>' + htmlContent;
-    const idx = pending.indexOf(node);
-    if (idx >= 0) pending.splice(idx, 1);
-    updateQueuedLabels();
+  function promoteDraftToChat(id) {
+    activeChatId = id;
+    messagesEl.dataset.chatId = String(id);
+    delete messagesEl.dataset.draft;
+    history.replaceState(null, '', '/chats/' + id);
   }
 
-  function failPending(node, errMsg) {
-    node.classList.remove('pending');
-    node.classList.add('error');
-    node.innerHTML = '<div class="role">system</div>' + escapeHtml('Error: ' + errMsg);
-    const idx = pending.indexOf(node);
-    if (idx >= 0) pending.splice(idx, 1);
-    updateQueuedLabels();
+  function maybeRedirectWhenIdle() {
+    if (!startedOnDraft || waitingItems.length > 0 || inFlight || !activeChatId) return;
+    window.location.assign('/chats/' + activeChatId);
   }
 
-  async function sendDraft(content, agent) {
-    // POST /chats with the first message; server creates the chat + runs the
-    // first turn. We block input only in draft mode (no chat_id yet for queue).
-    input.disabled = true;
-    button.disabled = true;
-    const node = appendPending();
+  async function sendCreateFirst(item, agent) {
+    const res = await fetch('/chats', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ agent, content: item.content }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    promoteDraftToChat(body.id);
+    insertAssistantAfter(item.userNode, body.message?.content || '');
+  }
+
+  async function sendMessageTurn(item, id) {
+    const res = await fetch('/chats/' + encodeURIComponent(id) + '/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ content: item.content }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const msg = await res.json();
+    insertAssistantAfter(item.userNode, msg.content || '');
+  }
+
+  async function pumpQueue() {
+    if (pumping || inFlight || waitingItems.length === 0) return;
+    pumping = true;
+
+    const waiting = waitingItems.shift();
+    renderWaitingQueue();
+
+    const item = { content: waiting.content, userNode: appendUserMessage(waiting.content) };
+    inFlight = item;
+
     try {
-      const res = await fetch('/chats', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({ agent, content }),
-      });
-      if (!res.ok) {
-        failPending(node, await res.text());
-        return;
+      if (!activeChatId) {
+        const agent = document.getElementById('draft-agent')?.value || 'openclaw/default';
+        await sendCreateFirst(item, agent);
+      } else {
+        await sendMessageTurn(item, activeChatId);
       }
-      const body = await res.json();
-      // We've got a chat_id and the first reply. Navigate to the real chat page.
-      window.location.assign('/chats/' + body.id);
     } catch (err) {
-      failPending(node, err.message);
-    } finally {
-      input.disabled = false;
-      button.disabled = false;
-      input.focus();
+      insertErrorAfter(item.userNode, err.message);
     }
+
+    inFlight = null;
+    pumping = false;
+    maybeRedirectWhenIdle();
+    pumpQueue();
   }
 
-  async function sendReal(content) {
-    // Optimistic UI: render user msg + pending placeholder immediately, fire
-    // the fetch, and let the server's per-chat lock serialize. The user can
-    // submit more while this is in flight — they queue up locally and on the
-    // server.
-    const node = appendPending();
-    try {
-      const res = await fetch('/chats/' + encodeURIComponent(chatId) + '/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({ content }),
-      });
-      if (!res.ok) {
-        failPending(node, await res.text());
-        return;
-      }
-      const msg = await res.json();
-      resolvePending(node, escapeHtml(msg.content || ''));
-    } catch (err) {
-      failPending(node, err.message);
-    }
-  }
-
-  form.addEventListener('submit', async (e) => {
+  form.addEventListener('submit', (e) => {
     e.preventDefault();
     const content = input.value.trim();
     if (!content) return;
-    if (input.disabled) return;
 
-    appendMessage('user', content);
+    enqueueWaiting(content);
     input.value = '';
-
-    if (isDraft) {
-      const agent = document.getElementById('draft-agent')?.value || 'openclaw/default';
-      await sendDraft(content, agent);
-    } else {
-      // Don't await — let the next submit happen freely. The Promise queues
-      // independently and updates its own placeholder.
-      sendReal(content);
-    }
+    pumpQueue();
   });
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (input.disabled) return;
       form.requestSubmit();
     }
   });

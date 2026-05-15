@@ -272,6 +272,53 @@ code {
 }
 .placeholder-text { display: inline; }
 
+/* ---------- Queue panel (above composer) ---------- */
+
+.queue {
+  max-width: 768px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.queue:empty { display: none; }
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 0.85em;
+  min-width: 0;
+}
+
+.queue-status {
+  flex: 0 0 auto;
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.queue-item.queued .queue-status {
+  background: #f4f4f5;
+  color: #71717a;
+}
+
+.queue-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
 /* ---------- Composer ---------- */
 
 .composer {
