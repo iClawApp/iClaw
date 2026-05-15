@@ -4,33 +4,48 @@
   <%- include('partials/sidebar') %>
 
   <main class="col col-main">
-    <header class="chat-header">
-      <h1>iClaude</h1>
+    <header class="chat-header draft-header">
+      <span class="draft-label">New chat</span>
+
+      <form class="agent-form" onsubmit="return false">
+        <select id="draft-agent" aria-label="Agent">
+          <% if (agentsError && agents.length === 0) { %>
+            <option value="<%= defaultAgent %>" selected><%= defaultAgent %></option>
+          <% } else { %>
+            <% agents.forEach(function (a) { %>
+              <option value="<%= a.id %>" <%= a.id === defaultAgent ? 'selected' : '' %>>
+                <%= a.id %>
+              </option>
+            <% }); %>
+          <% } %>
+        </select>
+      </form>
+
       <span class="gateway <%= gatewayUp ? 'ok' : 'down' %>" title="<%= openclawBaseUrl %>">
         OpenClaw: <%= gatewayUp ? 'connected' : 'unreachable' %>
       </span>
     </header>
 
-    <section class="welcome">
-      <h2>Start a new chat</h2>
+    <section class="messages" id="messages" data-chat-id="" data-draft="1">
       <% if (agentsError) { %>
         <p class="error">Gateway unreachable: <code><%= agentsError %></code></p>
       <% } else { %>
-        <form method="post" action="/chats" class="stack">
-          <label>
-            Agent
-            <select name="agent">
-              <% agents.forEach(function (a) { %>
-                <option value="<%= a.id %>" <%= a.id === defaultAgent ? 'selected' : '' %>>
-                  <%= a.id %>
-                </option>
-              <% }); %>
-            </select>
-          </label>
-          <button type="submit">New chat</button>
-        </form>
+        <p class="muted empty-state">Type a message to start a new chat.</p>
       <% } %>
     </section>
+
+    <form id="send-form" class="composer">
+      <textarea
+        id="composer-input"
+        name="content"
+        placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"
+        rows="2"
+        required
+      ></textarea>
+      <button type="submit">Send</button>
+    </form>
+
+    <script src="/js/chat.js"></script>
   </main>
 </div>
 

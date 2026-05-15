@@ -15,14 +15,35 @@ async function getAgentsSafe(): Promise<{ agents: { id: string }[]; error: strin
   }
 }
 
-chatsRouter.post('/', (req, res) => {
-  const agent = String(req.body?.agent ?? '').trim() || DEFAULT_AGENT;
-  const chat = chats.create(agent);
-  res.redirect(`/chats/${chat.id}`);
+// POST /chats — create a chat AND run the first turn atomically.
+// We don't create empty chats; a chat is only born when a real first message
+// is sent. Returns JSON: { id, message } where `message` is the assistant reply.
+chatsRouter.post('/', async (req, res, next) => {
+  try {
+    const content = String(req.body?.content ?? '').trim();
+    const agent = String(req.body?.agent ?? '').trim() || DEFAULT_AGENT;
+    if (!content) {
+      res.status(400).json({ error: 'content required' });
+      return;
+    }
+    const chat = chats.create(agent);
+    const reply = await chatStatus.withLock(chat.id, async () => {
+      messages.append(chat.id, 'user', content);
+      const history: ChatMessage[] = [{ role: 'user', content }];
+      const result = await openclaw.chat({
+        model: chat.agent,
+        sessionKey: chat.openclaw_session_id,
+        messages: history,
+      });
+      return messages.append(chat.id, 'assistant', result.content, result.finish_reason);
+    });
+    res.json({ id: chat.id, message: reply });
+  } catch (err) {
+    next(err);
+  }
 });
 
-// IMPORTANT: register the literal /status route BEFORE /:id so it doesn't get
-// captured as id="status".
+// IMPORTANT: register literal /status before /:id so it isn't captured.
 chatsRouter.get('/status', (_req, res) => {
   res.json({ working: chatStatus.workingIds() });
 });
@@ -94,7 +115,6 @@ chatsRouter.post('/:id/messages', async (req, res, next) => {
 
   try {
     const stored = await chatStatus.withLock(id, async () => {
-      // re-read inside the lock — agent could have been changed while we waited
       const fresh = chats.get(id)!;
       messages.append(id, 'user', content);
 
