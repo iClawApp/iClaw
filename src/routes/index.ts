@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { chats } from '../services/store';
 import { openclaw } from '../services/openclaw';
+import { chatStatus } from '../services/chatStatus';
 
 export const indexRouter: Router = Router();
 
@@ -22,5 +23,6 @@ indexRouter.get('/', async (_req, res) => {
     agentsError,
     defaultAgent: 'openclaw/default',
     openclawBaseUrl: openclaw.baseUrl,
+    workingIds: chatStatus.workingIds(),
   });
 });

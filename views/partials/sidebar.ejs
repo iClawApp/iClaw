@@ -5,7 +5,7 @@
     </form>
   </div>
 
-  <nav class="chat-list">
+  <nav class="chat-list" id="chat-list">
     <% if (chats.length === 0) { %>
       <p class="muted empty-list">No chats yet.</p>
     <% } %>
@@ -13,10 +13,14 @@
       <a
         href="/chats/<%= c.id %>"
         class="chat-item <%= activeChat && activeChat.id === c.id ? 'active' : '' %>"
+        data-chat-id="<%= c.id %>"
         title="<%= c.title %>"
       >
+        <span class="working-dot <%= workingIds.indexOf(c.id) >= 0 ? 'on' : '' %>" aria-hidden="true"></span>
         <span class="chat-item-title"><%= c.title %></span>
       </a>
     <% }); %>
   </nav>
 </aside>
+
+<script src="/js/status.js"></script>

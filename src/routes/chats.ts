@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { chats, messages } from '../services/store';
 import { openclaw, type ChatMessage } from '../services/openclaw';
+import { chatStatus } from '../services/chatStatus';
 
 export const chatsRouter: Router = Router();
 
@@ -20,6 +21,12 @@ chatsRouter.post('/', (req, res) => {
   res.redirect(`/chats/${chat.id}`);
 });
 
+// IMPORTANT: register the literal /status route BEFORE /:id so it doesn't get
+// captured as id="status".
+chatsRouter.get('/status', (_req, res) => {
+  res.json({ working: chatStatus.workingIds() });
+});
+
 chatsRouter.get('/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -37,6 +44,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
       agentsError,
       defaultAgent: DEFAULT_AGENT,
       openclawBaseUrl: openclaw.baseUrl,
+      workingIds: chatStatus.workingIds(),
     });
   } catch (err) {
     next(err);
@@ -72,33 +80,37 @@ chatsRouter.get('/:id/messages', (req, res) => {
 });
 
 chatsRouter.post('/:id/messages', async (req, res, next) => {
+  const id = Number(req.params.id);
+  const chat = chats.get(id);
+  if (!chat) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const content = String(req.body?.content ?? '').trim();
+  if (!content) {
+    res.status(400).json({ error: 'content required' });
+    return;
+  }
+
   try {
-    const id = Number(req.params.id);
-    const chat = chats.get(id);
-    if (!chat) {
-      res.status(404).json({ error: 'chat not found' });
-      return;
-    }
-    const content = String(req.body?.content ?? '').trim();
-    if (!content) {
-      res.status(400).json({ error: 'content required' });
-      return;
-    }
+    const stored = await chatStatus.withLock(id, async () => {
+      // re-read inside the lock — agent could have been changed while we waited
+      const fresh = chats.get(id)!;
+      messages.append(id, 'user', content);
 
-    messages.append(id, 'user', content);
+      const history: ChatMessage[] = messages
+        .listByChat(id)
+        .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
+        .map((m) => ({ role: m.role as ChatMessage['role'], content: m.content }));
 
-    const history: ChatMessage[] = messages
-      .listByChat(id)
-      .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
-      .map((m) => ({ role: m.role as ChatMessage['role'], content: m.content }));
+      const result = await openclaw.chat({
+        model: fresh.agent,
+        sessionKey: fresh.openclaw_session_id,
+        messages: history,
+      });
 
-    const result = await openclaw.chat({
-      model: chat.agent,
-      sessionKey: chat.openclaw_session_id,
-      messages: history,
+      return messages.append(id, 'assistant', result.content, result.finish_reason);
     });
-
-    const stored = messages.append(id, 'assistant', result.content, result.finish_reason);
     res.json(stored);
   } catch (err) {
     next(err);
