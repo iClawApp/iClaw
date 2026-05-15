@@ -5,6 +5,7 @@ import { chatStatus } from '../services/chatStatus';
 import { beginSse, endSse, writeSse, type ClientStreamEvent } from '../services/sse';
 import { gatewayWs, type GatewayActivity } from '../services/gatewayWs';
 import { lifecycleActivityLabel, toolActivityLabel } from '../services/toolLabels';
+import { deriveTitle, suggestChatTitleWithTimeout, TITLE_WAIT_DURING_RUN_MS } from '../services/chatTitle';
 import type { Message } from '../types';
 
 export const chatsRouter: Router = Router();
@@ -28,6 +29,58 @@ function historyForChat(chatId: number): ChatMessage[] {
     .listByChat(chatId)
     .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
     .map((m) => ({ role: m.role as ChatMessage['role'], content: m.content }));
+}
+
+function isFirstTurn(chatId: number): boolean {
+  return messages.listByChat(chatId).filter((m) => m.role === 'user').length === 1;
+}
+
+function startEarlyTitleTask(opts: {
+  chatId: number;
+  model: string;
+  userMessage: string;
+}): Promise<string | null> | null {
+  if (!isFirstTurn(opts.chatId)) return null;
+  const chat = chats.get(opts.chatId);
+  if (!chat || chat.title_manual) return null;
+  return suggestChatTitleWithTimeout(
+    { model: opts.model, userMessage: opts.userMessage, assistantReply: '' },
+    TITLE_WAIT_DURING_RUN_MS,
+  );
+}
+
+async function maybeApplyAutoTitle(
+  res: Response | null,
+  opts: {
+    chatId: number;
+    model: string;
+    userMessage: string;
+    assistantReply: string;
+    earlyTitle?: Promise<string | null> | null;
+  },
+): Promise<string | null> {
+  if (!isFirstTurn(opts.chatId)) return null;
+
+  const chat = chats.get(opts.chatId);
+  if (!chat || chat.title_manual) return null;
+
+  const placeholder = deriveTitle(opts.userMessage);
+  if (chat.title !== 'New chat' && chat.title !== placeholder) return null;
+
+  let suggested = await suggestChatTitleWithTimeout({
+    model: opts.model,
+    userMessage: opts.userMessage,
+    assistantReply: opts.assistantReply,
+  });
+  if (!suggested && opts.earlyTitle) {
+    suggested = await opts.earlyTitle;
+  }
+  if (!suggested || !chats.trySetAutoTitle(opts.chatId, suggested)) return null;
+
+  if (res && !res.writableEnded) {
+    writeSse(res, { type: 'title', id: opts.chatId, title: suggested });
+  }
+  return suggested;
 }
 
 function gatewayActivityToSse(ev: GatewayActivity): ClientStreamEvent | null {
@@ -117,14 +170,36 @@ chatsRouter.post('/', async (req, res, next) => {
     try {
       const reply = await chatStatus.withLock(chat.id, async () => {
         messages.append(chat.id, 'user', content);
+        const earlyTitle = startEarlyTitleTask({
+          chatId: chat.id,
+          model: chat.agent,
+          userMessage: content,
+        });
         const result = await openclaw.chat({
           model: chat.agent,
           sessionKey: chat.openclaw_session_id,
           messages: [{ role: 'user', content }],
         });
-        return messages.append(chat.id, 'assistant', result.content, result.finish_reason);
+        const stored = messages.append(
+          chat.id,
+          'assistant',
+          result.content,
+          result.finish_reason,
+        );
+        const title = await maybeApplyAutoTitle(null, {
+          chatId: chat.id,
+          model: chat.agent,
+          userMessage: content,
+          assistantReply: result.content,
+          earlyTitle,
+        });
+        return { stored, title: title ?? chats.get(chat.id)?.title };
       });
-      res.json({ id: chat.id, message: reply });
+      res.json({
+        id: chat.id,
+        message: reply.stored,
+        title: reply.title ?? undefined,
+      });
     } catch (err) {
       next(err);
     }
@@ -135,13 +210,26 @@ chatsRouter.post('/', async (req, res, next) => {
   try {
     await chatStatus.withLock(chat.id, async () => {
       messages.append(chat.id, 'user', content);
+      const earlyTitle = startEarlyTitleTask({
+        chatId: chat.id,
+        model: chat.agent,
+        userMessage: content,
+      });
       const { content: reply, finishReason } = await runOpenClawStream(res, {
         model: chat.agent,
         sessionKey: chat.openclaw_session_id,
         messages: [{ role: 'user', content }],
       });
       const stored = messages.append(chat.id, 'assistant', reply, finishReason);
-      writeSse(res, { type: 'done', id: chat.id, message: stored });
+      await maybeApplyAutoTitle(res, {
+        chatId: chat.id,
+        model: chat.agent,
+        userMessage: content,
+        assistantReply: reply,
+        earlyTitle,
+      });
+      const finalTitle = chats.get(chat.id)?.title ?? deriveTitle(content);
+      writeSse(res, { type: 'done', id: chat.id, title: finalTitle, message: stored });
     });
     endSse(res);
   } catch (err) {
@@ -177,9 +265,24 @@ chatsRouter.get('/:id', async (req, res, next) => {
   }
 });
 
+chatsRouter.patch('/:id', (req, res) => {
+  const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const title = String(req.body?.title ?? '').trim();
+  if (!title) {
+    res.status(400).json({ error: 'title required' });
+    return;
+  }
+  chats.rename(id, title, { manual: true });
+  res.json({ id, title });
+});
+
 chatsRouter.post('/:id/rename', (req, res) => {
   const id = Number(req.params.id);
-  chats.rename(id, String(req.body?.title ?? ''));
+  chats.rename(id, String(req.body?.title ?? ''), { manual: true });
   res.redirect(`/chats/${id}`);
 });
 
@@ -241,13 +344,26 @@ chatsRouter.post('/:id/messages', async (req, res, next) => {
     await chatStatus.withLock(id, async () => {
       const fresh = chats.get(id)!;
       messages.append(id, 'user', content);
+      const earlyTitle = startEarlyTitleTask({
+        chatId: id,
+        model: fresh.agent,
+        userMessage: content,
+      });
       const { content: reply, finishReason } = await runOpenClawStream(res, {
         model: fresh.agent,
         sessionKey: fresh.openclaw_session_id,
         messages: historyForChat(id),
       });
       const stored: Message = messages.append(id, 'assistant', reply, finishReason);
-      writeSse(res, { type: 'done', message: stored });
+      await maybeApplyAutoTitle(res, {
+        chatId: id,
+        model: fresh.agent,
+        userMessage: content,
+        assistantReply: reply,
+        earlyTitle,
+      });
+      const finalTitle = chats.get(id)?.title ?? fresh.title;
+      writeSse(res, { type: 'done', id, title: finalTitle, message: stored });
     });
     endSse(res);
   } catch (err) {

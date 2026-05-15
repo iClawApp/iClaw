@@ -1,14 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { db } from '../db/database';
+import { deriveTitle } from './chatTitle';
 import type { Chat, Message } from '../types';
-
-const TITLE_LIMIT = 60;
-
-function deriveTitle(firstMessage: string): string {
-  const single = firstMessage.replace(/\s+/g, ' ').trim();
-  if (!single) return 'New chat';
-  return single.length > TITLE_LIMIT ? single.slice(0, TITLE_LIMIT - 1) + '…' : single;
-}
 
 export const chats = {
   list(): Chat[] {
@@ -26,11 +19,33 @@ export const chats = {
       .run(agent, sessionKey);
     return this.get(Number(info.lastInsertRowid))!;
   },
-  rename(id: number, title: string): void {
-    db.prepare('UPDATE chats SET title = ?, updated_at = datetime(\'now\') WHERE id = ?').run(
-      title.trim() || 'New chat',
-      id,
-    );
+  rename(id: number, title: string, opts?: { manual?: boolean }): void {
+    const next = title.trim() || 'New chat';
+    if (opts?.manual) {
+      db.prepare(
+        "UPDATE chats SET title = ?, title_manual = 1, updated_at = datetime('now') WHERE id = ?",
+      ).run(next, id);
+    } else {
+      db.prepare("UPDATE chats SET title = ?, updated_at = datetime('now') WHERE id = ?").run(
+        next,
+        id,
+      );
+    }
+  },
+  trySetAutoTitle(id: number, title: string): boolean {
+    const next = title.trim() || 'New chat';
+    const info = db
+      .prepare(
+        "UPDATE chats SET title = ?, updated_at = datetime('now') WHERE id = ? AND title_manual = 0",
+      )
+      .run(next, id);
+    return info.changes > 0;
+  },
+  isTitleManual(id: number): boolean {
+    const row = db.prepare('SELECT title_manual FROM chats WHERE id = ?').get(id) as
+      | { title_manual: number }
+      | undefined;
+    return Boolean(row?.title_manual);
   },
   setAgent(id: number, agent: string): void {
     db.prepare('UPDATE chats SET agent = ?, updated_at = datetime(\'now\') WHERE id = ?').run(

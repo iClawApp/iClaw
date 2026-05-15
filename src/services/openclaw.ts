@@ -153,30 +153,36 @@ export const openclaw = {
     model: string;
     sessionKey: string;
     messages: ChatMessage[];
+    maxTokens?: number;
     signal?: AbortSignal;
   }): Promise<ChatResult> {
     const headers = authHeaders();
     headers['x-openclaw-session-key'] = opts.sessionKey;
+    const payload: Record<string, unknown> = {
+      model: opts.model,
+      messages: opts.messages,
+    };
+    if (opts.maxTokens != null) payload.max_tokens = opts.maxTokens;
     const res = await fetch(`${config.baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model: opts.model, messages: opts.messages }),
+      body: JSON.stringify(payload),
       signal: opts.signal,
     });
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`chat: HTTP ${res.status} ${body}`);
+      const errText = await res.text().catch(() => '');
+      throw new Error(`chat: HTTP ${res.status} ${errText}`);
     }
-    const body = (await res.json()) as {
+    const json = (await res.json()) as {
       choices?: { message?: { content?: string }; finish_reason?: string }[];
       usage?: ChatResult['usage'];
     };
-    const choice = body.choices?.[0];
+    const choice = json.choices?.[0];
     return {
       content: choice?.message?.content ?? '',
       finish_reason: choice?.finish_reason ?? null,
-      usage: body.usage,
-      raw: body,
+      usage: json.usage,
+      raw: json,
     };
   },
 

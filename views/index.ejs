@@ -5,7 +5,15 @@
 
   <main class="col col-main">
     <header class="chat-header draft-header">
-      <span class="draft-label">New chat</span>
+      <form class="rename-form" id="chat-rename-form" onsubmit="return false">
+        <input
+          type="text"
+          id="chat-title-input"
+          value="New chat"
+          aria-label="Chat title"
+          disabled
+        />
+      </form>
 
       <form class="agent-form" onsubmit="return false">
         <select id="draft-agent" aria-label="Agent">

@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS chats (
   agent               TEXT NOT NULL,
   openclaw_session_id TEXT NOT NULL,
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  title_manual        INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -40,3 +41,14 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 dropObsoleteTables(db);
 db.exec(SCHEMA);
+
+function migrateChatsSchema(database: Database.Database): void {
+  const cols = database.prepare('PRAGMA table_info(chats)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'title_manual')) {
+    database.exec(
+      'ALTER TABLE chats ADD COLUMN title_manual INTEGER NOT NULL DEFAULT 0',
+    );
+  }
+}
+
+migrateChatsSchema(db);

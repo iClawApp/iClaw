@@ -5,12 +5,12 @@
 
   <main class="col col-main">
     <header class="chat-header">
-      <form method="post" action="/chats/<%= activeChat.id %>/rename" class="rename-form">
+      <form class="rename-form" id="chat-rename-form" onsubmit="return false">
         <input
-          name="title"
+          type="text"
+          id="chat-title-input"
           value="<%= activeChat.title %>"
           aria-label="Chat title"
-          onblur="if (this.value !== this.defaultValue) this.form.submit()"
         />
       </form>
 

@@ -3,6 +3,7 @@ export interface Chat {
   title: string;
   agent: string;
   openclaw_session_id: string;
+  title_manual: number;
   created_at: string;
   updated_at: string;
 }

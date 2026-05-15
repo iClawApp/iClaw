@@ -9,6 +9,7 @@
   const rawId = messagesEl.dataset.chatId;
   const startedOnDraft = messagesEl.dataset.draft === '1' || !rawId;
   let activeChatId = startedOnDraft ? null : Number(rawId);
+  const titleInput = document.getElementById('chat-title-input');
 
   const waitingItems = [];
   let inFlight = null;
@@ -63,6 +64,7 @@
       gotDelta: false,
       activeTool: null,
       donePayload: null,
+      pendingTitle: null,
     };
   }
 
@@ -101,6 +103,13 @@
       } else if (ev.phase === 'end' && ctx.activeTool === ev.name) {
         ctx.activeTool = null;
         // Keep the last tool label until text deltas arrive (fast exec can finish in ms).
+      }
+    } else if (ev.type === 'title' && ev.title) {
+      const chatId = ev.id ?? activeChatId;
+      if (chatId) {
+        ctx.pendingTitle = ev.title;
+        applyChatTitle(chatId, ev.title);
+        if (!activeChatId) activeChatId = chatId;
       }
     } else if (ev.type === 'delta' && ctx.bodyEl) {
       onFirstDelta(ctx);
@@ -158,43 +167,64 @@
     return t.length > 60 ? t.slice(0, 59) + '…' : t;
   }
 
+  function setTitleInput(title, enabled) {
+    if (!titleInput) return;
+    titleInput.value = title;
+    titleInput.defaultValue = title;
+    if (enabled !== undefined) titleInput.disabled = !enabled;
+  }
+
+  function applyChatTitle(chatId, title) {
+    const list = document.getElementById('chat-list');
+    if (list) {
+      list.querySelector('.empty-list')?.remove();
+      document.querySelector('.new-chat-btn')?.classList.remove('active');
+      list.querySelectorAll('.chat-item.active').forEach((el) => el.classList.remove('active'));
+
+      let link = list.querySelector('.chat-item[data-chat-id="' + chatId + '"]');
+      if (!link) {
+        link = document.createElement('a');
+        link.href = '/chats/' + chatId;
+        link.className = 'chat-item active';
+        link.dataset.chatId = String(chatId);
+        link.innerHTML =
+          '<span class="working-dot" aria-hidden="true"></span>' +
+          '<span class="chat-item-title"></span>';
+        list.prepend(link);
+      } else {
+        link.classList.add('active');
+      }
+
+      link.title = title;
+      const titleEl = link.querySelector('.chat-item-title');
+      if (titleEl) titleEl.textContent = title;
+    }
+
+    setTitleInput(title, true);
+    document.title = title + ' — iClaude';
+  }
+
+  async function saveChatTitle(chatId) {
+    if (!titleInput || !chatId) return;
+    const next = titleInput.value.trim();
+    if (!next || next === titleInput.defaultValue) return;
+    const res = await fetch('/chats/' + encodeURIComponent(chatId), {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: next }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    applyChatTitle(chatId, data.title);
+  }
+
   function promoteDraftToChat(id, title) {
     activeChatId = id;
     messagesEl.dataset.chatId = String(id);
     delete messagesEl.dataset.draft;
     history.replaceState(null, '', '/chats/' + id);
-    if (startedOnDraft) syncSidebarAfterCreate(id, title);
-  }
-
-  function syncSidebarAfterCreate(id, title) {
-    const list = document.getElementById('chat-list');
-    if (!list) return;
-
-    list.querySelector('.empty-list')?.remove();
-    document.querySelector('.new-chat-btn')?.classList.remove('active');
-    list.querySelectorAll('.chat-item.active').forEach((el) => el.classList.remove('active'));
-
-    let link = list.querySelector('.chat-item[data-chat-id="' + id + '"]');
-    if (!link) {
-      link = document.createElement('a');
-      link.href = '/chats/' + id;
-      link.className = 'chat-item active';
-      link.dataset.chatId = String(id);
-      link.innerHTML =
-        '<span class="working-dot" aria-hidden="true"></span>' +
-        '<span class="chat-item-title"></span>';
-      list.prepend(link);
-    } else {
-      link.classList.add('active');
-    }
-
-    link.title = title;
-    const titleEl = link.querySelector('.chat-item-title');
-    if (titleEl) titleEl.textContent = title;
-
-    const draftLabel = document.querySelector('.draft-label');
-    if (draftLabel) draftLabel.textContent = title;
-    document.title = title + ' — iClaude';
+    if (startedOnDraft) applyChatTitle(id, title);
+    else setTitleInput(title, true);
   }
 
   function parseSseBlocks(buffer, onEvent) {
@@ -236,7 +266,11 @@
     parseSseBlocks(buffer + '\n\n', (ev) => handleStreamEvent(ev, ctx));
 
     finalizeStream(ctx);
-    return ctx.donePayload;
+    return { done: ctx.donePayload, pendingTitle: ctx.pendingTitle };
+  }
+
+  function resolveChatTitle(done, pendingTitle, fallbackContent) {
+    return done?.title ?? pendingTitle ?? deriveTitle(fallbackContent);
   }
 
   async function streamCreateFirst(item, agent) {
@@ -246,10 +280,11 @@
       body: JSON.stringify({ agent, content: item.content }),
     });
     if (!res.ok) throw new Error(await res.text());
-    const done = await consumeSseResponse(res, item.userNode);
-    const title = deriveTitle(item.content);
-    if (done?.id) promoteDraftToChat(done.id, title);
-    else if (done?.message?.chat_id) promoteDraftToChat(done.message.chat_id, title);
+    const { done, pendingTitle } = await consumeSseResponse(res, item.userNode);
+    const chatId = done?.id ?? done?.message?.chat_id;
+    if (chatId) {
+      promoteDraftToChat(chatId, resolveChatTitle(done, pendingTitle, item.content));
+    }
   }
 
   async function streamMessageTurn(item, id) {
@@ -304,6 +339,23 @@
       form.requestSubmit();
     }
   });
+
+  if (titleInput) {
+    if (!startedOnDraft || activeChatId) titleInput.disabled = false;
+    titleInput.addEventListener('blur', () => {
+      if (activeChatId) {
+        saveChatTitle(activeChatId).catch(() => {
+          titleInput.value = titleInput.defaultValue;
+        });
+      }
+    });
+    titleInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        titleInput.blur();
+      }
+    });
+  }
 
   input.focus();
 })();

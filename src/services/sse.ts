@@ -5,7 +5,8 @@ export type ClientStreamEvent =
   | { type: 'tool'; phase: 'start' | 'end'; name: string; label: string }
   | { type: 'lifecycle'; phase: string; label: string }
   | { type: 'delta'; text: string }
-  | { type: 'done'; id?: number; message: unknown }
+  | { type: 'title'; id: number; title: string }
+  | { type: 'done'; id?: number; title?: string; message: unknown }
   | { type: 'error'; error: string };
 
 export function beginSse(res: Response): void {
