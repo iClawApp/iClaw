@@ -198,7 +198,7 @@ class GatewayWsBridge {
       },
       auth: { token: cfg.token },
       locale: 'en-US',
-      userAgent: 'iclaude/0.1.0',
+      userAgent: 'iclaw/0.1.0',
     };
     this.sendReq('connect', params);
   }

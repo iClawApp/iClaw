@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to iClaude are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project follows [Semantic Versioning](https://semver.org/) starting at v0.1.0.
+All notable changes to iClaw are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project follows [Semantic Versioning](https://semver.org/) starting at v0.1.0.
 
 ## [Unreleased]
 
@@ -23,7 +23,7 @@ Initial ChatGPT-style local UI for OpenClaw Gateway. Builds the chat surface on 
 - **Live working indicator** per chat: pulsing green dot in the sidebar while a turn is in flight
 - **Per-chat send serialization** via `chatStatus.withLock` — parallel sends queue cleanly, user/assistant pairs stay intact
 - **Client-side message queue**: type and send freely while a previous turn is processing; queued messages display above the composer with position labels
-- **Token streaming via SSE** from OpenClaw through iClaude to the browser (delta-by-delta)
+- **Token streaming via SSE** from OpenClaw through iClaw to the browser (delta-by-delta)
 - **Live tool activity** from the gateway via WebSocket — shows which tool (bash, file, etc.) the agent is running in real time
 - **Instant chat in sidebar**: the moment the server creates the chat row, a `title` SSE event is emitted with the truncated user message
 - **AI-generated chat titles** as a cheap background sub-request to OpenClaw, with strict quality gates (rejects single-number / too-short / "Here is…" garbage) and a placeholder fallback

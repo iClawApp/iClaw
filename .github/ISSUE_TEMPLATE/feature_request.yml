@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the suggestion. Please make sure the feature fits iClaude's scope (a local ChatGPT-style UI on top of OpenClaw). See [ROADMAP.md](../ROADMAP.md) and the "What we don't want" section in [CONTRIBUTING.md](../CONTRIBUTING.md).
+        Thanks for the suggestion. Please make sure the feature fits iClaw's scope (a local ChatGPT-style UI on top of OpenClaw). See [ROADMAP.md](../ROADMAP.md) and the "What we don't want" section in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
   - type: textarea
     id: problem
@@ -35,7 +35,7 @@ body:
     attributes:
       label: Where does this belong?
       options:
-        - iClaude (UI / local organization)
+        - iClaw (UI / local organization)
         - OpenClaw (agent runtime / providers)
         - Both
         - Not sure

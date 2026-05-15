@@ -1,6 +1,6 @@
 # Roadmap
 
-A public sketch of where iClaude is heading. Anything not on this list is open for discussion — open an issue.
+A public sketch of where iClaw is heading. Anything not on this list is open for discussion — open an issue.
 
 This isn't a contract. Priorities shift based on what users actually use.
 
@@ -61,9 +61,9 @@ Focus: leverage OpenClaw's multi-agent model.
 These belong somewhere else (or to nobody):
 
 - Building our own agent runtime, memory, or RAG — that's OpenClaw's job
-- Cloud hosting / SaaS deployment — iClaude is local-first
+- Cloud hosting / SaaS deployment — iClaw is local-first
 - Multi-user auth and permissioning
 - Bundling third-party model providers directly (e.g., OpenAI, Anthropic, Vertex) — configure them in OpenClaw instead
 - A heavyweight frontend framework migration — we'll stay on EJS + vanilla JS unless we hit a wall
 
-If you want one of these, fork is welcome — but probably also reconsider whether iClaude is the right base.
+If you want one of these, fork is welcome — but probably also reconsider whether iClaw is the right base.

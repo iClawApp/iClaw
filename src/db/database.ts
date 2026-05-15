@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 const SCHEMA = `
@@ -33,8 +33,21 @@ function dropObsoleteTables(db: Database.Database): void {
   db.exec('DROP TABLE IF EXISTS projects');
 }
 
-const dbPath = resolve(process.cwd(), process.env.DB_PATH ?? './data/iclaude.db');
+const dbPath = resolve(process.cwd(), process.env.DB_PATH ?? './data/iclaw.db');
 mkdirSync(dirname(dbPath), { recursive: true });
+
+// Backwards-compatible migration: if a legacy ./data/iclaude.db (and its WAL
+// sidecars) exists from before the iClaude → iClaw rename, move it in place.
+// Only triggers when DB_PATH wasn't overridden and the new file doesn't exist.
+if (!process.env.DB_PATH) {
+  const legacy = resolve(process.cwd(), './data/iclaude.db');
+  if (existsSync(legacy) && !existsSync(dbPath)) {
+    renameSync(legacy, dbPath);
+    for (const ext of ['-shm', '-wal']) {
+      if (existsSync(legacy + ext)) renameSync(legacy + ext, dbPath + ext);
+    }
+  }
+}
 
 export const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');

@@ -1,6 +1,8 @@
 <div align="center">
 
-# iClaude
+<img src="docs/images/logo.png" alt="iClaw" width="220" />
+
+# iClaw
 
 **A local ChatGPT-style web UI for [OpenClaw Gateway](https://docs.openclaw.ai).**
 
@@ -19,13 +21,13 @@ Recommended: full-window screenshot at ~1600×1000, light theme, sidebar with
 queue panel showing 1 in-flight item.
 -->
 
-![iClaude](docs/images/hero.png)
+![iClaw](docs/images/hero.png)
 
-iClaude is a thin web UI bound to a local OpenClaw Gateway. It does **not** build its own agent runtime or AI memory — OpenClaw stays the backend; we just give you a nice chat surface and store conversation history locally in SQLite.
+iClaw is a thin web UI bound to a local OpenClaw Gateway. It does **not** build its own agent runtime or AI memory — OpenClaw stays the backend; we just give you a nice chat surface and store conversation history locally in SQLite.
 
 ## Contents
 
-- [Why iClaude](#why-iclaude)
+- [Why iClaw](#why-iclaw)
 - [Quick start](#quick-start)
 - [Features](#features)
 - [How it talks to OpenClaw](#how-it-talks-to-openclaw)
@@ -37,9 +39,9 @@ iClaude is a thin web UI bound to a local OpenClaw Gateway. It does **not** buil
 - [Star history](#star-history)
 - [License](#license)
 
-## Why iClaude
+## Why iClaw
 
-OpenClaw is a powerful self-hosted agent runtime, but its own dashboard is general-purpose. If you're used to ChatGPT's flow — a list of chats on the left, a conversation in the middle, fast back-and-forth — that's what iClaude gives you, against your own local OpenClaw.
+OpenClaw is a powerful self-hosted agent runtime, but its own dashboard is general-purpose. If you're used to ChatGPT's flow — a list of chats on the left, a conversation in the middle, fast back-and-forth — that's what iClaw gives you, against your own local OpenClaw.
 
 What you get:
 
@@ -68,7 +70,7 @@ Then restart the gateway:
 openclaw gateway restart
 ```
 
-Now run iClaude:
+Now run iClaw:
 
 ```bash
 git clone https://github.com/tmlxrd/iClaw.git
@@ -113,7 +115,7 @@ OpenClaw exposes an **OpenAI-compatible** HTTP API on the same port as the dashb
 - `GET /v1/models` — list agent targets (`openclaw/default`, `openclaw/research`, …)
 - `POST /v1/chat/completions` — chat (with `stream: true` for SSE)
 
-iClaude is OpenClaw's *client*:
+iClaw is OpenClaw's *client*:
 
 - We send the full conversation as `messages[]` on every turn — OpenClaw is stateless per request
 - A locally-generated UUID is sent as `x-openclaw-session-key` so the gateway tracks agent state (memory, tools) across turns
@@ -128,8 +130,8 @@ Everything is optional. Defaults work for the standard local setup.
 | --- | --- | --- |
 | `OPENCLAW_BASE_URL` | `http://127.0.0.1:18789` | Override gateway URL |
 | `OPENCLAW_API_KEY` | _(read from `~/.openclaw/openclaw.json`)_ | Override bearer token |
-| `PORT` | `3000` | iClaude HTTP port |
-| `DB_PATH` | `./data/iclaude.db` | SQLite file path |
+| `PORT` | `3000` | iClaw HTTP port |
+| `DB_PATH` | `./data/iclaw.db` | SQLite file path (existing `iclaude.db` is auto-migrated on first run) |
 
 ## Screenshots
 

@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in iClaude is broken or behaves unexpectedly
+description: Something in iClaw is broken or behaves unexpectedly
 labels: ["bug"]
 body:
   - type: markdown
@@ -29,9 +29,9 @@ body:
       required: true
 
   - type: input
-    id: iclaude-commit
+    id: iclaw-commit
     attributes:
-      label: iClaude commit / version
+      label: iClaw commit / version
       description: Output of `git rev-parse --short HEAD` or release tag
       placeholder: "eb35de7"
     validations:

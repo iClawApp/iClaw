@@ -2,17 +2,17 @@
 
 ## Supported versions
 
-iClaude is pre-1.0. Only the latest commit on the `main` and `dev` branches receives security fixes.
+iClaw is pre-1.0. Only the latest commit on the `main` and `dev` branches receives security fixes.
 
 ## Scope
 
-iClaude is a **local-only** UI binding to a local OpenClaw Gateway. The intended deployment is:
+iClaw is a **local-only** UI binding to a local OpenClaw Gateway. The intended deployment is:
 
 - Bound to `127.0.0.1` (loopback) on the user's own machine
 - Accessed only from the same machine via `http://localhost:3000`
 - Token-authenticated upstream against OpenClaw
 
-If you expose iClaude on a network beyond loopback, you are responsible for adding your own authentication, TLS, and access controls in front of it.
+If you expose iClaw on a network beyond loopback, you are responsible for adding your own authentication, TLS, and access controls in front of it.
 
 ### In-scope vulnerabilities
 
@@ -45,5 +45,5 @@ We aim to acknowledge reports within 72 hours and to publish a fix within 14 day
 ## Defaults you should know
 
 - The gateway bearer token is read from `~/.openclaw/openclaw.json` (mode `0600`)
-- SQLite database is at `./data/iclaude.db`, no encryption-at-rest by default
-- All chat history is stored locally; iClaude never sends it anywhere except OpenClaw
+- SQLite database is at `./data/iclaw.db`, no encryption-at-rest by default
+- All chat history is stored locally; iClaw never sends it anywhere except OpenClaw

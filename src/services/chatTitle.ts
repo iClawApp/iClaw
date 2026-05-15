@@ -86,7 +86,7 @@ export async function suggestChatTitle(opts: {
     const result = await openclaw.chat({
       model: opts.model,
       // Independent session so it doesn't interfere with the real chat.
-      sessionKey: `iclaude-title-${randomUUID()}`,
+      sessionKey: `iclaw-title-${randomUUID()}`,
       maxTokens: 32,
       messages: [{ role: 'user', content: buildTitlePrompt(opts.userMessage) }],
     });

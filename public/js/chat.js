@@ -201,7 +201,7 @@
     }
 
     setTitleInput(title, true);
-    document.title = title + ' — iClaude';
+    document.title = title + ' — iClaw';
   }
 
   async function saveChatTitle(chatId) {

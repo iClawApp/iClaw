@@ -1,6 +1,6 @@
-# Contributing to iClaude
+# Contributing to iClaw
 
-Thanks for considering a contribution. iClaude is a thin local UI on top of [OpenClaw Gateway](https://docs.openclaw.ai). We keep the surface small on purpose — the goal is **not** to build our own agent runtime.
+Thanks for considering a contribution. iClaw is a thin local UI on top of [OpenClaw Gateway](https://docs.openclaw.ai). We keep the surface small on purpose — the goal is **not** to build our own agent runtime.
 
 ## What we welcome
 
@@ -12,7 +12,7 @@ Thanks for considering a contribution. iClaude is a thin local UI on top of [Ope
 
 ## What we don't want
 
-- Wrapping/re-implementing OpenClaw's agent logic in iClaude
+- Wrapping/re-implementing OpenClaw's agent logic in iClaw
 - Adding remote auth, multi-user, or hosting features (this is a local-first app by design)
 - Bundling third-party AI providers directly — go through OpenClaw's gateway
 - Heavyweight client frameworks for features that work fine with the current vanilla-JS + EJS setup
@@ -79,7 +79,7 @@ Use the **Bug report** issue template. Include:
 
 Use the **Feature request** issue template. Describe:
 - What problem this solves
-- Why it belongs in iClaude (vs. OpenClaw, vs. a separate tool)
+- Why it belongs in iClaw (vs. OpenClaw, vs. a separate tool)
 - Rough sketch of the UX
 
 ## Code of Conduct

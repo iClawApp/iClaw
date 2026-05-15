@@ -6,7 +6,7 @@
   const POLL_MS = 2000;
   const listeners = new Set();
 
-  window.iclaudeStatus = {
+  window.iclawStatus = {
     onChange(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
@@ -30,8 +30,8 @@
       if (!res.ok) return;
       const body = await res.json();
       const next = new Set(body.working || []);
-      const prev = window.iclaudeStatus.workingIds;
-      window.iclaudeStatus.workingIds = next;
+      const prev = window.iclawStatus.workingIds;
+      window.iclawStatus.workingIds = next;
       applyDots(next);
       // notify listeners if the set actually changed
       const changed =
