@@ -44,7 +44,8 @@
       <% } else { %>
         <% chatMessages.forEach(function (m) { %>
           <div class="msg <%= m.role %>">
-            <div class="role"><%= m.role %></div><%= m.content %>
+            <div class="role"><%= m.role %></div>
+            <div class="msg-body"><%= m.content %></div>
           </div>
         <% }); %>
       <% } %>
@@ -63,6 +64,7 @@
       <button type="submit">Send</button>
     </form>
 
+    <script src="/js/vendor/marked.min.js"></script>
     <script src="/js/chat.js"></script>
   </main>
 </div>

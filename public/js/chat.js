@@ -20,9 +20,53 @@
     accept: 'text/event-stream',
   };
 
+  // ---------- markdown rendering ----------
+
+  // marked v15+: configure once. `breaks` turns single newlines into <br>, which
+  // matches assistant output that uses bare newlines for line breaks. `gfm` enables
+  // tables, strikethrough, autolinks. Marked escapes raw HTML by default, so
+  // inline `<script>` from an agent reply renders as literal text — safe enough
+  // for a local-first app with a trusted gateway.
+  if (window.marked && typeof window.marked.setOptions === 'function') {
+    window.marked.setOptions({ breaks: true, gfm: true });
+  }
+
+  function renderMarkdown(text) {
+    const src = String(text ?? '');
+    if (!window.marked || typeof window.marked.parse !== 'function') {
+      return escapeHtml(src);
+    }
+    try {
+      return window.marked.parse(src);
+    } catch {
+      return escapeHtml(src);
+    }
+  }
+
   function escapeHtml(s) {
     return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
   }
+
+  // Open all links inside rendered messages in a new tab, with safe rel.
+  function decorateLinks(root) {
+    root.querySelectorAll('a[href]').forEach((a) => {
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+    });
+  }
+
+  // Hydrate server-rendered messages on page load: their .msg-body contains the
+  // raw (HTML-escaped by EJS) source — replace it with the markdown render.
+  function hydrateServerRenderedMessages() {
+    messagesEl.querySelectorAll('.msg .msg-body').forEach((body) => {
+      const raw = body.textContent ?? '';
+      if (!raw) return;
+      body.innerHTML = renderMarkdown(raw);
+      decorateLinks(body);
+    });
+  }
+
+  // ---------- DOM helpers ----------
 
   function clearEmptyState() {
     const empty = messagesEl.querySelector('.empty-state');
@@ -37,7 +81,10 @@
     clearEmptyState();
     const div = document.createElement('div');
     div.className = 'msg user';
-    div.innerHTML = '<div class="role">user</div>' + escapeHtml(content);
+    div.innerHTML =
+      '<div class="role">user</div>' +
+      '<div class="msg-body">' + renderMarkdown(content) + '</div>';
+    decorateLinks(div);
     messagesEl.appendChild(div);
     scrollMessagesToBottom();
     return div;
@@ -49,12 +96,11 @@
     div.innerHTML =
       '<div class="role">assistant</div>' +
       '<div class="stream-status">Thinking…</div>' +
-      '<div class="stream-body"></div>';
+      '<div class="msg-body stream-body"></div>';
     userNode.insertAdjacentElement('afterend', div);
     scrollMessagesToBottom();
     return div;
   }
-
 
   function createStreamContext(assistantEl) {
     return {
@@ -65,6 +111,7 @@
       activeTool: null,
       donePayload: null,
       pendingTitle: null,
+      fullText: '',
     };
   }
 
@@ -102,7 +149,6 @@
         ctx.assistantEl.classList.add('stream-tool');
       } else if (ev.phase === 'end' && ctx.activeTool === ev.name) {
         ctx.activeTool = null;
-        // Keep the last tool label until text deltas arrive (fast exec can finish in ms).
       }
     } else if (ev.type === 'title' && ev.title) {
       const chatId = ev.id ?? activeChatId;
@@ -113,7 +159,11 @@
       }
     } else if (ev.type === 'delta' && ctx.bodyEl) {
       onFirstDelta(ctx);
-      ctx.bodyEl.textContent += ev.text;
+      ctx.fullText += ev.text;
+      // Re-render the whole accumulated text as markdown. marked is fast enough
+      // for normal-sized replies; ChatGPT does the same.
+      ctx.bodyEl.innerHTML = renderMarkdown(ctx.fullText);
+      decorateLinks(ctx.bodyEl);
       scrollMessagesToBottom();
     } else if (ev.type === 'done') {
       ctx.donePayload = ev;
@@ -130,15 +180,25 @@
       'stream-generating',
     );
     if (!ctx.gotDelta && ctx.statusEl) ctx.statusEl.hidden = true;
+    // Final paint: the markdown was rendered incrementally; if upstream sent
+    // any trailing text or done.message.content differs, re-render to truth.
+    if (ctx.donePayload?.message?.content && ctx.bodyEl) {
+      ctx.bodyEl.innerHTML = renderMarkdown(ctx.donePayload.message.content);
+      decorateLinks(ctx.bodyEl);
+    }
   }
 
   function insertErrorAfter(userNode, msg) {
     const div = document.createElement('div');
     div.className = 'msg system error';
-    div.innerHTML = '<div class="role">error</div>' + escapeHtml(msg);
+    div.innerHTML =
+      '<div class="role">error</div>' +
+      '<div class="msg-body">' + escapeHtml(msg) + '</div>';
     userNode.insertAdjacentElement('afterend', div);
     return div;
   }
+
+  // ---------- queue widget ----------
 
   function renderWaitingQueue() {
     queueEl.replaceChildren();
@@ -160,6 +220,8 @@
     renderWaitingQueue();
     return item;
   }
+
+  // ---------- chat title sync ----------
 
   function deriveTitle(content) {
     const t = String(content).trim();
@@ -226,6 +288,8 @@
     if (startedOnDraft) applyChatTitle(id, title);
     else setTitleInput(title, true);
   }
+
+  // ---------- SSE ----------
 
   function parseSseBlocks(buffer, onEvent) {
     const parts = buffer.split('\n\n');
@@ -322,6 +386,10 @@
     pumping = false;
     pumpQueue();
   }
+
+  // ---------- wiring ----------
+
+  hydrateServerRenderedMessages();
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();

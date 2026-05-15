@@ -9,6 +9,7 @@ All notable changes to iClaw are documented here. The format is based on [Keep a
 - CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, ROADMAP
 - GitHub Actions CI: typecheck + build on push/PR
 - Issue and pull request templates
+- **Markdown rendering** in chat messages (headings, lists, bold, italic, inline code, fenced code blocks, blockquotes, GFM tables, links → new tab). Vendored `marked` v15.0.7 at `public/js/vendor/marked.min.js`. Streaming assistant deltas re-render markdown incrementally; server-rendered messages on page load are hydrated client-side.
 
 ## v0.1.0 — initial public preview
 

@@ -314,6 +314,134 @@ code {
 }
 .placeholder-text { display: inline; }
 
+/* ---------- Markdown body ---------- */
+
+.msg-body {
+  /* override pre-wrap from .msg so block elements (lists, code) lay out normally */
+  white-space: normal;
+  word-break: break-word;
+}
+.msg-body > *:first-child { margin-top: 0; }
+.msg-body > *:last-child  { margin-bottom: 0; }
+
+.msg-body p {
+  margin: 0 0 0.75em;
+  line-height: 1.55;
+}
+
+.msg-body h1,
+.msg-body h2,
+.msg-body h3,
+.msg-body h4,
+.msg-body h5,
+.msg-body h6 {
+  margin: 1.2em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.msg-body h1 { font-size: 1.4em; }
+.msg-body h2 { font-size: 1.25em; }
+.msg-body h3 { font-size: 1.1em; }
+.msg-body h4 { font-size: 1em; }
+.msg-body h5,
+.msg-body h6 { font-size: 0.95em; color: var(--muted); }
+
+.msg-body ul,
+.msg-body ol {
+  margin: 0 0 0.75em;
+  padding-left: 1.5em;
+}
+.msg-body li { margin: 0.2em 0; line-height: 1.5; }
+.msg-body li > p { margin: 0.2em 0; }
+.msg-body ul ul,
+.msg-body ul ol,
+.msg-body ol ul,
+.msg-body ol ol { margin: 0.2em 0; }
+
+.msg-body a {
+  color: #2563eb;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.msg-body a:hover { color: #1d4ed8; }
+
+.msg-body strong { font-weight: 600; }
+.msg-body em { font-style: italic; }
+.msg-body del { color: var(--muted); }
+.msg-body hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.2em 0;
+}
+
+/* inline code */
+.msg-body :not(pre) > code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: #f1f1f3;
+  border: 1px solid #e8e8eb;
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  color: #1f2937;
+}
+
+/* fenced code block */
+.msg-body pre {
+  margin: 0.5em 0 1em;
+  padding: 12px 14px;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+.msg-body pre code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  white-space: pre;
+}
+
+/* blockquote */
+.msg-body blockquote {
+  margin: 0.5em 0 1em;
+  padding: 0.2em 0.9em;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+  font-style: italic;
+}
+.msg-body blockquote > p { margin: 0.3em 0; }
+
+/* tables (GFM) */
+.msg-body table {
+  border-collapse: collapse;
+  margin: 0.5em 0 1em;
+  font-size: 0.9em;
+}
+.msg-body th,
+.msg-body td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.msg-body th {
+  background: #f7f7f8;
+  font-weight: 600;
+}
+
+/* User-side: inline code needs more contrast on the blue bubble */
+.msg.user .msg-body :not(pre) > code {
+  background: #ffffff;
+  border-color: #d4dcef;
+}
+
+/* When the assistant body is the streaming target, keep our markdown rules */
+.msg.assistant .stream-body { white-space: normal; }
+
 /* ---------- Queue panel (above composer) ---------- */
 
 .queue {

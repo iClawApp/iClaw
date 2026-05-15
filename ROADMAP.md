@@ -18,7 +18,7 @@ Out now. See [CHANGELOG](CHANGELOG.md).
 
 Focus: make the daily-driver experience smoother.
 
-- [ ] Markdown rendering in assistant messages (code blocks, lists, links)
+- [x] ~~Markdown rendering in assistant messages (code blocks, lists, links)~~ — shipped
 - [ ] Syntax-highlighted code blocks with copy button
 - [ ] Keyboard shortcuts: `Cmd/Ctrl+K` (chat switcher), `Cmd/Ctrl+N` (new chat), `Cmd/Ctrl+Backspace` (delete chat)
 - [ ] Dark theme (manual toggle + `prefers-color-scheme`)
