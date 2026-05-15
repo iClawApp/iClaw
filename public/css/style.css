@@ -266,6 +266,16 @@ code {
   margin-bottom: 6px;
 }
 .msg.pending { opacity: 0.5; font-style: italic; }
+.msg.assistant.streaming .stream-status {
+  font-size: 0.85em;
+  color: var(--muted);
+  font-style: italic;
+  margin-bottom: 4px;
+}
+.msg.assistant .stream-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .msg.error {
   color: var(--danger);
   background: #fef2f2;

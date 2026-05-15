@@ -1,11 +1,17 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { chats, messages } from '../services/store';
 import { openclaw, type ChatMessage } from '../services/openclaw';
 import { chatStatus } from '../services/chatStatus';
+import { beginSse, endSse, writeSse } from '../services/sse';
+import type { Message } from '../types';
 
 export const chatsRouter: Router = Router();
 
 const DEFAULT_AGENT = 'openclaw/default';
+
+function wantsStream(req: Request): boolean {
+  return req.headers.accept?.includes('text/event-stream') ?? false;
+}
 
 async function getAgentsSafe(): Promise<{ agents: { id: string }[]; error: string | null }> {
   try {
@@ -15,35 +21,92 @@ async function getAgentsSafe(): Promise<{ agents: { id: string }[]; error: strin
   }
 }
 
-// POST /chats — create a chat AND run the first turn atomically.
-// We don't create empty chats; a chat is only born when a real first message
-// is sent. Returns JSON: { id, message } where `message` is the assistant reply.
-chatsRouter.post('/', async (req, res, next) => {
-  try {
-    const content = String(req.body?.content ?? '').trim();
-    const agent = String(req.body?.agent ?? '').trim() || DEFAULT_AGENT;
-    if (!content) {
-      res.status(400).json({ error: 'content required' });
-      return;
+function historyForChat(chatId: number): ChatMessage[] {
+  return messages
+    .listByChat(chatId)
+    .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
+    .map((m) => ({ role: m.role as ChatMessage['role'], content: m.content }));
+}
+
+async function runOpenClawStream(
+  res: Response,
+  opts: { model: string; sessionKey: string; messages: ChatMessage[] },
+): Promise<{ content: string; finishReason: string | null }> {
+  writeSse(res, { type: 'status', status: 'thinking' });
+
+  let content = '';
+  let finishReason: string | null = null;
+
+  for await (const ev of openclaw.chatStream({
+    model: opts.model,
+    sessionKey: opts.sessionKey,
+    messages: opts.messages,
+  })) {
+    if (ev.type === 'delta') {
+      content += ev.text;
+      writeSse(res, { type: 'delta', text: ev.text });
+    } else if (ev.type === 'finish') {
+      finishReason = ev.reason;
     }
-    const chat = chats.create(agent);
-    const reply = await chatStatus.withLock(chat.id, async () => {
+  }
+
+  return { content, finishReason };
+}
+
+function streamError(res: Response, err: unknown): void {
+  const error = err instanceof Error ? err.message : String(err);
+  if (!res.headersSent) beginSse(res);
+  writeSse(res, { type: 'error', error });
+  endSse(res);
+}
+
+// POST /chats — create a chat AND run the first turn atomically.
+chatsRouter.post('/', async (req, res, next) => {
+  const content = String(req.body?.content ?? '').trim();
+  const agent = String(req.body?.agent ?? '').trim() || DEFAULT_AGENT;
+  if (!content) {
+    res.status(400).json({ error: 'content required' });
+    return;
+  }
+
+  const chat = chats.create(agent);
+
+  if (!wantsStream(req)) {
+    try {
+      const reply = await chatStatus.withLock(chat.id, async () => {
+        messages.append(chat.id, 'user', content);
+        const result = await openclaw.chat({
+          model: chat.agent,
+          sessionKey: chat.openclaw_session_id,
+          messages: [{ role: 'user', content }],
+        });
+        return messages.append(chat.id, 'assistant', result.content, result.finish_reason);
+      });
+      res.json({ id: chat.id, message: reply });
+    } catch (err) {
+      next(err);
+    }
+    return;
+  }
+
+  beginSse(res);
+  try {
+    await chatStatus.withLock(chat.id, async () => {
       messages.append(chat.id, 'user', content);
-      const history: ChatMessage[] = [{ role: 'user', content }];
-      const result = await openclaw.chat({
+      const { content: reply, finishReason } = await runOpenClawStream(res, {
         model: chat.agent,
         sessionKey: chat.openclaw_session_id,
-        messages: history,
+        messages: [{ role: 'user', content }],
       });
-      return messages.append(chat.id, 'assistant', result.content, result.finish_reason);
+      const stored = messages.append(chat.id, 'assistant', reply, finishReason);
+      writeSse(res, { type: 'done', id: chat.id, message: stored });
     });
-    res.json({ id: chat.id, message: reply });
+    endSse(res);
   } catch (err) {
-    next(err);
+    streamError(res, err);
   }
 });
 
-// IMPORTANT: register literal /status before /:id so it isn't captured.
 chatsRouter.get('/status', (_req, res) => {
   res.json({ working: chatStatus.workingIds() });
 });
@@ -90,7 +153,6 @@ chatsRouter.post('/:id/delete', (req, res) => {
   res.redirect('/');
 });
 
-// JSON API used by the chat client
 chatsRouter.get('/:id/messages', (req, res) => {
   const id = Number(req.params.id);
   if (!chats.get(id)) {
@@ -113,26 +175,40 @@ chatsRouter.post('/:id/messages', async (req, res, next) => {
     return;
   }
 
+  if (!wantsStream(req)) {
+    try {
+      const stored = await chatStatus.withLock(id, async () => {
+        const fresh = chats.get(id)!;
+        messages.append(id, 'user', content);
+        const result = await openclaw.chat({
+          model: fresh.agent,
+          sessionKey: fresh.openclaw_session_id,
+          messages: historyForChat(id),
+        });
+        return messages.append(id, 'assistant', result.content, result.finish_reason);
+      });
+      res.json(stored);
+    } catch (err) {
+      next(err);
+    }
+    return;
+  }
+
+  beginSse(res);
   try {
-    const stored = await chatStatus.withLock(id, async () => {
+    await chatStatus.withLock(id, async () => {
       const fresh = chats.get(id)!;
       messages.append(id, 'user', content);
-
-      const history: ChatMessage[] = messages
-        .listByChat(id)
-        .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
-        .map((m) => ({ role: m.role as ChatMessage['role'], content: m.content }));
-
-      const result = await openclaw.chat({
+      const { content: reply, finishReason } = await runOpenClawStream(res, {
         model: fresh.agent,
         sessionKey: fresh.openclaw_session_id,
-        messages: history,
+        messages: historyForChat(id),
       });
-
-      return messages.append(id, 'assistant', result.content, result.finish_reason);
+      const stored: Message = messages.append(id, 'assistant', reply, finishReason);
+      writeSse(res, { type: 'done', message: stored });
     });
-    res.json(stored);
+    endSse(res);
   } catch (err) {
-    next(err);
+    streamError(res, err);
   }
 });

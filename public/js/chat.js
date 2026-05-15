@@ -10,13 +10,14 @@
   const startedOnDraft = messagesEl.dataset.draft === '1' || !rawId;
   let activeChatId = startedOnDraft ? null : Number(rawId);
 
-  /** Shown in the queue panel — not yet sent to the server. */
-  /** @type {{ el: HTMLElement, content: string }[]} */
   const waitingItems = [];
-  /** Currently in flight (shown in the message thread only). */
-  /** @type {{ content: string, userNode: HTMLElement | null } | null} */
   let inFlight = null;
   let pumping = false;
+
+  const STREAM_HEADERS = {
+    'content-type': 'application/json',
+    accept: 'text/event-stream',
+  };
 
   function escapeHtml(s) {
     return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
@@ -27,24 +28,29 @@
     if (empty) empty.remove();
   }
 
+  function scrollMessagesToBottom() {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
   function appendUserMessage(content) {
     clearEmptyState();
     const div = document.createElement('div');
     div.className = 'msg user';
     div.innerHTML = '<div class="role">user</div>' + escapeHtml(content);
     messagesEl.appendChild(div);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    scrollMessagesToBottom();
     return div;
   }
 
-  function insertAssistantAfter(userNode, content) {
+  function beginAssistantStream(userNode) {
     const div = document.createElement('div');
-    div.className = 'msg assistant';
-    div.innerHTML = '<div class="role">assistant</div>' + escapeHtml(content);
+    div.className = 'msg assistant streaming';
+    div.innerHTML =
+      '<div class="role">assistant</div>' +
+      '<div class="stream-status">Thinking…</div>' +
+      '<div class="stream-body"></div>';
     userNode.insertAdjacentElement('afterend', div);
-    if (userNode.nextElementSibling === div && div.nextElementSibling === null) {
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
+    scrollMessagesToBottom();
     return div;
   }
 
@@ -89,27 +95,99 @@
     window.location.assign('/chats/' + activeChatId);
   }
 
-  async function sendCreateFirst(item, agent) {
+  function parseSseBlocks(buffer, onEvent) {
+    const parts = buffer.split('\n\n');
+    const rest = parts.pop() ?? '';
+    for (const block of parts) {
+      for (const line of block.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(':')) continue;
+        if (!trimmed.startsWith('data:')) continue;
+        const data = trimmed.slice(5).trim();
+        if (data === '[DONE]') continue;
+        try {
+          onEvent(JSON.parse(data));
+        } catch {
+          /* ignore malformed chunks */
+        }
+      }
+    }
+    return rest;
+  }
+
+  async function consumeSseResponse(res, userNode) {
+    if (!res.body) throw new Error('No response body');
+    const assistantEl = beginAssistantStream(userNode);
+    const statusEl = assistantEl.querySelector('.stream-status');
+    const bodyEl = assistantEl.querySelector('.stream-body');
+    let gotDelta = false;
+    let donePayload = null;
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      buffer = parseSseBlocks(buffer, (ev) => {
+        if (ev.type === 'status' && statusEl) {
+          statusEl.textContent = ev.status === 'thinking' ? 'Thinking…' : ev.status;
+        } else if (ev.type === 'delta' && bodyEl) {
+          if (!gotDelta) {
+            gotDelta = true;
+            if (statusEl) statusEl.remove();
+            assistantEl.classList.remove('streaming');
+          }
+          bodyEl.textContent += ev.text;
+          scrollMessagesToBottom();
+        } else if (ev.type === 'done') {
+          donePayload = ev;
+        } else if (ev.type === 'error') {
+          throw new Error(ev.error || 'Stream error');
+        }
+      });
+    }
+
+    buffer += decoder.decode();
+    parseSseBlocks(buffer + '\n\n', (ev) => {
+      if (ev.type === 'delta' && bodyEl) {
+        if (!gotDelta) {
+          gotDelta = true;
+          if (statusEl) statusEl.remove();
+          assistantEl.classList.remove('streaming');
+        }
+        bodyEl.textContent += ev.text;
+      } else if (ev.type === 'done') donePayload = ev;
+      else if (ev.type === 'error') throw new Error(ev.error || 'Stream error');
+    });
+
+    if (!gotDelta && statusEl) statusEl.remove();
+    assistantEl.classList.remove('streaming');
+    return donePayload;
+  }
+
+  async function streamCreateFirst(item, agent) {
     const res = await fetch('/chats', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      headers: STREAM_HEADERS,
       body: JSON.stringify({ agent, content: item.content }),
     });
     if (!res.ok) throw new Error(await res.text());
-    const body = await res.json();
-    promoteDraftToChat(body.id);
-    insertAssistantAfter(item.userNode, body.message?.content || '');
+    const done = await consumeSseResponse(res, item.userNode);
+    if (done?.id) promoteDraftToChat(done.id);
+    else if (done?.message?.chat_id) promoteDraftToChat(done.message.chat_id);
   }
 
-  async function sendMessageTurn(item, id) {
+  async function streamMessageTurn(item, id) {
     const res = await fetch('/chats/' + encodeURIComponent(id) + '/messages', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      headers: STREAM_HEADERS,
       body: JSON.stringify({ content: item.content }),
     });
     if (!res.ok) throw new Error(await res.text());
-    const msg = await res.json();
-    insertAssistantAfter(item.userNode, msg.content || '');
+    await consumeSseResponse(res, item.userNode);
   }
 
   async function pumpQueue() {
@@ -125,9 +203,9 @@
     try {
       if (!activeChatId) {
         const agent = document.getElementById('draft-agent')?.value || 'openclaw/default';
-        await sendCreateFirst(item, agent);
+        await streamCreateFirst(item, agent);
       } else {
-        await sendMessageTurn(item, activeChatId);
+        await streamMessageTurn(item, activeChatId);
       }
     } catch (err) {
       insertErrorAfter(item.userNode, err.message);
