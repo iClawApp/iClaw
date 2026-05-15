@@ -387,9 +387,123 @@
     pumpQueue();
   }
 
+  // ---------- reload-during-processing recovery ----------
+  //
+  // If the page is loaded while this chat is mid-turn (server flagged
+  // isWorking → template rendered #reload-placeholder), wire it up so:
+  //   - the label tracks current activity (via status.js polling)
+  //   - when the chat goes idle, fetch /chats/:id/messages and insert any
+  //     messages that arrived since the last user msg already in the DOM
+  //
+  // This recovers from F5 / closed tab / new window flows. We don't get
+  // token-by-token replay (that would need a shared event bus), but the
+  // user sees a sensible placeholder, live status updates, and the full
+  // assistant reply once it lands.
+
+  function setPlaceholderLabel(placeholder, label) {
+    const statusEl = placeholder.querySelector('.stream-status');
+    if (statusEl) statusEl.textContent = label;
+  }
+
+  function setPlaceholderState(placeholder, activity) {
+    placeholder.classList.remove(
+      'stream-waiting',
+      'stream-tool',
+      'stream-generating',
+    );
+    if (!activity) {
+      placeholder.classList.add('stream-waiting');
+      return;
+    }
+    if (activity.kind === 'generating') placeholder.classList.add('stream-generating');
+    else if (activity.kind === 'tool' || activity.kind === 'lifecycle') {
+      placeholder.classList.add('stream-tool');
+    } else placeholder.classList.add('stream-waiting');
+  }
+
+  async function reconcileMessagesAfterIdle(placeholder) {
+    if (!activeChatId) return;
+    try {
+      const res = await fetch('/chats/' + encodeURIComponent(activeChatId) + '/messages', {
+        headers: { accept: 'application/json' },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const all = await res.json();
+      const knownIds = new Set();
+      messagesEl.querySelectorAll('.msg[data-msg-id]').forEach((el) => {
+        knownIds.add(Number(el.dataset.msgId));
+      });
+
+      // Find the assistant message that filled this placeholder. It's the
+      // most recent assistant message not already known to the DOM.
+      const newest = [...all].reverse().find(
+        (m) => m.role === 'assistant' && !knownIds.has(m.id),
+      );
+      if (newest) {
+        placeholder.classList.remove(
+          'streaming',
+          'stream-waiting',
+          'stream-tool',
+          'stream-generating',
+        );
+        placeholder.id = '';
+        placeholder.dataset.msgId = String(newest.id);
+        const statusEl = placeholder.querySelector('.stream-status');
+        if (statusEl) statusEl.remove();
+        const bodyEl = placeholder.querySelector('.stream-body');
+        if (bodyEl) {
+          bodyEl.classList.remove('stream-body');
+          bodyEl.innerHTML = renderMarkdown(newest.content || '');
+          decorateLinks(bodyEl);
+        }
+      } else {
+        // Idle but no new assistant message — likely an error mid-turn.
+        // Replace placeholder with an explanation.
+        placeholder.replaceWith(
+          (() => {
+            const div = document.createElement('div');
+            div.className = 'msg system error';
+            div.innerHTML =
+              '<div class="role">error</div>' +
+              '<div class="msg-body">' +
+              escapeHtml('Turn ended without an assistant reply. Try again.') +
+              '</div>';
+            return div;
+          })(),
+        );
+      }
+    } catch (err) {
+      console.error('reload reconcile failed', err);
+    }
+  }
+
+  function wireReloadPlaceholder() {
+    const placeholder = document.getElementById('reload-placeholder');
+    if (!placeholder || !activeChatId) return;
+
+    const onStatus = (ev) => {
+      const activity = ev.activities.get(activeChatId);
+      const stillWorking = ev.workingIds.has(activeChatId);
+
+      if (stillWorking) {
+        // Update the label if activity changed.
+        if (ev.activityChanged.includes(activeChatId) || ev.wentWorking.includes(activeChatId)) {
+          setPlaceholderState(placeholder, activity);
+          if (activity?.label) setPlaceholderLabel(placeholder, activity.label);
+        }
+      } else if (ev.wentIdle.includes(activeChatId)) {
+        unsubscribe();
+        reconcileMessagesAfterIdle(placeholder);
+      }
+    };
+
+    const unsubscribe = window.iclawStatus?.onChange(onStatus) ?? (() => {});
+  }
+
   // ---------- wiring ----------
 
   hydrateServerRenderedMessages();
+  wireReloadPlaceholder();
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();

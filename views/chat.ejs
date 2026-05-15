@@ -43,11 +43,27 @@
         <p class="muted empty-state">No messages yet. Say something.</p>
       <% } else { %>
         <% chatMessages.forEach(function (m) { %>
-          <div class="msg <%= m.role %>">
+          <div class="msg <%= m.role %>" data-msg-id="<%= m.id %>">
             <div class="role"><%= m.role %></div>
             <div class="msg-body"><%= m.content %></div>
           </div>
         <% }); %>
+      <% } %>
+      <% if (isWorking) { %>
+        <%
+          // Activity persists across page reloads — server side state. Client
+          // (chat.js) polls /chats/status and updates the label live, then
+          // fetches the final assistant message when this chat goes idle.
+          const _act = currentActivity || { kind: 'thinking', label: 'Thinking…' };
+          const _waitingClass = _act.kind === 'tool' || _act.kind === 'lifecycle'
+            ? 'stream-tool'
+            : (_act.kind === 'generating' ? 'stream-generating' : 'stream-waiting');
+        %>
+        <div class="msg assistant streaming <%= _waitingClass %>" id="reload-placeholder">
+          <div class="role">assistant</div>
+          <div class="stream-status"><%= _act.label %></div>
+          <div class="msg-body stream-body"></div>
+        </div>
       <% } %>
     </section>
 

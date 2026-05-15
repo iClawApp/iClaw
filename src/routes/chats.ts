@@ -84,19 +84,42 @@ function gatewayActivityToSse(ev: GatewayActivity): ClientStreamEvent | null {
 
 async function runOpenClawStream(
   res: Response,
-  opts: { model: string; sessionKey: string; messages: ChatMessage[] },
+  opts: { chatId: number; model: string; sessionKey: string; messages: ChatMessage[] },
 ): Promise<{ content: string; finishReason: string | null }> {
   writeSse(res, { type: 'status', status: 'thinking' });
+  chatStatus.setActivity(opts.chatId, { kind: 'thinking', label: 'Thinking…' });
 
   await gatewayWs.ensureConnected();
 
   const unwatch = gatewayWs.watchSession(opts.sessionKey, (activity) => {
     const sse = gatewayActivityToSse(activity);
     if (sse) writeSse(res, sse);
+
+    // Mirror into chatStatus so a reloaded page can see the same label.
+    if (activity.kind === 'tool') {
+      if (activity.phase === 'start') {
+        chatStatus.setActivity(opts.chatId, {
+          kind: 'tool',
+          name: activity.name,
+          label: toolActivityLabel(activity.name),
+        });
+      }
+      // tool 'end' alone doesn't change the activity — the next event
+      // (another tool, lifecycle, or first text delta) will replace it.
+    } else if (activity.kind === 'lifecycle') {
+      chatStatus.setActivity(opts.chatId, {
+        kind: 'lifecycle',
+        phase: activity.phase,
+        label: lifecycleActivityLabel(activity.phase),
+      });
+    } else if (activity.kind === 'status') {
+      chatStatus.setActivity(opts.chatId, { kind: 'thinking', label: 'Thinking…' });
+    }
   });
 
   let content = '';
   let finishReason: string | null = null;
+  let switchedToGenerating = false;
 
   try {
     for await (const ev of openclaw.chatStream({
@@ -105,6 +128,10 @@ async function runOpenClawStream(
       messages: opts.messages,
     })) {
       if (ev.type === 'delta') {
+        if (!switchedToGenerating) {
+          switchedToGenerating = true;
+          chatStatus.setActivity(opts.chatId, { kind: 'generating', label: 'Generating…' });
+        }
         content += ev.text;
         writeSse(res, { type: 'delta', text: ev.text });
       } else if (ev.type === 'tool') {
@@ -114,6 +141,15 @@ async function runOpenClawStream(
           name: ev.name,
           label: toolActivityLabel(ev.name),
         });
+        // The tool-call events from the chat stream are local-to-this-turn,
+        // distinct from gatewayWs session events. Mirror them too.
+        if (ev.phase === 'start') {
+          chatStatus.setActivity(opts.chatId, {
+            kind: 'tool',
+            name: ev.name,
+            label: toolActivityLabel(ev.name),
+          });
+        }
       } else if (ev.type === 'finish') {
         finishReason = ev.reason;
       }
@@ -193,6 +229,7 @@ chatsRouter.post('/', async (req, res, next) => {
     await chatStatus.withLock(chat.id, async () => {
       messages.append(chat.id, 'user', content);
       const { content: reply, finishReason } = await runOpenClawStream(res, {
+        chatId: chat.id,
         model: chat.agent,
         sessionKey: chat.openclaw_session_id,
         messages: [{ role: 'user', content }],
@@ -209,7 +246,10 @@ chatsRouter.post('/', async (req, res, next) => {
 });
 
 chatsRouter.get('/status', (_req, res) => {
-  res.json({ working: chatStatus.workingIds() });
+  res.json({
+    working: chatStatus.workingIds(),
+    activities: chatStatus.snapshot(),
+  });
 });
 
 chatsRouter.get('/:id', async (req, res, next) => {
@@ -230,6 +270,8 @@ chatsRouter.get('/:id', async (req, res, next) => {
       defaultAgent: DEFAULT_AGENT,
       openclawBaseUrl: openclaw.baseUrl,
       workingIds: chatStatus.workingIds(),
+      isWorking: chatStatus.isWorking(id),
+      currentActivity: chatStatus.getActivity(id),
     });
   } catch (err) {
     next(err);
@@ -316,6 +358,7 @@ chatsRouter.post('/:id/messages', async (req, res, next) => {
       const fresh = chats.get(id)!;
       messages.append(id, 'user', content);
       const { content: reply, finishReason } = await runOpenClawStream(res, {
+        chatId: id,
         model: fresh.agent,
         sessionKey: fresh.openclaw_session_id,
         messages: historyForChat(id),
