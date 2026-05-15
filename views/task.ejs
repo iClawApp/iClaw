@@ -1,0 +1,132 @@
+<%- include('partials/head', { title: activeTask.title + ' — iClaude' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-center chat">
+    <header class="col-header app-header task-header">
+      <div>
+        <h1><%= activeTask.title %></h1>
+        <p class="muted">
+          <%= project.name %> ·
+          status: <%= activeTask.status %> ·
+          <% if (activeTask.openclaw_session_id && activeTask.agent) { %>
+            agent <code><%= activeTask.agent %></code> ·
+            session <code><%= activeTask.openclaw_session_id.slice(0, 8) %>…</code>
+          <% } else { %>
+            no chat started
+          <% } %>
+        </p>
+      </div>
+
+      <div class="task-actions">
+        <form method="post" action="/tasks/<%= activeTask.id %>/status" class="inline-form">
+          <select name="status" onchange="this.form.submit()">
+            <% ['open', 'doing', 'done', 'paused'].forEach(function (s) { %>
+              <option value="<%= s %>" <%= activeTask.status === s ? 'selected' : '' %>>
+                <%= s %>
+              </option>
+            <% }); %>
+          </select>
+        </form>
+        <form method="post" action="/tasks/<%= activeTask.id %>/delete" class="inline-form danger">
+          <button type="submit" onclick="return confirm('Delete this task?')">delete</button>
+        </form>
+      </div>
+    </header>
+
+    <% if (!activeTask.openclaw_session_id) { %>
+      <section class="link-session">
+        <h2>Pick an OpenClaw agent</h2>
+        <% if (agentsError) { %>
+          <p class="error">Couldn't reach gateway: <code><%= agentsError %></code></p>
+          <p class="muted">Check that OpenClaw is running at <code><%= openclawBaseUrl %></code>.</p>
+        <% } else if (agents.length === 0) { %>
+          <p class="muted">Gateway reachable but no agents listed.</p>
+        <% } else { %>
+          <form method="post" action="/tasks/<%= activeTask.id %>/start-chat" class="stack">
+            <label>
+              Agent
+              <select name="agent">
+                <% agents.forEach(function (a) { %>
+                  <option value="<%= a.id %>" <%= a.id === defaultAgent ? 'selected' : '' %>>
+                    <%= a.id %>
+                  </option>
+                <% }); %>
+              </select>
+            </label>
+            <button type="submit">Start chat</button>
+          </form>
+          <p class="muted">
+            A local session key is generated and sent with every request as
+            <code>x-openclaw-session-key</code>. Pinned notes (right) become a
+            system message in the conversation.
+          </p>
+        <% } %>
+      </section>
+    <% } else { %>
+      <section
+        class="messages"
+        id="messages"
+        data-task-id="<%= activeTask.id %>"
+      >
+        <% if (taskMessages.length === 0) { %>
+          <p class="muted">No messages yet. Send the first one below.</p>
+        <% } else { %>
+          <% taskMessages.forEach(function (m) { %>
+            <div class="msg <%= m.role %>">
+              <div class="role"><%= m.role %></div><%= m.content %>
+            </div>
+          <% }); %>
+        <% } %>
+      </section>
+
+      <form id="send-form" class="composer">
+        <textarea
+          id="composer-input"
+          name="content"
+          placeholder="Message <%= activeTask.agent %>… (Enter to send, Shift+Enter for newline)"
+          rows="3"
+          required
+        ></textarea>
+        <button type="submit">Send</button>
+      </form>
+
+      <script src="/js/chat.js"></script>
+    <% } %>
+  </main>
+
+  <aside class="col col-right">
+    <header class="col-header"><h2>Pinned context</h2></header>
+
+    <form method="post" action="/tasks/<%= activeTask.id %>/notes" class="stack">
+      <textarea name="body" placeholder="Add a note…" rows="3" required></textarea>
+      <button type="submit">Pin note</button>
+    </form>
+
+    <ul class="notes">
+      <% notes.forEach(function (n) { %>
+        <li class="note <%= n.pinned ? 'pinned' : 'unpinned' %>">
+          <div class="note-body"><%= n.body %></div>
+          <div class="note-actions">
+            <form method="post"
+                  action="/tasks/<%= activeTask.id %>/notes/<%= n.id %>/toggle"
+                  class="inline-form">
+              <button type="submit"><%= n.pinned ? 'unpin' : 'pin' %></button>
+            </form>
+            <form method="post"
+                  action="/tasks/<%= activeTask.id %>/notes/<%= n.id %>/delete"
+                  class="inline-form danger">
+              <button type="submit">delete</button>
+            </form>
+          </div>
+        </li>
+      <% }); %>
+      <% if (notes.length === 0) { %>
+        <li class="muted">No notes yet.</li>
+      <% } %>
+    </ul>
+  </aside>
+</div>
+
+<%- include('partials/foot') %>
