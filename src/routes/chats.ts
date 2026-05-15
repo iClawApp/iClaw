@@ -5,7 +5,7 @@ import { chatStatus } from '../services/chatStatus';
 import { beginSse, endSse, writeSse, type ClientStreamEvent } from '../services/sse';
 import { gatewayWs, type GatewayActivity } from '../services/gatewayWs';
 import { lifecycleActivityLabel, toolActivityLabel } from '../services/toolLabels';
-import { deriveTitle, suggestChatTitleWithTimeout, TITLE_WAIT_DURING_RUN_MS } from '../services/chatTitle';
+import { deriveTitle, suggestChatTitleWithTimeout } from '../services/chatTitle';
 import type { Message } from '../types';
 
 export const chatsRouter: Router = Router();
@@ -31,56 +31,33 @@ function historyForChat(chatId: number): ChatMessage[] {
     .map((m) => ({ role: m.role as ChatMessage['role'], content: m.content }));
 }
 
-function isFirstTurn(chatId: number): boolean {
-  return messages.listByChat(chatId).filter((m) => m.role === 'user').length === 1;
-}
-
-function startEarlyTitleTask(opts: {
-  chatId: number;
-  model: string;
-  userMessage: string;
-}): Promise<string | null> | null {
-  if (!isFirstTurn(opts.chatId)) return null;
+/**
+ * Fire-and-forget title suggestion. Runs as a background sub-request to OpenClaw
+ * (~30s through the agent), independent of the main turn. When it resolves with
+ * a quality-validated title, we write it to the DB and emit an SSE update so
+ * the sidebar swaps the placeholder. If it fails or returns garbage, the
+ * placeholder (truncated user message) stays.
+ *
+ * Returns a Promise that the caller awaits BEFORE emitting `done`, so the
+ * final title is visible to the client when the turn completes.
+ */
+function backgroundTitleTask(
+  res: Response,
+  opts: { chatId: number; model: string; userMessage: string },
+): Promise<void> {
   const chat = chats.get(opts.chatId);
-  if (!chat || chat.title_manual) return null;
-  return suggestChatTitleWithTimeout(
-    { model: opts.model, userMessage: opts.userMessage, assistantReply: '' },
-    TITLE_WAIT_DURING_RUN_MS,
-  );
-}
+  if (!chat || chat.title_manual) return Promise.resolve();
 
-async function maybeApplyAutoTitle(
-  res: Response | null,
-  opts: {
-    chatId: number;
-    model: string;
-    userMessage: string;
-    assistantReply: string;
-    earlyTitle?: Promise<string | null> | null;
-  },
-): Promise<string | null> {
-  if (!isFirstTurn(opts.chatId)) return null;
-
-  const chat = chats.get(opts.chatId);
-  if (!chat || chat.title_manual) return null;
-
-  const placeholder = deriveTitle(opts.userMessage);
-  if (chat.title !== 'New chat' && chat.title !== placeholder) return null;
-
-  let suggested = await suggestChatTitleWithTimeout({
+  return suggestChatTitleWithTimeout({
     model: opts.model,
     userMessage: opts.userMessage,
-    assistantReply: opts.assistantReply,
+  }).then((suggested) => {
+    if (!suggested) return;
+    if (!chats.trySetAutoTitle(opts.chatId, suggested)) return;
+    if (!res.writableEnded) {
+      writeSse(res, { type: 'title', id: opts.chatId, title: suggested });
+    }
   });
-  if (!suggested && opts.earlyTitle) {
-    suggested = await opts.earlyTitle;
-  }
-  if (!suggested || !chats.trySetAutoTitle(opts.chatId, suggested)) return null;
-
-  if (res && !res.writableEnded) {
-    writeSse(res, { type: 'title', id: opts.chatId, title: suggested });
-  }
-  return suggested;
 }
 
 function gatewayActivityToSse(ev: GatewayActivity): ClientStreamEvent | null {
@@ -166,39 +143,31 @@ chatsRouter.post('/', async (req, res, next) => {
 
   const chat = chats.create(agent);
 
+  // Seed a placeholder title so the chat is fully usable even if the AI title
+  // task is slow / fails / gets rejected by quality gates.
+  const placeholderTitle = deriveTitle(content);
+  chats.trySetAutoTitle(chat.id, placeholderTitle);
+
   if (!wantsStream(req)) {
     try {
       const reply = await chatStatus.withLock(chat.id, async () => {
         messages.append(chat.id, 'user', content);
-        const earlyTitle = startEarlyTitleTask({
-          chatId: chat.id,
-          model: chat.agent,
-          userMessage: content,
-        });
         const result = await openclaw.chat({
           model: chat.agent,
           sessionKey: chat.openclaw_session_id,
           messages: [{ role: 'user', content }],
         });
-        const stored = messages.append(
+        return messages.append(
           chat.id,
           'assistant',
           result.content,
           result.finish_reason,
         );
-        const title = await maybeApplyAutoTitle(null, {
-          chatId: chat.id,
-          model: chat.agent,
-          userMessage: content,
-          assistantReply: result.content,
-          earlyTitle,
-        });
-        return { stored, title: title ?? chats.get(chat.id)?.title };
       });
       res.json({
         id: chat.id,
-        message: reply.stored,
-        title: reply.title ?? undefined,
+        message: reply,
+        title: chats.get(chat.id)?.title ?? placeholderTitle,
       });
     } catch (err) {
       next(err);
@@ -208,27 +177,29 @@ chatsRouter.post('/', async (req, res, next) => {
 
   beginSse(res);
   try {
+    // Tell the client immediately: chat exists, here's a usable title. The
+    // sidebar inserts the entry now; an AI-improved title may arrive later.
+    writeSse(res, { type: 'title', id: chat.id, title: placeholderTitle });
+
+    // Fire the AI title sub-request in the background. We `await` it before
+    // emitting `done` so the client sees the upgraded title (if any) before
+    // the turn closes — but the main stream is not blocked by it.
+    const titleTask = backgroundTitleTask(res, {
+      chatId: chat.id,
+      model: chat.agent,
+      userMessage: content,
+    });
+
     await chatStatus.withLock(chat.id, async () => {
       messages.append(chat.id, 'user', content);
-      const earlyTitle = startEarlyTitleTask({
-        chatId: chat.id,
-        model: chat.agent,
-        userMessage: content,
-      });
       const { content: reply, finishReason } = await runOpenClawStream(res, {
         model: chat.agent,
         sessionKey: chat.openclaw_session_id,
         messages: [{ role: 'user', content }],
       });
       const stored = messages.append(chat.id, 'assistant', reply, finishReason);
-      await maybeApplyAutoTitle(res, {
-        chatId: chat.id,
-        model: chat.agent,
-        userMessage: content,
-        assistantReply: reply,
-        earlyTitle,
-      });
-      const finalTitle = chats.get(chat.id)?.title ?? deriveTitle(content);
+      await titleTask;
+      const finalTitle = chats.get(chat.id)?.title ?? placeholderTitle;
       writeSse(res, { type: 'done', id: chat.id, title: finalTitle, message: stored });
     });
     endSse(res);
@@ -344,24 +315,12 @@ chatsRouter.post('/:id/messages', async (req, res, next) => {
     await chatStatus.withLock(id, async () => {
       const fresh = chats.get(id)!;
       messages.append(id, 'user', content);
-      const earlyTitle = startEarlyTitleTask({
-        chatId: id,
-        model: fresh.agent,
-        userMessage: content,
-      });
       const { content: reply, finishReason } = await runOpenClawStream(res, {
         model: fresh.agent,
         sessionKey: fresh.openclaw_session_id,
         messages: historyForChat(id),
       });
       const stored: Message = messages.append(id, 'assistant', reply, finishReason);
-      await maybeApplyAutoTitle(res, {
-        chatId: id,
-        model: fresh.agent,
-        userMessage: content,
-        assistantReply: reply,
-        earlyTitle,
-      });
       const finalTitle = chats.get(id)?.title ?? fresh.title;
       writeSse(res, { type: 'done', id, title: finalTitle, message: stored });
     });
