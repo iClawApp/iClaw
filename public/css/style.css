@@ -363,6 +363,21 @@ code {
   font-style: normal;
   font-weight: 500;
 }
+/* When the agent gave a detail (e.g. specific command summary), the status
+   becomes interactable: hover reveals the OS-native tooltip, click toggles
+   the inline-expanded text. */
+.stream-status.has-detail {
+  cursor: pointer;
+  border-bottom: 1px dotted currentColor;
+  user-select: none;
+}
+.stream-status.has-detail:hover {
+  filter: brightness(1.1);
+}
+.stream-status.detail-expanded {
+  font-style: italic;
+  font-weight: 500;
+}
 .msg.assistant.stream-generating .stream-body::after {
   content: '';
   display: inline-block;
@@ -575,6 +590,22 @@ code {
   background: var(--code-inline-bg);
   color: var(--muted);
 }
+
+.queue-remove {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-left: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0;
+}
+.queue-remove:hover { color: var(--danger); border-color: var(--danger); }
 
 .queue-text {
   flex: 1;

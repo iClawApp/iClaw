@@ -51,17 +51,26 @@
       <% } %>
       <% if (isWorking) { %>
         <%
-          // Activity persists across page reloads — server side state. Client
-          // (chat.js) polls /chats/status and updates the label live, then
-          // fetches the final assistant message when this chat goes idle.
+          // Activity persists across page reloads — server side state. The
+          // client's WS connection picks up live events after subscribing.
           const _act = currentActivity || { kind: 'thinking', label: 'Thinking…' };
           const _waitingClass = _act.kind === 'tool' || _act.kind === 'lifecycle'
             ? 'stream-tool'
             : (_act.kind === 'generating' ? 'stream-generating' : 'stream-waiting');
+          const _detail = _act.kind === 'tool' && _act.detail && _act.detail !== _act.label
+            ? _act.detail
+            : '';
         %>
         <div class="msg assistant streaming <%= _waitingClass %>" id="reload-placeholder">
           <div class="role">assistant</div>
-          <div class="stream-status"><%= _act.label %></div>
+          <div
+            class="stream-status<%= _detail ? ' has-detail' : '' %>"
+            <% if (_detail) { %>
+              data-detail="<%= _detail %>"
+              data-label="<%= _act.label %>"
+              title="<%= _detail %>"
+            <% } %>
+          ><%= _act.label %></div>
           <div class="msg-body stream-body"></div>
         </div>
       <% } %>

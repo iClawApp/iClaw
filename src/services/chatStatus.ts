@@ -15,7 +15,7 @@
 
 export type ChatActivity =
   | { kind: 'thinking'; label: string }
-  | { kind: 'tool'; name: string; label: string }
+  | { kind: 'tool'; name: string; label: string; detail?: string }
   | { kind: 'lifecycle'; phase: string; label: string }
   | { kind: 'generating'; label: string };
 

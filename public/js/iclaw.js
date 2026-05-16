@@ -149,19 +149,55 @@
   }
 
   // -------------------------------------------------------------------------
-  // queue widget
+  // queue widget — shows only WAITING items (not the in-flight one)
   // -------------------------------------------------------------------------
+
+  let nextQueueItemId = 1;
+
   function renderQueue() {
     if (!queueEl) return;
     queueEl.replaceChildren();
     waitingItems.forEach((item, idx) => {
       const el = document.createElement('div');
       el.className = 'queue-item queued';
+      el.dataset.itemId = item.id;
       const preview = item.content.length > 80 ? item.content.slice(0, 79) + '…' : item.content;
       el.innerHTML =
         '<span class="queue-status">Queued #' + (idx + 1) + '</span>' +
-        '<span class="queue-text">' + escapeHtml(preview) + '</span>';
+        '<span class="queue-text">' + escapeHtml(preview) + '</span>' +
+        '<button type="button" class="queue-remove" aria-label="Remove from queue" title="Remove from queue">×</button>';
       queueEl.appendChild(el);
+    });
+  }
+
+  // Click on a tool's stream-status with .has-detail toggles between the
+  // generic label and the detailed line. The next `turn-tool` start resets
+  // the expansion (see handleServerMsg/turn-tool), so the click is scoped
+  // to the current tool event only.
+  if (messagesEl) {
+    messagesEl.addEventListener('click', (e) => {
+      const status = e.target.closest('.stream-status.has-detail');
+      if (!status) return;
+      const expanded = status.classList.toggle('detail-expanded');
+      status.textContent = expanded
+        ? (status.dataset.detail || status.textContent)
+        : (status.dataset.label || status.textContent);
+    });
+  }
+
+  // Delete from queue via event delegation
+  if (queueEl) {
+    queueEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.queue-remove');
+      if (!btn) return;
+      const item = btn.closest('.queue-item');
+      const id = item?.dataset.itemId;
+      if (!id) return;
+      const idx = waitingItems.findIndex((it) => it.id === id);
+      if (idx >= 0) {
+        waitingItems.splice(idx, 1);
+        renderQueue();
+      }
     });
   }
 
@@ -381,8 +417,24 @@
         const status = el.querySelector('.stream-status');
         if (msg.phase === 'start' && status) {
           status.hidden = false;
-          // Prefer the agent's own description (e.g. "ls -la /tmp") when present.
-          status.textContent = msg.detail || msg.label || msg.name;
+          const label = msg.label || msg.name;
+          const detail = (msg.detail && msg.detail !== label) ? msg.detail : '';
+          // Always show the generic label. Hover (title) and click (expand)
+          // reveal the detail when present. Each new tool resets the
+          // expanded state — only this current event is interactable.
+          status.textContent = label;
+          status.classList.remove('detail-expanded');
+          if (detail) {
+            status.title = detail;
+            status.dataset.detail = detail;
+            status.dataset.label = label;
+            status.classList.add('has-detail');
+          } else {
+            status.removeAttribute('title');
+            delete status.dataset.detail;
+            delete status.dataset.label;
+            status.classList.remove('has-detail');
+          }
           el.classList.remove('stream-generating');
           el.classList.add('stream-tool');
         }
@@ -410,11 +462,11 @@
         // Belt + suspenders: kill any leftover reload-placeholder that might
         // still be on the page if events arrived in a weird order.
         clearStreamArtifacts();
-        // Drain queue (locally — server already serialized).
+        // The in-flight item is no longer in waitingItems (shifted out when
+        // flushNextQueued started). Just clear the inFlight flag and start
+        // the next one if any.
         if (inFlight) {
           inFlight = false;
-          waitingItems.shift();
-          renderQueue();
           if (waitingItems[0]) flushNextQueued();
         }
         return;
@@ -435,8 +487,9 @@
           '<div class="msg-body">' + escapeHtml('Error: ' + msg.error) + '</div>';
         messagesEl?.appendChild(div);
         setWorkingDot(msg.chatId, false);
+        // In-flight already shifted out of waitingItems when flushed.
         inFlight = false;
-        if (waitingItems.length) { waitingItems.shift(); renderQueue(); }
+        if (waitingItems[0]) flushNextQueued();
         return;
       }
     }
@@ -447,8 +500,11 @@
   // -------------------------------------------------------------------------
   function flushNextQueued() {
     if (inFlight) return;
-    const item = waitingItems[0];
+    // Take it out of the waiting list — it's no longer "queued", it's now
+    // the in-flight message. The queue widget only renders waiting items.
+    const item = waitingItems.shift();
     if (!item) return;
+    renderQueue();
     inFlight = true;
     // Optimistically append user msg. Mark it as pending-id so the
     // upcoming `message-appended` for the same user msg adopts this node
@@ -464,9 +520,11 @@
     if (activeChatId != null) payload.chatId = activeChatId;
     else payload.agent = draftAgentSelect?.value || 'openclaw/default';
     if (!wsSend(payload)) {
-      // No connection — keep in queue, retry when WS opens (handled in open handler).
-      // For now: notify error and bail.
+      // No connection — put the item back at the head so it isn't lost,
+      // and let the open handler retry.
       inFlight = false;
+      waitingItems.unshift(item);
+      renderQueue();
     }
   }
 
@@ -475,7 +533,7 @@
       e.preventDefault();
       const content = input.value.trim();
       if (!content) return;
-      waitingItems.push({ content });
+      waitingItems.push({ content, id: 'q-' + nextQueueItemId++ });
       input.value = '';
       renderQueue();
       flushNextQueued();
