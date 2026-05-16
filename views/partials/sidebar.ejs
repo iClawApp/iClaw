@@ -14,8 +14,8 @@
         data-chat-id="<%= c.id %>"
         title="<%= c.title %>"
       >
-        <span class="working-dot <%= workingIds.indexOf(c.id) >= 0 ? 'on' : '' %>" aria-hidden="true"></span>
         <span class="chat-item-title"><%= c.title %></span>
+        <span class="working-dot <%= workingIds.indexOf(c.id) >= 0 ? 'on' : '' %>" aria-hidden="true"></span>
       </a>
     <% }); %>
   </nav>

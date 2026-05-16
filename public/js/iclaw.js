@@ -216,8 +216,8 @@
       link.className = 'chat-item';
       link.dataset.chatId = String(id);
       link.innerHTML =
-        '<span class="working-dot" aria-hidden="true"></span>' +
-        '<span class="chat-item-title"></span>';
+        '<span class="chat-item-title"></span>' +
+        '<span class="working-dot" aria-hidden="true"></span>';
       list.prepend(link);
     }
     if (title != null) {
