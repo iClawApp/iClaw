@@ -10,7 +10,18 @@
   --muted: #71717a;
   --accent: #18181b;
 
-  /* Message bubbles */
+  /* Chat pane — ChatGPT-like conversation column */
+  --chat-pane-bg: #ffffff;
+  --header-surface: var(--chat-pane-bg);
+  --thread-max-width: 48rem;
+  --msg-gap: 1.25rem;
+  --msg-radius-user: 1.25rem;
+  --msg-user-fill: #f4f4f4;
+  --msg-user-stroke: transparent;
+  --msg-prose: #353740;
+  --msg-radius: 12px;
+
+  /* Message bubbles (legacy) */
   --user-bg: #f0f4ff;
   --user-code-bg: #ffffff;
   --user-code-border: #d4dcef;
@@ -32,9 +43,9 @@
   --btn-fg: #ffffff;
   --btn-bg-hover: #000000;
 
-  /* Markdown */
-  --md-link: #2563eb;
-  --md-link-hover: #1d4ed8;
+  /* Markdown (ChatGPT-ish link tone in prose) */
+  --md-link: #2962ff;
+  --md-link-hover: #1e54e5;
   --code-inline-bg: #f1f1f3;
   --code-inline-border: #e8e8eb;
   --code-inline-fg: #1f2937;
@@ -49,12 +60,18 @@
     --bg: #1a1a1a;
     --sidebar-bg: #141414;
     --surface: #232323;
-    --border: #2f2f2f;
+    --border: #424242;
     --hover: #2a2a2a;
     --active: #383838;
     --text: #ececec;
     --muted: #9ca3af;
     --accent: #ececec;
+
+    --chat-pane-bg: #212121;
+    --header-surface: var(--chat-pane-bg);
+    --msg-user-fill: #2f2f2f;
+    --msg-user-stroke: transparent;
+    --msg-prose: #d1d5db;
 
     /* Message bubbles */
     --user-bg: #1f2638;
@@ -79,8 +96,8 @@
     --btn-bg-hover: #ffffff;
 
     /* Markdown */
-    --md-link: #60a5fa;
-    --md-link-hover: #93c5fd;
+    --md-link: #7ab7ff;
+    --md-link-hover: #a8d0ff;
     --code-inline-bg: #2a2a2a;
     --code-inline-border: #3a3a3a;
     --code-inline-fg: #e5e7eb;
@@ -96,8 +113,10 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  font-size: 14px;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
   color: var(--text);
   background: var(--bg);
 }
@@ -229,50 +248,60 @@ code {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--chat-pane-bg);
 }
 
 .chat-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 92%, var(--chat-pane-bg));
+  background: var(--header-surface);
 }
 
 .chat-header h1 { flex: 1; }
 
-.rename-form { flex: 1; margin: 0; }
+.rename-form { flex: 1; margin: 0; min-width: 0; }
 .rename-form input {
   width: 100%;
   border: 1px solid transparent;
   background: transparent;
-  padding: 6px 8px;
+  padding: 8px 10px;
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 1.02rem;
+  letter-spacing: -0.02em;
+  border-radius: 10px;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.rename-form input:hover { border-color: var(--border); }
+.rename-form input:hover { border-color: color-mix(in srgb, var(--border) 80%, transparent); }
 .rename-form input:focus {
   outline: none;
-  border-color: var(--border);
+  border-color: color-mix(in srgb, var(--text) 14%, var(--border));
   background: var(--surface);
 }
 
 .agent-form { margin: 0; }
 .agent-form select {
-  font-size: 0.85em;
-  padding: 4px 8px;
+  font-size: 0.8rem;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  cursor: pointer;
+  max-width: 200px;
+  text-overflow: ellipsis;
 }
 
 .stop-btn {
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border-radius: 10px;
   cursor: pointer;
-  font-size: 0.85em;
+  font-size: 0.8rem;
+  font-weight: 500;
   line-height: 1;
   color: var(--text);
   display: inline-flex;
@@ -287,24 +316,26 @@ code {
 
 .delete-form { margin: 0; }
 .delete-form button {
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 6px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border-radius: 10px;
   cursor: pointer;
-  font-size: 1.2em;
+  font-size: 1.15em;
   line-height: 1;
   color: var(--muted);
 }
 .delete-form button:hover { color: var(--danger); border-color: var(--danger); }
 
 .gateway {
-  font-size: 0.75em;
-  padding: 3px 8px;
-  border-radius: 10px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: var(--msg-user-fill);
+  border: 1px solid var(--msg-user-stroke);
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 .gateway.ok { color: var(--ok); border-color: var(--ok-border); }
 .gateway.down { color: var(--down); border-color: var(--down-soft-border); }
@@ -320,71 +351,122 @@ code {
 
 .empty-state {
   text-align: center;
-  margin: 80px auto;
+  margin: 48px auto 32px;
+  max-width: 22rem;
+  padding: 0 20px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
 }
 
-/* ---------- Messages ---------- */
+/* ---------- Messages (ChatGPT-like thread) ---------- */
 
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 0;
+  overflow-x: hidden;
+  max-width: var(--thread-max-width);
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 16px 32px;
   display: flex;
   flex-direction: column;
+  gap: var(--msg-gap);
+  align-items: stretch;
+  scroll-behavior: smooth;
 }
 
 .msg {
-  max-width: 768px;
+  position: relative;
   width: 100%;
-  margin: 0 auto;
-  padding: 12px 24px;
-  white-space: pre-wrap;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  /* not pre-wrap: EJS indents between child divs would render as huge gaps */
+  white-space: normal;
   word-wrap: break-word;
-  line-height: 1.55;
+  line-height: 1.625;
+  letter-spacing: -0.01em;
 }
-.msg.user {
-  background: var(--user-bg);
+
+/* Assistant — flat prose on canvas (no bubble) */
+.msg.assistant,
+.msg.assistant.streaming {
   align-self: stretch;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
 }
-.msg.user .role { color: #3b82f6; }
-.msg.assistant { background: var(--assistant-bg); }
-.msg.assistant .role { color: var(--muted); }
-.msg.system {
-  background: var(--system-bg);
-  color: var(--muted);
-  font-style: italic;
-  font-size: 0.875em;
+
+.msg.assistant .msg-body,
+.msg.assistant.streaming .stream-body,
+.msg.assistant .stream-body {
+  color: var(--msg-prose);
 }
+
+/* User — light gray rounded bubble, right-aligned */
+.msg.user {
+  align-self: flex-end;
+  width: auto;
+  max-width: min(85%, 36rem);
+  background: var(--msg-user-fill);
+  color: var(--text);
+  border: 1px solid var(--msg-user-stroke);
+  border-radius: var(--msg-radius-user);
+  padding: 12px 16px 14px;
+  box-shadow: none;
+}
+
+.msg.user .msg-body {
+  color: var(--text);
+}
+
+/* ChatGPT hides role chrome; keep labels for screen readers only */
 .msg .role {
-  font-size: 0.7em;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 600;
-  margin-bottom: 6px;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
-.msg.pending { opacity: 0.5; font-style: italic; }
+
+.msg.pending { opacity: 0.55; font-style: italic; }
+
 .msg.assistant.streaming .stream-status {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.85em;
+  font-size: 0.8125rem;
   color: var(--muted);
-  font-style: italic;
+  font-style: normal;
   margin-bottom: 4px;
+  font-weight: 500;
 }
 .msg.assistant.streaming .stream-status::before {
   content: '';
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: #22c55e;
-  animation: pulse-dot 1.4s infinite;
+  background: var(--muted);
+  opacity: 0.7;
+  animation: stream-thinking-dot 1.25s ease-in-out infinite;
+}
+@keyframes stream-thinking-dot {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.85; }
 }
 .msg.assistant.stream-tool .stream-status {
-  color: var(--ok-soft-fg);
+  color: var(--muted);
   font-style: normal;
-  font-weight: 500;
+  font-weight: 600;
 }
 /* When the agent gave a detail (e.g. specific command summary), the status
    becomes interactable: hover reveals the OS-native tooltip, click toggles
@@ -409,20 +491,42 @@ code {
   margin-left: 2px;
   vertical-align: text-bottom;
   background: currentColor;
-  opacity: 0.7;
+  opacity: 0.55;
   animation: caret-blink 1s step-end infinite;
 }
 @keyframes caret-blink {
-  0%, 100% { opacity: 0.7; }
+  0%, 100% { opacity: 0.55; }
   50% { opacity: 0; }
 }
 .msg.assistant .stream-body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.msg.system {
+  align-self: center;
+  width: auto;
+  max-width: min(36rem, 94%);
+  background: var(--msg-user-fill);
+  color: var(--muted);
+  font-style: normal;
+  font-size: 0.8125rem;
+  text-align: center;
+  padding: 8px 14px;
+  border-radius: var(--msg-radius-user);
+  border: none;
+}
+
 .msg.error {
+  align-self: stretch;
   color: var(--danger);
   background: var(--down-soft-bg);
+  border: 1px solid var(--down-soft-border);
+  border-radius: var(--msg-radius);
+  padding: 12px 16px;
+  font-size: 0.875rem;
+  font-style: normal;
+  text-align: left;
 }
 .placeholder-text { display: inline; }
 
@@ -437,7 +541,7 @@ code {
 .msg-body > *:last-child  { margin-bottom: 0; }
 
 .msg-body p {
-  margin: 0 0 0.75em;
+  margin: 0 0 0.65em;
   line-height: 1.55;
 }
 
@@ -566,19 +670,13 @@ code {
   font-weight: 600;
 }
 
-/* User-side: inline code needs more contrast on the blue bubble */
-.msg.user .msg-body :not(pre) > code {
-  background: var(--user-code-bg);
-  border-color: var(--user-code-border);
-}
-
 /* When the assistant body is the streaming target, keep our markdown rules */
 .msg.assistant .stream-body { white-space: normal; }
 
 /* ---------- Queue panel (above composer) ---------- */
 
 .queue {
-  max-width: 768px;
+  max-width: var(--thread-max-width);
   width: 100%;
   margin: 0 auto;
   padding: 0 16px;
@@ -592,10 +690,10 @@ code {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  padding: 10px 14px;
+  border-radius: var(--msg-radius);
+  border: 1px solid var(--msg-user-stroke);
+  background: var(--msg-user-fill);
   font-size: 0.85em;
   min-width: 0;
 }
@@ -642,7 +740,7 @@ code {
 
 .composer {
   padding: 12px 20px 24px;
-  max-width: 768px;
+  max-width: var(--thread-max-width);
   width: 100%;
   margin: 0 auto;
 }
