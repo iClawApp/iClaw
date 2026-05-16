@@ -9,7 +9,7 @@
  * creation (WebSocket `send` without `chatId`).
  */
 
-import type { Message, Project, ProjectFact } from './index';
+import type { Message, Project, ProjectFact, ScheduledMessage } from './index';
 
 /* ---------------- Client → Server ---------------- */
 
@@ -126,4 +126,8 @@ export type ServerMsg =
       projectName: string;
       suggestions: { id: number; content: string }[];
     }
-  | { type: 'project-fact-suggestion-removed'; chatId: number; suggestionId: number };
+  | { type: 'project-fact-suggestion-removed'; chatId: number; suggestionId: number }
+
+  /* ---- scheduled messages (Telegram-style send-later) ---- */
+  | { type: 'scheduled-added'; chatId: number; scheduled: ScheduledMessage }
+  | { type: 'scheduled-deleted'; chatId: number; scheduledId: number };

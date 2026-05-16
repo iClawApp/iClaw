@@ -1,5 +1,13 @@
 import { Router } from 'express';
-import { chats, messages, chatSearch, projects, projectFactSuggestions, projectFacts } from '../services/store';
+import {
+  chats,
+  messages,
+  chatSearch,
+  projects,
+  projectFactSuggestions,
+  projectFacts,
+  scheduledMessages,
+} from '../services/store';
 import { compactProjectFacts } from '../services/projectMemory';
 import { openclaw } from '../services/openclaw';
 import { openclawWs } from '../services/openclawWs';
@@ -124,6 +132,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
       workingIds: chatStatus.workingIds(),
       isWorking: chatStatus.isWorking(id),
       currentActivity: chatStatus.getActivity(id),
+      scheduledList: scheduledMessages.listByChat(id),
     });
   } catch (err) {
     next(err);
@@ -233,4 +242,85 @@ chatsRouter.get('/:id/messages', (req, res) => {
     return;
   }
   res.json(messages.listByChat(id));
+});
+
+// ---------- scheduled messages (Telegram-style "send later") ----------
+
+/** List everything still pending for this chat. Used to hydrate the banner. */
+chatsRouter.get('/:id/scheduled', (req, res) => {
+  const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  res.json({ scheduled: scheduledMessages.listByChat(id) });
+});
+
+/**
+ * Queue a message to fire at a specific UTC instant.
+ *
+ * Body: { content: string, scheduledAt: ISO string }
+ *
+ * The scheduler service picks up rows where `scheduled_at <= datetime('now')`
+ * on every tick and dispatches them through `sendMessage` as if the user had
+ * just hit Send — so persistence, broadcasts, and project-context injection
+ * all behave identically.
+ */
+chatsRouter.post('/:id/scheduled', (req, res) => {
+  const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const content = String(req.body?.content ?? '').trim();
+  if (!content) {
+    res.status(400).json({ error: 'content required' });
+    return;
+  }
+  const rawAt = String(req.body?.scheduledAt ?? '').trim();
+  if (!rawAt) {
+    res.status(400).json({ error: 'scheduledAt required' });
+    return;
+  }
+  const when = new Date(rawAt);
+  if (Number.isNaN(when.getTime())) {
+    res.status(400).json({ error: 'invalid scheduledAt' });
+    return;
+  }
+  // Allow scheduling for "now" or even slightly in the past — the next sweep
+  // will fire it. This also covers clock skew between browser and server.
+  try {
+    const row = scheduledMessages.create({ chatId: id, content, scheduledAt: when });
+    wsHub.broadcastAll({
+      type: 'scheduled-added',
+      chatId: id,
+      scheduled: row,
+    });
+    res.json({ scheduled: row });
+  } catch (err) {
+    res
+      .status(400)
+      .json({ error: err instanceof Error ? err.message : 'failed to schedule' });
+  }
+});
+
+chatsRouter.post('/:id/scheduled/:scheduledId/delete', (req, res) => {
+  const id = Number(req.params.id);
+  const sid = Number(req.params.scheduledId);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const row = scheduledMessages.get(sid);
+  if (!row || row.chat_id !== id) {
+    res.status(404).json({ error: 'scheduled message not found' });
+    return;
+  }
+  scheduledMessages.remove(sid);
+  wsHub.broadcastAll({
+    type: 'scheduled-deleted',
+    chatId: id,
+    scheduledId: sid,
+  });
+  res.json({ ok: true });
 });

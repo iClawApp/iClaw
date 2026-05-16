@@ -514,6 +514,9 @@ code {
   align-items: center;
   gap: 6px;
 }
+.stop-btn[hidden] {
+  display: none !important;
+}
 .stop-btn:hover {
   color: var(--danger);
   border-color: var(--danger);
@@ -579,7 +582,14 @@ code {
   flex-direction: column;
   gap: var(--msg-gap);
   align-items: stretch;
-  scroll-behavior: smooth;
+  /* No scroll-behavior: smooth — assigning scrollTop animates with it, which
+     means opening a chat scrolls visibly from the top to the bottom every
+     time. We want the latest message to be there on first paint. */
+}
+/* Hide the transcript until we've scrolled it to the latest message — kills
+   the flash-of-top-content when opening a chat with a long history. */
+.messages[data-defer-paint] {
+  visibility: hidden;
 }
 
 .msg {
@@ -1156,6 +1166,151 @@ code {
   opacity: 0.35;
   cursor: progress;
   transform: none;
+}
+
+/* ---------- Scheduled messages ---------- */
+
+.scheduled-list {
+  max-width: var(--thread-max-width);
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scheduled-list.is-empty {
+  display: none;
+}
+.scheduled-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--accent, var(--text)) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent, var(--text)) 16%, var(--border));
+  border-radius: 12px;
+  font-size: 0.9em;
+}
+.scheduled-item-main {
+  flex: 1;
+  min-width: 0;
+}
+.scheduled-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.85em;
+  margin-bottom: 2px;
+}
+.scheduled-item-clock {
+  font-size: 0.9em;
+  line-height: 1;
+}
+.scheduled-item-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  line-height: 1.35;
+}
+.scheduled-item-cancel {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1.05em;
+  line-height: 1;
+  padding: 0;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.scheduled-item-cancel:hover {
+  color: var(--danger, #b00020);
+  border-color: color-mix(in srgb, var(--danger, #b00020) 28%, transparent);
+  background: color-mix(in srgb, var(--danger, #b00020) 8%, transparent);
+}
+
+/* Schedule menu — popover anchored to send button */
+.composer-field {
+  position: relative;
+}
+.schedule-menu {
+  position: absolute;
+  right: 6px;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-size: 0.92em;
+}
+.schedule-menu[hidden] {
+  display: none;
+}
+.schedule-menu-item {
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+}
+.schedule-menu-item:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.schedule-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.schedule-custom-row[hidden] {
+  display: none;
+}
+.schedule-custom-row span {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+.schedule-custom-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9em;
+}
+.schedule-custom-confirm {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  font: inherit;
+  font-size: 0.85em;
+  cursor: pointer;
+}
+.schedule-custom-confirm:hover {
+  background: var(--btn-bg-hover);
 }
 
 @media (prefers-color-scheme: dark) {

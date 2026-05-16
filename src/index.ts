@@ -3,11 +3,13 @@ import { createServer } from 'node:http';
 import { createApp } from './app';
 import { attachWsServer } from './routes/ws';
 import { openclaw } from './services/openclaw';
+import { scheduler } from './services/scheduler';
 
 const port = Number(process.env.PORT ?? 3000);
 const app = createApp();
 const server = createServer(app);
 attachWsServer(server);
+scheduler.start();
 
 server.listen(port, () => {
   console.log(`iClaw listening on http://localhost:${port}`);

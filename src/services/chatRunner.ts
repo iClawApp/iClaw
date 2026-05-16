@@ -113,6 +113,17 @@ async function runTurnLocked(opts: {
   const userMsg = messages.append(chatId, 'user', content);
   wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: userMsg });
 
+  // `messages.append` bumped `chats.updated_at`. Tell every tab so the sidebar
+  // re-sorts and this chat jumps to the top live (instead of only after F5).
+  const chatAfterUserMsg = chats.get(chatId);
+  if (chatAfterUserMsg) {
+    wsHub.broadcastAll({
+      type: 'chat-updated',
+      chatId,
+      updatedAt: chatAfterUserMsg.updated_at,
+    });
+  }
+
   // Title sub-request, in background, on first turn only.
   const titleTask: Promise<void> = isFirstTurn
     ? suggestChatTitleWithTimeout({ model: chat.agent, userMessage: content })
@@ -240,7 +251,6 @@ async function runTurnLocked(opts: {
     scheduleProjectFactExtraction({
       chatId,
       projectId: chatAfter.project_id,
-      agentLabel: chatAfter.agent,
       sharesToProject: Boolean(chatAfter.shares_to_project),
       userMessage: content,
       assistantText: finalText,

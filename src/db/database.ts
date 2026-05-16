@@ -7,7 +7,6 @@ CREATE TABLE IF NOT EXISTS projects (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
   description TEXT,
-  logo_preset INTEGER NOT NULL DEFAULT 0,
   logo_emoji  INTEGER NOT NULL DEFAULT 0,
   logo_color  INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
@@ -61,6 +60,18 @@ CREATE TABLE IF NOT EXISTS project_fact_suggestions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fact_suggestions_chat ON project_fact_suggestions(chat_id, id);
+
+CREATE TABLE IF NOT EXISTS scheduled_messages (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id      INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  content      TEXT NOT NULL,
+  /** Stored as 'YYYY-MM-DD HH:MM:SS' UTC — comparable with datetime('now'). */
+  scheduled_at TEXT NOT NULL,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_messages(scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_chat ON scheduled_messages(chat_id, scheduled_at);
 `;
 
 function dropObsoleteTables(db: Database.Database): void {
@@ -116,22 +127,31 @@ function migrateSchema(database: Database.Database): void {
       );
     }
     const hadLogoEmoji = projCols.some((c) => c.name === 'logo_emoji');
-    if (!projCols.some((c) => c.name === 'logo_preset')) {
-      database.exec('ALTER TABLE projects ADD COLUMN logo_preset INTEGER NOT NULL DEFAULT 0');
-    }
+    const hadLogoPreset = projCols.some((c) => c.name === 'logo_preset');
     if (!hadLogoEmoji) {
       database.exec('ALTER TABLE projects ADD COLUMN logo_emoji INTEGER NOT NULL DEFAULT 0');
     }
     if (!projCols.some((c) => c.name === 'logo_color')) {
       database.exec('ALTER TABLE projects ADD COLUMN logo_color INTEGER NOT NULL DEFAULT 0');
     }
-    if (!hadLogoEmoji && projCols.some((c) => c.name === 'logo_preset')) {
+    if (!hadLogoEmoji && hadLogoPreset) {
+      // One-time migration from the old single-int preset to the emoji+color
+      // split. After this runs `logo_preset` is dead weight.
       database.exec(`
         UPDATE projects SET
           logo_emoji = ABS(COALESCE(logo_preset, 0)) % 10,
           logo_color = (ABS(COALESCE(logo_preset, 0)) / 10) % 10
         WHERE 1 = 1
       `);
+    }
+    if (hadLogoPreset) {
+      // SQLite 3.35+ supports DROP COLUMN. better-sqlite3 ships a modern
+      // SQLite, so this works on every supported install.
+      try {
+        database.exec('ALTER TABLE projects DROP COLUMN logo_preset');
+      } catch {
+        /* Older SQLite — leave the dead column alone, it's harmless. */
+      }
     }
   }
 }

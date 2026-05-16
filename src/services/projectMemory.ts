@@ -19,17 +19,29 @@ const MAX_FACT_LINE_CHARS = 240;
 
 const compactingProjects = new Set<number>();
 
+/**
+ * Sub-tasks (extract + compact) always run against the gateway's default
+ * agent. Using whatever agent the chat is on (`openclaw/code`, etc.) made the
+ * two pipelines inconsistent and risked specialised agents underperforming on
+ * a plain text-extraction prompt. One agent, one behaviour.
+ */
+const SUBTASK_AGENT_ID = 'main';
+
 function approxTokens(s: string): number {
   return Math.ceil(s.length / CHARS_PER_TOKEN_EST);
 }
 
-function agentIdFromLabel(model: string): string {
-  if (!model || model === 'openclaw' || model === 'openclaw/default') return 'main';
-  return model.startsWith('openclaw/') ? model.slice('openclaw/'.length) : model;
-}
-
 function sleep<T = null>(ms: number, value: T | null = null): Promise<T | null> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
+}
+
+/** Strip leading bullet/number markers from a parsed model output line. */
+function stripBulletPrefix(line: string): string {
+  return line
+    .trim()
+    .replace(/^[-*•]+\s*/, '')
+    .replace(/^\d+[.)]\s*/, '')
+    .trim();
 }
 
 /**
@@ -95,16 +107,7 @@ function parseExtractedFactLines(raw: string): string[] {
   if (!t || /^none\.?$/i.test(t) || /^no facts\.?$/i.test(t) || /^nothing\.?$/i.test(t)) {
     return [];
   }
-  const lines = t
-    .split(/\r?\n/)
-    .map((l) =>
-      l
-        .trim()
-        .replace(/^[-*•]+\s*/, '')
-        .replace(/^\d+[.)]\s*/, '')
-        .trim(),
-    )
-    .filter((l) => l.length > 0);
+  const lines = t.split(/\r?\n/).map(stripBulletPrefix).filter((l) => l.length > 0);
   return lines.slice(0, 3).map((l) => (l.length > MAX_FACT_LINE_CHARS ? l.slice(0, MAX_FACT_LINE_CHARS) : l));
 }
 
@@ -143,11 +146,10 @@ function buildExtractPrompt(opts: {
   ].join('\n');
 }
 
-async function runThrowawayTurn(agentLabel: string, message: string): Promise<string> {
-  const agentId = agentIdFromLabel(agentLabel);
+async function runThrowawayTurn(message: string): Promise<string> {
   let sessionKey: string | null = null;
   try {
-    const session = await openclawWs.createSession({ agentId });
+    const session = await openclawWs.createSession({ agentId: SUBTASK_AGENT_ID });
     sessionKey = session.key;
     let acc = '';
     await openclawWs.runTurn({
@@ -165,13 +167,12 @@ async function runThrowawayTurn(agentLabel: string, message: string): Promise<st
 }
 
 export async function extractFactsFromTurn(opts: {
-  agentLabel: string;
   userMessage: string;
   assistantText: string;
   existingFacts: string[];
 }): Promise<string[]> {
   const raw = await Promise.race([
-    runThrowawayTurn(opts.agentLabel, buildExtractPrompt(opts)),
+    runThrowawayTurn(buildExtractPrompt(opts)),
     sleep<string>(EXTRACT_BUDGET_MS, ''),
   ]);
   if (raw == null || raw === '') return [];
@@ -200,20 +201,14 @@ export async function compactProjectFacts(projectId: number): Promise<void> {
     if (contents.length <= FACT_COMPACTION_THRESHOLD) return;
 
     const raw = await Promise.race([
-      runThrowawayTurn('openclaw/default', buildCompactionPrompt(contents)),
+      runThrowawayTurn(buildCompactionPrompt(contents)),
       sleep<string>(EXTRACT_BUDGET_MS, ''),
     ]);
     if (raw == null || raw === '') return;
 
     const merged = raw
       .split(/\r?\n/)
-      .map((l) =>
-        l
-          .trim()
-          .replace(/^[-*•]+\s*/, '')
-          .replace(/^\d+[.)]\s*/, '')
-          .trim(),
-      )
+      .map(stripBulletPrefix)
       .filter((l) => l.length > 0)
       .slice(0, COMPACTION_TARGET_LINES);
 
@@ -231,7 +226,6 @@ export async function compactProjectFacts(projectId: number): Promise<void> {
 async function runProjectFactExtraction(opts: {
   chatId: number;
   projectId: number;
-  agentLabel: string;
   userMessage: string;
   assistantText: string;
   assistantMessageId: number;
@@ -245,7 +239,6 @@ async function runProjectFactExtraction(opts: {
   const existingContents = existingRows.map((r) => r.content);
 
   const candidates = await extractFactsFromTurn({
-    agentLabel: opts.agentLabel,
     userMessage: opts.userMessage,
     assistantText: opts.assistantText,
     existingFacts: existingContents,
@@ -286,7 +279,6 @@ async function runProjectFactExtraction(opts: {
 export function scheduleProjectFactExtraction(opts: {
   chatId: number;
   projectId: number;
-  agentLabel: string;
   sharesToProject: boolean;
   userMessage: string;
   assistantText: string;

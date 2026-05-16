@@ -1,3 +1,35 @@
+<%
+  // Render any rows that are still pending so the banner is correct on first
+  // paint (before the WS connection comes online). JS hydrates from /scheduled
+  // for fallbacks and listens for `scheduled-added`/`scheduled-deleted` live.
+  const _scheduled =
+    typeof scheduledList !== 'undefined' && Array.isArray(scheduledList)
+      ? scheduledList
+      : [];
+%>
+<div
+  id="scheduled-list"
+  class="scheduled-list<%= _scheduled.length === 0 ? ' is-empty' : '' %>"
+  aria-live="polite"
+><% _scheduled.forEach(function (s) { %>
+  <div class="scheduled-item" data-scheduled-id="<%= s.id %>" data-scheduled-at="<%= s.scheduled_at %>">
+    <div class="scheduled-item-main">
+      <div class="scheduled-item-meta">
+        <span class="scheduled-item-clock" aria-hidden="true">⏰</span>
+        <span class="scheduled-item-when" data-when="<%= s.scheduled_at %>"><%= s.scheduled_at %></span>
+      </div>
+      <div class="scheduled-item-text"><%= s.content %></div>
+    </div>
+    <button
+      type="button"
+      class="scheduled-item-cancel"
+      data-scheduled-id="<%= s.id %>"
+      aria-label="Скасувати заплановане повідомлення"
+      title="Скасувати"
+    >×</button>
+  </div>
+<% }); %></div>
+
 <form id="send-form" class="composer">
   <div class="composer-field">
     <textarea
@@ -7,10 +39,37 @@
       rows="1"
       required
     ></textarea>
-    <button type="submit" class="composer-send" aria-label="Send">
+    <button
+      type="submit"
+      class="composer-send"
+      id="composer-send-btn"
+      aria-label="Send (утримай — запланувати)"
+      title="Натисніть, щоб надіслати. Утримуйте, щоб запланувати."
+    >
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M12 19V5M5 12l7-7 7 7"/>
       </svg>
     </button>
+
+    <!-- Schedule menu — anchored to the send button. JS shows it on long-press
+         and on right-click. Stays out of the tab order until visible. -->
+    <div
+      id="schedule-menu"
+      class="schedule-menu"
+      role="menu"
+      aria-label="Запланувати"
+      hidden
+    >
+      <button type="button" class="schedule-menu-item" data-offset="10m" role="menuitem">Через 10 хв</button>
+      <button type="button" class="schedule-menu-item" data-offset="1h"  role="menuitem">Через 1 годину</button>
+      <button type="button" class="schedule-menu-item" data-offset="3h"  role="menuitem">Через 3 години</button>
+      <button type="button" class="schedule-menu-item" data-offset="tomorrow9" role="menuitem">Завтра 09:00</button>
+      <button type="button" class="schedule-menu-item" data-offset="custom" role="menuitem">Вибрати час…</button>
+      <label class="schedule-custom-row" hidden>
+        <span>Час:</span>
+        <input type="datetime-local" id="schedule-custom-input" class="schedule-custom-input" />
+        <button type="button" class="schedule-custom-confirm" id="schedule-custom-confirm">OK</button>
+      </label>
+    </div>
   </div>
 </form>

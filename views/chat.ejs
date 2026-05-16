@@ -68,6 +68,7 @@
       class="messages"
       id="messages"
       data-chat-id="<%= activeChat.id %>"
+      data-defer-paint="1"
     >
       <% if (chatMessages.length === 0) { %>
         <p class="muted empty-state">No messages yet. Say something.</p>

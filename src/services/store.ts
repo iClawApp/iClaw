@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { db } from '../db/database';
 import { deriveTitle } from './chatTitle';
-import type { Chat, Message, Project, ProjectFact, ProjectFactSuggestion } from '../types';
+import type {
+  Chat,
+  Message,
+  Project,
+  ProjectFact,
+  ProjectFactSuggestion,
+  ScheduledMessage,
+} from '../types';
 import { clampLogoColor, clampLogoEmoji } from '../constants/projectLogos';
 
 // ---------- chats ----------
@@ -155,7 +162,7 @@ export const projects = {
   create(name: string, description?: string | null): Project {
     const info = db
       .prepare(
-        'INSERT INTO projects (name, description, logo_preset, logo_emoji, logo_color) VALUES (?, ?, 0, 0, 0)',
+        'INSERT INTO projects (name, description, logo_emoji, logo_color) VALUES (?, ?, 0, 0)',
       )
       .run(name.trim() || 'Untitled', description ?? null);
     return this.get(Number(info.lastInsertRowid))!;
@@ -312,6 +319,65 @@ export const projectFactSuggestions = {
   },
   remove(id: number): void {
     db.prepare('DELETE FROM project_fact_suggestions WHERE id = ?').run(id);
+  },
+};
+
+// ---------- scheduled messages ----------
+
+/**
+ * Convert an ISO string (or `Date`) into the same UTC `YYYY-MM-DD HH:MM:SS`
+ * format that SQLite's `datetime('now')` produces, so direct string comparison
+ * picks up due rows. Throws on invalid input — callers should validate first.
+ */
+function toSqliteUtc(input: string | Date): string {
+  const d = typeof input === 'string' ? new Date(input) : input;
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) {
+    throw new Error('invalid scheduled_at');
+  }
+  return d.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
+}
+
+export const scheduledMessages = {
+  listByChat(chatId: number): ScheduledMessage[] {
+    return db
+      .prepare(
+        'SELECT * FROM scheduled_messages WHERE chat_id = ? ORDER BY scheduled_at ASC, id ASC',
+      )
+      .all(chatId) as ScheduledMessage[];
+  },
+  get(id: number): ScheduledMessage | undefined {
+    return db.prepare('SELECT * FROM scheduled_messages WHERE id = ?').get(id) as
+      | ScheduledMessage
+      | undefined;
+  },
+  /** Rows whose `scheduled_at` is now or in the past — what the sweeper fires. */
+  listDue(limit = 50): ScheduledMessage[] {
+    return db
+      .prepare(
+        `SELECT * FROM scheduled_messages
+         WHERE scheduled_at <= datetime('now')
+         ORDER BY scheduled_at ASC, id ASC
+         LIMIT ?`,
+      )
+      .all(limit) as ScheduledMessage[];
+  },
+  create(opts: {
+    chatId: number;
+    content: string;
+    scheduledAt: string | Date;
+  }): ScheduledMessage {
+    const trimmed = opts.content.trim();
+    if (!trimmed) throw new Error('content required');
+    const at = toSqliteUtc(opts.scheduledAt);
+    const info = db
+      .prepare(
+        'INSERT INTO scheduled_messages (chat_id, content, scheduled_at) VALUES (?, ?, ?)',
+      )
+      .run(opts.chatId, trimmed, at);
+    return this.get(Number(info.lastInsertRowid))!;
+  },
+  remove(id: number): void {
+    db.prepare('DELETE FROM scheduled_messages WHERE id = ?').run(id);
   },
 };
 

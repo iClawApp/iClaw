@@ -1293,6 +1293,18 @@
         if (cnt) cnt.textContent = String(msg.facts.length);
         return;
       }
+
+      case 'scheduled-added': {
+        if (msg.chatId !== activeChatId) return;
+        renderScheduledItem(msg.scheduled);
+        return;
+      }
+
+      case 'scheduled-deleted': {
+        if (msg.chatId !== activeChatId) return;
+        removeScheduledItem(msg.scheduledId);
+        return;
+      }
     }
   }
 
@@ -1338,6 +1350,12 @@
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       if (startedOnDraft && !draftProjectLocked) return;
+      // If the schedule menu was just opened by a long-press, the bubbling
+      // click on the send button would otherwise submit a regular message.
+      if (scheduleMenuJustOpened || isScheduleMenuOpen()) {
+        scheduleMenuJustOpened = false;
+        return;
+      }
       const content = input.value.trim();
       if (!content) return;
       waitingItems.push({ content, id: 'q-' + nextQueueItemId++ });
@@ -1352,6 +1370,241 @@
       }
     });
     if (!startedOnDraft || draftProjectLocked) input.focus();
+  }
+
+  // -------------------------------------------------------------------------
+  // scheduled messages (Telegram-style hold-to-send-later)
+  // -------------------------------------------------------------------------
+  const scheduleMenu = document.getElementById('schedule-menu');
+  const sendBtn = document.getElementById('composer-send-btn');
+  const scheduledListEl = document.getElementById('scheduled-list');
+  const scheduleCustomRow = scheduleMenu?.querySelector('.schedule-custom-row');
+  const scheduleCustomInput = document.getElementById('schedule-custom-input');
+  const scheduleCustomConfirm = document.getElementById('schedule-custom-confirm');
+  const LONG_PRESS_MS = 450;
+  let schedulePressTimer = null;
+  let scheduleMenuJustOpened = false;
+
+  function isScheduleMenuOpen() {
+    return scheduleMenu != null && !scheduleMenu.hidden;
+  }
+  function closeScheduleMenu() {
+    if (!scheduleMenu) return;
+    scheduleMenu.hidden = true;
+    if (scheduleCustomRow) scheduleCustomRow.hidden = true;
+  }
+  function openScheduleMenu() {
+    if (!scheduleMenu) return;
+    if (!input.value.trim()) return; // nothing to schedule
+    scheduleMenu.hidden = false;
+    if (scheduleCustomRow) scheduleCustomRow.hidden = true;
+  }
+
+  /** Parse the SQLite UTC stamp ("YYYY-MM-DD HH:MM:SS") as a real UTC instant. */
+  function parseScheduledStamp(stamp) {
+    if (!stamp) return null;
+    const s = String(stamp).trim();
+    // ISO with timezone — trust as-is
+    if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) {
+      const d = new Date(s);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+    // 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DDTHH:MM:SS' — server emits UTC
+    const norm = s.replace(' ', 'T') + 'Z';
+    const d = new Date(norm);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  /** Render the "when" cell as a friendly local string. */
+  function formatScheduledWhen(stamp) {
+    const d = parseScheduledStamp(stamp);
+    if (!d) return String(stamp);
+    const now = new Date();
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    const sameDay = d.toDateString() === now.toDateString();
+    const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+    const isTomorrow = d.toDateString() === tomorrow.toDateString();
+    if (sameDay) return 'сьогодні ' + time;
+    if (isTomorrow) return 'завтра ' + time;
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ', ' + time;
+  }
+
+  function computeScheduledAt(offset) {
+    const now = new Date();
+    if (offset === '10m') return new Date(now.getTime() + 10 * 60_000);
+    if (offset === '1h')  return new Date(now.getTime() + 60 * 60_000);
+    if (offset === '3h')  return new Date(now.getTime() + 3 * 60 * 60_000);
+    if (offset === 'tomorrow9') {
+      const d = new Date(now);
+      d.setDate(d.getDate() + 1);
+      d.setHours(9, 0, 0, 0);
+      return d;
+    }
+    return null;
+  }
+
+  /** Pad a Date into 'YYYY-MM-DDTHH:MM' for `<input type="datetime-local">`. */
+  function toDatetimeLocalValue(d) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+      + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function refreshScheduledTimes() {
+    if (!scheduledListEl) return;
+    scheduledListEl.querySelectorAll('.scheduled-item-when[data-when]').forEach((el) => {
+      el.textContent = formatScheduledWhen(el.dataset.when);
+    });
+  }
+
+  function renderScheduledItem(scheduled) {
+    if (!scheduledListEl) return;
+    if (scheduledListEl.querySelector('.scheduled-item[data-scheduled-id="' + scheduled.id + '"]')) return;
+    const row = document.createElement('div');
+    row.className = 'scheduled-item';
+    row.dataset.scheduledId = String(scheduled.id);
+    row.dataset.scheduledAt = scheduled.scheduled_at;
+    row.innerHTML =
+      '<div class="scheduled-item-main">' +
+      '<div class="scheduled-item-meta">' +
+      '<span class="scheduled-item-clock" aria-hidden="true">⏰</span>' +
+      '<span class="scheduled-item-when" data-when="' + escapeHtml(scheduled.scheduled_at) + '">' +
+      escapeHtml(formatScheduledWhen(scheduled.scheduled_at)) + '</span>' +
+      '</div>' +
+      '<div class="scheduled-item-text">' + escapeHtml(scheduled.content) + '</div>' +
+      '</div>' +
+      '<button type="button" class="scheduled-item-cancel" data-scheduled-id="' +
+      scheduled.id + '" aria-label="Скасувати заплановане повідомлення" title="Скасувати">×</button>';
+    scheduledListEl.appendChild(row);
+    scheduledListEl.classList.remove('is-empty');
+  }
+  function removeScheduledItem(id) {
+    if (!scheduledListEl) return;
+    const row = scheduledListEl.querySelector('.scheduled-item[data-scheduled-id="' + id + '"]');
+    if (row) row.remove();
+    if (!scheduledListEl.querySelector('.scheduled-item')) {
+      scheduledListEl.classList.add('is-empty');
+    }
+  }
+
+  async function submitScheduled(when) {
+    if (activeChatId == null) return;
+    const content = input.value.trim();
+    if (!content) return;
+    if (when.getTime() <= Date.now() - 60_000) {
+      // 60s of tolerance; older than that is almost certainly a mistake.
+      alert('Час уже минув — оберіть час у майбутньому.');
+      return;
+    }
+    try {
+      const res = await fetch(
+        '/chats/' + encodeURIComponent(activeChatId) + '/scheduled',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content, scheduledAt: when.toISOString() }),
+        },
+      );
+      if (!res.ok) throw new Error(await res.text());
+      input.value = '';
+      closeScheduleMenu();
+      // Live `scheduled-added` broadcast will render the row.
+    } catch (err) {
+      alert('Не вдалось запланувати: ' + (err instanceof Error ? err.message : err));
+    }
+  }
+
+  // long-press detection on the send button
+  if (sendBtn) {
+    sendBtn.addEventListener('pointerdown', () => {
+      if (startedOnDraft || activeChatId == null) return;
+      if (!input.value.trim()) return;
+      if (schedulePressTimer) clearTimeout(schedulePressTimer);
+      schedulePressTimer = setTimeout(() => {
+        schedulePressTimer = null;
+        scheduleMenuJustOpened = true;
+        openScheduleMenu();
+      }, LONG_PRESS_MS);
+    });
+    const clearPress = () => {
+      if (schedulePressTimer) {
+        clearTimeout(schedulePressTimer);
+        schedulePressTimer = null;
+      }
+    };
+    sendBtn.addEventListener('pointerup', clearPress);
+    sendBtn.addEventListener('pointerleave', clearPress);
+    sendBtn.addEventListener('pointercancel', clearPress);
+    // Capture-phase click guard — swallows the synthetic click that follows
+    // the pointerup at the end of a long-press, which would otherwise submit
+    // the form.
+    sendBtn.addEventListener('click', (e) => {
+      if (scheduleMenuJustOpened || isScheduleMenuOpen()) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    }, true);
+  }
+
+  if (scheduleMenu) {
+    scheduleMenu.addEventListener('click', (e) => {
+      const btn = e.target.closest('.schedule-menu-item');
+      if (!btn) return;
+      const offset = btn.dataset.offset;
+      if (offset === 'custom') {
+        if (scheduleCustomRow) scheduleCustomRow.hidden = false;
+        if (scheduleCustomInput) {
+          scheduleCustomInput.value = toDatetimeLocalValue(new Date(Date.now() + 60 * 60_000));
+          scheduleCustomInput.focus();
+        }
+        return;
+      }
+      const when = computeScheduledAt(offset);
+      if (when) submitScheduled(when);
+    });
+    scheduleCustomConfirm?.addEventListener('click', () => {
+      const v = scheduleCustomInput?.value;
+      if (!v) return;
+      // datetime-local is interpreted as the user's local time
+      const d = new Date(v);
+      if (Number.isNaN(d.getTime())) return;
+      submitScheduled(d);
+    });
+  }
+
+  // Close the schedule menu on outside click or Esc.
+  document.addEventListener('click', (e) => {
+    if (!isScheduleMenuOpen()) return;
+    if (scheduleMenu.contains(e.target)) return;
+    if (sendBtn?.contains(e.target)) return;
+    closeScheduleMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isScheduleMenuOpen()) closeScheduleMenu();
+  });
+
+  // Cancel buttons on the scheduled-list banner.
+  if (scheduledListEl) {
+    scheduledListEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.scheduled-item-cancel');
+      if (!btn) return;
+      const sid = Number(btn.dataset.scheduledId);
+      if (!Number.isFinite(sid) || activeChatId == null) return;
+      // Optimistic remove; if it fails, `scheduled-added` won't fire so we'd
+      // miss the row. Acceptable — refetch on next page load anyway.
+      removeScheduledItem(sid);
+      try {
+        await fetch(
+          '/chats/' + encodeURIComponent(activeChatId) +
+            '/scheduled/' + encodeURIComponent(sid) + '/delete',
+          { method: 'POST' },
+        );
+      } catch {
+        /* silent — broadcast will reconcile */
+      }
+    });
+    // Hydrate the EJS-rendered "when" cells with local-friendly strings.
+    refreshScheduledTimes();
   }
 
   // -------------------------------------------------------------------------
@@ -1515,9 +1768,18 @@
   // boot
   // -------------------------------------------------------------------------
   hydrateServerRenderedMessages();
-  // Show the latest message first (chats default to the bottom of the
-  // transcript, like every other chat UI). Defer to the next frame so the
-  // hydrated markdown has actually been laid out.
-  requestAnimationFrame(() => scrollToBottom());
+  // Show the latest message immediately — set scrollTop synchronously so the
+  // first paint already has the bottom in view. `data-defer-paint` on the
+  // section keeps it invisible until we strip the attribute below; without
+  // that the browser may flash the top of the transcript for a frame.
+  if (messagesEl) {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    requestAnimationFrame(() => {
+      // Re-affirm after layout settles (markdown rendering may shift heights),
+      // then reveal the section.
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      messagesEl.removeAttribute('data-defer-paint');
+    });
+  }
   connectWs();
 })();

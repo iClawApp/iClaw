@@ -2,8 +2,6 @@ export interface Project {
   id: number;
   name: string;
   description: string | null;
-  /** @deprecated legacy single index; unused if logo_emoji/logo_color set */
-  logo_preset?: number;
   /** Index into `PROJECT_LOGO_EMOJIS` (0–9). */
   logo_emoji: number;
   /** Background tone index (0–9), maps to `[data-logo-color]` CSS. */
@@ -20,6 +18,16 @@ export interface ProjectFact {
   source_message_id: number | null;
   created_at: string;
   updated_at: string;
+}
+
+/** A user message queued to fire at a specific time (Telegram-style schedule). */
+export interface ScheduledMessage {
+  id: number;
+  chat_id: number;
+  content: string;
+  /** ISO-ish 'YYYY-MM-DD HH:MM:SS' UTC string from SQLite datetime(). */
+  scheduled_at: string;
+  created_at: string;
 }
 
 /** LLM-proposed fact awaiting user accept/reject in the chat UI. */
