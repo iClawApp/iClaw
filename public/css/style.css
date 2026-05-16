@@ -665,6 +665,11 @@ code {
   opacity: 0.7;
   animation: stream-thinking-dot 1.25s ease-in-out infinite;
 }
+/* Tool / command status already reads as “busy”; drop the extra pulse so it
+   doesn’t stack with the clickable affordance (felt like a stray dotted bar). */
+.msg.assistant.stream-tool .stream-status::before {
+  display: none;
+}
 @keyframes stream-thinking-dot {
   0%, 100% { opacity: 0.35; }
   50% { opacity: 0.85; }
@@ -679,15 +684,21 @@ code {
    the inline-expanded text. */
 .stream-status.has-detail {
   cursor: pointer;
-  border-bottom: 1px dotted currentColor;
   user-select: none;
+  text-decoration: underline solid color-mix(in srgb, currentColor 38%, transparent);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
 }
 .stream-status.has-detail:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.08);
+  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
 }
 .stream-status.detail-expanded {
-  font-style: italic;
+  font-style: normal;
   font-weight: 500;
+  text-decoration: none;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .msg.assistant.stream-generating .stream-body::after {
   content: '';

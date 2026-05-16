@@ -42,6 +42,15 @@
         </select>
       </form>
 
+      <button
+        type="button"
+        class="stop-btn"
+        id="stop-btn"
+        aria-label="Stop generation"
+        title="Stop this turn"
+        hidden
+      >■ Stop</button>
+
       <span class="gateway <%= gatewayUp ? 'ok' : 'down' %>" title="<%= openclawBaseUrl %>">
         OpenClaw: <%= gatewayUp ? 'connected' : 'unreachable' %>
       </span>

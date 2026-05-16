@@ -376,9 +376,8 @@
   }
 
   // Click on a tool's stream-status with .has-detail toggles between the
-  // generic label and the detailed line. The next `turn-tool` start resets
-  // the expansion (see handleServerMsg/turn-tool), so the click is scoped
-  // to the current tool event only.
+  // generic label and the detailed line. While expanded, new tool-start
+  // events keep showing detail until the user collapses or the turn ends.
   if (messagesEl) {
     messagesEl.addEventListener('click', (e) => {
       const acc = e.target.closest('.fact-suggestion-accept');
@@ -986,9 +985,16 @@
         if (msg.chatId !== activeChatId) return;
         setStopVisible(true);
         ensureStreamEl();
-        if (msg.activity?.label) {
+        {
           const status = currentStreamEl?.querySelector('.stream-status');
-          if (status) status.textContent = msg.activity.label;
+          if (status) {
+            status.hidden = false;
+            status.classList.remove('detail-expanded', 'has-detail');
+            status.removeAttribute('title');
+            delete status.dataset.detail;
+            delete status.dataset.label;
+            status.textContent = msg.activity?.label || 'Thinking…';
+          }
         }
         return;
 
@@ -1021,21 +1027,25 @@
           status.hidden = false;
           const label = msg.label || msg.name;
           const detail = (msg.detail && msg.detail !== label) ? msg.detail : '';
-          // Always show the generic label. Hover (title) and click (expand)
-          // reveal the detail when present. Each new tool resets the
-          // expanded state — only this current event is interactable.
-          status.textContent = label;
-          status.classList.remove('detail-expanded');
+          const keepDetailOpen = status.classList.contains('detail-expanded');
           if (detail) {
-            status.title = detail;
             status.dataset.detail = detail;
             status.dataset.label = label;
+            status.title = detail;
             status.classList.add('has-detail');
+            if (keepDetailOpen) {
+              status.classList.add('detail-expanded');
+              status.textContent = detail;
+            } else {
+              status.classList.remove('detail-expanded');
+              status.textContent = label;
+            }
           } else {
             status.removeAttribute('title');
             delete status.dataset.detail;
             delete status.dataset.label;
-            status.classList.remove('has-detail');
+            status.classList.remove('has-detail', 'detail-expanded');
+            status.textContent = label;
           }
           el.classList.remove('stream-generating');
           el.classList.add('stream-tool');
