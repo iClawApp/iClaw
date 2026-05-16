@@ -32,32 +32,46 @@ These are intentional non-goals. Don't add them. If a request lands here that ne
                        │WS      │HTTP /media/*  /health
                        │native  │
                   ┌────▼────────▼───────────────────────┐
-                  │  iClaw Express app (port 3000)      │
+                  │  iClaw Express + WS app (port 3000) │
                   │                                     │
                   │  gatewayWs.ts   ← single WS         │
                   │      ▲                              │
-                  │      │                              │
                   │  openclawWs.ts ← domain client      │
                   │      ▲                              │
-                  │      │                              │
-                  │  routes/chats.ts → SSE to browser   │
-                  └─────────────────────────────────────┘
-                       │SSE
-                       ▼
-                  ┌─────────────────┐
-                  │  Browser        │
-                  │  chat.js +      │
-                  │  marked (md)    │
-                  └─────────────────┘
+                  │  chatRunner.ts ← turn orchestrator  │
+                  │      ▲                              │
+                  │      ├─ routes/ws.ts  (browser WS)  │
+                  │      └─ routes/chats.ts (form POST) │
+                  │           rename/agent/delete only  │
+                  │                                     │
+                  │  wsHub.ts ← pub/sub fanout          │
+                  └────┬─────────────────────────────┬──┘
+                       │WS /ws (real-time)            │HTTP (forms + pages)
+                       ▼                              ▼
+                  ┌──────────────────────────────────────┐
+                  │  Browser — public/js/iclaw.js +      │
+                  │  vendored marked.min.js              │
+                  └──────────────────────────────────────┘
 ```
+
+Browser ↔ server is **one persistent WebSocket** at `/ws`. All chat traffic
+(send, abort, streaming turn events, cross-tab sync) flows through it.
+HTTP routes only exist for: page rendering (EJS), one-shot form actions
+(rename, change agent, delete), the `/media/*` proxy, and `GET
+/health`-style endpoints. After every HTTP form-action that mutates a chat
+the server emits the matching `chat-updated` / `chat-deleted` over WS so
+other tabs catch up instantly.
 
 ### The canonical client paths
 
 | What you want | Use |
 | --- | --- |
+| Run a turn (high-level: persist + broadcast) | `chatRunner.sendMessage({chatId?, content, agentLabel?, subscriber?})` |
+| Push to a subscribed chat | `wsHub.broadcastToChat(chatId, msg)` |
+| Push to every connected tab | `wsHub.broadcastAll(msg)` |
 | List agents | `openclawWs.listAgents()` |
 | Create a session | `openclawWs.createSession({ agentId })` |
-| Send a message + stream events | `openclawWs.runTurn({ sessionKey, message, onEvent })` |
+| Send + stream a single OpenClaw turn (low-level) | `openclawWs.runTurn({ sessionKey, message, onEvent })` |
 | Get transcript | `openclawWs.getHistory(sessionKey)` |
 | Cancel running turn | `openclawWs.abortRun(sessionKey, runId?)` |
 | Generic RPC against the gateway | `gatewayWs.request(method, params)` |
@@ -65,6 +79,12 @@ These are intentional non-goals. Don't add them. If a request lands here that ne
 | Raw frame access | `gatewayWs.onFrame(listener)` |
 | Check gateway is up (no auth needed) | `openclaw.health()` |
 | Read base URL for templates / proxy targets | `openclaw.baseUrl` |
+
+Anything that mutates a chat from a route handler MUST also broadcast the
+corresponding `chat-updated` / `chat-deleted` over `wsHub.broadcastAll`.
+Otherwise other tabs won't see the change until they reload. Convention:
+`routes/chats.ts` POST handlers do this directly; `chatRunner` does it for
+title/agent changes inside a turn.
 
 `src/services/openclaw.ts` is a deliberately tiny module — just `baseUrl` + `health()`. **Do not grow it.** All chat / agent / session work goes through `openclawWs.ts`.
 
