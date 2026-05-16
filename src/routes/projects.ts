@@ -8,6 +8,7 @@
  */
 
 import { Router } from 'express';
+import { listProjectLinkEntries } from '../services/projectLinks';
 import { chats, projects, projectFacts } from '../services/store';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
@@ -25,9 +26,11 @@ function wantsJson(req: import('express').Request): boolean {
 
 projectsRouter.get('/', (_req, res) => {
   const allProjects = projects.list();
-  const projectRows = allProjects.map((p) => ({
-    project: p,
-    chatCount: chats.listByProject(p.id).length,
+  const projectRows = projects.listWithMetrics().map((row) => ({
+    project: row.project,
+    chatCount: row.chatTotal,
+    msgs14: row.messages14d,
+    chats14: row.chats14d,
   }));
   res.render('projects', {
     chats: chats.list(),
@@ -72,6 +75,7 @@ projectsRouter.get('/:id', (req, res) => {
     project,
     projectChats: chats.listByProject(id),
     facts: projectFacts.listByProject(id),
+    projectLinks: listProjectLinkEntries(id),
     allProjects: projects.list(),
     activeChat: null,
     activeProject: project,

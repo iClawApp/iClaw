@@ -82,6 +82,47 @@
   let currentStreamEl = null;
   let currentStreamFullText = '';
 
+  /** Single-character ellipsis used in tool / lifecycle labels (`Running command…`). */
+  const STATUS_UNICODE_ELLIPSIS = '\u2026';
+  const streamStatusDotTimers = new WeakMap();
+
+  function stopStreamStatusDotAnim(statusEl) {
+    if (!statusEl) return;
+    const id = streamStatusDotTimers.get(statusEl);
+    if (id != null) {
+      clearInterval(id);
+      streamStatusDotTimers.delete(statusEl);
+    }
+  }
+
+  /** If `text` ends with `…` or `...`, cycle 0–3 ASCII dots after the base. */
+  function setStreamStatusLabel(statusEl, text) {
+    if (!statusEl) return;
+    const raw = String(text ?? '');
+    stopStreamStatusDotAnim(statusEl);
+    let base = raw;
+    let animate = false;
+    if (raw.endsWith(STATUS_UNICODE_ELLIPSIS)) {
+      base = raw.slice(0, -1);
+      animate = true;
+    } else if (raw.endsWith('...')) {
+      base = raw.slice(0, -3);
+      animate = true;
+    }
+    if (!animate) {
+      statusEl.textContent = raw;
+      return;
+    }
+    let step = 0;
+    function tick() {
+      const n = step % 4;
+      statusEl.textContent = base + '.'.repeat(n);
+      step += 1;
+    }
+    tick();
+    streamStatusDotTimers.set(statusEl, setInterval(tick, 450));
+  }
+
   // -------------------------------------------------------------------------
   // markdown
   // -------------------------------------------------------------------------
@@ -258,9 +299,11 @@
     div.className = 'msg assistant streaming stream-waiting';
     div.innerHTML =
       '<div class="role">assistant</div>' +
-      '<div class="stream-status">Thinking…</div>' +
+      '<div class="stream-status"></div>' +
       '<div class="msg-body stream-body"></div>';
     messagesEl.appendChild(div);
+    const st = div.querySelector('.stream-status');
+    if (st) setStreamStatusLabel(st, 'Thinking…');
     scrollToBottom();
     return div;
   }
@@ -450,9 +493,13 @@
       const status = e.target.closest('.stream-status.has-detail');
       if (!status) return;
       const expanded = status.classList.toggle('detail-expanded');
-      status.textContent = expanded
-        ? (status.dataset.detail || status.textContent)
-        : (status.dataset.label || status.textContent);
+      if (expanded) {
+        stopStreamStatusDotAnim(status);
+        status.textContent = status.dataset.detail || status.textContent;
+      } else {
+        const lab = status.dataset.label || status.textContent;
+        setStreamStatusLabel(status, lab);
+      }
     });
   }
 
@@ -487,6 +534,30 @@
     return document.getElementById('projects-hub-list');
   }
 
+  function sortProjectsHubRows() {
+    const ul = getProjectsHubListEl();
+    if (!ul) return;
+    const rows = Array.from(ul.querySelectorAll(':scope > li.projects-hub-row'));
+    if (rows.length < 2) return;
+    function key(li) {
+      const msgs = parseInt(li.getAttribute('data-msgs-14') || '0', 10) || 0;
+      const chats = parseInt(li.getAttribute('data-chats-14') || '0', 10) || 0;
+      const name = (li.querySelector('.projects-hub-name')?.textContent || '').toLowerCase();
+      const id = parseInt(li.getAttribute('data-project-id') || '0', 10) || 0;
+      return { msgs, chats, name, id };
+    }
+    rows.sort((a, b) => {
+      const pa = key(a);
+      const pb = key(b);
+      if (pb.msgs !== pa.msgs) return pb.msgs - pa.msgs;
+      if (pb.chats !== pa.chats) return pb.chats - pa.chats;
+      const cmp = pa.name.localeCompare(pb.name, 'uk', { sensitivity: 'base' });
+      if (cmp !== 0) return cmp;
+      return pa.id - pb.id;
+    });
+    for (const li of rows) ul.appendChild(li);
+  }
+
   function appendProjectsHubRow(project) {
     const ul = getProjectsHubListEl();
     if (!ul || !project) return;
@@ -497,6 +568,8 @@
     const li = document.createElement('li');
     li.className = 'projects-hub-row';
     li.dataset.projectId = String(pid);
+    li.setAttribute('data-msgs-14', '0');
+    li.setAttribute('data-chats-14', '0');
     const ei = clampLogoEmojiJs(project.logo_emoji);
     const ci = clampLogoColorJs(project.logo_color);
     const nm = String(project.name || 'Project').trim() || 'Project';
@@ -510,6 +583,7 @@
       '</span>' +
       '<span class="projects-hub-meta muted">0 chats</span></a>';
     ul.appendChild(li);
+    sortProjectsHubRows();
   }
 
   function removeProjectsHubRow(projectId) {
@@ -1015,7 +1089,10 @@
             );
             target.dataset.msgId = String(msg.message.id);
             const status = target.querySelector('.stream-status');
-            if (status) status.remove();
+            if (status) {
+              stopStreamStatusDotAnim(status);
+              status.remove();
+            }
             const body = target.querySelector('.stream-body, .msg-body');
             if (body) {
               body.classList.remove('stream-body');
@@ -1048,7 +1125,7 @@
             status.removeAttribute('title');
             delete status.dataset.detail;
             delete status.dataset.label;
-            status.textContent = msg.activity?.label || 'Thinking…';
+            setStreamStatusLabel(status, msg.activity?.label || 'Thinking…');
           }
         }
         return;
@@ -1063,7 +1140,10 @@
           el.classList.remove('stream-waiting', 'stream-tool');
           el.classList.add('stream-generating');
           const status = el.querySelector('.stream-status');
-          if (status) status.hidden = true;
+          if (status) {
+            stopStreamStatusDotAnim(status);
+            status.hidden = true;
+          }
         }
         const body = el.querySelector('.stream-body, .msg-body');
         if (body) {
@@ -1090,17 +1170,18 @@
             status.classList.add('has-detail');
             if (keepDetailOpen) {
               status.classList.add('detail-expanded');
+              stopStreamStatusDotAnim(status);
               status.textContent = detail;
             } else {
               status.classList.remove('detail-expanded');
-              status.textContent = label;
+              setStreamStatusLabel(status, label);
             }
           } else {
             status.removeAttribute('title');
             delete status.dataset.detail;
             delete status.dataset.label;
             status.classList.remove('has-detail', 'detail-expanded');
-            status.textContent = label;
+            setStreamStatusLabel(status, label);
           }
           el.classList.remove('stream-generating');
           el.classList.add('stream-tool');
@@ -1114,7 +1195,7 @@
         const status = el.querySelector('.stream-status');
         if (status && !currentStreamFullText) {
           status.hidden = false;
-          status.textContent = msg.label || msg.phase;
+          setStreamStatusLabel(status, msg.label || msg.phase);
         }
         return;
       }
@@ -1150,6 +1231,8 @@
         setInterruptVisible(false);
         finalizeReasoningBlock();
         if (currentStreamEl) {
+          const st = currentStreamEl.querySelector('.stream-status');
+          stopStreamStatusDotAnim(st);
           currentStreamEl.remove();
           currentStreamEl = null;
         }
@@ -1234,6 +1317,7 @@
           );
         }
         updateProjectsHubRow(msg.project);
+        sortProjectsHubRows();
         return;
       }
 
@@ -2181,10 +2265,52 @@
     });
   }
 
-  // -------------------------------------------------------------------------
-  // boot
-  // -------------------------------------------------------------------------
+  function initProjectPageTabs() {
+    const root = document.querySelector('main.project-page[data-project-id]');
+    if (!root) return;
+    const tabs = root.querySelectorAll('[data-project-tab]');
+    const panels = {
+      chats: document.getElementById('project-panel-chats'),
+      memory: document.getElementById('project-panel-memory'),
+      links: document.getElementById('project-panel-links'),
+    };
+    if (!tabs.length || !panels.chats || !panels.memory || !panels.links) return;
+
+    function activate(name) {
+      tabs.forEach((btn) => {
+        const on = btn.getAttribute('data-project-tab') === name;
+        btn.classList.toggle('is-active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        btn.tabIndex = on ? 0 : -1;
+      });
+      Object.keys(panels).forEach((k) => {
+        const el = panels[k];
+        if (!el) return;
+        const on = k === name;
+        el.classList.toggle('project-panel--active', on);
+        el.hidden = !on;
+      });
+    }
+
+    tabs.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const name = btn.getAttribute('data-project-tab');
+        if (!name || !panels[name]) return;
+        activate(name);
+      });
+    });
+  }
+  initProjectPageTabs();
   hydrateServerRenderedMessages();
+  (function seedMidTurnStreamStatusDots() {
+    const st = document.querySelector('#reload-placeholder .stream-status');
+    if (!st || st.classList.contains('detail-expanded')) return;
+    const seed =
+      (st.dataset.label && String(st.dataset.label).trim()) ||
+      (st.textContent || '').trim() ||
+      'Thinking…';
+    setStreamStatusLabel(st, seed);
+  })();
   // Show the latest message immediately — set scrollTop synchronously so the
   // first paint already has the bottom in view. `data-defer-paint` on the
   // section keeps it invisible until we strip the attribute below; without

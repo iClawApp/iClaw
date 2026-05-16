@@ -167,11 +167,64 @@ export const messages = {
 
 // ---------- projects ----------
 
+/** Activity in the last 14 days (messages, then distinct chats with messages). */
+export type ProjectListMetrics = {
+  project: Project;
+  chatTotal: number;
+  messages14d: number;
+  chats14d: number;
+};
+
+type ProjectRowWithMetrics = Project & {
+  chat_total: number;
+  msgs_14: number;
+  chats_14: number;
+};
+
+function listProjectsWithMetricsRows(): ProjectRowWithMetrics[] {
+  return db
+    .prepare(
+      `SELECT
+         p.id,
+         p.name,
+         p.description,
+         p.logo_emoji,
+         p.logo_color,
+         p.created_at,
+         p.updated_at,
+         (SELECT COUNT(*) FROM chats c WHERE c.project_id = p.id) AS chat_total,
+         (SELECT COUNT(*) FROM messages m
+            INNER JOIN chats c ON c.id = m.chat_id
+            WHERE c.project_id = p.id
+              AND datetime(m.created_at) >= datetime('now', '-14 days')) AS msgs_14,
+         (SELECT COUNT(DISTINCT m.chat_id) FROM messages m
+            INNER JOIN chats c ON c.id = m.chat_id
+            WHERE c.project_id = p.id
+              AND datetime(m.created_at) >= datetime('now', '-14 days')) AS chats_14
+       FROM projects p
+       ORDER BY msgs_14 DESC, chats_14 DESC, unicode_lower(p.name) ASC, p.id ASC`,
+    )
+    .all() as ProjectRowWithMetrics[];
+}
+
 export const projects = {
   list(): Project[] {
-    return db
-      .prepare('SELECT * FROM projects ORDER BY updated_at DESC, id DESC')
-      .all() as Project[];
+    return listProjectsWithMetricsRows().map((r) => {
+      const { chat_total, msgs_14, chats_14, ...project } = r;
+      return project as Project;
+    });
+  },
+  /** Same order as `list()`, plus chat totals and 14-day activity for hub UI. */
+  listWithMetrics(): ProjectListMetrics[] {
+    return listProjectsWithMetricsRows().map((r) => {
+      const { chat_total, msgs_14, chats_14, ...project } = r;
+      return {
+        project: project as Project,
+        chatTotal: Number(chat_total) || 0,
+        messages14d: Number(msgs_14) || 0,
+        chats14d: Number(chats_14) || 0,
+      };
+    });
   },
   get(id: number): Project | undefined {
     return db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project | undefined;

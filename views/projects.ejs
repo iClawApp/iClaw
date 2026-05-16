@@ -42,7 +42,12 @@
             const _ei = typeof p.logo_emoji === 'number' ? p.logo_emoji : 0;
             const _ci = typeof p.logo_color === 'number' ? p.logo_color : 0;
           %>
-            <li class="projects-hub-row" data-project-id="<%= p.id %>">
+            <li
+              class="projects-hub-row"
+              data-project-id="<%= p.id %>"
+              data-msgs-14="<%= row.msgs14 %>"
+              data-chats-14="<%= row.chats14 %>"
+            >
               <a href="/projects/<%= p.id %>" class="projects-hub-link">
                 <%- include('partials/projectLogo', { emojiIndex: _ei, colorIndex: _ci }) %>
                 <span class="projects-hub-name"><%= p.name %></span>
