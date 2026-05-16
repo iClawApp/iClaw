@@ -27,6 +27,15 @@
         </select>
       </form>
 
+      <button
+        type="button"
+        class="stop-btn"
+        id="stop-btn"
+        aria-label="Stop generation"
+        title="Stop this turn"
+        <%= isWorking ? '' : 'hidden' %>
+      >■ Stop</button>
+
       <form method="post" action="/chats/<%= activeChat.id %>/delete" class="delete-form">
         <button type="submit" onclick="return confirm('Delete this chat?')" aria-label="Delete">
           ×

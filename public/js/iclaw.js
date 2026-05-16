@@ -19,6 +19,7 @@
   const button = form?.querySelector('button');
   const titleInput = document.getElementById('chat-title-input');
   const draftAgentSelect = document.getElementById('draft-agent');
+  const stopBtn = document.getElementById('stop-btn');
 
   const rawChatId = messagesEl?.dataset.chatId;
   const startedOnDraft = messagesEl?.dataset.draft === '1' || !rawChatId;
@@ -383,6 +384,7 @@
       case 'turn-started':
         setWorkingDot(msg.chatId, true);
         if (msg.chatId !== activeChatId) return;
+        setStopVisible(true);
         ensureStreamEl();
         if (msg.activity?.label) {
           const status = currentStreamEl?.querySelector('.stream-status');
@@ -459,6 +461,7 @@
       case 'turn-ended':
         setWorkingDot(msg.chatId, false);
         if (msg.chatId !== activeChatId) return;
+        setStopVisible(false);
         // Belt + suspenders: kill any leftover reload-placeholder that might
         // still be on the page if events arrived in a weird order.
         clearStreamArtifacts();
@@ -476,6 +479,7 @@
           setWorkingDot(msg.chatId, false);
           return;
         }
+        setStopVisible(false);
         if (currentStreamEl) {
           currentStreamEl.remove();
           currentStreamEl = null;
@@ -576,8 +580,30 @@
   }
 
   // -------------------------------------------------------------------------
+  // stop button (visible while this chat is working)
+  // -------------------------------------------------------------------------
+  function setStopVisible(visible) {
+    if (!stopBtn) return;
+    stopBtn.hidden = !visible;
+  }
+  if (stopBtn) {
+    stopBtn.addEventListener('click', () => {
+      if (activeChatId == null) return;
+      wsSend({ type: 'abort', chatId: activeChatId });
+      // Optimistically disable until server confirms via turn-error/ended,
+      // so a frustrated double-click doesn't spam the gateway.
+      stopBtn.disabled = true;
+      setTimeout(() => { stopBtn.disabled = false; }, 3000);
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // boot
   // -------------------------------------------------------------------------
   hydrateServerRenderedMessages();
+  // Show the latest message first (chats default to the bottom of the
+  // transcript, like every other chat UI). Defer to the next frame so the
+  // hydrated markdown has actually been laid out.
+  requestAnimationFrame(() => scrollToBottom());
   connectWs();
 })();

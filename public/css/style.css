@@ -262,6 +262,26 @@ code {
   padding: 4px 8px;
 }
 
+.stop-btn {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85em;
+  line-height: 1;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.stop-btn:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.stop-btn:disabled { opacity: 0.5; cursor: progress; }
+
 .delete-form { margin: 0; }
 .delete-form button {
   width: 32px;
