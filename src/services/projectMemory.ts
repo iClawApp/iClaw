@@ -59,7 +59,7 @@ export function buildGatewayUserMessage(
   if (all.length === 0) return storedUserContent;
 
   const prefixBase =
-    '[Project context — shared facts for this workspace. Treat as background; the user message follows after the separator.]\n';
+    '[Project context — shared facts for this workspace. Treat as background only; respond in direct conversation to the user (their message is after the separator).]\n';
   const suffix = '\n---\n[User message]\n' + storedUserContent;
   const budget = Math.max(
     200,

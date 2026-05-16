@@ -1228,24 +1228,82 @@ code {
   color: var(--code-inline-fg);
 }
 
-/* fenced code block */
-.msg-body pre {
+/* fenced code block — `.code-block-wrap` positions the copy control (iclaw.js) */
+.code-block-wrap {
+  position: relative;
   margin: 0.5em 0 1em;
-  padding: 12px 14px;
+}
+
+.code-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  margin: 0;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--code-block-fg);
+  opacity: 0.42;
+  cursor: pointer;
+  transition:
+    opacity 0.12s ease,
+    background 0.12s ease;
+}
+
+.code-copy-icon {
+  display: block;
+  pointer-events: none;
+}
+
+.code-copy-icon--ok {
+  color: var(--ok);
+}
+
+.code-copy-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--code-block-fg) 10%, transparent);
+}
+
+.code-copy-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid color-mix(in srgb, var(--md-link) 50%, transparent);
+  outline-offset: 2px;
+}
+
+.code-copy-btn:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.code-block-wrap > pre {
+  margin: 0;
+  padding: 12px 40px 12px 14px;
   background: var(--code-block-bg);
   color: var(--code-block-fg);
   border-radius: 8px;
   overflow-x: auto;
   font-size: 0.85em;
-  line-height: 1.5;
+  line-height: 1.55;
 }
-.msg-body pre code {
+
+.code-block-wrap > pre code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: transparent;
   border: 0;
   padding: 0;
   color: inherit;
   white-space: pre;
+}
+
+.msg.user .code-block-wrap {
+  max-width: 100%;
 }
 
 /* blockquote */

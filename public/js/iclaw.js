@@ -268,8 +268,44 @@
     if (ta) ta.dataset.saved = String(f.content || '').trim();
     return li;
   }
+  /** Clipboard + check — inline SVG, `currentColor` from `.code-copy-btn`. */
+  const CODE_COPY_ICON_SVG =
+    '<svg class="code-copy-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M16 1H4a2 2 0 0 0-2 2v12h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
+  const CODE_COPIED_ICON_SVG =
+    '<svg class="code-copy-icon code-copy-icon--ok" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"/></svg>';
+
   function decorateLinks(root) {
-    root.querySelectorAll('a[href]').forEach((a) => { a.target = '_blank'; a.rel = 'noopener noreferrer'; });
+    root.querySelectorAll('a[href]').forEach((a) => {
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+    });
+  }
+
+  /** Wrap fenced ``` blocks for a floating copy control (after markdown → DOM). */
+  function enhanceCodeBlocks(root) {
+    if (!root || root.nodeType !== 1) return;
+    const pres = root.querySelectorAll('.msg-body pre, .stream-body pre, .reasoning-body pre');
+    pres.forEach((pre) => {
+      if (pre.parentElement?.classList.contains('code-block-wrap')) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'code-block-wrap';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'code-copy-btn';
+      btn.innerHTML = CODE_COPY_ICON_SVG;
+      btn.setAttribute('aria-label', 'Копіювати код');
+      btn.title = 'Копіювати';
+      const parent = pre.parentElement;
+      if (!parent) return;
+      parent.insertBefore(wrap, pre);
+      wrap.appendChild(pre);
+      wrap.appendChild(btn);
+    });
+  }
+
+  function decorateMessageBody(root) {
+    decorateLinks(root);
+    enhanceCodeBlocks(root);
   }
 
   // -------------------------------------------------------------------------
@@ -294,7 +330,7 @@
     div.innerHTML =
       '<div class="role">' + escapeHtml(msg.role || 'system') + '</div>' +
       '<div class="msg-body">' + renderMarkdown(msg.content || '') + '</div>';
-    decorateLinks(div);
+    decorateMessageBody(div);
     messagesAppendRoot().appendChild(div);
     scrollToBottom();
     return div;
@@ -346,7 +382,7 @@
       const raw = body.textContent ?? '';
       if (!raw) return;
       body.innerHTML = renderMarkdown(raw);
-      decorateLinks(body);
+      decorateMessageBody(body);
     });
   }
 
@@ -475,6 +511,31 @@
   // events keep showing detail until the user collapses or the turn ends.
   if (messagesEl) {
     messagesEl.addEventListener('click', (e) => {
+      const copyBtn = e.target.closest('.code-copy-btn');
+      if (copyBtn) {
+        const wrap = copyBtn.closest('.code-block-wrap');
+        const pre = wrap?.querySelector(':scope > pre');
+        const code = pre?.querySelector('code');
+        const raw = (code?.textContent ?? pre?.textContent ?? '').replace(/\u00a0/g, ' ');
+        if (!raw.trim()) return;
+        e.preventDefault();
+        const showCopied = () => {
+          copyBtn.innerHTML = CODE_COPIED_ICON_SVG;
+          copyBtn.setAttribute('aria-label', 'Скопійовано');
+          copyBtn.removeAttribute('title');
+          copyBtn.disabled = true;
+          setTimeout(() => {
+            copyBtn.innerHTML = CODE_COPY_ICON_SVG;
+            copyBtn.setAttribute('aria-label', 'Копіювати код');
+            copyBtn.title = 'Копіювати';
+            copyBtn.disabled = false;
+          }, 1700);
+        };
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          navigator.clipboard.writeText(raw).then(showCopied).catch(() => {});
+        }
+        return;
+      }
       const acc = e.target.closest('.fact-suggestion-accept');
       const rej = e.target.closest('.fact-suggestion-reject');
       if (acc || rej) {
@@ -1104,7 +1165,7 @@
             if (body) {
               body.classList.remove('stream-body');
               body.innerHTML = renderMarkdown(msg.message.content || '');
-              decorateLinks(body);
+              decorateMessageBody(body);
             }
             currentStreamEl = null;
             currentStreamFullText = '';
@@ -1155,7 +1216,7 @@
         const body = el.querySelector('.stream-body, .msg-body');
         if (body) {
           body.innerHTML = renderMarkdown(currentStreamFullText);
-          decorateLinks(body);
+          decorateMessageBody(body);
         }
         scrollToBottom();
         return;
