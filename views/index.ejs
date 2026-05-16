@@ -92,11 +92,13 @@
       <% } %>
 
       <section class="messages" id="messages" data-chat-id="" data-draft="1">
-        <% if (agentsError) { %>
-          <p class="error">Gateway unreachable: <code><%= agentsError %></code></p>
-        <% } else { %>
-          <p class="muted empty-state" id="draft-empty-hint" hidden>Напишіть перше повідомлення.</p>
-        <% } %>
+        <div class="messages-thread">
+          <% if (agentsError) { %>
+            <p class="error">Gateway unreachable: <code><%= agentsError %></code></p>
+          <% } else { %>
+            <p class="muted empty-state" id="draft-empty-hint" hidden>Напишіть перше повідомлення.</p>
+          <% } %>
+        </div>
       </section>
 
       <section class="queue" id="queue" aria-live="polite"></section>

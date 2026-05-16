@@ -13,6 +13,13 @@
   // shared DOM handles + state
   // -------------------------------------------------------------------------
   const messagesEl = document.getElementById('messages');
+  function getMessagesThreadEl() {
+    return messagesEl?.querySelector(':scope > .messages-thread') ?? null;
+  }
+  /** Inner column for transcript rows (scroll bar stays on `#messages` full width). */
+  function messagesAppendRoot() {
+    return getMessagesThreadEl() ?? messagesEl;
+  }
   const queueEl = document.getElementById('queue');
   const form = document.getElementById('send-form');
   const input = document.getElementById('composer-input');
@@ -288,7 +295,7 @@
       '<div class="role">' + escapeHtml(msg.role || 'system') + '</div>' +
       '<div class="msg-body">' + renderMarkdown(msg.content || '') + '</div>';
     decorateLinks(div);
-    messagesEl.appendChild(div);
+    messagesAppendRoot().appendChild(div);
     scrollToBottom();
     return div;
   }
@@ -301,7 +308,7 @@
       '<div class="role">assistant</div>' +
       '<div class="stream-status"></div>' +
       '<div class="msg-body stream-body"></div>';
-    messagesEl.appendChild(div);
+    messagesAppendRoot().appendChild(div);
     const st = div.querySelector('.stream-status');
     if (st) setStreamStatusLabel(st, 'Thinking…');
     scrollToBottom();
@@ -404,7 +411,7 @@
       rows +
       '</ul>' +
       '</div>';
-    messagesEl.appendChild(card);
+    messagesAppendRoot().appendChild(card);
     scrollToBottom();
   }
 
@@ -1241,7 +1248,7 @@
         div.innerHTML =
           '<div class="role">error</div>' +
           '<div class="msg-body">' + escapeHtml('Error: ' + msg.error) + '</div>';
-        messagesEl?.appendChild(div);
+        messagesAppendRoot()?.appendChild(div);
         setWorkingDot(msg.chatId, false);
         // In-flight already shifted out of waitingItems when flushed.
         inFlight = false;
@@ -1963,7 +1970,7 @@
       '<button type="button" class="exec-approval-btn exec-approval-approve" data-decision="approved">Дозволити</button>' +
       '</div>' +
       '</div>';
-    messagesEl.appendChild(card);
+    messagesAppendRoot().appendChild(card);
     scrollToBottom();
   }
   function removeApprovalCard(approvalId, decision) {
@@ -2015,10 +2022,11 @@
         '<div class="msg-body reasoning-body"></div>';
       // Insert above any currently-streaming assistant element so the user
       // sees thinking → answer, not answer → thinking.
-      if (currentStreamEl && currentStreamEl.parentElement === messagesEl) {
-        messagesEl.insertBefore(block, currentStreamEl);
-      } else {
-        messagesEl.appendChild(block);
+      const appendRoot = messagesAppendRoot();
+      if (currentStreamEl && appendRoot && currentStreamEl.parentElement === appendRoot) {
+        appendRoot.insertBefore(block, currentStreamEl);
+      } else if (appendRoot) {
+        appendRoot.appendChild(block);
       }
     }
     const body = block.querySelector('.reasoning-body');

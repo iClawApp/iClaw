@@ -117,41 +117,43 @@
       data-chat-id="<%= activeChat.id %>"
       data-defer-paint="1"
     >
-      <% if (chatMessages.length === 0) { %>
-        <p class="muted empty-state">No messages yet. Say something.</p>
-      <% } else { %>
-        <% chatMessages.forEach(function (m) { %>
-          <div class="msg <%= m.role %>" data-msg-id="<%= m.id %>">
-            <div class="role"><%= m.role %></div>
-            <div class="msg-body"><%= m.content %></div>
+      <div class="messages-thread">
+        <% if (chatMessages.length === 0) { %>
+          <p class="muted empty-state">No messages yet. Say something.</p>
+        <% } else { %>
+          <% chatMessages.forEach(function (m) { %>
+            <div class="msg <%= m.role %>" data-msg-id="<%= m.id %>">
+              <div class="role"><%= m.role %></div>
+              <div class="msg-body"><%= m.content %></div>
+            </div>
+          <% }); %>
+        <% } %>
+        <% if (isWorking) { %>
+          <%
+            // Activity persists across page reloads — server side state. The
+            // client's WS connection picks up live events after subscribing.
+            const _act = currentActivity || { kind: 'thinking', label: 'Thinking…' };
+            const _waitingClass = _act.kind === 'tool' || _act.kind === 'lifecycle'
+              ? 'stream-tool'
+              : (_act.kind === 'generating' ? 'stream-generating' : 'stream-waiting');
+            const _detail = _act.kind === 'tool' && _act.detail && _act.detail !== _act.label
+              ? _act.detail
+              : '';
+          %>
+          <div class="msg assistant streaming <%= _waitingClass %>" id="reload-placeholder">
+            <div class="role">assistant</div>
+            <div
+              class="stream-status<%= _detail ? ' has-detail' : '' %>"
+              <% if (_detail) { %>
+                data-detail="<%= _detail %>"
+                data-label="<%= _act.label %>"
+                title="<%= _detail %>"
+              <% } %>
+            ><%= _act.label %></div>
+            <div class="msg-body stream-body"></div>
           </div>
-        <% }); %>
-      <% } %>
-      <% if (isWorking) { %>
-        <%
-          // Activity persists across page reloads — server side state. The
-          // client's WS connection picks up live events after subscribing.
-          const _act = currentActivity || { kind: 'thinking', label: 'Thinking…' };
-          const _waitingClass = _act.kind === 'tool' || _act.kind === 'lifecycle'
-            ? 'stream-tool'
-            : (_act.kind === 'generating' ? 'stream-generating' : 'stream-waiting');
-          const _detail = _act.kind === 'tool' && _act.detail && _act.detail !== _act.label
-            ? _act.detail
-            : '';
-        %>
-        <div class="msg assistant streaming <%= _waitingClass %>" id="reload-placeholder">
-          <div class="role">assistant</div>
-          <div
-            class="stream-status<%= _detail ? ' has-detail' : '' %>"
-            <% if (_detail) { %>
-              data-detail="<%= _detail %>"
-              data-label="<%= _act.label %>"
-              title="<%= _detail %>"
-            <% } %>
-          ><%= _act.label %></div>
-          <div class="msg-body stream-body"></div>
-        </div>
-      <% } %>
+        <% } %>
+      </div>
     </section>
 
     <section class="queue" id="queue" aria-live="polite"></section>
