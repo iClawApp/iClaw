@@ -7,8 +7,15 @@ import { projectsRouter } from './routes/projects';
 import { agentsRouter } from './routes/sessions';
 import { mediaRouter } from './routes/media';
 
+import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
+
 export function createApp(): express.Express {
   const app = express();
+
+  app.use((_req, res, next) => {
+    res.locals.projectLogoEmojis = PROJECT_LOGO_EMOJIS;
+    next();
+  });
 
   app.set('view engine', 'ejs');
   app.set('views', path.resolve(__dirname, '../views'));

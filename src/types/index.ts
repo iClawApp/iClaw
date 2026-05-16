@@ -2,6 +2,12 @@ export interface Project {
   id: number;
   name: string;
   description: string | null;
+  /** @deprecated legacy single index; unused if logo_emoji/logo_color set */
+  logo_preset?: number;
+  /** Index into `PROJECT_LOGO_EMOJIS` (0–9). */
+  logo_emoji: number;
+  /** Background tone index (0–9), maps to `[data-logo-color]` CSS. */
+  logo_color: number;
   created_at: string;
   updated_at: string;
 }

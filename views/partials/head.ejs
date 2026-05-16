@@ -5,5 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title><%= typeof title !== 'undefined' ? title : 'iClaw' %></title>
   <link rel="stylesheet" href="/css/style.css" />
+  <script>
+    window.__ICLAW_PROJECT_LOGO_EMOJIS__ = <%- JSON.stringify(projectLogoEmojis || []) %>;
+  </script>
 </head>
 <body>

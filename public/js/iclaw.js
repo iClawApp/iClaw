@@ -70,6 +70,78 @@
   function escapeHtml(s) {
     return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
   }
+  function clampLogoEmojiJs(n) {
+    const em = window.__ICLAW_PROJECT_LOGO_EMOJIS__;
+    const max = Array.isArray(em) ? em.length - 1 : 9;
+    let v = Number(n);
+    if (!Number.isFinite(v) || v < 0) return 0;
+    if (v > max) return max;
+    return Math.floor(v);
+  }
+  function clampLogoColorJs(n) {
+    let v = Number(n);
+    if (!Number.isFinite(v) || v < 0) return 0;
+    if (v > 9) return 9;
+    return Math.floor(v);
+  }
+  function buildProjectLogoHtml(emojiIdx, colorIdx) {
+    const em = window.__ICLAW_PROJECT_LOGO_EMOJIS__;
+    if (!Array.isArray(em) || em.length === 0) return '';
+    const ei = clampLogoEmojiJs(emojiIdx);
+    const ci = clampLogoColorJs(colorIdx);
+    const glyph = em[ei] != null ? String(em[ei]) : '📁';
+    return (
+      '<span class="project-logo" data-logo-color="' +
+      String(ci) +
+      '" aria-hidden="true">' +
+      escapeHtml(glyph) +
+      '</span>'
+    );
+  }
+  function applyProjectLogoToEl(el, emojiIdx, colorIdx) {
+    const em = window.__ICLAW_PROJECT_LOGO_EMOJIS__;
+    if (!el || !Array.isArray(em) || em.length === 0) return;
+    const ei = clampLogoEmojiJs(emojiIdx);
+    const ci = clampLogoColorJs(colorIdx);
+    const glyph = em[ei] != null ? String(em[ei]) : '📁';
+    el.className = 'project-logo';
+    el.dataset.logoColor = String(ci);
+    el.textContent = glyph;
+  }
+  function readLogoFromEl(el) {
+    if (!el) return { ei: 0, ci: 0 };
+    const ci = clampLogoColorJs(Number(el.dataset.logoColor));
+    const em = window.__ICLAW_PROJECT_LOGO_EMOJIS__;
+    let ei = 0;
+    if (Array.isArray(em)) {
+      const t = el.textContent || '';
+      const idx = em.indexOf(t);
+      ei = idx >= 0 ? idx : 0;
+    }
+    return { ei, ci };
+  }
+  function syncProjectLogoPopoverSelection(emojiIdx, colorIdx) {
+    const pop = document.getElementById('project-logo-popover');
+    if (!pop) return;
+    const ei = clampLogoEmojiJs(emojiIdx);
+    const ci = clampLogoColorJs(colorIdx);
+    pop.querySelectorAll('.project-logo-swatch--emoji').forEach((btn, i) => {
+      const sel = i === ei;
+      btn.classList.toggle('is-selected', sel);
+      btn.setAttribute('aria-pressed', sel ? 'true' : 'false');
+    });
+    pop.querySelectorAll('.project-logo-swatch--color').forEach((btn) => {
+      const id = Number(btn.dataset.logoColor);
+      const sel = id === ci;
+      btn.classList.toggle('is-selected', sel);
+      btn.setAttribute('aria-pressed', sel ? 'true' : 'false');
+    });
+  }
+  function syncProjectPageHeaderLogo(emojiIdx, colorIdx) {
+    const inner = document.querySelector('.project-logo-trigger .project-logo');
+    if (inner) applyProjectLogoToEl(inner, emojiIdx, colorIdx);
+    syncProjectLogoPopoverSelection(emojiIdx, colorIdx);
+  }
   function currentProjectPageId() {
     const m = document.querySelector('main.project-page[data-project-id]');
     if (!m || !m.dataset.projectId) return null;
@@ -88,7 +160,7 @@
           '" class="fact-source">Chat #' +
           f.source_chat_id +
           '</a>'
-        : '<span class="fact-source muted">Manual</span>';
+        : '';
     li.innerHTML =
       '<textarea class="fact-content" aria-label="Fact text" rows="2">' +
       escapeHtml(f.content || '') +
@@ -388,8 +460,16 @@
     return el;
   }
 
-  function ensureProjectGroupInSidebar(list, projectId, projectName) {
+  function ensureProjectGroupInSidebar(list, projectId, projectName, logoEmoji, logoColor) {
     let group = list.querySelector('.project-group[data-project-id="' + projectId + '"]');
+    const ei =
+      logoEmoji !== undefined && logoEmoji !== null
+        ? clampLogoEmojiJs(Number(logoEmoji))
+        : 0;
+    const ci =
+      logoColor !== undefined && logoColor !== null
+        ? clampLogoColorJs(Number(logoColor))
+        : 0;
     if (!group) {
       ensureSidebarSectionLabel(list, 'Projects');
       group = document.createElement('div');
@@ -401,7 +481,10 @@
       const nm = projectName || ('Project #' + projectId);
       row.title = nm;
       row.innerHTML =
-        '<span class="project-row-name">' + escapeHtml(nm) + '</span>' +
+        buildProjectLogoHtml(ei, ci) +
+        '<span class="project-row-name">' +
+        escapeHtml(nm) +
+        '</span>' +
         '<span class="project-row-count">0</span>';
       group.appendChild(row);
       const personalLbl = Array.from(list.querySelectorAll('.sidebar-section-label')).find(
@@ -417,11 +500,30 @@
         if (plab && plab.nextSibling) list.insertBefore(group, plab.nextSibling);
         else list.prepend(group);
       }
-    } else if (projectName != null) {
-      const nameEl = group.querySelector('.project-row-name');
-      if (nameEl) nameEl.textContent = projectName;
-      const row = group.querySelector('.project-row');
-      if (row) row.title = projectName;
+    } else {
+      if (projectName != null) {
+        const nameEl = group.querySelector('.project-row-name');
+        if (nameEl) nameEl.textContent = projectName;
+        const row = group.querySelector('.project-row');
+        if (row) row.title = projectName;
+      }
+      if (logoEmoji !== undefined || logoColor !== undefined) {
+        const row = group.querySelector('.project-row');
+        const el = row?.querySelector('.project-logo');
+        let e = 0;
+        let c = 0;
+        if (el) {
+          const cur = readLogoFromEl(el);
+          e = cur.ei;
+          c = cur.ci;
+        }
+        if (logoEmoji !== undefined && logoEmoji !== null) e = clampLogoEmojiJs(Number(logoEmoji));
+        if (logoColor !== undefined && logoColor !== null) c = clampLogoColorJs(Number(logoColor));
+        if (row) {
+          if (el) applyProjectLogoToEl(el, e, c);
+          else row.insertAdjacentHTML('afterbegin', buildProjectLogoHtml(e, c));
+        }
+      }
     }
     return group;
   }
@@ -936,19 +1038,43 @@
       case 'project-created': {
         const list = document.getElementById('chat-list');
         if (list) {
-          ensureProjectGroupInSidebar(list, msg.project.id, msg.project.name);
+          ensureProjectGroupInSidebar(
+            list,
+            msg.project.id,
+            msg.project.name,
+            msg.project.logo_emoji,
+            msg.project.logo_color,
+          );
           ensurePersonalLabelBeforeOrphans(list);
         }
         return;
       }
 
       case 'project-updated': {
-        const list = document.getElementById('chat-list');
-        const g = list?.querySelector('.project-group[data-project-id="' + msg.project.id + '"]');
+        const g = document
+          .getElementById('chat-list')
+          ?.querySelector('.project-group[data-project-id="' + msg.project.id + '"]');
         const nameEl = g?.querySelector('.project-row-name');
         if (nameEl) nameEl.textContent = msg.project.name;
         const row = g?.querySelector('.project-row');
         if (row) row.title = msg.project.name;
+        const logoEl = row?.querySelector('.project-logo');
+        const hasE = msg.project.logo_emoji !== undefined && msg.project.logo_emoji !== null;
+        const hasC = msg.project.logo_color !== undefined && msg.project.logo_color !== null;
+        if (logoEl && (hasE || hasC)) {
+          const cur = readLogoFromEl(logoEl);
+          const e = hasE ? clampLogoEmojiJs(Number(msg.project.logo_emoji)) : cur.ei;
+          const c = hasC ? clampLogoColorJs(Number(msg.project.logo_color)) : cur.ci;
+          applyProjectLogoToEl(logoEl, e, c);
+        }
+        if (currentProjectPageId() === msg.project.id && (hasE || hasC)) {
+          const tr = document.querySelector('.project-logo-trigger .project-logo');
+          const cur2 = tr ? readLogoFromEl(tr) : { ei: 0, ci: 0 };
+          syncProjectPageHeaderLogo(
+            hasE ? clampLogoEmojiJs(Number(msg.project.logo_emoji)) : cur2.ei,
+            hasC ? clampLogoColorJs(Number(msg.project.logo_color)) : cur2.ci,
+          );
+        }
         return;
       }
 
@@ -990,7 +1116,7 @@
           const empty = document.createElement('li');
           empty.className = 'facts-empty muted';
           empty.textContent =
-            'No facts yet. They appear after conversations or when you add one below.';
+            'No facts yet. Accept a suggestion in a chat in this project to add one.';
           ul.appendChild(empty);
         }
         if (cnt && ul) cnt.textContent = String(ul.querySelectorAll('li.fact').length);
@@ -1010,7 +1136,7 @@
           const empty = document.createElement('li');
           empty.className = 'facts-empty muted';
           empty.textContent =
-            'No facts yet. They appear after conversations or when you add one below.';
+            'No facts yet. Accept a suggestion in a chat in this project to add one.';
           ul.appendChild(empty);
         }
         if (cnt) cnt.textContent = String(msg.facts.length);
@@ -1125,22 +1251,9 @@
   }
 
   // -------------------------------------------------------------------------
-  // project page — description + facts (fetch + WS sync from other tabs)
+  // project page — facts list (fetch + WS sync from other tabs)
   // -------------------------------------------------------------------------
   const projectPageId = currentProjectPageId();
-  const projectDescForm = document.getElementById('project-description-form');
-  const projectDescTa = document.getElementById('project-description');
-  if (projectPageId != null && projectDescForm && projectDescTa) {
-    projectDescForm.addEventListener('submit', (e) => e.preventDefault());
-    projectDescTa.addEventListener('blur', () => {
-      fetch('/projects/' + encodeURIComponent(projectPageId), {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ description: projectDescTa.value }),
-      }).catch(() => {});
-    });
-  }
-
   const factsListEl = document.getElementById('facts-list');
   if (factsListEl && projectPageId != null) {
     factsListEl.querySelectorAll('.fact-content').forEach((ta) => {
@@ -1188,6 +1301,64 @@
       },
       true,
     );
+  }
+
+  const projectLogoTrigger = document.getElementById('project-logo-trigger');
+  const projectLogoPopover = document.getElementById('project-logo-popover');
+  function closeProjectLogoPopover() {
+    if (!projectLogoPopover || !projectLogoTrigger) return;
+    projectLogoPopover.hidden = true;
+    projectLogoTrigger.setAttribute('aria-expanded', 'false');
+  }
+  function openProjectLogoPopover() {
+    if (!projectLogoPopover || !projectLogoTrigger) return;
+    projectLogoPopover.hidden = false;
+    projectLogoTrigger.setAttribute('aria-expanded', 'true');
+  }
+  if (projectLogoTrigger && projectLogoPopover && projectPageId != null) {
+    projectLogoTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!projectLogoPopover.hidden) closeProjectLogoPopover();
+      else openProjectLogoPopover();
+    });
+    projectLogoPopover.addEventListener('click', (e) => {
+      const emBtn = e.target.closest('.project-logo-swatch--emoji');
+      if (emBtn) {
+        const id = Number(emBtn.dataset.logoEmoji);
+        if (!Number.isFinite(id)) return;
+        const inner = document.querySelector('.project-logo-trigger .project-logo');
+        const cur = inner ? readLogoFromEl(inner) : { ei: 0, ci: 0 };
+        syncProjectPageHeaderLogo(id, cur.ci);
+        fetch('/projects/' + encodeURIComponent(projectPageId), {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ logoEmoji: id }),
+        }).catch(() => {});
+        return;
+      }
+      const colBtn = e.target.closest('.project-logo-swatch--color');
+      if (colBtn) {
+        const id = Number(colBtn.dataset.logoColor);
+        if (!Number.isFinite(id)) return;
+        const inner = document.querySelector('.project-logo-trigger .project-logo');
+        const cur = inner ? readLogoFromEl(inner) : { ei: 0, ci: 0 };
+        syncProjectPageHeaderLogo(cur.ei, id);
+        fetch('/projects/' + encodeURIComponent(projectPageId), {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ logoColor: id }),
+        }).catch(() => {});
+      }
+    });
+    document.addEventListener('click', (e) => {
+      if (!projectLogoPopover || projectLogoPopover.hidden) return;
+      if (projectLogoTrigger.contains(e.target)) return;
+      if (projectLogoPopover.contains(e.target)) return;
+      closeProjectLogoPopover();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeProjectLogoPopover();
+    });
   }
 
   // -------------------------------------------------------------------------

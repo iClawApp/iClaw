@@ -1,9 +1,8 @@
 /**
- * Project + project-facts CRUD.
+ * Project CRUD + project-facts edit/delete (facts are created from chat flows).
  *
  * HTTP-form style (POST + 302 redirect) for mutations so vanilla HTML forms
- * work. JSON variants (PATCH/POST application/json) are also accepted for the
- * client-side edit affordances on the project page.
+ * work. JSON variants (PATCH) for inline edits on the project page.
  *
  * Every mutation broadcasts a server-side WS event so other tabs sync.
  */
@@ -30,10 +29,7 @@ projectsRouter.post('/', (req, res) => {
     res.status(400).json({ error: 'name required' });
     return;
   }
-  const description = req.body?.description
-    ? String(req.body.description).trim() || null
-    : null;
-  const project = projects.create(name, description);
+  const project = projects.create(name, null);
   wsHub.broadcastAll({ type: 'project-created', project });
   if (wantsJson(req)) {
     res.json(project);
@@ -85,14 +81,19 @@ projectsRouter.patch('/:id', (req, res) => {
     res.status(404).json({ error: 'project not found' });
     return;
   }
+  const patch: { emoji?: unknown; color?: unknown } = {};
   if (typeof req.body?.name === 'string') {
     const name = req.body.name.trim();
     if (name) projects.rename(id, name);
   }
-  if ('description' in (req.body ?? {})) {
-    const desc =
-      typeof req.body.description === 'string' ? req.body.description.trim() : null;
-    projects.setDescription(id, desc || null);
+  if (req.body?.logoEmoji !== undefined && req.body?.logoEmoji !== null) {
+    patch.emoji = req.body.logoEmoji;
+  }
+  if (req.body?.logoColor !== undefined && req.body?.logoColor !== null) {
+    patch.color = req.body.logoColor;
+  }
+  if (patch.emoji !== undefined || patch.color !== undefined) {
+    projects.setLogoAppearance(id, patch);
   }
   const updated = projects.get(id)!;
   wsHub.broadcastAll({ type: 'project-updated', project: updated });
@@ -119,33 +120,7 @@ projectsRouter.post('/:id/delete', (req, res) => {
   res.redirect('/');
 });
 
-/* ---------------- facts CRUD ---------------- */
-
-projectsRouter.post('/:id/facts', (req, res) => {
-  const projectId = Number(req.params.id);
-  if (!projects.get(projectId)) {
-    res.status(404).json({ error: 'project not found' });
-    return;
-  }
-  const content = String(req.body?.content ?? '').trim();
-  if (!content) {
-    res.status(400).json({ error: 'content required' });
-    return;
-  }
-  const sourceChatId =
-    typeof req.body?.sourceChatId === 'number' ? req.body.sourceChatId : null;
-  const sourceMessageId =
-    typeof req.body?.sourceMessageId === 'number' ? req.body.sourceMessageId : null;
-  const fact = projectFacts.append({
-    projectId,
-    content,
-    sourceChatId,
-    sourceMessageId,
-  });
-  wsHub.broadcastAll({ type: 'project-fact-added', projectId, fact });
-  if (wantsJson(req)) res.json(fact);
-  else res.redirect(`/projects/${projectId}`);
-});
+/* ---------------- facts (from chats only; edit/delete here) ---------------- */
 
 projectsRouter.patch('/:id/facts/:factId', (req, res) => {
   const projectId = Number(req.params.id);

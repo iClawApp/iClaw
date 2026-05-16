@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { db } from '../db/database';
 import { deriveTitle } from './chatTitle';
 import type { Chat, Message, Project, ProjectFact, ProjectFactSuggestion } from '../types';
+import { clampLogoColor, clampLogoEmoji } from '../constants/projectLogos';
 
 // ---------- chats ----------
 
@@ -158,9 +159,24 @@ export const projects = {
   },
   create(name: string, description?: string | null): Project {
     const info = db
-      .prepare('INSERT INTO projects (name, description) VALUES (?, ?)')
+      .prepare(
+        'INSERT INTO projects (name, description, logo_preset, logo_emoji, logo_color) VALUES (?, ?, 0, 0, 0)',
+      )
       .run(name.trim() || 'Untitled', description ?? null);
     return this.get(Number(info.lastInsertRowid))!;
+  },
+  setLogoAppearance(id: number, opts: { emoji?: unknown; color?: unknown }): void {
+    const cur = this.get(id);
+    if (!cur) return;
+    const prevE = clampLogoEmoji((cur as unknown as { logo_emoji?: unknown }).logo_emoji ?? 0);
+    const prevC = clampLogoColor((cur as unknown as { logo_color?: unknown }).logo_color ?? 0);
+    const ei =
+      opts.emoji !== undefined && opts.emoji !== null ? clampLogoEmoji(opts.emoji) : prevE;
+    const ci =
+      opts.color !== undefined && opts.color !== null ? clampLogoColor(opts.color) : prevC;
+    db.prepare(
+      "UPDATE projects SET logo_emoji = ?, logo_color = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(ei, ci, id);
   },
   rename(id: number, name: string): void {
     db.prepare(

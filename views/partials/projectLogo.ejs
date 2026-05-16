@@ -1,0 +1,13 @@
+<%
+  const em = Array.isArray(projectLogoEmojis) ? projectLogoEmojis : [];
+  let ei = Number(typeof emojiIndex !== 'undefined' ? emojiIndex : 0);
+  let ci = Number(typeof colorIndex !== 'undefined' ? colorIndex : 0);
+  if (!Number.isFinite(ei) || ei < 0) ei = 0;
+  if (ei >= em.length) ei = em.length ? em.length - 1 : 0;
+  if (!Number.isFinite(ci) || ci < 0) ci = 0;
+  if (ci > 9) ci = 9;
+  ei = Math.floor(ei);
+  ci = Math.floor(ci);
+  const glyph = em[ei] || '📁';
+%>
+<span class="project-logo" data-logo-color="<%= ci %>" aria-hidden="true"><%- glyph %></span>

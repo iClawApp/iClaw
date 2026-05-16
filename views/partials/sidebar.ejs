@@ -58,6 +58,10 @@
             class="project-row<%= activeProject && activeProject.id === p.id ? ' active' : '' %>"
             title="<%= p.name %>"
           >
+            <%- include('./projectLogo', {
+              emojiIndex: typeof p.logo_emoji === 'number' ? p.logo_emoji : 0,
+              colorIndex: typeof p.logo_color === 'number' ? p.logo_color : 0,
+            }) %>
             <span class="project-row-name"><%= p.name %></span>
             <span class="project-row-count"><%= pChats.length %></span>
           </a>

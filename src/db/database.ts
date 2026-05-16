@@ -7,6 +7,9 @@ CREATE TABLE IF NOT EXISTS projects (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
   description TEXT,
+  logo_preset INTEGER NOT NULL DEFAULT 0,
+  logo_emoji  INTEGER NOT NULL DEFAULT 0,
+  logo_color  INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -111,6 +114,24 @@ function migrateSchema(database: Database.Database): void {
       database.exec(
         "ALTER TABLE projects ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
       );
+    }
+    const hadLogoEmoji = projCols.some((c) => c.name === 'logo_emoji');
+    if (!projCols.some((c) => c.name === 'logo_preset')) {
+      database.exec('ALTER TABLE projects ADD COLUMN logo_preset INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!hadLogoEmoji) {
+      database.exec('ALTER TABLE projects ADD COLUMN logo_emoji INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!projCols.some((c) => c.name === 'logo_color')) {
+      database.exec('ALTER TABLE projects ADD COLUMN logo_color INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!hadLogoEmoji && projCols.some((c) => c.name === 'logo_preset')) {
+      database.exec(`
+        UPDATE projects SET
+          logo_emoji = ABS(COALESCE(logo_preset, 0)) % 10,
+          logo_color = (ABS(COALESCE(logo_preset, 0)) / 10) % 10
+        WHERE 1 = 1
+      `);
     }
   }
 }
