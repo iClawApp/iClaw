@@ -70,6 +70,21 @@ export const chatStatus = {
     e.activity = activity ?? undefined;
   },
 
+  /**
+   * Force a chat out of the "working" state. Used by manual recovery
+   * (POST /chats/:id/unstick) when something hung and the lock never
+   * released. Any consumer still awaiting `tail` will continue waiting
+   * — but new consumers will see active === 0 and proceed.
+   *
+   * Returns true if state was modified.
+   */
+  forceClear(chatId: number): boolean {
+    const e = map.get(chatId);
+    if (!e) return false;
+    map.delete(chatId);
+    return true;
+  },
+
   async withLock<T>(chatId: number, fn: () => Promise<T>): Promise<T> {
     const cur = getOrInit(chatId);
     const previous = cur.tail;

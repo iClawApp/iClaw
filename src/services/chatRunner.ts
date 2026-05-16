@@ -276,13 +276,28 @@ export async function sendMessage(opts: {
       runTurnLocked({ chatId: chatId!, content: opts.content, isFirstTurn }),
     );
   } catch (err) {
+    const errorText = err instanceof Error ? err.message : String(err);
+    // Persist a system "error" row so F5 / cross-tab still see what happened
+    // — without this an errored turn just shows a user msg with no reply.
+    const errorMsg = messages.append(
+      chatId,
+      'system',
+      `Error: ${errorText}`,
+      null,
+    );
+    wsHub.broadcastToChat(chatId, {
+      type: 'message-appended',
+      chatId,
+      message: errorMsg,
+    });
     wsHub.broadcastToChat(chatId, {
       type: 'turn-error',
       chatId,
       requestId: opts.requestId,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorText,
     });
-    throw err;
+    // don't rethrow — we've already broadcast + persisted. Rethrowing only
+    // leaks the error up to the WS handler which logs it again.
   }
 
   return { chatId };

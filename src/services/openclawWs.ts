@@ -165,12 +165,25 @@ export const openclawWs = {
       if (stream === 'lifecycle') {
         const phase = safeString(data.phase) ?? 'unknown';
         opts.onEvent({ type: 'lifecycle', phase, label: lifecycleActivityLabel(phase) });
-        if (phase === 'end') {
+        // Terminal lifecycle phases — anything that isn't 'start' means the
+        // turn is over. We used to handle only 'end'; if the agent erroreda
+        // or was aborted we'd hang forever on turnDone, leaving the chat
+        // stuck in `working` state until the 5-min safety timeout.
+        const TERMINAL = new Set([
+          'end', 'error', 'aborted', 'cancelled',
+          'failed', 'terminated', 'stopped',
+        ]);
+        if (TERMINAL.has(phase)) {
           if (!finalEmitted) {
             finalEmitted = true;
             opts.onEvent({ type: 'text-final', text: accumulatedText });
           }
-          resolveTurn();
+          if (phase === 'end') {
+            resolveTurn();
+          } else {
+            // Reject so chatRunner broadcasts turn-error and the lock unwinds.
+            rejectTurn(new Error(`agent run ${phase}`));
+          }
         }
         return;
       }

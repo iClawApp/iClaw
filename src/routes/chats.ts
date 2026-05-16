@@ -98,6 +98,28 @@ chatsRouter.post('/:id/delete', (req, res) => {
   res.redirect('/');
 });
 
+/**
+ * Force-clear a stuck "working" flag. Use when a turn errored in a way that
+ * didn't unwind the in-memory lock (e.g. agent crashed mid-stream). Doesn't
+ * touch any data — only the in-process chatStatus map.
+ */
+chatsRouter.post('/:id/unstick', (req, res) => {
+  const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const changed = chatStatus.forceClear(id);
+  // Tell anyone subscribed that the turn is done — so the UI clears its
+  // streaming placeholder.
+  wsHub.broadcastToChat(id, {
+    type: 'turn-error',
+    chatId: id,
+    error: 'Turn was force-unstuck.',
+  });
+  res.json({ id, cleared: changed });
+});
+
 chatsRouter.get('/:id/messages', (req, res) => {
   const id = Number(req.params.id);
   if (!chats.get(id)) {
