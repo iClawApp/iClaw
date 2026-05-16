@@ -22,6 +22,13 @@ export const chats = {
   get(id: number): Chat | undefined {
     return db.prepare('SELECT * FROM chats WHERE id = ?').get(id) as Chat | undefined;
   },
+  /** Reverse lookup — gateway broadcasts events keyed by OpenClaw session key. */
+  findBySessionKey(sessionKey: string): Chat | undefined {
+    if (!sessionKey) return undefined;
+    return db
+      .prepare('SELECT * FROM chats WHERE openclaw_session_id = ? LIMIT 1')
+      .get(sessionKey) as Chat | undefined;
+  },
   /** Chats that don't belong to any project. */
   listOrphans(): Chat[] {
     return db
@@ -89,6 +96,16 @@ export const chats = {
     db.prepare(
       "UPDATE chats SET shares_to_project = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(shares ? 1 : 0, id);
+  },
+  setModelOverride(id: number, model: string | null): void {
+    db.prepare(
+      "UPDATE chats SET model_override = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(model && model.trim() ? model.trim() : null, id);
+  },
+  setReasoningMode(id: number, mode: 'off' | 'on' | 'stream'): void {
+    db.prepare(
+      "UPDATE chats SET reasoning_mode = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(mode, id);
   },
   touch(id: number): void {
     db.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").run(id);

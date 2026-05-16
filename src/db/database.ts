@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS chats (
   openclaw_session_id TEXT NOT NULL,
   project_id          INTEGER REFERENCES projects(id) ON DELETE SET NULL,
   shares_to_project   INTEGER NOT NULL DEFAULT 1,
+  -- Optional per-session model override applied via sessions.patch.
+  model_override      TEXT,
+  -- Reasoning visibility mirror; actual state lives on the gateway.
+  reasoning_mode      TEXT NOT NULL DEFAULT 'off',
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
   title_manual        INTEGER NOT NULL DEFAULT 0,
@@ -112,6 +116,12 @@ function migrateSchema(database: Database.Database): void {
   }
   if (!chatColNames.has('shares_to_project')) {
     database.exec('ALTER TABLE chats ADD COLUMN shares_to_project INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!chatColNames.has('model_override')) {
+    database.exec('ALTER TABLE chats ADD COLUMN model_override TEXT');
+  }
+  if (!chatColNames.has('reasoning_mode')) {
+    database.exec("ALTER TABLE chats ADD COLUMN reasoning_mode TEXT NOT NULL DEFAULT 'off'");
   }
 
   // projects — older installs (pre-v0.1) might have a projects table without

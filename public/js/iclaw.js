@@ -962,6 +962,15 @@
           });
         }
         if (msg.chatId === activeChatId && msg.title != null) applyTitleForActive(msg.title);
+        // Sync header controls when another tab/CLI flipped these.
+        if (msg.chatId === activeChatId && msg.modelOverride !== undefined && modelSelect) {
+          const v = msg.modelOverride == null ? '' : String(msg.modelOverride);
+          modelSelect.dataset.current = v;
+          if (modelSelect.value !== v) modelSelect.value = v;
+        }
+        if (msg.chatId === activeChatId && msg.reasoningMode !== undefined && reasoningToggle) {
+          reasoningToggle.checked = msg.reasoningMode !== 'off';
+        }
         if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
         return;
 
@@ -1029,6 +1038,7 @@
         setWorkingDot(msg.chatId, true);
         if (msg.chatId !== activeChatId) return;
         setStopVisible(true);
+        setInterruptVisible(true);
         ensureStreamEl();
         {
           const status = currentStreamEl?.querySelector('.stream-status');
@@ -1117,6 +1127,8 @@
         setWorkingDot(msg.chatId, false);
         if (msg.chatId !== activeChatId) return;
         setStopVisible(false);
+        setInterruptVisible(false);
+        finalizeReasoningBlock();
         // Belt + suspenders: kill any leftover reload-placeholder that might
         // still be on the page if events arrived in a weird order.
         clearStreamArtifacts();
@@ -1135,6 +1147,8 @@
           return;
         }
         setStopVisible(false);
+        setInterruptVisible(false);
+        finalizeReasoningBlock();
         if (currentStreamEl) {
           currentStreamEl.remove();
           currentStreamEl = null;
@@ -1305,6 +1319,37 @@
         removeScheduledItem(msg.scheduledId);
         return;
       }
+
+      case 'exec-approval-requested': {
+        if (msg.chatId !== activeChatId) return;
+        renderApprovalCard({
+          approvalId: msg.approvalId,
+          command: msg.command,
+          cwd: msg.cwd,
+          reason: msg.reason,
+          host: msg.host,
+        });
+        return;
+      }
+
+      case 'exec-approval-resolved': {
+        if (msg.chatId !== 0 && msg.chatId !== activeChatId) return;
+        removeApprovalCard(msg.approvalId, msg.decision);
+        return;
+      }
+
+      case 'turn-reasoning': {
+        if (msg.chatId !== activeChatId) return;
+        appendReasoningChunk(msg.text);
+        return;
+      }
+
+      case 'gateway-session-changed':
+        // Informational — for now we don't auto-refetch the sidebar. Logging
+        // this lets future iterations decide what to do without changing the
+        // wire protocol again.
+        console.debug('[iclaw] gateway-session-changed', msg.kind, msg.sessionKey);
+        return;
     }
   }
 
@@ -1652,6 +1697,378 @@
       setTimeout(() => { stopBtn.disabled = false; }, 3000);
     });
   }
+
+  // -------------------------------------------------------------------------
+  // Chat header extras: Interrupt, Compact, Reasoning toggle, Model picker
+  // -------------------------------------------------------------------------
+  const interruptBtn = document.getElementById('interrupt-btn');
+  const compactBtn = document.getElementById('compact-btn');
+  const reasoningToggle = document.getElementById('chat-reasoning-toggle');
+  const modelForm = document.getElementById('model-form');
+  const modelSelect = document.getElementById('chat-model-select');
+
+  function setInterruptVisible(visible) {
+    if (!interruptBtn) return;
+    interruptBtn.hidden = !visible;
+  }
+
+  if (interruptBtn) {
+    interruptBtn.addEventListener('click', () => {
+      if (activeChatId == null) return;
+      // Abort drops the active turn; the resulting `turn-error` re-triggers
+      // flushNextQueued which picks up the next queued message immediately.
+      wsSend({ type: 'abort', chatId: activeChatId });
+      interruptBtn.disabled = true;
+      setTimeout(() => { interruptBtn.disabled = false; }, 3000);
+    });
+  }
+
+  if (compactBtn) {
+    compactBtn.addEventListener('click', () => {
+      if (activeChatId == null) return;
+      // /compact is a slash command — runs through the normal send pipeline so
+      // queue ordering, lock, and broadcasts behave like a regular turn.
+      const id = 'q-' + nextQueueItemId++;
+      waitingItems.push({ content: '/compact', id });
+      renderQueue();
+      flushNextQueued();
+    });
+  }
+
+  if (reasoningToggle && activeChatId != null) {
+    reasoningToggle.addEventListener('change', async () => {
+      const mode = reasoningToggle.checked ? 'on' : 'off';
+      try {
+        await fetch('/chats/' + encodeURIComponent(activeChatId) + '/reasoning', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode }),
+        });
+      } catch {
+        // revert if the server didn't accept
+        reasoningToggle.checked = !reasoningToggle.checked;
+      }
+    });
+  }
+
+  // Populate the model picker. The list is small enough that a one-shot fetch
+  // on chat open is fine — no polling.
+  let modelsLoaded = false;
+  async function loadModelOptions() {
+    if (!modelForm || !modelSelect || modelsLoaded) return;
+    try {
+      const res = await fetch('/api/gateway/models', { headers: { Accept: 'application/json' } });
+      if (!res.ok) return;
+      const data = await res.json();
+      const models = Array.isArray(data.models) ? data.models : [];
+      if (models.length === 0) return;
+      const current = modelSelect.dataset.current || '';
+      // Wipe everything except the "agent default" option.
+      const defaultOpt = modelSelect.querySelector('option[value=""]');
+      modelSelect.replaceChildren();
+      if (defaultOpt) modelSelect.appendChild(defaultOpt);
+      else {
+        const o = document.createElement('option');
+        o.value = '';
+        o.textContent = '(agent default)';
+        modelSelect.appendChild(o);
+      }
+      for (const m of models) {
+        const o = document.createElement('option');
+        o.value = m.id;
+        o.textContent = m.label || m.id;
+        if (m.id === current) o.selected = true;
+        modelSelect.appendChild(o);
+      }
+      modelForm.hidden = false;
+      modelsLoaded = true;
+    } catch {
+      /* network error — leave picker hidden */
+    }
+  }
+  if (modelSelect && activeChatId != null) {
+    loadModelOptions();
+    modelSelect.addEventListener('change', async () => {
+      const model = modelSelect.value;
+      try {
+        const res = await fetch('/chats/' + encodeURIComponent(activeChatId) + '/model', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ model }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert('Model change failed: ' + (err.error || res.statusText));
+          modelSelect.value = modelSelect.dataset.current || '';
+          return;
+        }
+        modelSelect.dataset.current = model;
+      } catch (err) {
+        alert('Network error: ' + (err && err.message ? err.message : String(err)));
+        modelSelect.value = modelSelect.dataset.current || '';
+      }
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Usage cost chip — polls /api/gateway/usage/today every 30s
+  // -------------------------------------------------------------------------
+  const costChip = document.getElementById('cost-chip');
+  function fmtUsd(n) {
+    if (typeof n !== 'number' || !Number.isFinite(n)) return null;
+    if (n < 0.005) return '$0.00';
+    if (n < 1) return '$' + n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+    return '$' + n.toFixed(2);
+  }
+  async function refreshCost() {
+    if (!costChip) return;
+    try {
+      const res = await fetch('/api/gateway/usage/today', { headers: { Accept: 'application/json' } });
+      if (!res.ok) {
+        costChip.hidden = true;
+        return;
+      }
+      const data = await res.json();
+      const txt = fmtUsd(data.totalUsd);
+      if (txt == null) {
+        costChip.hidden = true;
+        return;
+      }
+      costChip.textContent = 'Today ' + txt;
+      costChip.hidden = false;
+    } catch {
+      costChip.hidden = true;
+    }
+  }
+  if (costChip) {
+    refreshCost();
+    setInterval(refreshCost, 30_000);
+  }
+
+  // -------------------------------------------------------------------------
+  // Exec approval cards (gateway → operator)
+  // -------------------------------------------------------------------------
+  function renderApprovalCard(opts) {
+    if (!messagesEl) return;
+    clearEmptyState();
+    const existing = messagesEl.querySelector(
+      '.exec-approval-card[data-approval-id="' + opts.approvalId + '"]',
+    );
+    if (existing) return;
+    const card = document.createElement('div');
+    card.className = 'msg system exec-approval-card';
+    card.dataset.approvalId = opts.approvalId;
+    const safeCmd = escapeHtml(opts.command || '(no command text)');
+    const cwdLine = opts.cwd
+      ? '<div class="exec-approval-cwd">cwd: <code>' + escapeHtml(opts.cwd) + '</code></div>'
+      : '';
+    const reasonLine = opts.reason
+      ? '<div class="exec-approval-reason">' + escapeHtml(opts.reason) + '</div>'
+      : '';
+    card.innerHTML =
+      '<div class="exec-approval-shell">' +
+      '<div class="exec-approval-head">' +
+      '<span class="exec-approval-icon" aria-hidden="true">🔐</span>' +
+      '<span class="exec-approval-title">Дозвіл на виконання команди</span>' +
+      '<span class="exec-approval-host">' + escapeHtml(opts.host || 'gateway') + '</span>' +
+      '</div>' +
+      '<pre class="exec-approval-cmd"><code>' + safeCmd + '</code></pre>' +
+      cwdLine + reasonLine +
+      '<div class="exec-approval-actions">' +
+      '<button type="button" class="exec-approval-btn exec-approval-deny" data-decision="denied">Відхилити</button>' +
+      '<button type="button" class="exec-approval-btn exec-approval-approve" data-decision="approved">Дозволити</button>' +
+      '</div>' +
+      '</div>';
+    messagesEl.appendChild(card);
+    scrollToBottom();
+  }
+  function removeApprovalCard(approvalId, decision) {
+    if (!messagesEl) return;
+    const card = messagesEl.querySelector(
+      '.exec-approval-card[data-approval-id="' + approvalId + '"]',
+    );
+    if (!card) return;
+    // If we know the decision, leave a small "decided" trace before removal so
+    // the user sees what they chose; otherwise just drop it silently.
+    if (decision) {
+      const trace = document.createElement('div');
+      trace.className = 'msg system exec-approval-trace';
+      const label = decision === 'approved' ? '✓ Approved' : '✕ Denied';
+      trace.innerHTML = '<div class="msg-body muted">' + escapeHtml(label) + '</div>';
+      card.replaceWith(trace);
+      // Auto-fade after a moment
+      setTimeout(() => trace.remove(), 6_000);
+    } else {
+      card.remove();
+    }
+  }
+  if (messagesEl) {
+    messagesEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.exec-approval-btn');
+      if (!btn) return;
+      const card = btn.closest('.exec-approval-card');
+      if (!card) return;
+      const approvalId = card.dataset.approvalId;
+      const decision = btn.dataset.decision === 'denied' ? 'denied' : 'approved';
+      if (!approvalId || activeChatId == null) return;
+      // Disable buttons to prevent double-clicks while the RPC resolves.
+      card.querySelectorAll('.exec-approval-btn').forEach((b) => (b.disabled = true));
+      wsSend({ type: 'exec-approval', chatId: activeChatId, approvalId, decision });
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Reasoning text rendering
+  // -------------------------------------------------------------------------
+  function appendReasoningChunk(text) {
+    if (!messagesEl || !text) return;
+    let block = messagesEl.querySelector('.reasoning-block.active');
+    if (!block) {
+      block = document.createElement('div');
+      block.className = 'msg assistant reasoning-block active';
+      block.innerHTML =
+        '<div class="role">reasoning</div>' +
+        '<div class="msg-body reasoning-body"></div>';
+      // Insert above any currently-streaming assistant element so the user
+      // sees thinking → answer, not answer → thinking.
+      if (currentStreamEl && currentStreamEl.parentElement === messagesEl) {
+        messagesEl.insertBefore(block, currentStreamEl);
+      } else {
+        messagesEl.appendChild(block);
+      }
+    }
+    const body = block.querySelector('.reasoning-body');
+    if (body) body.textContent += text;
+    scrollToBottom();
+  }
+  function finalizeReasoningBlock() {
+    if (!messagesEl) return;
+    messagesEl.querySelectorAll('.reasoning-block.active').forEach((b) => {
+      b.classList.remove('active');
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Slash autocomplete (`/` at composer start → commands.list)
+  // -------------------------------------------------------------------------
+  /** @type {Array<{name:string,description:string,aliases:string[]}>} */
+  let commandCatalog = [];
+  let commandsLoaded = false;
+  let slashMenuEl = null;
+  let slashActiveIndex = 0;
+  /** @type {Array<{name:string,description:string}>} */
+  let slashFiltered = [];
+
+  async function ensureCommandsLoaded() {
+    if (commandsLoaded) return;
+    commandsLoaded = true;
+    try {
+      const agent = document.getElementById('chat-agent-select')?.value || '';
+      const url = '/api/gateway/commands' + (agent ? '?agent=' + encodeURIComponent(agent) : '');
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!res.ok) return;
+      const data = await res.json();
+      commandCatalog = Array.isArray(data.commands) ? data.commands : [];
+    } catch {
+      commandCatalog = [];
+    }
+  }
+  function buildSlashMenu() {
+    if (slashMenuEl) return slashMenuEl;
+    slashMenuEl = document.createElement('div');
+    slashMenuEl.id = 'slash-menu';
+    slashMenuEl.className = 'slash-menu';
+    slashMenuEl.hidden = true;
+    const composer = document.querySelector('.composer-field');
+    if (composer) composer.appendChild(slashMenuEl);
+    return slashMenuEl;
+  }
+  function closeSlashMenu() {
+    if (slashMenuEl) slashMenuEl.hidden = true;
+    slashFiltered = [];
+    slashActiveIndex = 0;
+  }
+  function renderSlashMenu() {
+    const m = buildSlashMenu();
+    if (slashFiltered.length === 0) {
+      closeSlashMenu();
+      return;
+    }
+    m.replaceChildren();
+    slashFiltered.forEach((c, i) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'slash-item' + (i === slashActiveIndex ? ' active' : '');
+      row.dataset.name = c.name;
+      row.innerHTML =
+        '<span class="slash-item-name">/' + escapeHtml(c.name) + '</span>' +
+        (c.description ? '<span class="slash-item-desc">' + escapeHtml(c.description) + '</span>' : '');
+      m.appendChild(row);
+    });
+    m.hidden = false;
+  }
+  function pickSlashCommand(name) {
+    if (!input) return;
+    input.value = '/' + name + ' ';
+    closeSlashMenu();
+    input.focus();
+  }
+  function updateSlashFromInput() {
+    if (!input) return;
+    const v = input.value;
+    if (!v.startsWith('/')) {
+      closeSlashMenu();
+      return;
+    }
+    // Only autocomplete the first token; once user typed a space we hide.
+    const firstSpace = v.indexOf(' ');
+    if (firstSpace !== -1) {
+      closeSlashMenu();
+      return;
+    }
+    const needle = v.slice(1).toLowerCase();
+    void ensureCommandsLoaded().then(() => {
+      slashFiltered = commandCatalog
+        .filter((c) => c.name.toLowerCase().startsWith(needle))
+        .slice(0, 12);
+      slashActiveIndex = 0;
+      renderSlashMenu();
+    });
+  }
+  if (input) {
+    input.addEventListener('input', updateSlashFromInput);
+    input.addEventListener('keydown', (e) => {
+      if (!slashMenuEl || slashMenuEl.hidden) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        slashActiveIndex = (slashActiveIndex + 1) % Math.max(slashFiltered.length, 1);
+        renderSlashMenu();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        slashActiveIndex =
+          (slashActiveIndex - 1 + slashFiltered.length) % Math.max(slashFiltered.length, 1);
+        renderSlashMenu();
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        const pick = slashFiltered[slashActiveIndex];
+        if (pick) {
+          e.preventDefault();
+          pickSlashCommand(pick.name);
+        }
+      } else if (e.key === 'Escape') {
+        closeSlashMenu();
+      }
+    });
+  }
+  document.addEventListener('click', (e) => {
+    if (!slashMenuEl || slashMenuEl.hidden) return;
+    if (slashMenuEl.contains(e.target)) {
+      const item = e.target.closest('.slash-item');
+      if (item) pickSlashCommand(item.dataset.name);
+      return;
+    }
+    if (input?.contains(e.target)) return;
+    closeSlashMenu();
+  });
 
   // -------------------------------------------------------------------------
   // project page — facts list (fetch + WS sync from other tabs)

@@ -200,6 +200,13 @@ async function runTurnLocked(opts: {
         phase: ev.phase,
         label: ev.label,
       });
+    } else if (ev.type === 'reasoning') {
+      // Surface model reasoning only when the user opted in for this chat.
+      // We re-read chat row every event because the toggle can flip mid-turn.
+      const cur = chats.get(chatId);
+      if (cur && cur.reasoning_mode && cur.reasoning_mode !== 'off') {
+        wsHub.broadcastToChat(chatId, { type: 'turn-reasoning', chatId, text: ev.text });
+      }
     } else if (ev.type === 'attachment') {
       const proxied = rewriteMediaUrl(ev.url);
       // Inline into the running text so the stream-renderer picks it up, AND

@@ -49,6 +49,8 @@ export type TurnEvent =
   | { type: 'tool-end'; name: string; itemId?: string }
   | { type: 'lifecycle'; phase: string; label: string }
   | { type: 'attachment'; url: string; mime: string; label?: string; itemId?: string }
+  /** Model reasoning / analysis text — only emitted, chatRunner decides whether to surface. */
+  | { type: 'reasoning'; text: string }
   | { type: 'text-final'; text: string };
 
 // ---------- helpers --------------------------------------------------------
@@ -116,6 +118,54 @@ export const openclawWs = {
       limit,
     });
     return res.messages ?? [];
+  },
+
+  /**
+   * Resolve a pending exec approval (gateway broadcasts `exec.approval.requested`
+   * when the agent needs human OK to run a shell command). `decision` is
+   * "approved" | "denied". `reason` is optional and surfaced to the agent.
+   */
+  async resolveExecApproval(opts: {
+    approvalId: string;
+    decision: 'approved' | 'denied';
+    reason?: string;
+  }): Promise<void> {
+    const params: Record<string, unknown> = {
+      approvalId: opts.approvalId,
+      decision: opts.decision,
+    };
+    if (opts.reason) params.reason = opts.reason;
+    await gatewayWs.request('exec.approval.resolve', params);
+  },
+
+  /** Get usage cost summary for a date range. */
+  async usageCost(opts: { from?: string; to?: string } = {}): Promise<unknown> {
+    return gatewayWs.request('usage.cost', opts as Record<string, unknown>);
+  },
+
+  /** Configured + discoverable models (used by the model picker UI). */
+  async listModels(view: 'configured' | 'all' | 'default' = 'configured'): Promise<unknown> {
+    return gatewayWs.request('models.list', { view });
+  },
+
+  /** Slash-command catalog for an agent — feeds the `/` autocomplete. */
+  async listCommands(opts: { agentId?: string } = {}): Promise<unknown> {
+    return gatewayWs.request('commands.list', opts as Record<string, unknown>);
+  },
+
+  /** Apply a per-session override (e.g. swap the model). */
+  async patchSession(opts: {
+    key: string;
+    model?: string;
+  }): Promise<unknown> {
+    const params: Record<string, unknown> = { key: opts.key };
+    if (opts.model) params.model = opts.model;
+    return gatewayWs.request('sessions.patch', params);
+  },
+
+  /** Subscribe to the global session index — needed for `sessions.changed`. */
+  async subscribeSessions(): Promise<void> {
+    await gatewayWs.request('sessions.subscribe', {});
   },
 
   /** Abort an in-flight turn (no-op if already finished). */
@@ -193,7 +243,19 @@ export const openclawWs = {
 
       if (stream === 'item') {
         const kind = safeString(data.kind);
-        if (kind === 'analysis') return; // reasoning — skipped in v1
+        if (kind === 'analysis') {
+          // Reasoning / chain-of-thought. We always emit; chatRunner gates
+          // delivery to subscribers based on per-chat reasoning_mode.
+          const phase = data.phase;
+          if (phase === 'start' || phase === 'end' || phase === 'completed') return;
+          const text =
+            safeString(data.text) ??
+            safeString(data.deltaText) ??
+            safeString(data.content) ??
+            '';
+          if (text) opts.onEvent({ type: 'reasoning', text });
+          return;
+        }
         const name = safeString(data.name) ?? kind ?? 'tool';
         const phase = data.phase;
         const itemId = safeString(data.itemId);
@@ -311,10 +373,13 @@ export const openclawWs = {
 
       // Wait for the turn to finish (`chat` state:final resolves the promise;
       // agent lifecycle:end alone does not — see handleAgent).
-      // 5 min upper bound — agent runs can be slow with tool calls.
+      // 60 min upper bound — OpenClaw itself defaults to 48h for agent runs,
+      // and real tool-heavy turns can comfortably run for 20–30 minutes. The
+      // old 5 min cap was killing legitimate long runs on our side while the
+      // gateway happily kept executing them.
       const timeout = setTimeout(() => {
         rejectTurn(new Error('runTurn: timed out waiting for turn to finish'));
-      }, 5 * 60_000);
+      }, 60 * 60_000);
       try {
         await turnDone;
       } finally {

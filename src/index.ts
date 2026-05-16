@@ -4,12 +4,14 @@ import { createApp } from './app';
 import { attachWsServer } from './routes/ws';
 import { openclaw } from './services/openclaw';
 import { scheduler } from './services/scheduler';
+import { gatewayEvents } from './services/gatewayEvents';
 
 const port = Number(process.env.PORT ?? 3000);
 const app = createApp();
 const server = createServer(app);
 attachWsServer(server);
 scheduler.start();
+gatewayEvents.start();
 
 server.listen(port, () => {
   console.log(`iClaw listening on http://localhost:${port}`);

@@ -514,8 +514,244 @@ code {
   align-items: center;
   gap: 6px;
 }
-.stop-btn[hidden] {
+.stop-btn[hidden],
+.interrupt-btn[hidden] {
   display: none !important;
+}
+
+/* ---------- Chat header — interrupt / compact / reasoning / model / cost ---------- */
+
+.interrupt-btn,
+.header-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 0.85em;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.interrupt-btn:hover,
+.header-secondary-btn:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.interrupt-btn:disabled,
+.header-secondary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.compact-btn {
+  /* alias header-secondary-btn */
+}
+
+.reasoning-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85em;
+  cursor: pointer;
+  user-select: none;
+}
+.reasoning-toggle input[type="checkbox"] {
+  margin: 0;
+}
+
+.cost-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 0.8em;
+  background: color-mix(in srgb, var(--accent, var(--text)) 8%, var(--surface));
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.cost-chip[hidden] {
+  display: none !important;
+}
+
+.model-form[hidden] {
+  display: none !important;
+}
+
+/* ---------- Exec approval card ---------- */
+
+.exec-approval-card {
+  border-left: 3px solid color-mix(in srgb, var(--accent, #c47a00) 60%, transparent);
+  background: color-mix(in srgb, var(--accent, #c47a00) 6%, var(--surface));
+  padding: 0;
+}
+.exec-approval-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+}
+.exec-approval-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.9em;
+}
+.exec-approval-icon {
+  font-size: 1.05em;
+}
+.exec-approval-title {
+  flex: 1;
+}
+.exec-approval-host {
+  font-size: 0.75em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.exec-approval-cmd {
+  margin: 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--text) 4%, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.4;
+  white-space: pre;
+}
+.exec-approval-cmd code {
+  background: transparent;
+  padding: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.exec-approval-cwd,
+.exec-approval-reason {
+  font-size: 0.82em;
+  color: var(--muted);
+}
+.exec-approval-cwd code {
+  font-size: 0.95em;
+}
+.exec-approval-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+.exec-approval-btn {
+  padding: 5px 14px;
+  font-size: 0.88em;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.exec-approval-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.exec-approval-approve {
+  background: color-mix(in srgb, #2da44e 20%, var(--surface));
+  border-color: color-mix(in srgb, #2da44e 45%, var(--border));
+  color: #1a7f37;
+  font-weight: 600;
+}
+.exec-approval-approve:hover:not(:disabled) {
+  background: color-mix(in srgb, #2da44e 32%, var(--surface));
+}
+.exec-approval-deny {
+  background: color-mix(in srgb, var(--danger, #b00020) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger, #b00020) 35%, var(--border));
+  color: var(--danger, #b00020);
+}
+.exec-approval-deny:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger, #b00020) 20%, var(--surface));
+}
+.exec-approval-trace {
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+/* ---------- Reasoning block ---------- */
+
+.reasoning-block {
+  border-left: 3px solid color-mix(in srgb, var(--text) 25%, transparent);
+  background: color-mix(in srgb, var(--text) 3%, var(--surface));
+  padding: 8px 12px;
+  font-size: 0.88em;
+  color: var(--muted);
+  font-style: italic;
+}
+.reasoning-block .role {
+  font-size: 0.75em;
+  text-transform: lowercase;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+.reasoning-block .reasoning-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}
+.reasoning-block.active::after {
+  content: "…";
+  margin-left: 4px;
+  opacity: 0.5;
+}
+
+/* ---------- Slash autocomplete menu ---------- */
+
+.slash-menu {
+  position: absolute;
+  left: 12px;
+  bottom: calc(100% + 8px);
+  z-index: 25;
+  min-width: 280px;
+  max-width: 480px;
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+}
+.slash-menu[hidden] {
+  display: none;
+}
+.slash-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  gap: 1px;
+}
+.slash-item:hover,
+.slash-item.active {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.slash-item-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
+  color: var(--text);
+}
+.slash-item-desc {
+  font-size: 0.78em;
+  color: var(--muted);
 }
 .stop-btn:hover {
   color: var(--danger);

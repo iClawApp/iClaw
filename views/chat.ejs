@@ -28,6 +28,37 @@
         </select>
       </form>
 
+      <div class="header-field model-form" id="model-form" hidden>
+        <label class="header-field-label" for="chat-model-select">Model</label>
+        <select
+          id="chat-model-select"
+          data-current="<%= activeChat.model_override || '' %>"
+          aria-label="Model override"
+          title="Per-chat model override (sessions.patch). Empty = agent default."
+        >
+          <option value="">(agent default)</option>
+        </select>
+      </div>
+
+      <label
+        class="reasoning-toggle header-field"
+        title="Show the model's reasoning / thinking inline. Type /reasoning on in chat to actually enable it on OpenClaw side."
+      >
+        <input
+          type="checkbox"
+          id="chat-reasoning-toggle"
+          <%= activeChat.reasoning_mode && activeChat.reasoning_mode !== 'off' ? 'checked' : '' %>
+        />
+        <span>Reasoning</span>
+      </label>
+
+      <span
+        class="cost-chip"
+        id="cost-chip"
+        title="Total OpenClaw spend today (refreshes every 30s)"
+        hidden
+      ></span>
+
       <% if (activeChat.project_id) { %>
         <form
           method="post"
@@ -50,12 +81,28 @@
 
       <button
         type="button"
+        class="interrupt-btn"
+        id="interrupt-btn"
+        aria-label="Interrupt and replace with next message"
+        title="Stops the current run and immediately sends the next queued message (if any)."
+        <%= isWorking ? '' : 'hidden' %>
+      >⏵ Interrupt</button>
+
+      <button
+        type="button"
         class="stop-btn"
         id="stop-btn"
         aria-label="Stop generation"
         title="Stop this turn"
         <%= isWorking ? '' : 'hidden' %>
       >■ Stop</button>
+
+      <button
+        type="button"
+        class="compact-btn header-secondary-btn"
+        id="compact-btn"
+        title="Summarize older messages on the gateway so the session fits the context window (sends /compact)."
+      >🗜 Compact</button>
 
       <form method="post" action="/chats/<%= activeChat.id %>/delete" class="delete-form">
         <button type="submit" onclick="return confirm('Delete this chat?')" aria-label="Delete">

@@ -1,13 +1,4 @@
-import { randomUUID } from 'node:crypto';
 import { loadOpenClawConfig } from './config';
-
-/** Activity from gateway WS (agent / session.tool), keyed by session. */
-export type GatewayActivity =
-  | { kind: 'tool'; phase: 'start' | 'end'; name: string }
-  | { kind: 'lifecycle'; phase: string }
-  | { kind: 'status'; status: 'thinking' };
-
-type ActivityListener = (ev: GatewayActivity) => void;
 
 type GatewayFrame = {
   type?: string;
@@ -30,76 +21,6 @@ function httpToWsUrl(httpUrl: string): string {
   return u.toString().replace(/\/$/, '');
 }
 
-function pickSessionKey(payload: Record<string, unknown>): string | null {
-  for (const key of ['sessionKey', 'session_id', 'sessionId']) {
-    const v = payload[key];
-    if (typeof v === 'string' && v) return v;
-  }
-  return null;
-}
-
-function toolNameFromPayload(data: Record<string, unknown>): string {
-  const name = data.name ?? data.toolName ?? data.tool;
-  return typeof name === 'string' && name ? name : 'tool';
-}
-
-function itemToolName(data: Record<string, unknown>): string {
-  const name = toolNameFromPayload(data);
-  if (name !== 'tool') return name;
-  const kind = typeof data.kind === 'string' ? data.kind : '';
-  if (kind && kind !== 'tool') return kind;
-  return name;
-}
-
-function mapAgentPayload(payload: Record<string, unknown>): GatewayActivity | null {
-  const stream = payload.stream;
-  const data = (payload.data ?? {}) as Record<string, unknown>;
-
-  if (stream === 'tool') {
-    const phase = data.phase;
-    if (phase === 'start') {
-      return { kind: 'tool', phase: 'start', name: toolNameFromPayload(data) };
-    }
-    if (phase === 'result' || phase === 'end' || phase === 'error') {
-      return { kind: 'tool', phase: 'end', name: toolNameFromPayload(data) };
-    }
-    return null;
-  }
-
-  if (stream === 'item') {
-    const kind = typeof data.kind === 'string' ? data.kind : '';
-    if (kind === 'analysis') return null;
-
-    const phase = data.phase;
-    const name = itemToolName(data);
-    if (phase === 'start') return { kind: 'tool', phase: 'start', name };
-    if (phase === 'end' || phase === 'completed' || phase === 'error') {
-      return { kind: 'tool', phase: 'end', name };
-    }
-    return null;
-  }
-
-  if (stream === 'lifecycle') {
-    const phase = typeof data.phase === 'string' ? data.phase : 'unknown';
-    if (phase === 'thinking') return { kind: 'status', status: 'thinking' };
-    return null;
-  }
-
-  return null;
-}
-
-function mapSessionToolPayload(payload: Record<string, unknown>): GatewayActivity | null {
-  const phase = payload.phase ?? payload.status;
-  const name = toolNameFromPayload(payload);
-  if (phase === 'start' || phase === 'running' || phase === 'invoke') {
-    return { kind: 'tool', phase: 'start', name };
-  }
-  if (phase === 'end' || phase === 'done' || phase === 'result' || phase === 'error') {
-    return { kind: 'tool', phase: 'end', name };
-  }
-  return null;
-}
-
 /** Default RPC timeout — chat.send takes up to ~30s for big agent runs. */
 const DEFAULT_RPC_TIMEOUT_MS = 120_000;
 
@@ -109,7 +30,6 @@ class GatewayWsBridge {
   private connectSent = false;
   private nextRpcSeq = 1;
 
-  private readonly activityListeners = new Map<string, Set<ActivityListener>>();
   private readonly rawListeners = new Set<RawFrameListener>();
   private readonly pending = new Map<
     string,
@@ -175,37 +95,6 @@ class GatewayWsBridge {
     return () => this.rawListeners.delete(listener);
   }
 
-  // --- activity (simple) subscription -----------------------------------
-
-  private emitActivity(sessionKey: string, ev: GatewayActivity): void {
-    const set = this.activityListeners.get(sessionKey);
-    if (!set) return;
-    for (const fn of set) {
-      try {
-        fn(ev);
-      } catch (err) {
-        console.error('[gatewayWs] activity listener error', err);
-      }
-    }
-  }
-
-  private dispatchEvent(eventName: string, payload: Record<string, unknown>): void {
-    const sessionKey = pickSessionKey(payload);
-
-    if (eventName === 'session.tool') {
-      const mapped = mapSessionToolPayload(payload);
-      if (mapped && sessionKey) this.emitActivity(sessionKey, mapped);
-      return;
-    }
-
-    if (eventName === 'agent') {
-      const mapped = mapAgentPayload(payload);
-      const sk = sessionKey ?? pickSessionKey((payload.data ?? {}) as Record<string, unknown>);
-      if (!mapped || !sk) return;
-      this.emitActivity(sk, mapped);
-    }
-  }
-
   private handleFrame(raw: string): void {
     let frame: GatewayFrame;
     try {
@@ -227,12 +116,10 @@ class GatewayWsBridge {
 
     if (frame.type === 'event' || frame.event) {
       const name = frame.event ?? '';
-      const payload = (frame.payload ?? {}) as Record<string, unknown>;
       if (name === 'connect.challenge') {
         this.sendConnect();
         return;
       }
-      this.dispatchEvent(name, payload);
       return;
     }
 
@@ -263,7 +150,9 @@ class GatewayWsBridge {
       minProtocol: 3,
       maxProtocol: 4,
       role: 'operator',
-      scopes: ['operator.read', 'operator.write'],
+      // operator.approvals is needed to call exec.approval.resolve when the
+      // gateway broadcasts exec.approval.requested for one of our sessions.
+      scopes: ['operator.read', 'operator.write', 'operator.approvals'],
       client: {
         id: 'gateway-client',
         version: '0.1.0',
@@ -282,12 +171,6 @@ class GatewayWsBridge {
 
   private sendSessionSubscribe(sessionKey: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    // Note: docs distinguish `sessions.subscribe` (index changes) from
-    // `sessions.messages.subscribe` (per-session transcript). For tool/
-    // activity events we don't actually need an explicit subscribe — `agent`
-    // and `chat` events broadcast to any operator.read client. But calling
-    // sessions.messages.subscribe enables `session.message` events for
-    // persisted messages, which higher-level clients may want.
     this.request('sessions.messages.subscribe', { key: sessionKey }).catch((err) => {
       console.warn('[gatewayWs] sessions.messages.subscribe failed', err.message);
     });
@@ -377,27 +260,12 @@ class GatewayWsBridge {
     return this.connectTask;
   }
 
-  /** Subscribe to tool/lifecycle activity for a chat session key (high-level). */
-  watchSession(sessionKey: string, listener: ActivityListener): () => void {
-    let set = this.activityListeners.get(sessionKey);
-    if (!set) {
-      set = new Set();
-      this.activityListeners.set(sessionKey, set);
-    }
-    set.add(listener);
-
+  /** Subscribe to per-session transcript events for `sessionKey`. */
+  subscribeSession(sessionKey: string): void {
     this.subscribedSessions.add(sessionKey);
     void this.ensureConnected()
       .then(() => this.sendSessionSubscribe(sessionKey))
       .catch((err) => console.error('[gatewayWs] connect failed', err.message));
-
-    return () => {
-      set?.delete(listener);
-      if (set?.size === 0) {
-        this.activityListeners.delete(sessionKey);
-        this.subscribedSessions.delete(sessionKey);
-      }
-    };
   }
 }
 

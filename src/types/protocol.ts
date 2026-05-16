@@ -35,6 +35,14 @@ export type ClientMsg =
     }
   /** Abort a running turn for this chat. */
   | { type: 'abort'; chatId: number }
+  /** Resolve a pending exec approval — `decision` is 'approved' | 'denied'. */
+  | {
+      type: 'exec-approval';
+      chatId: number;
+      approvalId: string;
+      decision: 'approved' | 'denied';
+      reason?: string;
+    }
   /** Keepalive — server replies with `pong`. */
   | { type: 'ping' };
 
@@ -72,6 +80,10 @@ export type ServerMsg =
       projectName?: string | null;
       /** Toggle on whether the chat writes facts back to the project. */
       sharesToProject?: boolean;
+      /** Per-chat model override (null = agent default). */
+      modelOverride?: string | null;
+      /** Reasoning visibility mode mirror — 'off' | 'on' | 'stream'. */
+      reasoningMode?: 'off' | 'on' | 'stream';
       /** Present after mutations that bump `chats.updated_at` — flat sidebar order. */
       updatedAt?: string;
     }
@@ -130,4 +142,31 @@ export type ServerMsg =
 
   /* ---- scheduled messages (Telegram-style send-later) ---- */
   | { type: 'scheduled-added'; chatId: number; scheduled: ScheduledMessage }
-  | { type: 'scheduled-deleted'; chatId: number; scheduledId: number };
+  | { type: 'scheduled-deleted'; chatId: number; scheduledId: number }
+
+  /* ---- gateway events forwarded to UI ---- */
+  /** Gateway session index/metadata changed (possibly from another tab/CLI). */
+  | {
+      type: 'gateway-session-changed';
+      kind: string;
+      sessionKey: string | null;
+    }
+  /** Agent is asking for human approval to run a shell command. */
+  | {
+      type: 'exec-approval-requested';
+      chatId: number;
+      approvalId: string;
+      command: string;
+      cwd: string | null;
+      reason: string | null;
+      host: string;
+    }
+  /** Approval resolved (by us, another client, or auto-policy). */
+  | {
+      type: 'exec-approval-resolved';
+      chatId: number;
+      approvalId: string;
+      decision: string;
+    }
+  /** A turn lost a reasoning/analysis chunk — only emitted when reasoning is on. */
+  | { type: 'turn-reasoning'; chatId: number; text: string };

@@ -49,6 +49,10 @@ export interface Chat {
   project_id: number | null;
   /** 0/1 — when 1, after each reply the app proposes facts; you confirm each with Add / Skip. */
   shares_to_project: number;
+  /** Optional per-chat model override applied via `sessions.patch` on OpenClaw. */
+  model_override: string | null;
+  /** Reasoning visibility mirror — 'off' | 'on' | 'stream'. */
+  reasoning_mode: string;
   title_manual: number;
   unread: number;
   created_at: string;

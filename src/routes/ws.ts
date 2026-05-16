@@ -9,6 +9,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { chats } from '../services/store';
 import { wsHub } from '../services/wsHub';
 import { sendMessage, abortChatRun } from '../services/chatRunner';
+import { openclawWs } from '../services/openclawWs';
 import type { ClientMsg, ServerMsg } from '../types/protocol';
 
 const PATH = '/ws';
@@ -82,6 +83,24 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
         });
       }
       return;
+
+    case 'exec-approval': {
+      const approvalId = String(msg.approvalId ?? '').trim();
+      const decision = msg.decision === 'denied' ? 'denied' : 'approved';
+      if (!approvalId) return;
+      try {
+        await openclawWs.resolveExecApproval({
+          approvalId,
+          decision,
+          reason: msg.reason,
+        });
+        // The gateway broadcasts `exec.approval.resolved` after we resolve, so
+        // the UI card-removal flows through the same path as external resolves.
+      } catch (err) {
+        console.error('[ws] exec.approval.resolve failed', err);
+      }
+      return;
+    }
   }
 }
 
