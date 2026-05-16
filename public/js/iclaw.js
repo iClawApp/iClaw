@@ -20,7 +20,7 @@
   const titleInput = document.getElementById('chat-title-input');
   const draftAgentSelect = document.getElementById('draft-agent');
   const stopBtn = document.getElementById('stop-btn');
-
+  const searchInput = document.getElementById('sidebar-search-input');
   const rawChatId = messagesEl?.dataset.chatId;
   const startedOnDraft = messagesEl?.dataset.draft === '1' || !rawChatId;
   let activeChatId = startedOnDraft ? null : Number(rawChatId);
@@ -230,10 +230,12 @@
       list.querySelectorAll('.chat-item.active').forEach((el) => el.classList.remove('active'));
       link.classList.add('active');
     }
+    applySidebarSearchFilterIfActive();
   }
   function sidebarRemoveChat(id) {
     const list = document.getElementById('chat-list');
     list?.querySelector('.chat-item[data-chat-id="' + id + '"]')?.remove();
+    if (searchMatchSet !== null) applySidebarSearchFilter();
   }
   function statusDot(id) {
     return document.querySelector('.chat-item[data-chat-id="' + id + '"] .status-dot');
@@ -254,6 +256,89 @@
     if (on) dot.classList.add('unread');
     else dot.classList.remove('unread');
   }
+
+  let searchMatchSet = null;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let searchDebounceTimer = null;
+
+  function ensureSearchNoMatchesEl(list) {
+    let el = list.querySelector('.search-no-matches');
+    if (!el) {
+      el = document.createElement('p');
+      el.className = 'muted empty-list search-no-matches';
+      el.textContent = 'No matches.';
+      el.hidden = true;
+      list.appendChild(el);
+    }
+    return el;
+  }
+
+  function applySidebarSearchFilter() {
+    const list = document.getElementById('chat-list');
+    if (!list) return;
+    const noMatches = ensureSearchNoMatchesEl(list);
+    if (searchMatchSet === null) {
+      list.querySelectorAll('.chat-item').forEach((link) => {
+        link.hidden = false;
+      });
+      noMatches.hidden = true;
+      return;
+    }
+    list.querySelectorAll('.chat-item').forEach((link) => {
+      const id = Number(link.dataset.chatId);
+      link.hidden = !searchMatchSet.has(id);
+    });
+    const anyVisible = list.querySelector('.chat-item:not([hidden])');
+    const hasAnyChats = Boolean(list.querySelector('.chat-item'));
+    noMatches.hidden = !hasAnyChats || Boolean(anyVisible);
+  }
+
+  async function runSidebarSearch() {
+    const q = searchInput ? searchInput.value : '';
+    if (!q.trim()) {
+      searchMatchSet = null;
+      applySidebarSearchFilter();
+      return;
+    }
+    try {
+      const res = await fetch('/chats/search?' + new URLSearchParams({ q: q.trim() }), {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) throw new Error('search ' + res.status);
+      const data = await res.json();
+      const ids = Array.isArray(data.ids) ? data.ids : [];
+      searchMatchSet = new Set(ids.map((x) => Number(x)));
+    } catch (err) {
+      console.error('[iclaw] sidebar search failed', err);
+      searchMatchSet = null;
+    }
+    applySidebarSearchFilter();
+  }
+
+  function scheduleSidebarSearch() {
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => {
+      searchDebounceTimer = null;
+      runSidebarSearch();
+    }, 280);
+  }
+
+  function applySidebarSearchFilterIfActive() {
+    if (searchMatchSet !== null) applySidebarSearchFilter();
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener('input', scheduleSidebarSearch);
+    searchInput.addEventListener('search', () => {
+      if (searchInput.value === '') {
+        if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = null;
+        searchMatchSet = null;
+        applySidebarSearchFilter();
+      }
+    });
+  }
+
   function applyTitleForActive(title) {
     if (titleInput && activeChatId != null) {
       titleInput.value = title;
@@ -336,11 +421,13 @@
           applyTitleForActive(msg.title || 'New chat');
         }
         sidebarUpsertChat({ id: msg.chatId, title: msg.title, agent: msg.agent });
+        if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
         return;
 
       case 'chat-updated':
         if (msg.title != null) sidebarUpsertChat({ id: msg.chatId, title: msg.title });
         if (msg.chatId === activeChatId && msg.title != null) applyTitleForActive(msg.title);
+        if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
         return;
 
       case 'chat-deleted':

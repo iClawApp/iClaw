@@ -1,6 +1,17 @@
 <aside class="col col-left">
   <div class="sidebar-top">
     <a href="/" class="new-chat-btn <%= !activeChat ? 'active' : '' %>">+ New chat</a>
+    <div class="sidebar-search">
+      <input
+        type="search"
+        id="sidebar-search-input"
+        name="sidebar-search"
+        placeholder="Search chats…"
+        autocomplete="off"
+        aria-label="Search chats by title or message text"
+        spellcheck="false"
+      />
+    </div>
   </div>
 
   <nav class="chat-list" id="chat-list">

@@ -161,7 +161,29 @@ code {
 
 .sidebar-top {
   padding: 12px;
-  border-bottom: 1px solid transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-search input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+.sidebar-search input::placeholder {
+  color: var(--muted);
+  opacity: 0.85;
+}
+.sidebar-search input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--text) 18%, var(--border));
 }
 
 .new-chat-btn {

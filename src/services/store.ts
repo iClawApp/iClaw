@@ -114,3 +114,29 @@ export const messages = {
     return db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid) as Message;
   },
 };
+
+const SEARCH_MAX_LEN = 200;
+
+/**
+ * Case-insensitive substring search over chat titles and message bodies.
+ * Returns distinct chat ids, newest chats first (same order as sidebar).
+ */
+export const chatSearch = {
+  matchingChatIds(query: string): number[] {
+    let needle = query.trim().toLowerCase();
+    if (!needle) return [];
+    if (needle.length > SEARCH_MAX_LEN) needle = needle.slice(0, SEARCH_MAX_LEN);
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT c.id AS id
+         FROM chats c
+         LEFT JOIN messages m ON m.chat_id = c.id
+         WHERE instr(lower(c.title), ?) > 0
+            OR instr(lower(COALESCE(m.content, '')), ?) > 0
+         ORDER BY c.updated_at DESC, c.id DESC
+         LIMIT 500`,
+      )
+      .all(needle, needle) as { id: number }[];
+    return rows.map((r) => r.id);
+  },
+};

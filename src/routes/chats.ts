@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { chats, messages } from '../services/store';
+import { chats, messages, chatSearch } from '../services/store';
 import { openclaw } from '../services/openclaw';
 import { openclawWs } from '../services/openclawWs';
 import { chatStatus } from '../services/chatStatus';
@@ -29,6 +29,13 @@ chatsRouter.get('/status', (_req, res) => {
     working: chatStatus.workingIds(),
     activities: chatStatus.snapshot(),
   });
+});
+
+/** JSON search — must stay above `/:id` so "search" is not parsed as an id. */
+chatsRouter.get('/search', (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q : '';
+  const ids = chatSearch.matchingChatIds(q);
+  res.type('application/json').json({ ids });
 });
 
 chatsRouter.get('/:id', async (req, res, next) => {
