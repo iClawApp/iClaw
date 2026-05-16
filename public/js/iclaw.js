@@ -22,6 +22,9 @@
   const draftProjectSelect = document.getElementById('draft-project');
   const stopBtn = document.getElementById('stop-btn');
   const searchInput = document.getElementById('sidebar-search-input');
+  const sidebarToolbar = document.querySelector('.sidebar-toolbar');
+  const searchToggleBtn = document.getElementById('sidebar-search-toggle');
+  const searchCloseBtn = document.getElementById('sidebar-search-close');
   const rawChatId = messagesEl?.dataset.chatId;
   const startedOnDraft = messagesEl?.dataset.draft === '1' || !rawChatId;
   let activeChatId = startedOnDraft ? null : Number(rawChatId);
@@ -436,6 +439,75 @@
     return arr.find((p) => p && p.id === id) ?? null;
   }
 
+  function getProjectsHubListEl() {
+    return document.getElementById('projects-hub-list');
+  }
+
+  function appendProjectsHubRow(project) {
+    const ul = getProjectsHubListEl();
+    if (!ul || !project) return;
+    ul.querySelector('.projects-hub-empty')?.remove();
+    const pid = Number(project.id);
+    if (!Number.isFinite(pid)) return;
+    if (ul.querySelector('.projects-hub-row[data-project-id="' + pid + '"]')) return;
+    const li = document.createElement('li');
+    li.className = 'projects-hub-row';
+    li.dataset.projectId = String(pid);
+    const ei = clampLogoEmojiJs(project.logo_emoji);
+    const ci = clampLogoColorJs(project.logo_color);
+    const nm = String(project.name || 'Project').trim() || 'Project';
+    li.innerHTML =
+      '<a href="/projects/' +
+      pid +
+      '" class="projects-hub-link">' +
+      buildProjectLogoHtml(ei, ci) +
+      '<span class="projects-hub-name">' +
+      escapeHtml(nm) +
+      '</span>' +
+      '<span class="projects-hub-meta muted">0 chats</span></a>';
+    ul.appendChild(li);
+  }
+
+  function removeProjectsHubRow(projectId) {
+    const ul = getProjectsHubListEl();
+    if (!ul) return;
+    const pid = Number(projectId);
+    if (!Number.isFinite(pid)) return;
+    ul.querySelector('.projects-hub-row[data-project-id="' + pid + '"]')?.remove();
+    if (!ul.querySelector('.projects-hub-row')) {
+      const li = document.createElement('li');
+      li.className = 'projects-hub-empty';
+      li.setAttribute('aria-live', 'polite');
+      li.innerHTML =
+        '<div class="projects-hub-empty-visual" aria-hidden="true"></div>' +
+        '<p class="projects-hub-empty-title">Nothing here yet</p>' +
+        '<p class="projects-hub-empty-hint muted">Add one above, then choose it when you start a chat from home.</p>';
+      ul.appendChild(li);
+    }
+  }
+
+  function updateProjectsHubRow(project) {
+    const ul = getProjectsHubListEl();
+    if (!ul || !project) return;
+    const pid = Number(project.id);
+    if (!Number.isFinite(pid)) return;
+    const li = ul.querySelector('.projects-hub-row[data-project-id="' + pid + '"]');
+    if (!li) return;
+    const textEl = li.querySelector('.projects-hub-name');
+    const logoEl = li.querySelector('.project-logo');
+    if (textEl && project.name != null) {
+      textEl.textContent = String(project.name).trim() || 'Project';
+    }
+    const hasE = project.logo_emoji !== undefined && project.logo_emoji !== null;
+    const hasC = project.logo_color !== undefined && project.logo_color !== null;
+    if (logoEl && (hasE || hasC)) {
+      const cur = readLogoFromEl(logoEl);
+      const ei = hasE ? clampLogoEmojiJs(Number(project.logo_emoji)) : cur.ei;
+      const ci = hasC ? clampLogoColorJs(Number(project.logo_color)) : cur.ci;
+      applyProjectLogoToEl(logoEl, ei, ci);
+    }
+  }
+
   function mergeProjectIntoClientCache(projectId, projectName) {
     if (projectId == null || !Number.isFinite(Number(projectId))) return;
     const pid = Number(projectId);
@@ -600,6 +672,7 @@
   let searchMatchSet = null;
   /** @type {ReturnType<typeof setTimeout> | null} */
   let searchDebounceTimer = null;
+  const SIDEBAR_SEARCH_DEBOUNCE_MS = 1500;
 
   function ensureSearchNoMatchesEl(list) {
     let el = list.querySelector('.search-no-matches');
@@ -615,6 +688,7 @@
 
   function applySidebarSearchFilter() {
     const list = document.getElementById('chat-list');
+    const statusEl = document.getElementById('sidebar-search-status');
     if (!list) return;
     const noMatches = ensureSearchNoMatchesEl(list);
     if (searchMatchSet === null) {
@@ -622,14 +696,30 @@
         link.hidden = false;
       });
       noMatches.hidden = true;
+      if (statusEl) {
+        statusEl.hidden = true;
+        statusEl.textContent = '';
+      }
       return;
     }
-    list.querySelectorAll('.chat-item').forEach((link) => {
+    const items = list.querySelectorAll('.chat-item');
+    let visibleCount = 0;
+    items.forEach((link) => {
       const id = Number(link.dataset.chatId);
-      link.hidden = !searchMatchSet.has(id);
+      const show = searchMatchSet.has(id);
+      link.hidden = !show;
+      if (show) visibleCount += 1;
     });
+    const total = items.length;
+    if (statusEl) {
+      statusEl.hidden = false;
+      statusEl.textContent =
+        visibleCount === total
+          ? 'All ' + total + ' chats match'
+          : visibleCount + ' of ' + total + ' chats';
+    }
     const anyVisible = list.querySelector('.chat-item:not([hidden])');
-    const hasAnyChats = Boolean(list.querySelector('.chat-item'));
+    const hasAnyChats = total > 0;
     noMatches.hidden = !hasAnyChats || Boolean(anyVisible);
   }
 
@@ -642,6 +732,7 @@
     }
     try {
       const res = await fetch('/chats/search?' + new URLSearchParams({ q: q.trim() }), {
+        cache: 'no-store',
         headers: { Accept: 'application/json' },
       });
       if (!res.ok) throw new Error('search ' + res.status);
@@ -660,13 +751,42 @@
     searchDebounceTimer = setTimeout(() => {
       searchDebounceTimer = null;
       runSidebarSearch();
-    }, 280);
+    }, SIDEBAR_SEARCH_DEBOUNCE_MS);
   }
 
   function applySidebarSearchFilterIfActive() {
     if (searchMatchSet !== null) applySidebarSearchFilter();
   }
 
+  function openSidebarSearchPanel() {
+    if (!sidebarToolbar || !searchToggleBtn) return;
+    sidebarToolbar.classList.add('is-search-open');
+    searchToggleBtn.setAttribute('aria-expanded', 'true');
+    if (searchInput) requestAnimationFrame(() => searchInput.focus());
+  }
+
+  function closeSidebarSearchPanel() {
+    if (!sidebarToolbar || !searchToggleBtn) return;
+    sidebarToolbar.classList.remove('is-search-open');
+    searchToggleBtn.setAttribute('aria-expanded', 'false');
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = null;
+    }
+    if (searchInput) {
+      searchInput.value = '';
+      searchInput.blur();
+    }
+    searchMatchSet = null;
+    applySidebarSearchFilter();
+  }
+
+  if (searchToggleBtn && sidebarToolbar) {
+    searchToggleBtn.addEventListener('click', openSidebarSearchPanel);
+  }
+  if (searchCloseBtn) {
+    searchCloseBtn.addEventListener('click', closeSidebarSearchPanel);
+  }
   if (searchInput) {
     searchInput.addEventListener('input', scheduleSidebarSearch);
     searchInput.addEventListener('search', () => {
@@ -675,6 +795,12 @@
         searchDebounceTimer = null;
         searchMatchSet = null;
         applySidebarSearchFilter();
+      }
+    });
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSidebarSearchPanel();
       }
     });
   }
@@ -999,6 +1125,7 @@
             logo_color: msg.project.logo_color ?? 0,
           });
         }
+        appendProjectsHubRow(msg.project);
         return;
       }
 
@@ -1037,6 +1164,7 @@
             hasC ? clampLogoColorJs(Number(msg.project.logo_color)) : cur2.ci,
           );
         }
+        updateProjectsHubRow(msg.project);
         return;
       }
 
@@ -1048,7 +1176,8 @@
           syncChatItemProjectMark(a);
         });
         window.__ICLAW_PROJECTS__ = (window.__ICLAW_PROJECTS__ || []).filter((p) => p && p.id !== pid);
-        if (currentProjectPageId() === pid) window.location.assign('/');
+        removeProjectsHubRow(pid);
+        if (currentProjectPageId() === pid) window.location.assign('/projects');
         return;
       }
 

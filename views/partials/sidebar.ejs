@@ -9,30 +9,46 @@
 %>
 <aside class="col col-left">
   <div class="sidebar-top">
-    <a href="/" class="new-chat-btn <%= !activeChat && !activeProject ? 'active' : '' %>">+ New chat</a>
-    <div class="sidebar-search">
-      <input
-        type="search"
-        id="sidebar-search-input"
-        name="sidebar-search"
-        placeholder="Search chats…"
-        autocomplete="off"
-        aria-label="Search chats by title or message text"
-        spellcheck="false"
-      />
+    <div class="sidebar-toolbar">
+      <a href="/" class="new-chat-btn <%= !activeChat && !activeProject && !(typeof activeProjectsList !== 'undefined' && activeProjectsList) ? 'active' : '' %>">+ New chat</a>
+      <div class="sidebar-search-slot">
+        <button
+          type="button"
+          class="sidebar-search-toggle"
+          id="sidebar-search-toggle"
+          aria-label="Search chats"
+          aria-expanded="false"
+          aria-controls="sidebar-search-input"
+        >
+          <svg class="sidebar-search-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path
+              fill="currentColor"
+              d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"
+            />
+          </svg>
+        </button>
+        <div class="sidebar-search-field-wrap" id="sidebar-search-field-wrap">
+          <input
+            type="search"
+            id="sidebar-search-input"
+            name="sidebar-search"
+            placeholder="Search chats…"
+            autocomplete="off"
+            aria-label="Search chats by title or message text"
+            spellcheck="false"
+          />
+          <button type="button" class="sidebar-search-close" id="sidebar-search-close" aria-label="Close search">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+      </div>
     </div>
-    <div class="sidebar-create-project">
-      <form method="post" action="/projects" class="sidebar-new-project" id="new-project-form">
-        <input
-          type="text"
-          name="name"
-          placeholder="New project…"
-          autocomplete="off"
-          spellcheck="false"
-          aria-label="New project name"
-        />
-        <button type="submit" class="sidebar-create-project-btn">Create</button>
-      </form>
+    <p id="sidebar-search-status" class="sidebar-search-status" hidden aria-live="polite"></p>
+    <div class="sidebar-projects-nav">
+      <a
+        href="/projects"
+        class="sidebar-projects-btn<%= typeof activeProjectsList !== 'undefined' && activeProjectsList ? ' active' : '' %>"
+      >Projects</a>
     </div>
   </div>
 

@@ -1,0 +1,63 @@
+<%- include('partials/head', { title: 'Projects — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main projects-hub-page">
+    <div class="projects-hub-inner">
+      <header class="projects-hub-head">
+        <h1 class="projects-hub-title">Projects</h1>
+        <p class="projects-hub-intro muted">
+          Shared notes for your chats — facts you save in a conversation show up here and travel with new messages in the same project.
+        </p>
+      </header>
+
+      <div class="projects-hub-create-wrap">
+        <form method="post" action="/projects" class="projects-hub-form" aria-label="New project">
+          <input
+            type="text"
+            name="name"
+            placeholder="Name this project…"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Project name"
+            required
+          />
+          <button type="submit" class="projects-hub-add">Create</button>
+        </form>
+      </div>
+
+      <ul id="projects-hub-list" class="projects-hub-list">
+        <% if (projectRows.length === 0) { %>
+          <li class="projects-hub-empty" aria-live="polite">
+            <div class="projects-hub-empty-visual" aria-hidden="true"></div>
+            <p class="projects-hub-empty-title">Nothing here yet</p>
+            <p class="projects-hub-empty-hint muted">
+              Add one above, then choose it when you start a chat from home.
+            </p>
+          </li>
+        <% } else { %>
+          <% projectRows.forEach(function (row) {
+            const p = row.project;
+            const _ei = typeof p.logo_emoji === 'number' ? p.logo_emoji : 0;
+            const _ci = typeof p.logo_color === 'number' ? p.logo_color : 0;
+          %>
+            <li class="projects-hub-row" data-project-id="<%= p.id %>">
+              <a href="/projects/<%= p.id %>" class="projects-hub-link">
+                <%- include('partials/projectLogo', { emojiIndex: _ei, colorIndex: _ci }) %>
+                <span class="projects-hub-name"><%= p.name %></span>
+                <span class="projects-hub-meta muted">
+                  <%= row.chatCount %> <%= row.chatCount === 1 ? 'chat' : 'chats' %>
+                </span>
+              </a>
+            </li>
+          <% }); %>
+        <% } %>
+      </ul>
+    </div>
+
+    <script src="/js/iclaw.js"></script>
+  </main>
+</div>
+
+<%- include('partials/foot') %>

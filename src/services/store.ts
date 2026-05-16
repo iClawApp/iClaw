@@ -334,8 +334,8 @@ export const chatSearch = {
         `SELECT DISTINCT c.id AS id
          FROM chats c
          LEFT JOIN messages m ON m.chat_id = c.id
-         WHERE instr(lower(c.title), ?) > 0
-            OR instr(lower(COALESCE(m.content, '')), ?) > 0
+         WHERE instr(unicode_lower(c.title), ?) > 0
+            OR instr(unicode_lower(COALESCE(m.content, '')), ?) > 0
          ORDER BY c.updated_at DESC, c.id DESC
          LIMIT 500`,
       )

@@ -36,6 +36,8 @@ chatsRouter.get('/status', (_req, res) => {
 chatsRouter.get('/search', (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q : '';
   const ids = chatSearch.matchingChatIds(q);
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
   res.type('application/json').json({ ids });
 });
 

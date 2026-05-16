@@ -23,10 +23,31 @@ function wantsJson(req: import('express').Request): boolean {
 
 /* ---------------- project CRUD ---------------- */
 
+projectsRouter.get('/', (_req, res) => {
+  const allProjects = projects.list();
+  const projectRows = allProjects.map((p) => ({
+    project: p,
+    chatCount: chats.listByProject(p.id).length,
+  }));
+  res.render('projects', {
+    chats: chats.list(),
+    workingIds: chatStatus.workingIds(),
+    allProjects,
+    projectRows,
+    activeChat: null,
+    activeProject: null,
+    activeProjectsList: true,
+  });
+});
+
 projectsRouter.post('/', (req, res) => {
   const name = String(req.body?.name ?? '').trim();
   if (!name) {
-    res.status(400).json({ error: 'name required' });
+    if (wantsJson(req)) {
+      res.status(400).json({ error: 'name required' });
+    } else {
+      res.redirect(303, '/projects');
+    }
     return;
   }
   const project = projects.create(name, null);
@@ -119,7 +140,7 @@ projectsRouter.post('/:id/delete', (req, res) => {
       updatedAt: chats.get(chatId)!.updated_at,
     });
   }
-  res.redirect('/');
+  res.redirect('/projects');
 });
 
 /* ---------------- facts (from chats only; edit/delete here) ---------------- */

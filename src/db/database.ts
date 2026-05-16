@@ -138,6 +138,17 @@ function migrateSchema(database: Database.Database): void {
 
 migrateSchema(db);
 
+/** SQLite's lower() is ASCII-only; JS toLowerCase() folds Cyrillic and other scripts for search. */
+db.function(
+  'unicode_lower',
+  { deterministic: true },
+  (text: unknown): string | null => {
+    if (text == null) return null;
+    if (typeof text === 'string') return text.toLowerCase();
+    return null;
+  },
+);
+
 /** Must run after `migrateSchema` — old DBs have `chats` without `project_id` until ALTER. */
 function ensureChatsProjectIndex(database: Database.Database): void {
   const chatCols = database.prepare('PRAGMA table_info(chats)').all() as { name: string }[];

@@ -173,11 +173,99 @@ code {
   background: color-mix(in srgb, var(--sidebar-elevated) 35%, var(--sidebar-bg));
 }
 
-.sidebar-search input {
+.sidebar-toolbar {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.sidebar-search-slot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.sidebar-toolbar.is-search-open .sidebar-search-slot {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-toolbar.is-search-open .new-chat-btn {
+  display: none;
+}
+
+.sidebar-search-toggle {
+  flex: 0 0 auto;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, var(--sidebar-bg));
+  border-radius: 10px;
+  background: var(--sidebar-elevated);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.sidebar-search-toggle:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--hover) 70%, var(--sidebar-elevated));
+  border-color: color-mix(in srgb, var(--border) 100%, var(--sidebar-bg));
+}
+.sidebar-search-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-link) 35%, transparent);
+}
+.sidebar-toolbar.is-search-open .sidebar-search-toggle {
+  display: none;
+}
+
+.sidebar-search-toggle-icon {
+  width: 22px;
+  height: 22px;
   display: block;
-  width: 100%;
+}
+
+.sidebar-search-field-wrap {
+  display: none;
+  flex: 1;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+  animation: sidebar-search-expand-in 0.2s ease;
+}
+.sidebar-toolbar.is-search-open .sidebar-search-field-wrap {
+  display: flex;
+}
+
+@keyframes sidebar-search-expand-in {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.sidebar-search-field-wrap input[type='search'] {
+  flex: 1;
+  min-width: 0;
   box-sizing: border-box;
-  padding: 9px 11px;
+  padding: 9px 10px;
   font-size: 0.8125rem;
   line-height: 1.25;
   border-radius: 10px;
@@ -185,15 +273,51 @@ code {
   background: var(--sidebar-elevated);
   color: var(--text);
 }
-.sidebar-search input::placeholder {
+.sidebar-search-field-wrap input[type='search']::placeholder {
   color: var(--muted);
   opacity: 0.8;
 }
-.sidebar-search input:focus {
+.sidebar-search-field-wrap input[type='search']:focus {
   outline: none;
   border-color: color-mix(in srgb, var(--md-link) 35%, var(--border));
   background: var(--surface);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--md-link) 14%, transparent);
+}
+
+.sidebar-search-close {
+  flex: 0 0 auto;
+  width: 36px;
+  min-width: 36px;
+  height: auto;
+  align-self: stretch;
+  margin: 0;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, var(--sidebar-bg));
+  border-radius: 10px;
+  background: var(--sidebar-elevated);
+  color: var(--muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.sidebar-search-close:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--hover) 65%, var(--sidebar-elevated));
+}
+.sidebar-search-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-link) 35%, transparent);
+}
+
+.sidebar-search-status {
+  margin: 0 2px;
+  font-size: 0.6875rem;
+  line-height: 1.35;
+  color: var(--muted);
 }
 
 .new-chat-btn {
@@ -201,7 +325,8 @@ code {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 10px 12px;
   background: color-mix(in srgb, var(--btn-bg) 92%, var(--sidebar-bg));
   color: var(--btn-fg);
@@ -309,6 +434,11 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Ensure filtered rows stay hidden (some engines are picky about [hidden] on <a>) */
+.chat-list > a.chat-item[hidden] {
+  display: none !important;
 }
 
 .empty-list {
@@ -1061,43 +1191,246 @@ code {
   border: 1px solid var(--down-soft-border);
 }
 
-/* ---------- Sidebar: projects & create ---------- */
+/* ---------- Sidebar: projects link ---------- */
 
-.sidebar-create-project {
+.sidebar-projects-nav {
   margin-top: 0;
 }
-.sidebar-new-project {
+
+.sidebar-projects-btn {
   display: flex;
-  gap: 8px;
-  align-items: stretch;
-  margin: 0;
-}
-.sidebar-new-project input {
-  flex: 1;
-  min-width: 0;
-  font-size: 0.8125rem;
-  line-height: 1.25;
-  padding: 9px 11px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--border) 90%, var(--sidebar-bg));
-  background: var(--sidebar-elevated);
-}
-.sidebar-create-project-btn {
-  flex: 0 0 auto;
-  padding: 9px 12px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--border) 70%, var(--sidebar-bg));
-  cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, var(--sidebar-bg));
   background: transparent;
   color: var(--text);
-  white-space: nowrap;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
-.sidebar-create-project-btn:hover {
-  background: color-mix(in srgb, var(--hover) 70%, var(--sidebar-bg));
+
+.sidebar-projects-btn:hover {
+  background: color-mix(in srgb, var(--hover) 65%, var(--sidebar-bg));
   border-color: color-mix(in srgb, var(--border) 100%, var(--sidebar-bg));
+}
+
+.sidebar-projects-btn.active {
+  background: color-mix(in srgb, var(--btn-bg) 78%, var(--sidebar-bg));
+  border-color: color-mix(in srgb, var(--btn-bg) 55%, var(--sidebar-bg));
+  color: var(--btn-fg);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+/* ---------- Projects hub (/projects) ---------- */
+
+.projects-hub-page {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.projects-hub-inner {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+  max-width: 28rem;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 32px 22px 52px;
+}
+
+.projects-hub-head {
+  margin-bottom: 22px;
+}
+
+.projects-hub-title {
+  margin: 0 0 10px;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+.projects-hub-intro {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  max-width: 26rem;
+}
+
+.projects-hub-create-wrap {
+  margin: 0 0 26px;
+  padding: 14px 14px 15px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--chat-pane-bg));
+  border: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  .projects-hub-create-wrap {
+    box-shadow: none;
+    background: color-mix(in srgb, var(--surface) 55%, var(--chat-pane-bg));
+    border-color: color-mix(in srgb, var(--border) 45%, transparent);
+  }
+}
+
+.projects-hub-form {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  margin: 0;
+}
+
+.projects-hub-form input[type='text'] {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 0.9375rem;
+  line-height: 1.35;
+  border: 1px solid color-mix(in srgb, var(--border) 75%, var(--chat-pane-bg));
+  border-radius: 10px;
+  background: var(--chat-pane-bg);
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.projects-hub-form input[type='text']::placeholder {
+  color: color-mix(in srgb, var(--muted) 72%, var(--chat-pane-bg));
+}
+
+.projects-hub-form input[type='text']:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--md-link) 42%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--md-link) 16%, transparent);
+}
+
+.projects-hub-add {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 10px 16px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.35;
+  border: none;
+  border-radius: 10px;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.projects-hub-add:hover {
+  background: var(--btn-bg-hover);
+}
+
+.projects-hub-add:active {
+  transform: scale(0.98);
+}
+
+.projects-hub-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.projects-hub-empty {
+  margin: 0;
+  padding: 28px 16px 8px;
+  text-align: center;
+  list-style: none;
+}
+
+.projects-hub-empty-visual {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 30% 30%,
+    color-mix(in srgb, var(--md-link) 22%, transparent),
+    color-mix(in srgb, var(--border) 40%, var(--chat-pane-bg)) 70%
+  );
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  opacity: 0.95;
+}
+
+.projects-hub-empty-title {
+  margin: 0 0 8px;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.projects-hub-empty-hint {
+  margin: 0 auto;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  max-width: 20rem;
+}
+
+.projects-hub-row {
+  margin: 0 0 6px;
+}
+
+.projects-hub-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px 12px;
+  margin: 0;
+  text-decoration: none;
+  color: var(--text);
+  border-radius: 12px;
+  border: 1px solid transparent;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.projects-hub-link:hover {
+  background: color-mix(in srgb, var(--hover) 65%, var(--chat-pane-bg));
+  border-color: color-mix(in srgb, var(--border) 45%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.projects-hub-link:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--md-link) 35%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--md-link) 14%, transparent);
+}
+
+.projects-hub-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-hub-meta {
+  flex: 0 0 auto;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .sidebar-list-tail {
