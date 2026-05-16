@@ -84,12 +84,13 @@
   function scrollToBottom() {
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
   }
-  function appendMessage(msg) {
+  function appendMessage(msg, opts) {
     if (!messagesEl) return null;
     clearEmptyState();
     const div = document.createElement('div');
     div.className = 'msg ' + (msg.role || 'system');
     if (msg.id) div.dataset.msgId = String(msg.id);
+    if (opts?.pendingId) div.classList.add('pending-id');
     div.innerHTML =
       '<div class="role">' + escapeHtml(msg.role || 'system') + '</div>' +
       '<div class="msg-body">' + renderMarkdown(msg.content || '') + '</div>';
@@ -110,6 +111,32 @@
     messagesEl.appendChild(div);
     scrollToBottom();
     return div;
+  }
+  /**
+   * Get or create the assistant streaming element. If the page was loaded
+   * mid-turn there's an #reload-placeholder we adopt; otherwise we spawn a
+   * fresh one. This is the single source of truth — never call
+   * appendStreamingAssistant() directly elsewhere.
+   */
+  function ensureStreamEl() {
+    if (currentStreamEl && messagesEl?.contains(currentStreamEl)) return currentStreamEl;
+    const placeholder = document.getElementById('reload-placeholder');
+    if (placeholder) {
+      placeholder.id = '';
+      currentStreamEl = placeholder;
+      // Make sure it's classified as streaming so our state CSS applies
+      currentStreamEl.classList.add('streaming');
+      return currentStreamEl;
+    }
+    currentStreamEl = appendStreamingAssistant();
+    return currentStreamEl;
+  }
+  /** Remove any orphaned reload placeholder + clear streaming styles. */
+  function clearStreamArtifacts() {
+    document.getElementById('reload-placeholder')?.remove();
+    if (currentStreamEl && !messagesEl?.contains(currentStreamEl)) {
+      currentStreamEl = null;
+    }
   }
   function hydrateServerRenderedMessages() {
     if (!messagesEl) return;
@@ -273,89 +300,99 @@
 
       case 'message-appended':
         if (msg.chatId !== activeChatId) return;
-        // Drop the streaming placeholder once the assistant message lands —
-        // its content is the same final text we accumulated.
-        if (msg.message.role === 'assistant' && currentStreamEl) {
-          currentStreamEl.classList.remove(
-            'streaming', 'stream-waiting', 'stream-tool', 'stream-generating',
-          );
-          currentStreamEl.dataset.msgId = String(msg.message.id);
-          const status = currentStreamEl.querySelector('.stream-status');
-          if (status) status.remove();
-          const body = currentStreamEl.querySelector('.stream-body');
-          if (body) {
-            body.classList.remove('stream-body');
-            body.innerHTML = renderMarkdown(msg.message.content || '');
-            decorateLinks(body);
-          }
-          currentStreamEl = null;
-          currentStreamFullText = '';
-        } else if (msg.message.role === 'user') {
-          // User messages are appended optimistically by us; only add if missing.
-          if (!messagesEl?.querySelector('.msg[data-msg-id="' + msg.message.id + '"]')) {
+
+        if (msg.message.role === 'user') {
+          // The optimistic user node we appended on submit doesn't know the id
+          // yet — adopt this one, don't duplicate.
+          const pending = messagesEl?.querySelector('.msg.user.pending-id');
+          if (pending) {
+            pending.classList.remove('pending-id');
+            pending.dataset.msgId = String(msg.message.id);
+          } else if (!messagesEl?.querySelector('.msg[data-msg-id="' + msg.message.id + '"]')) {
             appendMessage(msg.message);
           }
-        } else {
-          appendMessage(msg.message);
+          return;
         }
+
+        if (msg.message.role === 'assistant') {
+          // If we missed a turn-started (e.g. reloaded mid-turn) but have a
+          // reload-placeholder, adopt it now so the placeholder gets replaced
+          // rather than left orphaned above the final message.
+          const target = ensureStreamEl();
+          if (target) {
+            target.classList.remove(
+              'streaming', 'stream-waiting', 'stream-tool', 'stream-generating',
+            );
+            target.dataset.msgId = String(msg.message.id);
+            const status = target.querySelector('.stream-status');
+            if (status) status.remove();
+            const body = target.querySelector('.stream-body, .msg-body');
+            if (body) {
+              body.classList.remove('stream-body');
+              body.innerHTML = renderMarkdown(msg.message.content || '');
+              decorateLinks(body);
+            }
+            currentStreamEl = null;
+            currentStreamFullText = '';
+          } else {
+            appendMessage(msg.message);
+          }
+          clearStreamArtifacts();
+          return;
+        }
+
+        appendMessage(msg.message);
         return;
 
       case 'turn-started':
         setWorkingDot(msg.chatId, true);
         if (msg.chatId !== activeChatId) return;
-        if (!currentStreamEl) {
-          // Maybe page was reloaded mid-turn — adopt the server-rendered
-          // #reload-placeholder if it's there.
-          const placeholder = document.getElementById('reload-placeholder');
-          if (placeholder) {
-            currentStreamEl = placeholder;
-            placeholder.id = '';
-            currentStreamFullText = '';
-          } else {
-            currentStreamEl = appendStreamingAssistant();
-          }
-        }
+        ensureStreamEl();
         if (msg.activity?.label) {
           const status = currentStreamEl?.querySelector('.stream-status');
           if (status) status.textContent = msg.activity.label;
         }
         return;
 
-      case 'turn-delta':
+      case 'turn-delta': {
         if (msg.chatId !== activeChatId) return;
-        if (!currentStreamEl) currentStreamEl = appendStreamingAssistant();
+        const el = ensureStreamEl();
         currentStreamFullText += msg.text;
         // first delta flips the state
-        if (currentStreamEl.classList.contains('stream-waiting') ||
-            currentStreamEl.classList.contains('stream-tool')) {
-          currentStreamEl.classList.remove('stream-waiting', 'stream-tool');
-          currentStreamEl.classList.add('stream-generating');
-          const status = currentStreamEl.querySelector('.stream-status');
+        if (el.classList.contains('stream-waiting') ||
+            el.classList.contains('stream-tool')) {
+          el.classList.remove('stream-waiting', 'stream-tool');
+          el.classList.add('stream-generating');
+          const status = el.querySelector('.stream-status');
           if (status) status.hidden = true;
         }
-        const body = currentStreamEl.querySelector('.stream-body, .msg-body');
+        const body = el.querySelector('.stream-body, .msg-body');
         if (body) {
           body.innerHTML = renderMarkdown(currentStreamFullText);
           decorateLinks(body);
         }
         scrollToBottom();
         return;
+      }
 
       case 'turn-tool': {
-        if (msg.chatId !== activeChatId || !currentStreamEl) return;
-        const status = currentStreamEl.querySelector('.stream-status');
+        if (msg.chatId !== activeChatId) return;
+        const el = ensureStreamEl();
+        const status = el.querySelector('.stream-status');
         if (msg.phase === 'start' && status) {
           status.hidden = false;
-          status.textContent = msg.label || msg.name;
-          currentStreamEl.classList.remove('stream-generating');
-          currentStreamEl.classList.add('stream-tool');
+          // Prefer the agent's own description (e.g. "ls -la /tmp") when present.
+          status.textContent = msg.detail || msg.label || msg.name;
+          el.classList.remove('stream-generating');
+          el.classList.add('stream-tool');
         }
         return;
       }
 
       case 'turn-lifecycle': {
-        if (msg.chatId !== activeChatId || !currentStreamEl) return;
-        const status = currentStreamEl.querySelector('.stream-status');
+        if (msg.chatId !== activeChatId) return;
+        const el = ensureStreamEl();
+        const status = el.querySelector('.stream-status');
         if (status && !currentStreamFullText) {
           status.hidden = false;
           status.textContent = msg.label || msg.phase;
@@ -370,6 +407,9 @@
       case 'turn-ended':
         setWorkingDot(msg.chatId, false);
         if (msg.chatId !== activeChatId) return;
+        // Belt + suspenders: kill any leftover reload-placeholder that might
+        // still be on the page if events arrived in a weird order.
+        clearStreamArtifacts();
         // Drain queue (locally — server already serialized).
         if (inFlight) {
           inFlight = false;
@@ -410,10 +450,12 @@
     const item = waitingItems[0];
     if (!item) return;
     inFlight = true;
-    // Optimistically append user msg
-    appendMessage({ role: 'user', content: item.content });
+    // Optimistically append user msg. Mark it as pending-id so the
+    // upcoming `message-appended` for the same user msg adopts this node
+    // instead of duplicating.
+    appendMessage({ role: 'user', content: item.content }, { pendingId: true });
     currentStreamFullText = '';
-    currentStreamEl = appendStreamingAssistant();
+    currentStreamEl = ensureStreamEl();
     const payload = {
       type: 'send',
       requestId: 'r-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),

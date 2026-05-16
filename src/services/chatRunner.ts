@@ -104,7 +104,7 @@ async function runTurnLocked(opts: {
       chatStatus.setActivity(chatId, {
         kind: 'tool',
         name: ev.name,
-        label: ev.label,
+        label: ev.detail ?? ev.label,
       });
       wsHub.broadcastToChat(chatId, {
         type: 'turn-tool',
@@ -112,6 +112,7 @@ async function runTurnLocked(opts: {
         phase: 'start',
         name: ev.name,
         label: ev.label,
+        detail: ev.detail,
       });
     } else if (ev.type === 'tool-end') {
       wsHub.broadcastToChat(chatId, {

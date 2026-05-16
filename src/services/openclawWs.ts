@@ -38,7 +38,14 @@ export interface HistoryMessage {
 
 export type TurnEvent =
   | { type: 'text-delta'; text: string }
-  | { type: 'tool-start'; name: string; label: string; itemId?: string }
+  | {
+      type: 'tool-start';
+      name: string;
+      label: string;
+      /** Human-readable detail from data.meta — e.g. the actual command summary. */
+      detail?: string;
+      itemId?: string;
+    }
   | { type: 'tool-end'; name: string; itemId?: string }
   | { type: 'lifecycle'; phase: string; label: string }
   | { type: 'attachment'; url: string; mime: string; label?: string; itemId?: string }
@@ -194,10 +201,14 @@ export const openclawWs = {
         }
 
         if (phase === 'start') {
+          // OpenClaw puts a concise human description in data.meta — for bash
+          // it's a summary like "print lines 1-220 from USER.md (agent)".
+          const detail = safeString(data.meta);
           opts.onEvent({
             type: 'tool-start',
             name,
             label: toolActivityLabel(name),
+            detail,
             itemId,
           });
         } else if (phase === 'end' || phase === 'completed' || phase === 'error') {

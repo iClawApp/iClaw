@@ -69,6 +69,8 @@ export type ServerMsg =
       phase: 'start' | 'end';
       name: string;
       label: string;
+      /** Human description of what the tool is doing right now (e.g. "ls -la /tmp"). */
+      detail?: string;
     }
   /** Coarse turn lifecycle (start/end/etc.). */
   | { type: 'turn-lifecycle'; chatId: number; phase: string; label: string }
