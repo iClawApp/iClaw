@@ -207,26 +207,24 @@ async function runTurnLocked(opts: {
         label: ev.label,
       });
     }
-    // text-final is captured implicitly via accumulated deltas
   };
 
-  await openclawWs.runTurn({
+  const { text: gatewayAccumulated } = await openclawWs.runTurn({
     sessionKey,
     message: gatewayMessage,
     onEvent,
   });
 
-  // OpenClaw routes some user-facing replies through `tools.message` (when the
-  // agent picks `sourceReplyDeliveryMode: "message_tool_only"`). In that mode
-  // the model's freeform output — what we just streamed — is an internal
-  // status note ("Попросив уточнення в чаті…"), while the real reply lives
-  // as a separate projected assistant row in the canonical transcript.
-  //
-  // Fetch the transcript and prefer the LAST assistant text row as the
-  // canonical content. Falls back to our streamed accumulation if anything
-  // goes wrong or no text row is found.
+  // `gatewayAccumulated` is openclawWs's buffer — on successful turns it is set
+  // from the `chat` state:final payload before the turn promise resolves (we no
+  // longer resolve on agent lifecycle:end alone, which used to race chat.history).
   const canonicalText = await canonicalAssistantText(sessionKey).catch(() => null);
-  const finalText = canonicalText && canonicalText.length > 0 ? canonicalText : assistantText;
+  const finalText =
+    gatewayAccumulated.trim().length > 0
+      ? gatewayAccumulated
+      : canonicalText && canonicalText.length > 0
+        ? canonicalText
+        : assistantText;
 
   // Persist the assistant message + broadcast.
   const assistantMsg = messages.append(chatId, 'assistant', finalText, null);

@@ -174,16 +174,19 @@ export const openclawWs = {
           'failed', 'terminated', 'stopped',
         ]);
         if (TERMINAL.has(phase)) {
+          if (phase === 'end') {
+            // Successful completion: the gateway's canonical assistant message and
+            // turn resolution come from the `chat` event (`state:final`). Resolving
+            // here used to race ahead of that event, so chatRunner persisted from
+            // chat.history before the final merged assistant row existed.
+            return;
+          }
           if (!finalEmitted) {
             finalEmitted = true;
             opts.onEvent({ type: 'text-final', text: accumulatedText });
           }
-          if (phase === 'end') {
-            resolveTurn();
-          } else {
-            // Reject so chatRunner broadcasts turn-error and the lock unwinds.
-            rejectTurn(new Error(`agent run ${phase}`));
-          }
+          rejectTurn(new Error(`agent run ${phase}`));
+          return;
         }
         return;
       }
@@ -251,11 +254,14 @@ export const openclawWs = {
       if (payload.state === 'final') {
         const text = contentToString(payload.message?.content) || accumulatedText;
         accumulatedText = text;
+        // Always emit — lifecycle:end no longer resolves the turn, so this is the
+        // primary signal for consumers that need the gateway's final assistant text.
+        opts.onEvent({ type: 'text-final', text });
         if (!finalEmitted) {
           finalEmitted = true;
-          opts.onEvent({ type: 'text-final', text });
         }
         resolveTurn();
+        return;
       }
     };
 
@@ -303,7 +309,8 @@ export const openclawWs = {
       for (const f of buffered) dispatch(f);
       buffered.length = 0;
 
-      // Wait for the turn to finish (chat:final or lifecycle:end).
+      // Wait for the turn to finish (`chat` state:final resolves the promise;
+      // agent lifecycle:end alone does not — see handleAgent).
       // 5 min upper bound — agent runs can be slow with tool calls.
       const timeout = setTimeout(() => {
         rejectTurn(new Error('runTurn: timed out waiting for turn to finish'));
