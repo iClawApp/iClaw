@@ -426,156 +426,94 @@
   }
 
   // -------------------------------------------------------------------------
-  // sidebar live updates
+  // sidebar live updates (flat chat list + optional project logo prefix)
   // -------------------------------------------------------------------------
-  /** When projects exist, keep non-nested chats under a "Personal" label (matches server EJS). */
-  function ensurePersonalLabelBeforeOrphans(list) {
-    const orphanChats = Array.from(list.children).filter(
-      (n) =>
-        n.nodeType === 1 &&
-        n.classList.contains('chat-item') &&
-        !n.classList.contains('nested'),
-    );
-    if (orphanChats.length === 0) return;
-    if (!list.querySelector('.project-group')) return;
-    const hasPersonal = Array.from(list.querySelectorAll('.sidebar-section-label')).some(
-      (x) => x.textContent.trim() === 'Personal',
-    );
-    if (hasPersonal) return;
-    const personalLbl = document.createElement('div');
-    personalLbl.className = 'sidebar-section-label';
-    personalLbl.textContent = 'Personal';
-    list.insertBefore(personalLbl, orphanChats[0]);
+  function findProjectMeta(projectId) {
+    const arr = window.__ICLAW_PROJECTS__;
+    if (!Array.isArray(arr) || projectId == null) return null;
+    const id = Number(projectId);
+    if (!Number.isFinite(id)) return null;
+    return arr.find((p) => p && p.id === id) ?? null;
   }
 
-  function ensureSidebarSectionLabel(list, text) {
-    const labels = list.querySelectorAll('.sidebar-section-label');
-    for (let i = 0; i < labels.length; i++) {
-      if (labels[i].textContent.trim() === text) return labels[i];
+  function mergeProjectIntoClientCache(projectId, projectName) {
+    if (projectId == null || !Number.isFinite(Number(projectId))) return;
+    const pid = Number(projectId);
+    const arr = window.__ICLAW_PROJECTS__;
+    if (!Array.isArray(arr)) return;
+    const nm = projectName != null ? String(projectName) : '';
+    const prev = arr.find((p) => p && p.id === pid);
+    if (!prev) {
+      arr.push({
+        id: pid,
+        name: nm || 'Project',
+        logo_emoji: 0,
+        logo_color: 0,
+      });
+    } else if (nm) prev.name = nm;
+  }
+
+  function buildChatItemLeadingMarkHtml(projectIdStr) {
+    const raw = projectIdStr != null ? String(projectIdStr).trim() : '';
+    if (raw === '') {
+      return '<span class="chat-item-project-mark chat-item-project-mark--spacer" aria-hidden="true"></span>';
     }
-    const el = document.createElement('div');
-    el.className = 'sidebar-section-label';
-    el.textContent = text;
-    list.insertBefore(el, list.firstElementChild);
-    return el;
-  }
-
-  function ensureProjectGroupInSidebar(list, projectId, projectName, logoEmoji, logoColor) {
-    let group = list.querySelector('.project-group[data-project-id="' + projectId + '"]');
-    const ei =
-      logoEmoji !== undefined && logoEmoji !== null
-        ? clampLogoEmojiJs(Number(logoEmoji))
-        : 0;
-    const ci =
-      logoColor !== undefined && logoColor !== null
-        ? clampLogoColorJs(Number(logoColor))
-        : 0;
-    if (!group) {
-      ensureSidebarSectionLabel(list, 'Projects');
-      group = document.createElement('div');
-      group.className = 'project-group';
-      group.dataset.projectId = String(projectId);
-      const row = document.createElement('a');
-      row.href = '/projects/' + projectId;
-      row.className = 'project-row';
-      const nm = projectName || ('Project #' + projectId);
-      row.title = nm;
-      row.innerHTML =
-        buildProjectLogoHtml(ei, ci) +
-        '<span class="project-row-name">' +
-        escapeHtml(nm) +
-        '</span>' +
-        '<span class="project-row-count">0</span>';
-      group.appendChild(row);
-      const personalLbl = Array.from(list.querySelectorAll('.sidebar-section-label')).find(
-        (x) => x.textContent.trim() === 'Personal',
-      );
-      const lastGroup = Array.from(list.querySelectorAll('.project-group')).pop();
-      if (lastGroup) list.insertBefore(group, lastGroup.nextSibling);
-      else if (personalLbl) list.insertBefore(group, personalLbl);
-      else {
-        const plab = Array.from(list.querySelectorAll('.sidebar-section-label')).find(
-          (x) => x.textContent.trim() === 'Projects',
-        );
-        if (plab && plab.nextSibling) list.insertBefore(group, plab.nextSibling);
-        else list.prepend(group);
-      }
-    } else {
-      if (projectName != null) {
-        const nameEl = group.querySelector('.project-row-name');
-        if (nameEl) nameEl.textContent = projectName;
-        const row = group.querySelector('.project-row');
-        if (row) row.title = projectName;
-      }
-      if (logoEmoji !== undefined || logoColor !== undefined) {
-        const row = group.querySelector('.project-row');
-        const el = row?.querySelector('.project-logo');
-        let e = 0;
-        let c = 0;
-        if (el) {
-          const cur = readLogoFromEl(el);
-          e = cur.ei;
-          c = cur.ci;
-        }
-        if (logoEmoji !== undefined && logoEmoji !== null) e = clampLogoEmojiJs(Number(logoEmoji));
-        if (logoColor !== undefined && logoColor !== null) c = clampLogoColorJs(Number(logoColor));
-        if (row) {
-          if (el) applyProjectLogoToEl(el, e, c);
-          else row.insertAdjacentHTML('afterbegin', buildProjectLogoHtml(e, c));
-        }
-      }
+    const pid = Number(raw);
+    if (!Number.isFinite(pid)) {
+      return '<span class="chat-item-project-mark chat-item-project-mark--spacer" aria-hidden="true"></span>';
     }
-    return group;
+    const p = findProjectMeta(pid);
+    const ei = p ? clampLogoEmojiJs(Number(p.logo_emoji)) : 0;
+    const ci = p ? clampLogoColorJs(Number(p.logo_color)) : 0;
+    return (
+      '<span class="chat-item-project-mark" aria-hidden="true">' +
+      buildProjectLogoHtml(ei, ci) +
+      '</span>'
+    );
   }
 
-  function bumpProjectRowCount(group) {
-    if (!group) return;
-    const cnt = group.querySelectorAll('.chat-item.nested').length;
-    const badge = group.querySelector('.project-row-count');
-    if (badge) badge.textContent = String(cnt);
+  function buildChatItemAvatarWrapHtml(projectIdStr) {
+    return (
+      '<span class="chat-item-avatar-wrap">' +
+      buildChatItemLeadingMarkHtml(projectIdStr) +
+      '<span class="status-dot" aria-hidden="true"></span></span>'
+    );
   }
 
-  function refreshAllProjectCounts(list) {
-    list.querySelectorAll('.project-group').forEach((g) => bumpProjectRowCount(g));
+  function syncChatItemProjectMark(link) {
+    const mark = link.querySelector('.chat-item-avatar-wrap .chat-item-project-mark');
+    if (!mark) return;
+    const html = buildChatItemLeadingMarkHtml(link.dataset.projectId || '');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const next = tmp.firstElementChild;
+    if (next) mark.replaceWith(next);
   }
 
-  function placeChatAsOrphan(list, link) {
-    link.classList.remove('nested');
+  function parseSidebarChatTs(iso) {
+    if (iso == null || iso === '') return 0;
+    const t = Date.parse(String(iso).replace(' ', 'T'));
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  function insertChatItemSorted(list, link) {
     const tail = list.querySelector('#sidebar-list-tail');
-    const hasProjects = list.querySelector('.project-group');
-    if (hasProjects) {
-      let personalLbl = Array.from(list.querySelectorAll('.sidebar-section-label')).find(
-        (x) => x.textContent.trim() === 'Personal',
-      );
-      if (!personalLbl) {
-        personalLbl = document.createElement('div');
-        personalLbl.className = 'sidebar-section-label';
-        personalLbl.textContent = 'Personal';
-        if (tail) list.insertBefore(personalLbl, tail);
-        else list.appendChild(personalLbl);
+    const mine = Number(link.dataset.chatId);
+    const myTs = parseSidebarChatTs(link.dataset.updatedAt);
+    const others = Array.from(list.querySelectorAll('a.chat-item[data-chat-id]')).filter((el) => el !== link);
+    let insertBefore = null;
+    for (let i = 0; i < others.length; i++) {
+      const o = others[i];
+      const oTs = parseSidebarChatTs(o.dataset.updatedAt);
+      const oid = Number(o.dataset.chatId);
+      if (myTs > oTs || (myTs === oTs && mine > oid)) {
+        insertBefore = o;
+        break;
       }
-      let n = personalLbl.nextSibling;
-      let lastOrphan = null;
-      while (n && n !== tail) {
-        if (n.nodeType === 1 && n.classList && n.classList.contains('chat-item') && !n.classList.contains('nested')) {
-          lastOrphan = n;
-        }
-        n = n.nextSibling;
-      }
-      if (lastOrphan) list.insertBefore(link, lastOrphan.nextSibling);
-      else list.insertBefore(link, personalLbl.nextSibling);
-    } else if (tail) {
-      list.insertBefore(link, tail);
-    } else {
-      list.appendChild(link);
     }
-  }
-
-  function placeChatInProject(list, link, projectId, projectName) {
-    link.classList.add('nested');
-    const group = ensureProjectGroupInSidebar(list, projectId, projectName);
-    group.appendChild(link);
-    bumpProjectRowCount(group);
+    if (insertBefore) list.insertBefore(link, insertBefore);
+    else if (tail) list.insertBefore(link, tail);
+    else list.appendChild(link);
   }
 
   function sidebarUpsertChat(opts) {
@@ -583,41 +521,49 @@
     const title = opts.title;
     const projectId = opts.projectId;
     const projectName = opts.projectName;
+    const updatedAt = opts.updatedAt;
 
     const list = document.getElementById('chat-list');
     if (!list) return;
     list.querySelector('.empty-list')?.remove();
-    let link = list.querySelector('.chat-item[data-chat-id="' + id + '"]');
+    let link = list.querySelector('a.chat-item[data-chat-id="' + id + '"]');
+    const isNew = !link;
     if (!link) {
       link = document.createElement('a');
       link.href = '/chats/' + id;
       link.className = 'chat-item';
       link.dataset.chatId = String(id);
       link.innerHTML =
-        '<span class="chat-item-title"></span>' +
-        '<span class="status-dot" aria-hidden="true"></span>';
+        buildChatItemAvatarWrapHtml('') +
+        '<span class="chat-item-title"></span>';
     }
     if (title != null) {
       link.title = title;
       const titleEl = link.querySelector('.chat-item-title');
       if (titleEl) titleEl.textContent = title;
     }
-    const mustReposition = projectId !== undefined;
-    if (mustReposition) {
-      const oldGroup = link.parentElement?.closest?.('.project-group') ?? null;
+    if (updatedAt != null && updatedAt !== '') {
+      link.dataset.updatedAt = String(updatedAt);
+    }
+    if (projectId !== undefined) {
+      link.dataset.projectId = projectId == null || projectId === '' ? '' : String(projectId);
+      if (projectName != null && projectId != null && projectId !== '') {
+        mergeProjectIntoClientCache(projectId, projectName);
+      }
+      syncChatItemProjectMark(link);
+    }
+    const reposition =
+      isNew ||
+      (updatedAt != null && updatedAt !== '') ||
+      projectId !== undefined;
+    if (reposition) {
       if (link.parentElement) link.parentElement.removeChild(link);
-      if (projectId == null) placeChatAsOrphan(list, link);
-      else placeChatInProject(list, link, projectId, projectName);
-      if (oldGroup && oldGroup !== link.parentElement) bumpProjectRowCount(oldGroup);
-      refreshAllProjectCounts(list);
-      ensurePersonalLabelBeforeOrphans(list);
+      insertChatItemSorted(list, link);
     } else if (!list.contains(link)) {
-      placeChatAsOrphan(list, link);
+      insertChatItemSorted(list, link);
     }
     if (id === activeChatId) {
       document.querySelector('.new-chat-btn')?.classList.remove('active');
-      document.querySelector('.project-row.active')?.classList.remove('active');
-      list.querySelectorAll('.project-group.active').forEach((el) => el.classList.remove('active'));
       list.querySelectorAll('.chat-item.active').forEach((el) => el.classList.remove('active'));
       link.classList.add('active');
     }
@@ -625,14 +571,14 @@
   }
   function sidebarRemoveChat(id) {
     const list = document.getElementById('chat-list');
-    const link = list?.querySelector('.chat-item[data-chat-id="' + id + '"]');
-    const parentGroup = link?.closest('.project-group');
+    const link = list?.querySelector('a.chat-item[data-chat-id="' + id + '"]');
     link?.remove();
-    if (parentGroup) bumpProjectRowCount(parentGroup);
     if (searchMatchSet !== null) applySidebarSearchFilter();
   }
   function statusDot(id) {
-    return document.querySelector('.chat-item[data-chat-id="' + id + '"] .status-dot');
+    return document.querySelector(
+      '.chat-item[data-chat-id="' + id + '"] .chat-item-avatar-wrap .status-dot',
+    );
   }
   function setWorkingDot(id, on) {
     const dot = statusDot(id);
@@ -823,18 +769,26 @@
           agent: msg.agent,
           projectId: msg.projectId,
           projectName: msg.projectName,
+          updatedAt: msg.updatedAt,
         });
         if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
         return;
 
       case 'chat-updated':
-        if (msg.title != null || msg.projectId !== undefined) {
+        if (
+          msg.title != null ||
+          msg.projectId !== undefined ||
+          msg.updatedAt != null ||
+          msg.agent != null ||
+          msg.sharesToProject !== undefined
+        ) {
           sidebarUpsertChat({
             id: msg.chatId,
             title: msg.title,
             agent: msg.agent,
             projectId: msg.projectId,
             projectName: msg.projectName,
+            updatedAt: msg.updatedAt,
           });
         }
         if (msg.chatId === activeChatId && msg.title != null) applyTitleForActive(msg.title);
@@ -1036,38 +990,46 @@
         return;
 
       case 'project-created': {
-        const list = document.getElementById('chat-list');
-        if (list) {
-          ensureProjectGroupInSidebar(
-            list,
-            msg.project.id,
-            msg.project.name,
-            msg.project.logo_emoji,
-            msg.project.logo_color,
-          );
-          ensurePersonalLabelBeforeOrphans(list);
+        const arr = window.__ICLAW_PROJECTS__;
+        if (Array.isArray(arr)) {
+          arr.push({
+            id: msg.project.id,
+            name: msg.project.name,
+            logo_emoji: msg.project.logo_emoji ?? 0,
+            logo_color: msg.project.logo_color ?? 0,
+          });
         }
         return;
       }
 
       case 'project-updated': {
-        const g = document
-          .getElementById('chat-list')
-          ?.querySelector('.project-group[data-project-id="' + msg.project.id + '"]');
-        const nameEl = g?.querySelector('.project-row-name');
-        if (nameEl) nameEl.textContent = msg.project.name;
-        const row = g?.querySelector('.project-row');
-        if (row) row.title = msg.project.name;
-        const logoEl = row?.querySelector('.project-logo');
+        const arr = window.__ICLAW_PROJECTS__;
+        const pid = msg.project.id;
         const hasE = msg.project.logo_emoji !== undefined && msg.project.logo_emoji !== null;
         const hasC = msg.project.logo_color !== undefined && msg.project.logo_color !== null;
-        if (logoEl && (hasE || hasC)) {
-          const cur = readLogoFromEl(logoEl);
-          const e = hasE ? clampLogoEmojiJs(Number(msg.project.logo_emoji)) : cur.ei;
-          const c = hasC ? clampLogoColorJs(Number(msg.project.logo_color)) : cur.ci;
-          applyProjectLogoToEl(logoEl, e, c);
+        if (Array.isArray(arr)) {
+          const i = arr.findIndex((p) => p && p.id === pid);
+          if (i >= 0) {
+            const cur = arr[i];
+            arr[i] = {
+              id: pid,
+              name: msg.project.name != null ? String(msg.project.name) : cur.name,
+              logo_emoji: hasE ? clampLogoEmojiJs(Number(msg.project.logo_emoji)) : cur.logo_emoji,
+              logo_color: hasC ? clampLogoColorJs(Number(msg.project.logo_color)) : cur.logo_color,
+            };
+          } else {
+            arr.push({
+              id: pid,
+              name: msg.project.name != null ? String(msg.project.name) : 'Project',
+              logo_emoji: hasE ? clampLogoEmojiJs(Number(msg.project.logo_emoji)) : 0,
+              logo_color: hasC ? clampLogoColorJs(Number(msg.project.logo_color)) : 0,
+            });
+          }
         }
-        if (currentProjectPageId() === msg.project.id && (hasE || hasC)) {
+        document.querySelectorAll('.chat-item[data-project-id="' + pid + '"]').forEach((a) => {
+          syncChatItemProjectMark(a);
+        });
+        if (currentProjectPageId() === pid && (hasE || hasC)) {
           const tr = document.querySelector('.project-logo-trigger .project-logo');
           const cur2 = tr ? readLogoFromEl(tr) : { ei: 0, ci: 0 };
           syncProjectPageHeaderLogo(
@@ -1079,9 +1041,14 @@
       }
 
       case 'project-deleted': {
+        const pid = msg.projectId;
         const list = document.getElementById('chat-list');
-        list?.querySelector('.project-group[data-project-id="' + msg.projectId + '"]')?.remove();
-        if (currentProjectPageId() === msg.projectId) window.location.assign('/');
+        list?.querySelectorAll('.chat-item[data-project-id="' + pid + '"]').forEach((a) => {
+          a.dataset.projectId = '';
+          syncChatItemProjectMark(a);
+        });
+        window.__ICLAW_PROJECTS__ = (window.__ICLAW_PROJECTS__ || []).filter((p) => p && p.id !== pid);
+        if (currentProjectPageId() === pid) window.location.assign('/');
         return;
       }
 

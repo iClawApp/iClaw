@@ -110,11 +110,13 @@ projectsRouter.post('/:id/delete', (req, res) => {
   projects.remove(id);
   wsHub.broadcastAll({ type: 'project-deleted', projectId: id });
   for (const chatId of detachedChatIds) {
+    chats.touch(chatId);
     wsHub.broadcastAll({
       type: 'chat-updated',
       chatId,
       projectId: null,
       projectName: null,
+      updatedAt: chats.get(chatId)!.updated_at,
     });
   }
   res.redirect('/');

@@ -6,6 +6,7 @@ import { chatsRouter } from './routes/chats';
 import { projectsRouter } from './routes/projects';
 import { agentsRouter } from './routes/sessions';
 import { mediaRouter } from './routes/media';
+import { projects } from './services/store';
 
 import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
 
@@ -14,6 +15,12 @@ export function createApp(): express.Express {
 
   app.use((_req, res, next) => {
     res.locals.projectLogoEmojis = PROJECT_LOGO_EMOJIS;
+    res.locals.projectsMini = projects.list().map((p) => ({
+      id: p.id,
+      name: p.name,
+      logo_emoji: p.logo_emoji,
+      logo_color: p.logo_color,
+    }));
     next();
   });
 

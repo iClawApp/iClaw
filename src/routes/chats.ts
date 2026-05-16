@@ -142,7 +142,12 @@ chatsRouter.patch('/:id', (req, res) => {
     return;
   }
   chats.rename(id, title, { manual: true });
-  wsHub.broadcastAll({ type: 'chat-updated', chatId: id, title });
+  wsHub.broadcastAll({
+    type: 'chat-updated',
+    chatId: id,
+    title,
+    updatedAt: chats.get(id)!.updated_at,
+  });
   res.json({ id, title });
 });
 
@@ -150,7 +155,12 @@ chatsRouter.post('/:id/rename', (req, res) => {
   const id = Number(req.params.id);
   const next = String(req.body?.title ?? '').trim() || 'New chat';
   chats.rename(id, next, { manual: true });
-  wsHub.broadcastAll({ type: 'chat-updated', chatId: id, title: next });
+  wsHub.broadcastAll({
+    type: 'chat-updated',
+    chatId: id,
+    title: next,
+    updatedAt: chats.get(id)!.updated_at,
+  });
   res.redirect(`/chats/${id}`);
 });
 
@@ -159,7 +169,12 @@ chatsRouter.post('/:id/agent', (req, res) => {
   const agent = String(req.body?.agent ?? '').trim();
   if (agent) {
     chats.setAgent(id, agent);
-    wsHub.broadcastAll({ type: 'chat-updated', chatId: id, agent });
+    wsHub.broadcastAll({
+      type: 'chat-updated',
+      chatId: id,
+      agent,
+      updatedAt: chats.get(id)!.updated_at,
+    });
   }
   res.redirect(`/chats/${id}`);
 });
@@ -183,6 +198,7 @@ chatsRouter.post('/:id/project', (req, res) => {
     chatId: id,
     projectId,
     projectName: proj?.name ?? null,
+    updatedAt: chats.get(id)!.updated_at,
   });
   res.redirect(`/chats/${id}`);
 });
@@ -196,7 +212,12 @@ chatsRouter.post('/:id/shares', (req, res) => {
   // checkbox sends "1" when checked, nothing when unchecked
   const shares = !!req.body?.shares;
   chats.setSharesToProject(id, shares);
-  wsHub.broadcastAll({ type: 'chat-updated', chatId: id, sharesToProject: shares });
+  wsHub.broadcastAll({
+    type: 'chat-updated',
+    chatId: id,
+    sharesToProject: shares,
+    updatedAt: chats.get(id)!.updated_at,
+  });
   res.redirect(`/chats/${id}`);
 });
 

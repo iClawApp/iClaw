@@ -57,6 +57,8 @@ export type ServerMsg =
       agent: string;
       projectId: number | null;
       projectName?: string | null;
+      /** SQLite `updated_at` after create — sidebar sorts the flat list. */
+      updatedAt: string;
     }
   | {
       type: 'chat-updated';
@@ -69,6 +71,8 @@ export type ServerMsg =
       projectName?: string | null;
       /** Toggle on whether the chat writes facts back to the project. */
       sharesToProject?: boolean;
+      /** Present after mutations that bump `chats.updated_at` — flat sidebar order. */
+      updatedAt?: string;
     }
   | { type: 'chat-unread'; chatId: number }
   | { type: 'chat-read'; chatId: number }

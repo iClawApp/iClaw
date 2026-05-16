@@ -121,7 +121,15 @@ async function runTurnLocked(opts: {
           if (!chats.trySetAutoTitle(chatId, suggested)) return;
           // broadcastAll covers every subscriber + every sidebar — no need
           // to also broadcastToChat (those listeners are a subset of "all").
-          wsHub.broadcastAll({ type: 'chat-updated', chatId, title: suggested });
+          const row = chats.get(chatId);
+          if (row) {
+            wsHub.broadcastAll({
+              type: 'chat-updated',
+              chatId,
+              title: suggested,
+              updatedAt: row.updated_at,
+            });
+          }
         })
         .catch(() => {})
     : Promise.resolve();
@@ -304,6 +312,7 @@ export async function sendMessage(opts: {
       agent: created.agent,
       projectId: created.project_id,
       projectName: proj?.name ?? null,
+      updatedAt: created.updated_at,
     });
   } else {
     if (opts.subscriber) wsHub.subscribe(opts.subscriber, chatId);
