@@ -4,7 +4,7 @@
 //   - Open and auto-reconnect a WebSocket to the iClaw server
 //   - Subscribe to the active chat (if any) and any chat the user is in
 //   - Render incoming events: message-appended, turn-delta, turn-tool, …
-//   - Sidebar live updates: chat-created / chat-updated / chat-deleted
+//   - Sidebar live updates: chat / project / fact events
 //   - Replace the page's compose-form submit with a WS send
 //   - Hydrate already-server-rendered markdown bodies on load
 
@@ -19,6 +19,7 @@
   const button = form?.querySelector('.composer-send');
   const titleInput = document.getElementById('chat-title-input');
   const draftAgentSelect = document.getElementById('draft-agent');
+  const draftProjectSelect = document.getElementById('draft-project');
   const stopBtn = document.getElementById('stop-btn');
   const searchInput = document.getElementById('sidebar-search-input');
   const rawChatId = messagesEl?.dataset.chatId;
@@ -68,6 +69,36 @@
   }
   function escapeHtml(s) {
     return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  }
+  function currentProjectPageId() {
+    const m = document.querySelector('main.project-page[data-project-id]');
+    if (!m || !m.dataset.projectId) return null;
+    const n = Number(m.dataset.projectId);
+    return Number.isFinite(n) ? n : null;
+  }
+  /** Build a fact row matching `views/project.ejs` (WS-driven updates on project page). */
+  function buildFactLi(f) {
+    const li = document.createElement('li');
+    li.className = 'fact';
+    li.dataset.factId = String(f.id);
+    const src =
+      f.source_chat_id != null
+        ? '<a href="/chats/' +
+          f.source_chat_id +
+          '" class="fact-source">Chat #' +
+          f.source_chat_id +
+          '</a>'
+        : '<span class="fact-source muted">Manual</span>';
+    li.innerHTML =
+      '<textarea class="fact-content" aria-label="Fact text" rows="2">' +
+      escapeHtml(f.content || '') +
+      '</textarea>' +
+      '<div class="fact-meta">' +
+      src +
+      '<button type="button" class="fact-delete" aria-label="Delete fact">Remove</button></div>';
+    const ta = li.querySelector('.fact-content');
+    if (ta) ta.dataset.saved = String(f.content || '').trim();
+    return li;
   }
   function decorateLinks(root) {
     root.querySelectorAll('a[href]').forEach((a) => { a.target = '_blank'; a.rel = 'noopener noreferrer'; });
@@ -149,6 +180,104 @@
     });
   }
 
+  function existingFactSuggestionIds() {
+    const ids = new Set();
+    if (!messagesEl) return ids;
+    messagesEl.querySelectorAll('.fact-suggestion-row[data-suggestion-id]').forEach((el) => {
+      const n = Number(el.dataset.suggestionId);
+      if (Number.isFinite(n)) ids.add(n);
+    });
+    return ids;
+  }
+
+  function removeFactSuggestionRow(chatId, sid) {
+    if (!messagesEl || chatId !== activeChatId) return;
+    const row = messagesEl.querySelector('.fact-suggestion-row[data-suggestion-id="' + sid + '"]');
+    if (!row) return;
+    const card = row.closest('.fact-suggestions-card');
+    row.remove();
+    if (card && !card.querySelector('.fact-suggestion-row')) card.remove();
+  }
+
+  function appendFactSuggestionsCard(opts) {
+    if (!messagesEl) return;
+    const { projectId, chatId, suggestions, projectName } = opts;
+    if (!suggestions || suggestions.length === 0) return;
+    clearEmptyState();
+    const safeName = escapeHtml((projectName || '').trim() || 'проєкт');
+    const card = document.createElement('div');
+    card.className = 'msg system fact-suggestions-card';
+    card.dataset.projectId = String(projectId);
+    card.dataset.chatId = String(chatId);
+    const rows = suggestions
+      .map(
+        (s) =>
+          '<li class="fact-suggestion-row" data-suggestion-id="' +
+          s.id +
+          '" role="listitem">' +
+          '<p class="fact-suggestion-text">' +
+          escapeHtml(s.content) +
+          '</p>' +
+          '<div class="fact-suggestion-actions">' +
+          '<button type="button" class="fact-suggestion-btn fact-suggestion-reject" data-suggestion-id="' +
+          s.id +
+          '" aria-label="Пропустити">' +
+          '<span class="fact-suggestion-btn-glyph" aria-hidden="true">✕</span>' +
+          '</button>' +
+          '<button type="button" class="fact-suggestion-btn fact-suggestion-accept" data-suggestion-id="' +
+          s.id +
+          '" aria-label="Зберегти в проєкт">' +
+          '<span class="fact-suggestion-btn-glyph" aria-hidden="true">✓</span>' +
+          '</button>' +
+          '</div></li>',
+      )
+      .join('');
+    card.innerHTML =
+      '<div class="fact-suggestions-shell">' +
+      '<p class="fact-suggestions-lead">Зберегти в памʼять «' +
+      safeName +
+      '»?</p>' +
+      '<ul class="fact-suggestions-list" role="list">' +
+      rows +
+      '</ul>' +
+      '</div>';
+    messagesEl.appendChild(card);
+    scrollToBottom();
+  }
+
+  async function loadPendingFactSuggestions() {
+    if (activeChatId == null || !messagesEl) return;
+    try {
+      const res = await fetch('/chats/' + encodeURIComponent(activeChatId) + '/fact-suggestions', {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = Array.isArray(data.suggestions) ? data.suggestions : [];
+      if (list.length === 0) return;
+      const first = list[0];
+      const pid = first ? Number(first.project_id) : NaN;
+      if (!Number.isFinite(pid)) return;
+      const have = existingFactSuggestionIds();
+      const fresh = list
+        .filter((s) => s && Number.isFinite(Number(s.id)) && !have.has(Number(s.id)))
+        .map((s) => ({ id: Number(s.id), content: String(s.content ?? '') }));
+      const pname =
+        typeof data.projectName === 'string' && data.projectName.trim()
+          ? data.projectName.trim()
+          : null;
+      const projectLabel = pname || 'проєкт';
+      appendFactSuggestionsCard({
+        projectId: pid,
+        chatId: activeChatId,
+        projectName: projectLabel,
+        suggestions: fresh,
+      });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
   // -------------------------------------------------------------------------
   // queue widget — shows only WAITING items (not the in-flight one)
   // -------------------------------------------------------------------------
@@ -177,6 +306,28 @@
   // to the current tool event only.
   if (messagesEl) {
     messagesEl.addEventListener('click', (e) => {
+      const acc = e.target.closest('.fact-suggestion-accept');
+      const rej = e.target.closest('.fact-suggestion-reject');
+      if (acc || rej) {
+        const sid = Number((acc || rej).dataset.suggestionId);
+        if (!Number.isFinite(sid) || activeChatId == null) return;
+        e.preventDefault();
+        const path = acc ? 'accept' : 'reject';
+        fetch(
+          '/chats/' +
+            encodeURIComponent(activeChatId) +
+            '/fact-suggestions/' +
+            encodeURIComponent(sid) +
+            '/' +
+            path,
+          { method: 'POST', headers: { Accept: 'application/json' } },
+        )
+          .then((res) => {
+            if (res.ok) removeFactSuggestionRow(activeChatId, sid);
+          })
+          .catch(() => {});
+        return;
+      }
       const status = e.target.closest('.stream-status.has-detail');
       if (!status) return;
       const expanded = status.classList.toggle('detail-expanded');
@@ -205,7 +356,132 @@
   // -------------------------------------------------------------------------
   // sidebar live updates
   // -------------------------------------------------------------------------
-  function sidebarUpsertChat({ id, title, agent }) {
+  /** When projects exist, keep non-nested chats under a "Personal" label (matches server EJS). */
+  function ensurePersonalLabelBeforeOrphans(list) {
+    const orphanChats = Array.from(list.children).filter(
+      (n) =>
+        n.nodeType === 1 &&
+        n.classList.contains('chat-item') &&
+        !n.classList.contains('nested'),
+    );
+    if (orphanChats.length === 0) return;
+    if (!list.querySelector('.project-group')) return;
+    const hasPersonal = Array.from(list.querySelectorAll('.sidebar-section-label')).some(
+      (x) => x.textContent.trim() === 'Personal',
+    );
+    if (hasPersonal) return;
+    const personalLbl = document.createElement('div');
+    personalLbl.className = 'sidebar-section-label';
+    personalLbl.textContent = 'Personal';
+    list.insertBefore(personalLbl, orphanChats[0]);
+  }
+
+  function ensureSidebarSectionLabel(list, text) {
+    const labels = list.querySelectorAll('.sidebar-section-label');
+    for (let i = 0; i < labels.length; i++) {
+      if (labels[i].textContent.trim() === text) return labels[i];
+    }
+    const el = document.createElement('div');
+    el.className = 'sidebar-section-label';
+    el.textContent = text;
+    list.insertBefore(el, list.firstElementChild);
+    return el;
+  }
+
+  function ensureProjectGroupInSidebar(list, projectId, projectName) {
+    let group = list.querySelector('.project-group[data-project-id="' + projectId + '"]');
+    if (!group) {
+      ensureSidebarSectionLabel(list, 'Projects');
+      group = document.createElement('div');
+      group.className = 'project-group';
+      group.dataset.projectId = String(projectId);
+      const row = document.createElement('a');
+      row.href = '/projects/' + projectId;
+      row.className = 'project-row';
+      const nm = projectName || ('Project #' + projectId);
+      row.title = nm;
+      row.innerHTML =
+        '<span class="project-row-name">' + escapeHtml(nm) + '</span>' +
+        '<span class="project-row-count">0</span>';
+      group.appendChild(row);
+      const personalLbl = Array.from(list.querySelectorAll('.sidebar-section-label')).find(
+        (x) => x.textContent.trim() === 'Personal',
+      );
+      const lastGroup = Array.from(list.querySelectorAll('.project-group')).pop();
+      if (lastGroup) list.insertBefore(group, lastGroup.nextSibling);
+      else if (personalLbl) list.insertBefore(group, personalLbl);
+      else {
+        const plab = Array.from(list.querySelectorAll('.sidebar-section-label')).find(
+          (x) => x.textContent.trim() === 'Projects',
+        );
+        if (plab && plab.nextSibling) list.insertBefore(group, plab.nextSibling);
+        else list.prepend(group);
+      }
+    } else if (projectName != null) {
+      const nameEl = group.querySelector('.project-row-name');
+      if (nameEl) nameEl.textContent = projectName;
+      const row = group.querySelector('.project-row');
+      if (row) row.title = projectName;
+    }
+    return group;
+  }
+
+  function bumpProjectRowCount(group) {
+    if (!group) return;
+    const cnt = group.querySelectorAll('.chat-item.nested').length;
+    const badge = group.querySelector('.project-row-count');
+    if (badge) badge.textContent = String(cnt);
+  }
+
+  function refreshAllProjectCounts(list) {
+    list.querySelectorAll('.project-group').forEach((g) => bumpProjectRowCount(g));
+  }
+
+  function placeChatAsOrphan(list, link) {
+    link.classList.remove('nested');
+    const tail = list.querySelector('#sidebar-list-tail');
+    const hasProjects = list.querySelector('.project-group');
+    if (hasProjects) {
+      let personalLbl = Array.from(list.querySelectorAll('.sidebar-section-label')).find(
+        (x) => x.textContent.trim() === 'Personal',
+      );
+      if (!personalLbl) {
+        personalLbl = document.createElement('div');
+        personalLbl.className = 'sidebar-section-label';
+        personalLbl.textContent = 'Personal';
+        if (tail) list.insertBefore(personalLbl, tail);
+        else list.appendChild(personalLbl);
+      }
+      let n = personalLbl.nextSibling;
+      let lastOrphan = null;
+      while (n && n !== tail) {
+        if (n.nodeType === 1 && n.classList && n.classList.contains('chat-item') && !n.classList.contains('nested')) {
+          lastOrphan = n;
+        }
+        n = n.nextSibling;
+      }
+      if (lastOrphan) list.insertBefore(link, lastOrphan.nextSibling);
+      else list.insertBefore(link, personalLbl.nextSibling);
+    } else if (tail) {
+      list.insertBefore(link, tail);
+    } else {
+      list.appendChild(link);
+    }
+  }
+
+  function placeChatInProject(list, link, projectId, projectName) {
+    link.classList.add('nested');
+    const group = ensureProjectGroupInSidebar(list, projectId, projectName);
+    group.appendChild(link);
+    bumpProjectRowCount(group);
+  }
+
+  function sidebarUpsertChat(opts) {
+    const id = opts.id;
+    const title = opts.title;
+    const projectId = opts.projectId;
+    const projectName = opts.projectName;
+
     const list = document.getElementById('chat-list');
     if (!list) return;
     list.querySelector('.empty-list')?.remove();
@@ -218,15 +494,28 @@
       link.innerHTML =
         '<span class="chat-item-title"></span>' +
         '<span class="status-dot" aria-hidden="true"></span>';
-      list.prepend(link);
     }
     if (title != null) {
       link.title = title;
       const titleEl = link.querySelector('.chat-item-title');
       if (titleEl) titleEl.textContent = title;
     }
+    const mustReposition = projectId !== undefined;
+    if (mustReposition) {
+      const oldGroup = link.parentElement?.closest?.('.project-group') ?? null;
+      if (link.parentElement) link.parentElement.removeChild(link);
+      if (projectId == null) placeChatAsOrphan(list, link);
+      else placeChatInProject(list, link, projectId, projectName);
+      if (oldGroup && oldGroup !== link.parentElement) bumpProjectRowCount(oldGroup);
+      refreshAllProjectCounts(list);
+      ensurePersonalLabelBeforeOrphans(list);
+    } else if (!list.contains(link)) {
+      placeChatAsOrphan(list, link);
+    }
     if (id === activeChatId) {
       document.querySelector('.new-chat-btn')?.classList.remove('active');
+      document.querySelector('.project-row.active')?.classList.remove('active');
+      list.querySelectorAll('.project-group.active').forEach((el) => el.classList.remove('active'));
       list.querySelectorAll('.chat-item.active').forEach((el) => el.classList.remove('active'));
       link.classList.add('active');
     }
@@ -234,7 +523,10 @@
   }
   function sidebarRemoveChat(id) {
     const list = document.getElementById('chat-list');
-    list?.querySelector('.chat-item[data-chat-id="' + id + '"]')?.remove();
+    const link = list?.querySelector('.chat-item[data-chat-id="' + id + '"]');
+    const parentGroup = link?.closest('.project-group');
+    link?.remove();
+    if (parentGroup) bumpProjectRowCount(parentGroup);
     if (searchMatchSet !== null) applySidebarSearchFilter();
   }
   function statusDot(id) {
@@ -386,7 +678,10 @@
 
     ws.addEventListener('open', () => {
       reconnectAttempt = 0;
-      if (activeChatId != null) wsSend({ type: 'subscribe', chatId: activeChatId });
+      if (activeChatId != null) {
+        wsSend({ type: 'subscribe', chatId: activeChatId });
+        loadPendingFactSuggestions();
+      }
     });
     ws.addEventListener('close', () => {
       ws = null;
@@ -420,12 +715,26 @@
           history.replaceState(null, '', '/chats/' + msg.chatId);
           applyTitleForActive(msg.title || 'New chat');
         }
-        sidebarUpsertChat({ id: msg.chatId, title: msg.title, agent: msg.agent });
+        sidebarUpsertChat({
+          id: msg.chatId,
+          title: msg.title,
+          agent: msg.agent,
+          projectId: msg.projectId,
+          projectName: msg.projectName,
+        });
         if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
         return;
 
       case 'chat-updated':
-        if (msg.title != null) sidebarUpsertChat({ id: msg.chatId, title: msg.title });
+        if (msg.title != null || msg.projectId !== undefined) {
+          sidebarUpsertChat({
+            id: msg.chatId,
+            title: msg.title,
+            agent: msg.agent,
+            projectId: msg.projectId,
+            projectName: msg.projectName,
+          });
+        }
         if (msg.chatId === activeChatId && msg.title != null) applyTitleForActive(msg.title);
         if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
         return;
@@ -605,6 +914,108 @@
         if (waitingItems[0]) flushNextQueued();
         return;
       }
+
+      case 'project-fact-suggestions': {
+        if (msg.chatId !== activeChatId) return;
+        const have = existingFactSuggestionIds();
+        const fresh = (msg.suggestions || []).filter((s) => s && !have.has(s.id));
+        if (fresh.length === 0) return;
+        appendFactSuggestionsCard({
+          projectId: msg.projectId,
+          chatId: msg.chatId,
+          projectName: typeof msg.projectName === 'string' ? msg.projectName : 'проєкт',
+          suggestions: fresh,
+        });
+        return;
+      }
+
+      case 'project-fact-suggestion-removed':
+        removeFactSuggestionRow(msg.chatId, msg.suggestionId);
+        return;
+
+      case 'project-created': {
+        const list = document.getElementById('chat-list');
+        if (list) {
+          ensureProjectGroupInSidebar(list, msg.project.id, msg.project.name);
+          ensurePersonalLabelBeforeOrphans(list);
+        }
+        return;
+      }
+
+      case 'project-updated': {
+        const list = document.getElementById('chat-list');
+        const g = list?.querySelector('.project-group[data-project-id="' + msg.project.id + '"]');
+        const nameEl = g?.querySelector('.project-row-name');
+        if (nameEl) nameEl.textContent = msg.project.name;
+        const row = g?.querySelector('.project-row');
+        if (row) row.title = msg.project.name;
+        return;
+      }
+
+      case 'project-deleted': {
+        const list = document.getElementById('chat-list');
+        list?.querySelector('.project-group[data-project-id="' + msg.projectId + '"]')?.remove();
+        if (currentProjectPageId() === msg.projectId) window.location.assign('/');
+        return;
+      }
+
+      case 'project-fact-added': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        const ul = document.getElementById('facts-list');
+        const cnt = document.getElementById('facts-count');
+        if (!ul) return;
+        ul.querySelector('.facts-empty')?.remove();
+        ul.appendChild(buildFactLi(msg.fact));
+        if (cnt) cnt.textContent = String(ul.querySelectorAll('li.fact').length);
+        return;
+      }
+
+      case 'project-fact-updated': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        const li = document.querySelector('#facts-list li.fact[data-fact-id="' + msg.fact.id + '"]');
+        const ta = li?.querySelector('.fact-content');
+        if (ta) {
+          ta.value = msg.fact.content;
+          ta.dataset.saved = msg.fact.content.trim();
+        }
+        return;
+      }
+
+      case 'project-fact-deleted': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        document.querySelector('#facts-list li.fact[data-fact-id="' + msg.factId + '"]')?.remove();
+        const ul = document.getElementById('facts-list');
+        const cnt = document.getElementById('facts-count');
+        if (ul && !ul.querySelector('li.fact')) {
+          const empty = document.createElement('li');
+          empty.className = 'facts-empty muted';
+          empty.textContent =
+            'No facts yet. They appear after conversations or when you add one below.';
+          ul.appendChild(empty);
+        }
+        if (cnt && ul) cnt.textContent = String(ul.querySelectorAll('li.fact').length);
+        return;
+      }
+
+      case 'project-facts-synced': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        const ul = document.getElementById('facts-list');
+        const cnt = document.getElementById('facts-count');
+        if (!ul) return;
+        ul.replaceChildren();
+        for (let i = 0; i < msg.facts.length; i++) {
+          ul.appendChild(buildFactLi(msg.facts[i]));
+        }
+        if (msg.facts.length === 0) {
+          const empty = document.createElement('li');
+          empty.className = 'facts-empty muted';
+          empty.textContent =
+            'No facts yet. They appear after conversations or when you add one below.';
+          ul.appendChild(empty);
+        }
+        if (cnt) cnt.textContent = String(msg.facts.length);
+        return;
+      }
     }
   }
 
@@ -631,7 +1042,14 @@
       content: item.content,
     };
     if (activeChatId != null) payload.chatId = activeChatId;
-    else payload.agent = draftAgentSelect?.value || 'openclaw/default';
+    else {
+      payload.agent = draftAgentSelect?.value || 'openclaw/default';
+      const dp = draftProjectSelect;
+      if (dp && dp.value) {
+        const n = Number(dp.value);
+        if (Number.isFinite(n) && n > 0) payload.projectId = n;
+      }
+    }
     if (!wsSend(payload)) {
       // No connection — put the item back at the head so it isn't lost,
       // and let the open handler retry.
@@ -704,6 +1122,72 @@
       stopBtn.disabled = true;
       setTimeout(() => { stopBtn.disabled = false; }, 3000);
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // project page — description + facts (fetch + WS sync from other tabs)
+  // -------------------------------------------------------------------------
+  const projectPageId = currentProjectPageId();
+  const projectDescForm = document.getElementById('project-description-form');
+  const projectDescTa = document.getElementById('project-description');
+  if (projectPageId != null && projectDescForm && projectDescTa) {
+    projectDescForm.addEventListener('submit', (e) => e.preventDefault());
+    projectDescTa.addEventListener('blur', () => {
+      fetch('/projects/' + encodeURIComponent(projectPageId), {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ description: projectDescTa.value }),
+      }).catch(() => {});
+    });
+  }
+
+  const factsListEl = document.getElementById('facts-list');
+  if (factsListEl && projectPageId != null) {
+    factsListEl.querySelectorAll('.fact-content').forEach((ta) => {
+      ta.dataset.saved = ta.value.trim();
+    });
+    factsListEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.fact-delete');
+      if (!btn) return;
+      const li = btn.closest('li.fact');
+      const factId = li?.dataset.factId;
+      if (!factId) return;
+      e.preventDefault();
+      fetch(
+        '/projects/' +
+          encodeURIComponent(projectPageId) +
+          '/facts/' +
+          encodeURIComponent(factId) +
+          '/delete',
+        { method: 'POST', headers: { Accept: 'application/json' } },
+      ).catch(() => {});
+    });
+    factsListEl.addEventListener(
+      'blur',
+      (e) => {
+        const ta = e.target.closest('.fact-content');
+        if (!ta || !factsListEl.contains(ta)) return;
+        const li = ta.closest('li.fact');
+        const factId = li?.dataset.factId;
+        if (!factId) return;
+        const next = ta.value.trim();
+        if (!next) return;
+        if (next === (ta.dataset.saved || '').trim()) return;
+        fetch(
+          '/projects/' + encodeURIComponent(projectPageId) + '/facts/' + encodeURIComponent(factId),
+          {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ content: next }),
+          },
+        )
+          .then((res) => {
+            if (res.ok) ta.dataset.saved = next;
+          })
+          .catch(() => {});
+      },
+      true,
+    );
   }
 
   // -------------------------------------------------------------------------

@@ -15,7 +15,8 @@
         />
       </form>
 
-      <form class="agent-form" onsubmit="return false">
+      <form class="agent-form header-field" onsubmit="return false">
+        <label class="header-field-label" for="draft-agent">Agent</label>
         <select id="draft-agent" aria-label="Agent">
           <% if (agentsError && agents.length === 0) { %>
             <option value="<%= defaultAgent %>" selected><%= defaultAgent %></option>
@@ -29,6 +30,18 @@
         </select>
       </form>
 
+      <form class="project-form header-field" onsubmit="return false">
+        <label class="header-field-label" for="draft-project">Project</label>
+        <select id="draft-project" aria-label="Project">
+          <option value="">(no project)</option>
+          <% allProjects.forEach(function (p) { %>
+            <option value="<%= p.id %>" <%= preselectedProject && preselectedProject.id === p.id ? 'selected' : '' %>>
+              <%= p.name %>
+            </option>
+          <% }); %>
+        </select>
+      </form>
+
       <span class="gateway <%= gatewayUp ? 'ok' : 'down' %>" title="<%= openclawBaseUrl %>">
         OpenClaw: <%= gatewayUp ? 'connected' : 'unreachable' %>
       </span>
@@ -37,6 +50,11 @@
     <section class="messages" id="messages" data-chat-id="" data-draft="1">
       <% if (agentsError) { %>
         <p class="error">Gateway unreachable: <code><%= agentsError %></code></p>
+      <% } else if (preselectedProject) { %>
+        <p class="muted empty-state">
+          New chat in <strong><%= preselectedProject.name %></strong>.
+          Type a message to start.
+        </p>
       <% } else { %>
         <p class="muted empty-state">Type a message to start a new chat.</p>
       <% } %>

@@ -3,12 +3,12 @@
  * WebSocket per browser tab; all real-time chat traffic flows through it.
  *
  * Form-style HTTP routes still exist for one-shot mutations (rename / agent /
- * delete) — those return 302 redirects like normal HTML forms, and the server
- * broadcasts the resulting `chat-updated` event over WS so other tabs see the
- * change instantly.
+ * delete / project CRUD) — those return 302 redirects like normal HTML forms,
+ * and the server broadcasts the resulting `chat-updated` / `project-*` event
+ * over WS so other tabs see the change instantly.
  */
 
-import type { Message } from './index';
+import type { Message, Project, ProjectFact } from './index';
 
 /* ---------------- Client → Server ---------------- */
 
@@ -20,13 +20,17 @@ export type ClientMsg =
   /**
    * Send a user message. If chatId is omitted the server creates a new chat
    * first and replies with `chat-created`, then the streaming events.
+   *
+   * `projectId` is honored only when creating (no chatId). For an existing
+   * chat the server uses the chat's stored project.
    */
   | {
       type: 'send';
-      requestId: string; // client-generated; echoed in turn-error so client can pair errors
+      requestId: string;
       chatId?: number;
       content: string;
       agent?: string;
+      projectId?: number | null;
     }
   /** Abort a running turn for this chat. */
   | { type: 'abort'; chatId: number }
@@ -35,7 +39,6 @@ export type ClientMsg =
 
 /* ---------------- Server → Client ---------------- */
 
-/** Snapshot of in-flight activity for a chat (used when a client (re)subscribes). */
 export interface ChatActivitySnapshot {
   state: 'thinking' | 'tool' | 'lifecycle' | 'generating' | 'idle';
   label?: string;
@@ -43,42 +46,52 @@ export interface ChatActivitySnapshot {
 }
 
 export type ServerMsg =
-  /** Hello after connect — includes pid so the client can detect a server restart. */
   | { type: 'hello'; serverStarted: number }
-  /** Ack for client ping. */
   | { type: 'pong' }
 
-  /** Chat row was created (e.g. by a `send` without chatId). */
-  | { type: 'chat-created'; chatId: number; title: string; agent: string }
-  /** Chat metadata changed (title, agent). */
-  | { type: 'chat-updated'; chatId: number; title?: string; agent?: string }
-  /** Assistant reply finished while no tab was viewing this chat. */
+  /* ---- chat lifecycle ---- */
+  | {
+      type: 'chat-created';
+      chatId: number;
+      title: string;
+      agent: string;
+      projectId: number | null;
+      projectName?: string | null;
+    }
+  | {
+      type: 'chat-updated';
+      chatId: number;
+      title?: string;
+      agent?: string;
+      /** Reassignment to a different project (or null to detach). */
+      projectId?: number | null;
+      /** Present when `projectId` is set — helps the sidebar render without a reload. */
+      projectName?: string | null;
+      /** Toggle on whether the chat writes facts back to the project. */
+      sharesToProject?: boolean;
+    }
   | { type: 'chat-unread'; chatId: number }
-  /** User opened this chat — clear sidebar unread indicator. */
   | { type: 'chat-read'; chatId: number }
-  /** Chat was deleted; clients on that chat should navigate away. */
   | { type: 'chat-deleted'; chatId: number }
 
-  /** Persisted message landed in the DB (both roles). */
+  /* ---- messages + turn streaming ---- */
   | { type: 'message-appended'; chatId: number; message: Message }
-
-  /** A new turn just began (sent right after subscribe if a turn was already in flight). */
-  | { type: 'turn-started'; chatId: number; runId: string; activity?: ChatActivitySnapshot }
-  /** Streaming text delta for a turn. */
+  | {
+      type: 'turn-started';
+      chatId: number;
+      runId: string;
+      activity?: ChatActivitySnapshot;
+    }
   | { type: 'turn-delta'; chatId: number; text: string }
-  /** Tool invocation lifecycle. */
   | {
       type: 'turn-tool';
       chatId: number;
       phase: 'start' | 'end';
       name: string;
       label: string;
-      /** Human description of what the tool is doing right now (e.g. "ls -la /tmp"). */
       detail?: string;
     }
-  /** Coarse turn lifecycle (start/end/etc.). */
   | { type: 'turn-lifecycle'; chatId: number; phase: string; label: string }
-  /** Inline attachment for the running turn (image / video / file). */
   | {
       type: 'turn-attachment';
       chatId: number;
@@ -86,7 +99,26 @@ export type ServerMsg =
       mime: string;
       label?: string;
     }
-  /** Turn finished cleanly. Final assistant message is also delivered via `message-appended`. */
   | { type: 'turn-ended'; chatId: number; title: string }
-  /** Turn failed. */
-  | { type: 'turn-error'; chatId: number; requestId?: string; error: string };
+  | { type: 'turn-error'; chatId: number; requestId?: string; error: string }
+
+  /* ---- projects ---- */
+  | { type: 'project-created'; project: Project }
+  | { type: 'project-updated'; project: Project }
+  | { type: 'project-deleted'; projectId: number }
+  | { type: 'project-fact-added'; projectId: number; fact: ProjectFact }
+  | { type: 'project-fact-updated'; projectId: number; fact: ProjectFact }
+  | { type: 'project-fact-deleted'; projectId: number; factId: number }
+  /** Full list replacement after compaction — clients should replace the facts UI wholesale. */
+  | { type: 'project-facts-synced'; projectId: number; facts: ProjectFact[] }
+  /**
+   * After a turn, proposed lines the user can add to project facts (confirm in chat).
+   */
+  | {
+      type: 'project-fact-suggestions';
+      chatId: number;
+      projectId: number;
+      projectName: string;
+      suggestions: { id: number; content: string }[];
+    }
+  | { type: 'project-fact-suggestion-removed'; chatId: number; suggestionId: number };

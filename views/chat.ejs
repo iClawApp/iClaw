@@ -14,8 +14,9 @@
         />
       </form>
 
-      <form method="post" action="/chats/<%= activeChat.id %>/agent" class="agent-form">
-        <select name="agent" onchange="this.form.submit()" aria-label="Agent">
+      <form class="agent-form header-field" method="post" action="/chats/<%= activeChat.id %>/agent">
+        <label class="header-field-label" for="chat-agent-select">Agent</label>
+        <select name="agent" id="chat-agent-select" onchange="this.form.submit()" aria-label="Agent">
           <% agents.forEach(function (a) { %>
             <option value="<%= a.id %>" <%= a.id === activeChat.agent ? 'selected' : '' %>>
               <%= a.id %>
@@ -26,6 +27,38 @@
           <% } %>
         </select>
       </form>
+
+      <form method="post" action="/chats/<%= activeChat.id %>/project" class="project-form header-field">
+        <label class="header-field-label" for="chat-project-select">Project</label>
+        <select name="projectId" id="chat-project-select" onchange="this.form.submit()" aria-label="Project">
+          <option value="" <%= !activeChat.project_id ? 'selected' : '' %>>(no project)</option>
+          <% allProjects.forEach(function (p) { %>
+            <option value="<%= p.id %>" <%= activeChat.project_id === p.id ? 'selected' : '' %>>
+              <%= p.name %>
+            </option>
+          <% }); %>
+        </select>
+      </form>
+
+      <% if (activeChat.project_id) { %>
+        <form
+          method="post"
+          action="/chats/<%= activeChat.id %>/shares"
+          class="share-form"
+          title="When on, after each assistant reply you get suggested facts to add to the project (you confirm each)."
+        >
+          <label class="share-toggle">
+            <input
+              type="checkbox"
+              name="shares"
+              value="1"
+              <%= activeChat.shares_to_project ? 'checked' : '' %>
+              onchange="this.form.submit()"
+            />
+            <span>Suggest facts for project</span>
+          </label>
+        </form>
+      <% } %>
 
       <button
         type="button"

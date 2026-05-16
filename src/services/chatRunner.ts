@@ -7,7 +7,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { chats, messages } from './store';
+import { chats, messages, projects } from './store';
+import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
 import { chatStatus } from './chatStatus';
 import { openclawWs, type TurnEvent } from './openclawWs';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
@@ -102,7 +103,13 @@ async function runTurnLocked(opts: {
   const chat = chats.get(chatId)!;
   const sessionKey = await ensureSession(chatId);
 
-  // Persist user message + broadcast.
+  const gatewayMessage =
+    chat.project_id != null && projects.get(chat.project_id)
+      ? buildGatewayUserMessage(content, chat.project_id)
+      : content;
+
+  // Persist user message + broadcast (stored text is the literal user input —
+  // project context is only prepended for the gateway).
   const userMsg = messages.append(chatId, 'user', content);
   wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: userMsg });
 
@@ -197,7 +204,7 @@ async function runTurnLocked(opts: {
 
   await openclawWs.runTurn({
     sessionKey,
-    message: content,
+    message: gatewayMessage,
     onEvent,
   });
 
@@ -221,6 +228,19 @@ async function runTurnLocked(opts: {
     message: assistantMsg,
   });
   syncSidebarUnread(chatId);
+
+  const chatAfter = chats.get(chatId)!;
+  if (chatAfter.project_id != null && projects.get(chatAfter.project_id)) {
+    scheduleProjectFactExtraction({
+      chatId,
+      projectId: chatAfter.project_id,
+      agentLabel: chatAfter.agent,
+      sharesToProject: Boolean(chatAfter.shares_to_project),
+      userMessage: content,
+      assistantText: finalText,
+      assistantMessageId: assistantMsg.id,
+    });
+  }
 
   // Wait for the title task (if any) so the final `turn-ended` reflects it.
   await titleTask;
@@ -248,6 +268,8 @@ export async function sendMessage(opts: {
   chatId?: number;
   content: string;
   agentLabel?: string;
+  /** Project to attach this NEW chat to. Ignored when chatId is provided. */
+  projectId?: number | null;
   requestId?: string;
   /**
    * Optional socket to subscribe to the chat the moment it's resolved/created.
@@ -261,7 +283,11 @@ export async function sendMessage(opts: {
 
   if (chatId == null) {
     const agent = (opts.agentLabel ?? '').trim() || DEFAULT_AGENT;
-    const chat = chats.create(agent);
+    const projectId =
+      typeof opts.projectId === 'number' && Number.isFinite(opts.projectId)
+        ? opts.projectId
+        : null;
+    const chat = chats.create(agent, projectId);
     chatId = chat.id;
     isFirstTurn = true;
     // Seed a placeholder title so the sidebar entry shows up immediately.
@@ -270,11 +296,14 @@ export async function sendMessage(opts: {
     // Subscribe the originating socket BEFORE we emit chat-created or start
     // the turn — otherwise it would miss every event in this turn.
     if (opts.subscriber) wsHub.subscribe(opts.subscriber, chatId);
+    const proj = created.project_id ? projects.get(created.project_id) : null;
     wsHub.broadcastAll({
       type: 'chat-created',
       chatId,
       title: created.title,
       agent: created.agent,
+      projectId: created.project_id,
+      projectName: proj?.name ?? null,
     });
   } else {
     if (opts.subscriber) wsHub.subscribe(opts.subscriber, chatId);

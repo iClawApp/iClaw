@@ -1,6 +1,25 @@
+<%
+  // Sidebar receives `chats` (all chats), `workingIds`, `activeChat?`,
+  // `activeProject?`. We need projects too — render them at the top with
+  // their chats nested. We expect `allProjects` if rendered from a context
+  // that has it; fall back to gathering project ids from chats.
+  const _projectsList = typeof allProjects !== 'undefined' && Array.isArray(allProjects)
+    ? allProjects
+    : (typeof projectsList !== 'undefined' ? projectsList : []);
+  const _byProject = new Map();
+  for (const c of chats) {
+    if (c.project_id) {
+      const arr = _byProject.get(c.project_id) || [];
+      arr.push(c);
+      _byProject.set(c.project_id, arr);
+    }
+  }
+  const _orphans = chats.filter((c) => !c.project_id);
+  function _renderChatItem(c) { /* logic below in template */ }
+%>
 <aside class="col col-left">
   <div class="sidebar-top">
-    <a href="/" class="new-chat-btn <%= !activeChat ? 'active' : '' %>">+ New chat</a>
+    <a href="/" class="new-chat-btn <%= !activeChat && !activeProject ? 'active' : '' %>">+ New chat</a>
     <div class="sidebar-search">
       <input
         type="search"
@@ -12,30 +31,91 @@
         spellcheck="false"
       />
     </div>
+    <div class="sidebar-create-project">
+      <form method="post" action="/projects" class="sidebar-new-project" id="new-project-form">
+        <input
+          type="text"
+          name="name"
+          placeholder="New project…"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="New project name"
+        />
+        <button type="submit" class="sidebar-create-project-btn">Create</button>
+      </form>
+    </div>
   </div>
 
   <nav class="chat-list" id="chat-list">
-    <% if (chats.length === 0) { %>
-      <p class="muted empty-list">No chats yet.</p>
+    <% if (_projectsList.length > 0) { %>
+      <div class="sidebar-section-label">Projects</div>
+      <% _projectsList.forEach(function (p) {
+        const pChats = _byProject.get(p.id) || [];
+      %>
+        <div class="project-group<%= activeProject && activeProject.id === p.id ? ' active' : '' %>" data-project-id="<%= p.id %>">
+          <a
+            href="/projects/<%= p.id %>"
+            class="project-row<%= activeProject && activeProject.id === p.id ? ' active' : '' %>"
+            title="<%= p.name %>"
+          >
+            <span class="project-row-name"><%= p.name %></span>
+            <span class="project-row-count"><%= pChats.length %></span>
+          </a>
+          <% pChats.forEach(function (c) { %>
+            <a
+              href="/chats/<%= c.id %>"
+              class="chat-item nested <%= activeChat && activeChat.id === c.id ? 'active' : '' %>"
+              data-chat-id="<%= c.id %>"
+              title="<%= c.title %>"
+            >
+              <span class="chat-item-title"><%= c.title %></span>
+              <%
+                const dotWorking = workingIds.indexOf(c.id) >= 0;
+                const dotUnread = !dotWorking && c.unread;
+              %>
+              <span
+                class="status-dot<%= dotWorking ? ' working' : (dotUnread ? ' unread' : '') %>"
+                aria-hidden="true"
+              ></span>
+            </a>
+          <% }); %>
+        </div>
+      <% }); %>
     <% } %>
-    <% chats.forEach(function (c) { %>
-      <a
-        href="/chats/<%= c.id %>"
-        class="chat-item <%= activeChat && activeChat.id === c.id ? 'active' : '' %>"
-        data-chat-id="<%= c.id %>"
-        title="<%= c.title %>"
-      >
-        <span class="chat-item-title"><%= c.title %></span>
-        <%
-          const dotWorking = workingIds.indexOf(c.id) >= 0;
-          const dotUnread = !dotWorking && c.unread;
-        %>
-        <span
-          class="status-dot<%= dotWorking ? ' working' : (dotUnread ? ' unread' : '') %>"
-          aria-hidden="true"
-        ></span>
-      </a>
-    <% }); %>
+
+    <% if (_orphans.length > 0) { %>
+      <% if (_projectsList.length > 0) { %>
+        <div class="sidebar-section-label">Personal</div>
+      <% } %>
+      <% _orphans.forEach(function (c) { %>
+        <a
+          href="/chats/<%= c.id %>"
+          class="chat-item <%= activeChat && activeChat.id === c.id ? 'active' : '' %>"
+          data-chat-id="<%= c.id %>"
+          title="<%= c.title %>"
+        >
+          <span class="chat-item-title"><%= c.title %></span>
+          <%
+            const dotWorking = workingIds.indexOf(c.id) >= 0;
+            const dotUnread = !dotWorking && c.unread;
+          %>
+          <span
+            class="status-dot<%= dotWorking ? ' working' : (dotUnread ? ' unread' : '') %>"
+            aria-hidden="true"
+          ></span>
+        </a>
+      <% }); %>
+    <% } %>
+
+    <% if (chats.length === 0 && _projectsList.length === 0) { %>
+      <p class="muted empty-list">No projects or chats yet.</p>
+    <% } %>
+
+    <% if (_projectsList.length === 0 && _orphans.length > 0) { %>
+      <%/* No projects — orphans already rendered. No extra section label needed. */%>
+    <% } %>
+
+    <div id="sidebar-list-tail" class="sidebar-list-tail" aria-hidden="true"></div>
   </nav>
 </aside>
 

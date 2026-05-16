@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { db } from '../db/database';
 import { deriveTitle } from './chatTitle';
-import type { Chat, Message } from '../types';
+import type { Chat, Message, Project, ProjectFact, ProjectFactSuggestion } from '../types';
+
+// ---------- chats ----------
 
 export const chats = {
   list(): Chat[] {
@@ -12,11 +14,28 @@ export const chats = {
   get(id: number): Chat | undefined {
     return db.prepare('SELECT * FROM chats WHERE id = ?').get(id) as Chat | undefined;
   },
-  create(agent: string): Chat {
+  /** Chats that don't belong to any project. */
+  listOrphans(): Chat[] {
+    return db
+      .prepare(
+        'SELECT * FROM chats WHERE project_id IS NULL ORDER BY updated_at DESC, id DESC',
+      )
+      .all() as Chat[];
+  },
+  listByProject(projectId: number): Chat[] {
+    return db
+      .prepare(
+        'SELECT * FROM chats WHERE project_id = ? ORDER BY updated_at DESC, id DESC',
+      )
+      .all(projectId) as Chat[];
+  },
+  create(agent: string, projectId: number | null = null): Chat {
     const sessionKey = randomUUID();
     const info = db
-      .prepare('INSERT INTO chats (agent, openclaw_session_id) VALUES (?, ?)')
-      .run(agent, sessionKey);
+      .prepare(
+        'INSERT INTO chats (agent, openclaw_session_id, project_id) VALUES (?, ?, ?)',
+      )
+      .run(agent, sessionKey, projectId);
     return this.get(Number(info.lastInsertRowid))!;
   },
   rename(id: number, title: string, opts?: { manual?: boolean }): void {
@@ -53,10 +72,20 @@ export const chats = {
     ).run(sessionKey, id);
   },
   setAgent(id: number, agent: string): void {
-    db.prepare('UPDATE chats SET agent = ?, updated_at = datetime(\'now\') WHERE id = ?').run(
+    db.prepare("UPDATE chats SET agent = ?, updated_at = datetime('now') WHERE id = ?").run(
       agent,
       id,
     );
+  },
+  setProject(id: number, projectId: number | null): void {
+    db.prepare(
+      "UPDATE chats SET project_id = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(projectId, id);
+  },
+  setSharesToProject(id: number, shares: boolean): void {
+    db.prepare(
+      "UPDATE chats SET shares_to_project = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(shares ? 1 : 0, id);
   },
   touch(id: number): void {
     db.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").run(id);
@@ -78,6 +107,8 @@ export const chats = {
   },
 };
 
+// ---------- messages ----------
+
 export const messages = {
   listByChat(chatId: number): Message[] {
     return db
@@ -96,7 +127,6 @@ export const messages = {
       )
       .run(chatId, role, content, finishReason);
     chats.touch(chatId);
-    // Auto-name a chat from its first user message
     if (role === 'user') {
       const count = (db
         .prepare("SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND role = 'user'")
@@ -115,12 +145,169 @@ export const messages = {
   },
 };
 
+// ---------- projects ----------
+
+export const projects = {
+  list(): Project[] {
+    return db
+      .prepare('SELECT * FROM projects ORDER BY updated_at DESC, id DESC')
+      .all() as Project[];
+  },
+  get(id: number): Project | undefined {
+    return db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project | undefined;
+  },
+  create(name: string, description?: string | null): Project {
+    const info = db
+      .prepare('INSERT INTO projects (name, description) VALUES (?, ?)')
+      .run(name.trim() || 'Untitled', description ?? null);
+    return this.get(Number(info.lastInsertRowid))!;
+  },
+  rename(id: number, name: string): void {
+    db.prepare(
+      "UPDATE projects SET name = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(name.trim() || 'Untitled', id);
+  },
+  setDescription(id: number, description: string | null): void {
+    db.prepare(
+      "UPDATE projects SET description = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(description, id);
+  },
+  remove(id: number): void {
+    // chats keep existing (project_id becomes NULL via FK ON DELETE SET NULL)
+    // facts are cascaded.
+    db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+  },
+  touch(id: number): void {
+    db.prepare("UPDATE projects SET updated_at = datetime('now') WHERE id = ?").run(id);
+  },
+};
+
+// ---------- project facts ----------
+
+const FACTS_DEFAULT_LIMIT = 200;
+
+export const projectFacts = {
+  listByProject(projectId: number, limit = FACTS_DEFAULT_LIMIT): ProjectFact[] {
+    return db
+      .prepare(
+        'SELECT * FROM project_facts WHERE project_id = ? ORDER BY created_at ASC, id ASC LIMIT ?',
+      )
+      .all(projectId, limit) as ProjectFact[];
+  },
+  countByProject(projectId: number): number {
+    const row = db
+      .prepare('SELECT COUNT(*) AS n FROM project_facts WHERE project_id = ?')
+      .get(projectId) as { n: number };
+    return row.n;
+  },
+  get(id: number): ProjectFact | undefined {
+    return db.prepare('SELECT * FROM project_facts WHERE id = ?').get(id) as
+      | ProjectFact
+      | undefined;
+  },
+  append(opts: {
+    projectId: number;
+    content: string;
+    sourceChatId?: number | null;
+    sourceMessageId?: number | null;
+  }): ProjectFact {
+    const trimmed = opts.content.trim();
+    if (!trimmed) throw new Error('fact content required');
+    const info = db
+      .prepare(
+        `INSERT INTO project_facts (project_id, content, source_chat_id, source_message_id)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(
+        opts.projectId,
+        trimmed,
+        opts.sourceChatId ?? null,
+        opts.sourceMessageId ?? null,
+      );
+    projects.touch(opts.projectId);
+    return this.get(Number(info.lastInsertRowid))!;
+  },
+  edit(id: number, content: string): void {
+    const trimmed = content.trim();
+    if (!trimmed) throw new Error('fact content required');
+    db.prepare(
+      "UPDATE project_facts SET content = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(trimmed, id);
+    // bump owning project's updated_at
+    const row = db
+      .prepare('SELECT project_id FROM project_facts WHERE id = ?')
+      .get(id) as { project_id: number } | undefined;
+    if (row) projects.touch(row.project_id);
+  },
+  remove(id: number): void {
+    const row = db
+      .prepare('SELECT project_id FROM project_facts WHERE id = ?')
+      .get(id) as { project_id: number } | undefined;
+    db.prepare('DELETE FROM project_facts WHERE id = ?').run(id);
+    if (row) projects.touch(row.project_id);
+  },
+  /**
+   * Atomic replace — used by compaction. Drops all facts for the project and
+   * inserts the new list. Caller is responsible for content quality.
+   */
+  replaceAll(projectId: number, newContents: string[]): void {
+    const trx = db.transaction((items: string[]) => {
+      db.prepare('DELETE FROM project_facts WHERE project_id = ?').run(projectId);
+      const insert = db.prepare(
+        'INSERT INTO project_facts (project_id, content) VALUES (?, ?)',
+      );
+      for (const c of items) {
+        const t = c.trim();
+        if (t) insert.run(projectId, t);
+      }
+      db.prepare("UPDATE projects SET updated_at = datetime('now') WHERE id = ?").run(
+        projectId,
+      );
+    });
+    trx(newContents);
+  },
+};
+
+// ---------- project fact suggestions (user confirm in chat) ----------
+
+export const projectFactSuggestions = {
+  listByChat(chatId: number): ProjectFactSuggestion[] {
+    return db
+      .prepare(
+        'SELECT * FROM project_fact_suggestions WHERE chat_id = ? ORDER BY id ASC',
+      )
+      .all(chatId) as ProjectFactSuggestion[];
+  },
+  get(id: number): ProjectFactSuggestion | undefined {
+    return db.prepare('SELECT * FROM project_fact_suggestions WHERE id = ?').get(id) as
+      | ProjectFactSuggestion
+      | undefined;
+  },
+  insert(opts: {
+    projectId: number;
+    chatId: number;
+    content: string;
+    assistantMessageId: number | null;
+  }): ProjectFactSuggestion {
+    const trimmed = opts.content.trim();
+    if (!trimmed) throw new Error('suggestion content required');
+    const info = db
+      .prepare(
+        `INSERT INTO project_fact_suggestions (project_id, chat_id, content, assistant_message_id)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(opts.projectId, opts.chatId, trimmed, opts.assistantMessageId ?? null);
+    return this.get(Number(info.lastInsertRowid))!;
+  },
+  remove(id: number): void {
+    db.prepare('DELETE FROM project_fact_suggestions WHERE id = ?').run(id);
+  },
+};
+
+// ---------- search ----------
+
 const SEARCH_MAX_LEN = 200;
 
-/**
- * Case-insensitive substring search over chat titles and message bodies.
- * Returns distinct chat ids, newest chats first (same order as sidebar).
- */
 export const chatSearch = {
   matchingChatIds(query: string): number[] {
     let needle = query.trim().toLowerCase();

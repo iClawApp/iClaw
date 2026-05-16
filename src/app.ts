@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { indexRouter } from './routes/index';
 import { chatsRouter } from './routes/chats';
+import { projectsRouter } from './routes/projects';
 import { agentsRouter } from './routes/sessions';
 import { mediaRouter } from './routes/media';
 
@@ -18,6 +19,7 @@ export function createApp(): express.Express {
 
   app.use('/', indexRouter);
   app.use('/chats', chatsRouter);
+  app.use('/projects', projectsRouter);
   app.use('/api/agents', agentsRouter);
   app.use('/media', mediaRouter);
 

@@ -1,0 +1,150 @@
+<%- include('partials/head', { title: project.name + ' — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main project-page" data-project-id="<%= project.id %>">
+    <header class="chat-header project-header">
+      <a href="/" class="project-back-link" title="Back to chat list">← Chats</a>
+
+      <form
+        method="post"
+        action="/projects/<%= project.id %>/rename"
+        class="rename-form project-title-form"
+        id="project-rename-form"
+      >
+        <input
+          type="text"
+          name="name"
+          value="<%= project.name %>"
+          aria-label="Project name"
+        />
+      </form>
+
+      <div class="project-header-actions">
+        <a
+          class="project-action-btn project-new-chat"
+          href="/?project=<%= project.id %>"
+          title="Start a new chat in this project"
+        >New chat</a>
+        <form method="post" action="/projects/<%= project.id %>/delete" class="delete-form project-delete-form">
+          <button
+            type="submit"
+            class="project-delete-btn"
+            onclick="return confirm('Delete this project? Chats inside will detach (not deleted).')"
+            aria-label="Delete project"
+          >Delete</button>
+        </form>
+      </div>
+    </header>
+
+    <section class="project-body">
+      <div class="project-body-inner">
+        <section class="project-card">
+          <div class="project-card-head">
+            <h2 class="project-card-title">About</h2>
+            <p class="project-card-hint muted small">Visible on this page; optional context for you.</p>
+          </div>
+          <form
+            class="project-description-form"
+            id="project-description-form"
+            onsubmit="return false"
+          >
+            <textarea
+              name="description"
+              id="project-description"
+              rows="3"
+              placeholder="What is this project? Stack, repo, goals…"
+            ><%= project.description ?? '' %></textarea>
+          </form>
+        </section>
+
+        <section class="project-card">
+          <div class="project-card-head">
+            <h2 class="project-card-title">
+              Shared context
+              <span class="project-badge" id="facts-count"><%= facts.length %></span>
+            </h2>
+            <p class="project-card-hint muted small">
+              Shown to the model when you message in this project. You confirm each suggestion in the chat (✅ add / ❌ skip) or add lines here manually.
+            </p>
+          </div>
+
+          <ul class="facts-list" id="facts-list">
+            <% facts.forEach(function (f) { %>
+              <li class="fact" data-fact-id="<%= f.id %>">
+                <textarea
+                  class="fact-content"
+                  aria-label="Fact text"
+                  rows="2"
+                ><%= f.content %></textarea>
+                <div class="fact-meta">
+                  <% if (f.source_chat_id) { %>
+                    <a href="/chats/<%= f.source_chat_id %>" class="fact-source">
+                      Chat #<%= f.source_chat_id %>
+                    </a>
+                  <% } else { %>
+                    <span class="fact-source muted">Manual</span>
+                  <% } %>
+                  <button
+                    type="button"
+                    class="fact-delete"
+                    aria-label="Delete fact"
+                  >Remove</button>
+                </div>
+              </li>
+            <% }); %>
+            <% if (facts.length === 0) { %>
+              <li class="facts-empty muted">No facts yet. They appear after conversations or when you add one below.</li>
+            <% } %>
+          </ul>
+
+          <form
+            method="post"
+            action="/projects/<%= project.id %>/facts"
+            class="fact-add-form"
+            id="fact-add-form"
+          >
+            <textarea
+              name="content"
+              placeholder="Add a fact (decision, stack, URL…)"
+              rows="2"
+              required
+            ></textarea>
+            <button type="submit" class="fact-add-submit">Add fact</button>
+          </form>
+        </section>
+
+        <section class="project-card">
+          <div class="project-card-head">
+            <h2 class="project-card-title">
+              Chats
+              <span class="project-badge project-badge--muted"><%= projectChats.length %></span>
+            </h2>
+          </div>
+          <% if (projectChats.length === 0) { %>
+            <p class="muted project-empty-chats">No chats yet. Use “New chat” above.</p>
+          <% } else { %>
+            <ul class="project-chats">
+              <% projectChats.forEach(function (c) { %>
+                <li>
+                  <a href="/chats/<%= c.id %>" class="project-chat-link">
+                    <span class="project-chat-title"><%= c.title %></span>
+                    <% if (c.shares_to_project === 0) { %>
+                      <span class="project-chat-badge" title="This chat does not write facts back to the project">No share-back</span>
+                    <% } %>
+                  </a>
+                </li>
+              <% }); %>
+            </ul>
+          <% } %>
+        </section>
+      </div>
+    </section>
+
+    <script src="/js/vendor/marked.min.js"></script>
+    <script src="/js/iclaw.js"></script>
+  </main>
+</div>
+
+<%- include('partials/foot') %>
