@@ -112,12 +112,10 @@ chatsRouter.get('/:id', async (req, res, next) => {
     }
     if (chats.markRead(id)) wsHub.broadcastAll({ type: 'chat-read', chatId: id });
     const { agents, error: agentsError } = await getAgentsSafe();
-    const activeProject = chat.project_id ? projects.get(chat.project_id) ?? null : null;
     res.render('chat', {
       chats: chats.list(),
       allProjects: projects.list(),
       activeChat: chat,
-      activeProject,
       chatMessages: messages.listByChat(id),
       agents,
       agentsError,
@@ -178,30 +176,6 @@ chatsRouter.post('/:id/agent', (req, res) => {
       updatedAt: chats.get(id)!.updated_at,
     });
   }
-  res.redirect(`/chats/${id}`);
-});
-
-chatsRouter.post('/:id/project', (req, res) => {
-  const id = Number(req.params.id);
-  if (!chats.get(id)) {
-    res.status(404).send('chat not found');
-    return;
-  }
-  const raw = req.body?.projectId;
-  let projectId: number | null = null;
-  if (raw && String(raw).trim() !== '') {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0 && projects.get(n)) projectId = n;
-  }
-  chats.setProject(id, projectId);
-  const proj = projectId ? projects.get(projectId) : null;
-  wsHub.broadcastAll({
-    type: 'chat-updated',
-    chatId: id,
-    projectId,
-    projectName: proj?.name ?? null,
-    updatedAt: chats.get(id)!.updated_at,
-  });
   res.redirect(`/chats/${id}`);
 });
 

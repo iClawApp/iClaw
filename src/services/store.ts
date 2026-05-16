@@ -78,11 +78,6 @@ export const chats = {
       id,
     );
   },
-  setProject(id: number, projectId: number | null): void {
-    db.prepare(
-      "UPDATE chats SET project_id = ?, updated_at = datetime('now') WHERE id = ?",
-    ).run(projectId, id);
-  },
   setSharesToProject(id: number, shares: boolean): void {
     db.prepare(
       "UPDATE chats SET shares_to_project = ?, updated_at = datetime('now') WHERE id = ?",

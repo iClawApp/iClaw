@@ -28,18 +28,6 @@
         </select>
       </form>
 
-      <form method="post" action="/chats/<%= activeChat.id %>/project" class="project-form header-field">
-        <label class="header-field-label" for="chat-project-select">Project</label>
-        <select name="projectId" id="chat-project-select" onchange="this.form.submit()" aria-label="Project">
-          <option value="" <%= !activeChat.project_id ? 'selected' : '' %>>(no project)</option>
-          <% allProjects.forEach(function (p) { %>
-            <option value="<%= p.id %>" <%= activeChat.project_id === p.id ? 'selected' : '' %>>
-              <%= p.name %>
-            </option>
-          <% }); %>
-        </select>
-      </form>
-
       <% if (activeChat.project_id) { %>
         <form
           method="post"

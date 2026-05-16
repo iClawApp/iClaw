@@ -1738,6 +1738,108 @@ code {
   row-gap: 10px;
 }
 
+.draft-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.draft-body.is-picking .messages {
+  display: none;
+}
+.draft-pick-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 20px 40px;
+  min-height: 0;
+}
+.draft-body:not(.is-picking) .draft-pick-stage {
+  display: none;
+}
+.draft-composer-wrap {
+  flex-shrink: 0;
+}
+
+.project-pick {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 0;
+  text-align: center;
+  border: none;
+  background: transparent;
+}
+.project-pick-title {
+  margin: 0 0 22px;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.project-pick-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  align-items: stretch;
+  width: 100%;
+}
+.project-pick-card {
+  margin: 0;
+  flex: 1 1 148px;
+  max-width: 200px;
+  min-width: 132px;
+  padding: 14px 14px 16px;
+  text-align: center;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.1s ease;
+}
+.project-pick-card:hover {
+  border-color: color-mix(in srgb, var(--text) 16%, var(--border));
+  transform: translateY(-1px);
+}
+.project-pick-card:active {
+  transform: translateY(0);
+}
+.project-pick-card--none .project-pick-card-inner {
+  align-items: center;
+}
+.project-pick-card--none .project-logo--none {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  font-size: 1rem;
+  opacity: 0.8;
+}
+.project-pick-card-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.project-pick-card .project-logo {
+  flex-shrink: 0;
+}
+.project-pick-name {
+  font-size: 0.84rem;
+  font-weight: 600;
+  line-height: 1.25;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 /* ---------- Project page (calm list / settings layout) ---------- */
 
 .project-page .project-body {

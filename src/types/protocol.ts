@@ -3,9 +3,10 @@
  * WebSocket per browser tab; all real-time chat traffic flows through it.
  *
  * Form-style HTTP routes still exist for one-shot mutations (rename / agent /
- * delete / project CRUD) — those return 302 redirects like normal HTML forms,
- * and the server broadcasts the resulting `chat-updated` / `project-*` event
- * over WS so other tabs see the change instantly.
+ * delete / project CRUD). They return 302 redirects like normal HTML forms,
+ * and the server broadcasts the resulting `chat-updated` / `project-*` events
+ * over WS so other tabs see the change instantly. A chat's project is fixed at
+ * creation (WebSocket `send` without `chatId`).
  */
 
 import type { Message, Project, ProjectFact } from './index';
@@ -21,8 +22,8 @@ export type ClientMsg =
    * Send a user message. If chatId is omitted the server creates a new chat
    * first and replies with `chat-created`, then the streaming events.
    *
-   * `projectId` is honored only when creating (no chatId). For an existing
-   * chat the server uses the chat's stored project.
+   * `projectId` is honored only when creating (no chatId). For an existing chat
+   * the server ignores this field and uses the chat's stored project.
    */
   | {
       type: 'send';

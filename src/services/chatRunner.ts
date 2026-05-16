@@ -289,10 +289,15 @@ export async function sendMessage(opts: {
 
   if (chatId == null) {
     const agent = (opts.agentLabel ?? '').trim() || DEFAULT_AGENT;
-    const projectId =
-      typeof opts.projectId === 'number' && Number.isFinite(opts.projectId)
-        ? opts.projectId
-        : null;
+    let projectId: number | null = null;
+    if (
+      typeof opts.projectId === 'number' &&
+      Number.isFinite(opts.projectId) &&
+      opts.projectId > 0 &&
+      projects.get(opts.projectId)
+    ) {
+      projectId = opts.projectId;
+    }
     const chat = chats.create(agent, projectId);
     chatId = chat.id;
     isFirstTurn = true;

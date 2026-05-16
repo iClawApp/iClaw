@@ -64,7 +64,7 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
           chatId: msg.chatId,
           content,
           agentLabel: msg.agent,
-          projectId: msg.projectId ?? null,
+          projectId: msg.chatId == null ? (msg.projectId ?? null) : undefined,
           requestId: msg.requestId,
           subscriber: socket,
         });

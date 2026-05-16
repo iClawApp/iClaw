@@ -19,7 +19,11 @@
   const button = form?.querySelector('.composer-send');
   const titleInput = document.getElementById('chat-title-input');
   const draftAgentSelect = document.getElementById('draft-agent');
-  const draftProjectSelect = document.getElementById('draft-project');
+  const projectPickEl = document.getElementById('project-pick');
+  const draftBody = document.getElementById('draft-body');
+  const draftPickStage = document.getElementById('draft-pick-stage');
+  const composerWrap = document.getElementById('draft-composer-wrap');
+  const draftEmptyHint = document.getElementById('draft-empty-hint');
   const stopBtn = document.getElementById('stop-btn');
   const searchInput = document.getElementById('sidebar-search-input');
   const sidebarToolbar = document.querySelector('.sidebar-toolbar');
@@ -29,7 +33,48 @@
   const startedOnDraft = messagesEl?.dataset.draft === '1' || !rawChatId;
   let activeChatId = startedOnDraft ? null : Number(rawChatId);
 
-  // local queue used while a turn for *this* tab is in-flight; the server
+  /** After project pick on draft home: null = no project, number = id. Meaningful only when `draftProjectLocked`. */
+  let draftChosenProjectId = null;
+  let draftProjectLocked = false;
+
+  function commitDraftFromCard(card) {
+    if (!card || draftProjectLocked) return;
+    const rawId = card.getAttribute('data-project-id');
+    draftChosenProjectId =
+      rawId == null || String(rawId).trim() === '' ? null : Number(rawId);
+    if (draftChosenProjectId != null && !Number.isFinite(draftChosenProjectId)) {
+      draftChosenProjectId = null;
+    }
+    draftProjectLocked = true;
+    if (projectPickEl) projectPickEl.hidden = true;
+    if (draftPickStage) draftPickStage.hidden = true;
+    draftBody?.classList.remove('is-picking');
+    if (draftEmptyHint) draftEmptyHint.hidden = false;
+    if (composerWrap) composerWrap.hidden = false;
+    input?.focus();
+  }
+
+  function initDraftProjectPick() {
+    if (!startedOnDraft || !projectPickEl || !composerWrap || !draftBody) return;
+
+    projectPickEl.addEventListener('click', (e) => {
+      const card = e.target.closest('.project-pick-card');
+      if (!card || draftProjectLocked) return;
+      commitDraftFromCard(card);
+    });
+
+    const initSel = (projectPickEl.dataset.initialProjectId || '').trim();
+    if (initSel !== '') {
+      const esc =
+        typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+          ? CSS.escape(initSel)
+          : initSel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      const card = projectPickEl.querySelector('.project-pick-card[data-project-id="' + esc + '"]');
+      if (card) queueMicrotask(() => commitDraftFromCard(card));
+    }
+  }
+
+  initDraftProjectPick();
   // serializes turns per chat too, so this is just for the visible label
   const waitingItems = [];
   let inFlight = false;
@@ -1276,10 +1321,8 @@
     if (activeChatId != null) payload.chatId = activeChatId;
     else {
       payload.agent = draftAgentSelect?.value || 'openclaw/default';
-      const dp = draftProjectSelect;
-      if (dp && dp.value) {
-        const n = Number(dp.value);
-        if (Number.isFinite(n) && n > 0) payload.projectId = n;
+      if (draftChosenProjectId != null && Number.isFinite(draftChosenProjectId)) {
+        payload.projectId = draftChosenProjectId;
       }
     }
     if (!wsSend(payload)) {
@@ -1294,6 +1337,7 @@
   if (form) {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
+      if (startedOnDraft && !draftProjectLocked) return;
       const content = input.value.trim();
       if (!content) return;
       waitingItems.push({ content, id: 'q-' + nextQueueItemId++ });
@@ -1307,7 +1351,7 @@
         form.requestSubmit();
       }
     });
-    input.focus();
+    if (!startedOnDraft || draftProjectLocked) input.focus();
   }
 
   // -------------------------------------------------------------------------
