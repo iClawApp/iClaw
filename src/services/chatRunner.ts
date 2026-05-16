@@ -40,6 +40,36 @@ async function ensureSession(chatId: number): Promise<string> {
   return fresh.key;
 }
 
+/**
+ * Walk the canonical transcript backwards and return the most recent
+ * assistant *text* row. OpenClaw mirrors `tools.message.send` outputs into
+ * the transcript as a separate assistant entry, so this is the right place
+ * to find the user-facing reply regardless of whether the agent used
+ * freeform output or the message tool.
+ *
+ * Returns '' when no text row is found in the last `limit` rows.
+ */
+async function canonicalAssistantText(sessionKey: string, limit = 20): Promise<string> {
+  const history = await openclawWs.getHistory(sessionKey, limit);
+  for (let i = history.length - 1; i >= 0; i--) {
+    const row = history[i];
+    if (row.role !== 'assistant') continue;
+    const c = row.content;
+    if (typeof c === 'string' && c.trim().length > 0) return c;
+    if (Array.isArray(c)) {
+      const parts = c.filter(
+        (p): p is { type?: string; text?: string } => p !== null && typeof p === 'object',
+      );
+      const text = parts
+        .filter((p) => p.type === 'text' && typeof p.text === 'string')
+        .map((p) => p.text as string)
+        .join('');
+      if (text.trim().length > 0) return text;
+    }
+  }
+  return '';
+}
+
 /** Rewrite OpenClaw's `/api/chat/media/*` URL into our `/media/*` proxy. */
 function rewriteMediaUrl(url: string): string {
   if (!url) return url;
@@ -161,8 +191,20 @@ async function runTurnLocked(opts: {
     onEvent,
   });
 
+  // OpenClaw routes some user-facing replies through `tools.message` (when the
+  // agent picks `sourceReplyDeliveryMode: "message_tool_only"`). In that mode
+  // the model's freeform output — what we just streamed — is an internal
+  // status note ("Попросив уточнення в чаті…"), while the real reply lives
+  // as a separate projected assistant row in the canonical transcript.
+  //
+  // Fetch the transcript and prefer the LAST assistant text row as the
+  // canonical content. Falls back to our streamed accumulation if anything
+  // goes wrong or no text row is found.
+  const canonicalText = await canonicalAssistantText(sessionKey).catch(() => null);
+  const finalText = canonicalText && canonicalText.length > 0 ? canonicalText : assistantText;
+
   // Persist the assistant message + broadcast.
-  const assistantMsg = messages.append(chatId, 'assistant', assistantText, null);
+  const assistantMsg = messages.append(chatId, 'assistant', finalText, null);
   wsHub.broadcastToChat(chatId, {
     type: 'message-appended',
     chatId,
