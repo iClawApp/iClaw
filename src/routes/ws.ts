@@ -6,6 +6,7 @@
 
 import type { Server as HttpServer, IncomingMessage } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { chats } from '../services/store';
 import { wsHub } from '../services/wsHub';
 import { sendMessage, abortChatRun } from '../services/chatRunner';
 import type { ClientMsg, ServerMsg } from '../types/protocol';
@@ -29,9 +30,13 @@ function parseClientMsg(raw: unknown): ClientMsg | null {
 
 async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void> {
   switch (msg.type) {
-    case 'subscribe':
-      if (typeof msg.chatId === 'number') wsHub.subscribe(socket, msg.chatId);
+    case 'subscribe': {
+      const chatId = msg.chatId;
+      if (typeof chatId !== 'number') return;
+      wsHub.subscribe(socket, chatId);
+      if (chats.markRead(chatId)) wsHub.broadcastAll({ type: 'chat-read', chatId });
       return;
+    }
 
     case 'unsubscribe':
       if (typeof msg.chatId === 'number') wsHub.unsubscribe(socket, msg.chatId);

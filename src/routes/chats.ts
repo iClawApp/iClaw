@@ -39,6 +39,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
       res.status(404).send('chat not found');
       return;
     }
+    if (chats.markRead(id)) wsHub.broadcastAll({ type: 'chat-read', chatId: id });
     const { agents, error: agentsError } = await getAgentsSafe();
     res.render('chat', {
       chats: chats.list(),

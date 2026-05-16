@@ -52,6 +52,10 @@ export type ServerMsg =
   | { type: 'chat-created'; chatId: number; title: string; agent: string }
   /** Chat metadata changed (title, agent). */
   | { type: 'chat-updated'; chatId: number; title?: string; agent?: string }
+  /** Assistant reply finished while no tab was viewing this chat. */
+  | { type: 'chat-unread'; chatId: number }
+  /** User opened this chat — clear sidebar unread indicator. */
+  | { type: 'chat-read'; chatId: number }
   /** Chat was deleted; clients on that chat should navigate away. */
   | { type: 'chat-deleted'; chatId: number }
 

@@ -15,7 +15,14 @@
         title="<%= c.title %>"
       >
         <span class="chat-item-title"><%= c.title %></span>
-        <span class="working-dot <%= workingIds.indexOf(c.id) >= 0 ? 'on' : '' %>" aria-hidden="true"></span>
+        <%
+          const dotWorking = workingIds.indexOf(c.id) >= 0;
+          const dotUnread = !dotWorking && c.unread;
+        %>
+        <span
+          class="status-dot<%= dotWorking ? ' working' : (dotUnread ? ' unread' : '') %>"
+          aria-hidden="true"
+        ></span>
       </a>
     <% }); %>
   </nav>

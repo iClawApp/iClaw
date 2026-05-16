@@ -61,6 +61,18 @@ export const chats = {
   touch(id: number): void {
     db.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").run(id);
   },
+  markRead(id: number): boolean {
+    const info = db
+      .prepare('UPDATE chats SET unread = 0 WHERE id = ? AND unread != 0')
+      .run(id);
+    return info.changes > 0;
+  },
+  markUnread(id: number): boolean {
+    const info = db
+      .prepare('UPDATE chats SET unread = 1 WHERE id = ? AND unread = 0')
+      .run(id);
+    return info.changes > 0;
+  },
   remove(id: number): void {
     db.prepare('DELETE FROM chats WHERE id = ?').run(id);
   },

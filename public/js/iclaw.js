@@ -16,7 +16,7 @@
   const queueEl = document.getElementById('queue');
   const form = document.getElementById('send-form');
   const input = document.getElementById('composer-input');
-  const button = form?.querySelector('button');
+  const button = form?.querySelector('.composer-send');
   const titleInput = document.getElementById('chat-title-input');
   const draftAgentSelect = document.getElementById('draft-agent');
   const stopBtn = document.getElementById('stop-btn');
@@ -217,7 +217,7 @@
       link.dataset.chatId = String(id);
       link.innerHTML =
         '<span class="chat-item-title"></span>' +
-        '<span class="working-dot" aria-hidden="true"></span>';
+        '<span class="status-dot" aria-hidden="true"></span>';
       list.prepend(link);
     }
     if (title != null) {
@@ -235,11 +235,24 @@
     const list = document.getElementById('chat-list');
     list?.querySelector('.chat-item[data-chat-id="' + id + '"]')?.remove();
   }
+  function statusDot(id) {
+    return document.querySelector('.chat-item[data-chat-id="' + id + '"] .status-dot');
+  }
   function setWorkingDot(id, on) {
-    const item = document.querySelector('.chat-item[data-chat-id="' + id + '"] .working-dot');
-    if (!item) return;
-    if (on) item.classList.add('on');
-    else item.classList.remove('on');
+    const dot = statusDot(id);
+    if (!dot) return;
+    if (on) {
+      dot.classList.add('working');
+      dot.classList.remove('unread');
+    } else {
+      dot.classList.remove('working');
+    }
+  }
+  function setUnreadDot(id, on) {
+    const dot = statusDot(id);
+    if (!dot) return;
+    if (on) dot.classList.add('unread');
+    else dot.classList.remove('unread');
   }
   function applyTitleForActive(title) {
     if (titleInput && activeChatId != null) {
@@ -333,6 +346,15 @@
       case 'chat-deleted':
         sidebarRemoveChat(msg.chatId);
         if (msg.chatId === activeChatId) window.location.assign('/');
+        return;
+
+      case 'chat-unread':
+        setWorkingDot(msg.chatId, false);
+        setUnreadDot(msg.chatId, true);
+        return;
+
+      case 'chat-read':
+        setUnreadDot(msg.chatId, false);
         return;
 
       case 'message-appended':

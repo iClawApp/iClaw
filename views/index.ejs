@@ -44,16 +44,7 @@
 
     <section class="queue" id="queue" aria-live="polite"></section>
 
-    <form id="send-form" class="composer">
-      <textarea
-        id="composer-input"
-        name="content"
-        placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"
-        rows="2"
-        required
-      ></textarea>
-      <button type="submit">Send</button>
-    </form>
+    <%- include('partials/composer') %>
 
     <script src="/js/vendor/marked.min.js"></script>
     <script src="/js/iclaw.js"></script>

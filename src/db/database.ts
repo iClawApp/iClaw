@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS chats (
   openclaw_session_id TEXT NOT NULL,
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-  title_manual        INTEGER NOT NULL DEFAULT 0
+  title_manual        INTEGER NOT NULL DEFAULT 0,
+  unread              INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -48,6 +49,9 @@ function migrateChatsSchema(database: Database.Database): void {
     database.exec(
       'ALTER TABLE chats ADD COLUMN title_manual INTEGER NOT NULL DEFAULT 0',
     );
+  }
+  if (!cols.some((c) => c.name === 'unread')) {
+    database.exec('ALTER TABLE chats ADD COLUMN unread INTEGER NOT NULL DEFAULT 0');
   }
 }
 

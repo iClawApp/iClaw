@@ -78,6 +78,15 @@ function rewriteMediaUrl(url: string): string {
   return url;
 }
 
+/** Sidebar unread: set when a reply lands and no tab is subscribed to this chat. */
+function syncSidebarUnread(chatId: number): void {
+  if (wsHub.hasSubscriber(chatId)) {
+    if (chats.markRead(chatId)) wsHub.broadcastAll({ type: 'chat-read', chatId });
+  } else if (chats.markUnread(chatId)) {
+    wsHub.broadcastAll({ type: 'chat-unread', chatId });
+  }
+}
+
 /**
  * Run one turn end-to-end: ensure session exists, write user msg, stream
  * events to subscribers, persist assistant msg, optionally generate title.
@@ -112,7 +121,7 @@ async function runTurnLocked(opts: {
 
   // Tell subscribers the turn began.
   chatStatus.setActivity(chatId, { kind: 'thinking', label: 'Thinking…' });
-  wsHub.broadcastToChat(chatId, {
+  wsHub.broadcastAll({
     type: 'turn-started',
     chatId,
     runId: randomUUID(), // synthetic; real runId is internal to OpenClaw
@@ -211,11 +220,13 @@ async function runTurnLocked(opts: {
     chatId,
     message: assistantMsg,
   });
+  syncSidebarUnread(chatId);
 
   // Wait for the title task (if any) so the final `turn-ended` reflects it.
   await titleTask;
 
-  wsHub.broadcastToChat(chatId, {
+  // broadcastAll so every tab updates the sidebar dot (not only subscribers).
+  wsHub.broadcastAll({
     type: 'turn-ended',
     chatId,
     title: chats.get(chatId)?.title ?? '',
