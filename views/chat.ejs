@@ -110,12 +110,13 @@
               <% if (m.reply_to_message_id && m.reply_quote) { %>
                 <%
                   const _rr = m.reply_to_role || '';
-                  const _who = _rr === 'user' ? 'Користувач' : (_rr === 'assistant' ? 'Асистент' : 'Повідомлення');
+                  const _who = _rr === 'user' ? 'Ви' : (_rr === 'assistant' ? 'Асистент' : 'Чат');
                 %>
                 <button
                   type="button"
                   class="msg-reply-stub"
                   data-jump-to-msg="<%= m.reply_to_message_id %>"
+                  data-reply-quote="<%= encodeURIComponent(m.reply_quote) %>"
                   aria-label="Перейти до цитованого повідомлення"
                 >
                   <span class="msg-reply-stub-track">

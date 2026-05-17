@@ -39,7 +39,20 @@
   const rawChatId = messagesEl?.dataset.chatId;
   const startedOnDraft = messagesEl?.dataset.draft === '1' || !rawChatId;
   let activeChatId = startedOnDraft ? null : Number(rawChatId);
+  /** Clears timed reply-quote highlights in the transcript. */
+  let replyJumpHighlightTimer = null;
+  let replyJumpHighlightFadeTimer = null;
 
+  function cancelReplyJumpHighlightTimers() {
+    if (replyJumpHighlightTimer != null) {
+      clearTimeout(replyJumpHighlightTimer);
+      replyJumpHighlightTimer = null;
+    }
+    if (replyJumpHighlightFadeTimer != null) {
+      clearTimeout(replyJumpHighlightFadeTimer);
+      replyJumpHighlightFadeTimer = null;
+    }
+  }
   /** After project pick on draft home: null = no project, number = id. Meaningful only when `draftProjectLocked`. */
   let draftChosenProjectId = null;
   let draftProjectLocked = false;
@@ -399,9 +412,9 @@
     }
   }
   function replyStubRoleLabel(role) {
-    if (role === 'user') return 'Користувач';
+    if (role === 'user') return 'Ви';
     if (role === 'assistant') return 'Асистент';
-    return 'Повідомлення';
+    return 'Чат';
   }
 
   function msgReplyStubHtml(replyToId, quote, replyToRole) {
@@ -411,6 +424,8 @@
     return (
       '<button type="button" class="msg-reply-stub" data-jump-to-msg="' +
       rid +
+      '" data-reply-quote="' +
+      encodeURIComponent(quote) +
       '" aria-label="Перейти до цитованого повідомлення">' +
       '<span class="msg-reply-stub-track">' +
       '<span class="msg-reply-stub-bar" aria-hidden="true"></span>' +
@@ -433,6 +448,109 @@
     const rRole = serverMsg.reply_to_role != null ? String(serverMsg.reply_to_role) : '';
     const roleEl = pendingEl.querySelector('.role');
     if (roleEl) roleEl.insertAdjacentHTML('afterend', msgReplyStubHtml(rId, rQu, rRole));
+  }
+
+  function readReplyStubQuote(stub) {
+    const enc = stub.getAttribute('data-reply-quote');
+    if (enc == null || enc === '') return '';
+    try {
+      return decodeURIComponent(enc);
+    } catch {
+      return '';
+    }
+  }
+
+  /** Text nodes to search for reply target (skip code — ranges must not split code). */
+  function replyQuoteSearchTextNodes(root) {
+    const out = /** @type {Text[]} */ ([]);
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = w.nextNode())) {
+      const el = n.parentElement;
+      if (!el) continue;
+      if (el.closest('pre, code, script, style')) continue;
+      out.push(/** @type {Text} */ (n));
+    }
+    return out;
+  }
+
+  function clearReplyJumpHighlights(root) {
+    if (!root) return;
+    root.querySelectorAll('.msg-reply-quote-highlight').forEach((mark) => {
+      const p = mark.parentNode;
+      if (!p) return;
+      while (mark.firstChild) p.insertBefore(mark.firstChild, mark);
+      p.removeChild(mark);
+      p.normalize();
+    });
+  }
+
+  function scheduleClearReplyJumpHighlight(root) {
+    cancelReplyJumpHighlightTimers();
+    const holdMs = 800;
+    const fadeMs = 200;
+    replyJumpHighlightTimer = setTimeout(() => {
+      replyJumpHighlightTimer = null;
+      const marks = root.querySelectorAll('.msg-reply-quote-highlight');
+      if (!marks.length) return;
+      marks.forEach((m) => m.classList.add('msg-reply-quote-highlight--out'));
+      replyJumpHighlightFadeTimer = setTimeout(() => {
+        replyJumpHighlightFadeTimer = null;
+        clearReplyJumpHighlights(root);
+      }, fadeMs + 40);
+    }, holdMs);
+  }
+
+  /**
+   * If the stored quote appears verbatim in the parent body, wrap it in a
+   * temporary highlight (not text selection).
+   * @returns {boolean}
+   */
+  function highlightReplyTargetQuote(targetMsg, quoteRaw) {
+    const body = targetMsg.querySelector('.msg-body');
+    if (!body) return false;
+    const q = String(quoteRaw ?? '').trim();
+    if (!q) return false;
+    const nodes = replyQuoteSearchTextNodes(body);
+    if (!nodes.length) return false;
+    const big = nodes.map((t) => t.nodeValue || '').join('');
+    const idx = big.indexOf(q);
+    if (idx === -1) return false;
+    const end = idx + q.length;
+    let acc = 0;
+    /** @type {{ tn: Text; off: number } | null} */
+    let startRef = null;
+    /** @type {{ tn: Text; off: number } | null} */
+    let endRef = null;
+    for (const tn of nodes) {
+      const len = (tn.nodeValue || '').length;
+      const segEnd = acc + len;
+      if (startRef === null && idx < segEnd) startRef = { tn, off: idx - acc };
+      if (end <= segEnd) {
+        endRef = { tn, off: end - acc };
+        break;
+      }
+      acc = segEnd;
+    }
+    if (!startRef || !endRef) return false;
+    try {
+      const range = document.createRange();
+      range.setStart(startRef.tn, startRef.off);
+      range.setEnd(endRef.tn, endRef.off);
+      const mark = document.createElement('mark');
+      mark.className = 'msg-reply-quote-highlight';
+      try {
+        range.surroundContents(mark);
+      } catch {
+        const frag = range.extractContents();
+        mark.appendChild(frag);
+        range.insertNode(mark);
+      }
+      mark.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function scrollToBottom() {
@@ -769,9 +887,16 @@
         e.preventDefault();
         const targetMsg = messagesEl.querySelector('.msg[data-msg-id="' + mid + '"]');
         if (targetMsg) {
-          targetMsg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          targetMsg.classList.add('msg-highlight-flash');
-          setTimeout(() => targetMsg.classList.remove('msg-highlight-flash'), 1200);
+          cancelReplyJumpHighlightTimers();
+          if (messagesEl) clearReplyJumpHighlights(messagesEl);
+          const q = readReplyStubQuote(replyStub);
+          const picked = q && highlightReplyTargetQuote(targetMsg, q);
+          if (picked && messagesEl) scheduleClearReplyJumpHighlight(messagesEl);
+          if (!picked) {
+            targetMsg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            targetMsg.classList.add('msg-highlight-flash');
+            setTimeout(() => targetMsg.classList.remove('msg-highlight-flash'), 1200);
+          }
         }
         return;
       }
@@ -2137,11 +2262,7 @@
       if (composerReplyMeta) {
         const r = pendingComposerReply.role;
         composerReplyMeta.textContent =
-          r === 'user'
-            ? 'Відповідь · Користувач'
-            : r === 'assistant'
-              ? 'Відповідь · Асистент'
-              : 'Відповідь';
+          r === 'user' ? 'Ви' : r === 'assistant' ? 'Асистент' : 'Чат';
       }
       composerReplyText.textContent = pendingComposerReply.quote;
       composerReplyBar.hidden = false;
