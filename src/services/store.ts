@@ -4,6 +4,7 @@ import { deriveTitle } from './chatTitle';
 import type {
   Chat,
   Message,
+  MessageAttachment,
   Project,
   ProjectFact,
   ProjectFactSuggestion,
@@ -143,14 +144,33 @@ export function enrichFactsWithSourceChatTitles(facts: ProjectFact[]): ProjectFa
 
 // ---------- messages ----------
 
+type MessageRow = Omit<Message, 'attachments'> & { attachments: string | null };
+
+/** Parse the `attachments` TEXT column (JSON string) into the typed array shape. */
+function hydrateMessage(row: MessageRow | undefined): Message | undefined {
+  if (!row) return undefined;
+  let attachments: Message['attachments'] = null;
+  if (row.attachments) {
+    try {
+      const parsed = JSON.parse(row.attachments);
+      if (Array.isArray(parsed)) attachments = parsed;
+    } catch {
+      // Corrupt JSON — treat as no attachments rather than crashing the read path.
+    }
+  }
+  return { ...row, attachments };
+}
+
 export const messages = {
   listByChat(chatId: number): Message[] {
-    return db
+    const rows = db
       .prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC')
-      .all(chatId) as Message[];
+      .all(chatId) as MessageRow[];
+    return rows.map((r) => hydrateMessage(r) as Message);
   },
   get(id: number): Message | undefined {
-    return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message | undefined;
+    const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as MessageRow | undefined;
+    return hydrateMessage(row);
   },
   append(
     chatId: number,
@@ -158,15 +178,18 @@ export const messages = {
     content: string,
     finishReason: string | null = null,
     reply?: { replyToMessageId: number; replyQuote: string; replyToRole: string } | null,
+    attachments?: MessageAttachment[] | null,
   ): Message {
     const rid = reply?.replyToMessageId ?? null;
     const rq = reply?.replyQuote ?? null;
     const rrole = reply?.replyToRole ?? null;
+    const att =
+      attachments && attachments.length > 0 ? JSON.stringify(attachments) : null;
     const info = db
       .prepare(
-        'INSERT INTO messages (chat_id, role, content, finish_reason, reply_to_message_id, reply_quote, reply_to_role) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO messages (chat_id, role, content, finish_reason, reply_to_message_id, reply_quote, reply_to_role, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(chatId, role, content, finishReason, rid, rq, rrole);
+      .run(chatId, role, content, finishReason, rid, rq, rrole, att);
     // chats.updated_at is bumped by the trg_chats_touch_on_message SQLite
     // trigger; no manual touch() needed here. We keep chats.touch() public
     // for callers that mutate parents without writing a message (e.g.
@@ -185,7 +208,10 @@ export const messages = {
         }
       }
     }
-    return db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid) as Message;
+    const out = hydrateMessage(
+      db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid) as MessageRow,
+    );
+    return out as Message;
   },
 };
 

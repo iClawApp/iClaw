@@ -57,6 +57,18 @@ export function createApp(): express.Express {
     ),
   );
 
+  // User-uploaded attachments live under `data/uploads/<chatId>/<file>` and are
+  // served straight back to the browser for inline rendering in past messages.
+  // No directory listing — express.static returns 404 for paths that don't exist.
+  const uploadsRoot = path.resolve(
+    process.cwd(),
+    process.env.DB_PATH
+      ? path.join(path.dirname(process.env.DB_PATH), 'uploads')
+      : './data/uploads',
+  );
+  fs.mkdirSync(uploadsRoot, { recursive: true });
+  app.use('/uploads', express.static(uploadsRoot));
+
   app.use('/', indexRouter);
   app.use('/chats', chatsRouter);
   app.use('/projects', projectsRouter);

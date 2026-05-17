@@ -174,6 +174,17 @@ export const openclawWs = {
     onEvent: (ev: TurnEvent) => void;
     /** Optional custom idempotency key — defaults to random uuid. */
     idempotencyKey?: string;
+    /**
+     * Optional inline attachments forwarded verbatim to OpenClaw `chat.send`.
+     * Shape matches the dashboard's normalized payload — `content` is base64
+     * with or without `data:<mime>;base64,` prefix.
+     */
+    attachments?: Array<{
+      type: 'image' | 'file';
+      mimeType: string;
+      fileName: string;
+      content: string;
+    }>;
   }): Promise<{ runId: string; text: string }> {
     let runId: string | null = null;
     let accumulatedText = '';
@@ -347,6 +358,9 @@ export const openclawWs = {
           sessionKey: opts.sessionKey,
           message: opts.message,
           idempotencyKey: opts.idempotencyKey ?? `iclaw-${randomUUID()}`,
+          ...(opts.attachments && opts.attachments.length > 0
+            ? { attachments: opts.attachments }
+            : {}),
         },
         { timeoutMs: 30_000 },
       );

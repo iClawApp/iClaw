@@ -129,6 +129,30 @@
                 </button>
               <% } %>
               <div class="msg-body"><%= m.content %></div>
+              <% if (Array.isArray(m.attachments) && m.attachments.length > 0) { %>
+                <div class="msg-attachments">
+                  <% m.attachments.forEach(function (a) {
+                    const _mime = String(a.mimeType || '');
+                    const _url = String(a.url || '');
+                    const _name = String(a.fileName || 'file');
+                    const _sz = Number(a.sizeBytes) || 0;
+                    function _humanSize(b){ if(b<1024)return b+' B'; if(b<1024*1024)return (b/1024).toFixed(1)+' KB'; return (b/(1024*1024)).toFixed(1)+' MB'; }
+                  %>
+                    <% if (_mime.indexOf('image/') === 0) { %>
+                      <a class="msg-attachment" href="<%= _url %>" target="_blank" rel="noopener noreferrer">
+                        <img class="msg-attachment-image" src="<%= _url %>" alt="<%= _name %>" loading="lazy" />
+                      </a>
+                    <% } else { %>
+                      <a class="msg-attachment-file" href="<%= _url %>" target="_blank" rel="noopener noreferrer" title="<%= _name %>">
+                        <span class="msg-attachment-file-name"><%= _name %></span>
+                        <% if (_sz > 0) { %>
+                          <span class="msg-attachment-file-size"><%= _humanSize(_sz) %></span>
+                        <% } %>
+                      </a>
+                    <% } %>
+                  <% }); %>
+                </div>
+              <% } %>
             </div>
           <% }); %>
         <% } %>

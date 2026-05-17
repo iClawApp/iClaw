@@ -24,6 +24,9 @@
   const form = document.getElementById('send-form');
   const input = document.getElementById('composer-input');
   const button = form?.querySelector('.composer-send');
+  const attachBtn = document.getElementById('composer-attach-btn');
+  const fileInput = document.getElementById('composer-file-input');
+  const attachmentsBar = document.getElementById('composer-attachments');
   const titleInput = document.getElementById('chat-title-input');
   const draftAgentSelect = document.getElementById('draft-agent');
   const projectPickEl = document.getElementById('project-pick');
@@ -556,6 +559,45 @@
   function scrollToBottom() {
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
   }
+  /** Build the HTML block for persisted attachments (image inline / file as link). */
+  function attachmentsHtml(attachments) {
+    if (!Array.isArray(attachments) || attachments.length === 0) return '';
+    const items = attachments
+      .map((a) => {
+        const url = String(a.url || '');
+        const mime = String(a.mimeType || '');
+        const name = String(a.fileName || 'file');
+        const sz = humanSize(Number(a.sizeBytes) || 0);
+        if (mime.startsWith('image/')) {
+          return (
+            '<a class="msg-attachment" href="' +
+            escapeHtml(url) +
+            '" target="_blank" rel="noopener noreferrer">' +
+            '<img class="msg-attachment-image" src="' +
+            escapeHtml(url) +
+            '" alt="' +
+            escapeHtml(name) +
+            '" loading="lazy" />' +
+            '</a>'
+          );
+        }
+        return (
+          '<a class="msg-attachment-file" href="' +
+          escapeHtml(url) +
+          '" target="_blank" rel="noopener noreferrer" title="' +
+          escapeHtml(name) +
+          '">' +
+          '<span class="msg-attachment-file-name">' +
+          escapeHtml(name) +
+          '</span>' +
+          (sz ? '<span class="msg-attachment-file-size">' + escapeHtml(sz) + '</span>' : '') +
+          '</a>'
+        );
+      })
+      .join('');
+    return '<div class="msg-attachments">' + items + '</div>';
+  }
+
   function appendMessage(msg, opts) {
     if (!messagesEl) return null;
     clearEmptyState();
@@ -570,7 +612,8 @@
     div.innerHTML =
       '<div class="role">' + escapeHtml(msg.role || 'system') + '</div>' +
       (replyHtml ? replyHtml : '') +
-      '<div class="msg-body">' + renderMarkdown(msg.content || '') + '</div>';
+      '<div class="msg-body">' + renderMarkdown(msg.content || '') + '</div>' +
+      attachmentsHtml(msg.attachments);
     decorateMessageBody(div);
     messagesAppendRoot().appendChild(div);
     scrollToBottom();
@@ -2198,6 +2241,17 @@
       optimistic.reply_quote = item.replyTo.quote;
       if (item.replyTo.role) optimistic.reply_to_role = item.replyTo.role;
     }
+    // Optimistic attachment previews use the in-memory data URLs we just
+    // generated so the user sees the image immediately — the server replaces
+    // them with proper `/uploads/...` URLs in the `message-appended` event.
+    if (item.attachments && item.attachments.length > 0) {
+      optimistic.attachments = item.attachments.map((a) => ({
+        url: a.dataUrl,
+        mimeType: a.mimeType,
+        fileName: a.fileName,
+        sizeBytes: a.sizeBytes,
+      }));
+    }
     appendMessage(optimistic, { pendingId: true });
     currentStreamFullText = '';
     currentStreamEl = ensureStreamEl();
@@ -2212,6 +2266,13 @@
         quote: item.replyTo.quote,
       };
       if (item.replyTo.role) payload.replyTo.role = item.replyTo.role;
+    }
+    if (item.attachments && item.attachments.length > 0) {
+      payload.attachments = item.attachments.map((a) => ({
+        mimeType: a.mimeType,
+        fileName: a.fileName,
+        content: a.base64,
+      }));
     }
     if (activeChatId != null) payload.chatId = activeChatId;
     else {
@@ -2280,6 +2341,200 @@
     });
   }
 
+  // -------------------------------------------------------------------------
+  // composer attachments (drag-drop, paste, paperclip → inline base64)
+  // -------------------------------------------------------------------------
+  /** Per-file size cap mirrors the gateway default (`agents.defaults.mediaMaxMb`). */
+  const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+  /** UI sanity cap — server enforces the same number. */
+  const ATTACHMENT_MAX_COUNT = 25;
+  /** Same blacklist as the OpenClaw dashboard — videos are pushed through other channels. */
+  const ATTACHMENT_VIDEO_EXT_RE = /\.(?:avi|m4v|mov|mp4|mpeg|mpg|webm)$/i;
+  /** Each entry: { id, file, dataUrl, base64, mimeType, fileName, sizeBytes }. */
+  let pendingAttachments = [];
+  let attachmentSeq = 0;
+
+  /** True when the file is acceptable. Same predicate as dashboard's `QC`. */
+  function isSupportedAttachment(file) {
+    if (file.type && file.type.startsWith('video/')) return false;
+    if (file.name && ATTACHMENT_VIDEO_EXT_RE.test(file.name)) return false;
+    return true;
+  }
+
+  function humanSize(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function renderAttachmentChips() {
+    if (!attachmentsBar) return;
+    if (pendingAttachments.length === 0) {
+      attachmentsBar.innerHTML = '';
+      attachmentsBar.hidden = true;
+      return;
+    }
+    attachmentsBar.hidden = false;
+    const html = pendingAttachments
+      .map((a) => {
+        const isImage = a.mimeType && a.mimeType.startsWith('image/');
+        const name = escapeHtml(a.fileName);
+        const size = escapeHtml(humanSize(a.sizeBytes));
+        const thumb = isImage
+          ? '<img class="composer-attachment-chip-thumb" src="' +
+            escapeHtml(a.dataUrl) +
+            '" alt="" />'
+          : '';
+        return (
+          '<span class="composer-attachment-chip' +
+          (isImage ? ' is-image' : '') +
+          '" data-att-id="' +
+          a.id +
+          '">' +
+          thumb +
+          '<span class="composer-attachment-chip-name" title="' +
+          name +
+          ' (' +
+          size +
+          ')">' +
+          name +
+          '</span>' +
+          '<button type="button" class="composer-attachment-chip-remove" data-att-remove="' +
+          a.id +
+          '" aria-label="Прибрати">×</button>' +
+          '</span>'
+        );
+      })
+      .join('');
+    attachmentsBar.innerHTML = html;
+  }
+
+  /** Read a File into a base64 data URL via FileReader (matches dashboard's BF). */
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener('load', () => resolve(String(reader.result || '')));
+      reader.addEventListener('error', () => reject(reader.error || new Error('read failed')));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function addFilesToPending(files) {
+    if (!files || files.length === 0) return;
+    const accepted = [];
+    for (const f of files) {
+      if (!isSupportedAttachment(f)) continue;
+      if (f.size > ATTACHMENT_MAX_BYTES) continue;
+      accepted.push(f);
+    }
+    if (accepted.length === 0) return;
+    const slotsLeft = Math.max(0, ATTACHMENT_MAX_COUNT - pendingAttachments.length);
+    const toRead = accepted.slice(0, slotsLeft);
+    for (const file of toRead) {
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        const m = /^data:([^;,]+)?(?:;[^,]*)?,(.*)$/.exec(dataUrl);
+        const base64 = m ? m[2] : '';
+        const sniffedMime = m && m[1] ? m[1].trim() : '';
+        pendingAttachments.push({
+          id: 'att-' + ++attachmentSeq,
+          file,
+          dataUrl,
+          base64,
+          mimeType: file.type || sniffedMime || 'application/octet-stream',
+          fileName: file.name || 'attachment',
+          sizeBytes: file.size,
+        });
+      } catch {
+        // Silently skip files that fail to read.
+      }
+    }
+    renderAttachmentChips();
+  }
+
+  function removePendingAttachment(id) {
+    pendingAttachments = pendingAttachments.filter((a) => a.id !== id);
+    renderAttachmentChips();
+  }
+
+  function clearPendingAttachments() {
+    pendingAttachments = [];
+    renderAttachmentChips();
+  }
+
+  if (attachmentsBar) {
+    attachmentsBar.addEventListener('click', (e) => {
+      const t = e.target;
+      if (t && t.matches && t.matches('[data-att-remove]')) {
+        removePendingAttachment(t.getAttribute('data-att-remove'));
+      }
+    });
+  }
+  if (attachBtn && fileInput) {
+    attachBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      addFilesToPending(Array.from(fileInput.files || []));
+      // Allow re-selecting the same file later.
+      fileInput.value = '';
+    });
+  }
+  if (form) {
+    // Dragging a file anywhere over the page surfaces a Telegram-style
+    // drop-zone over the composer. We track dragenter/dragleave at the
+    // document level (depth-counted because both fire repeatedly as the
+    // pointer crosses child boundaries), and we ONLY accept the drop if it
+    // lands on the form.
+    let dragDepth = 0;
+    function hasFiles(e) {
+      return !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+    }
+    document.addEventListener('dragenter', (e) => {
+      if (!hasFiles(e)) return;
+      dragDepth++;
+      form.classList.add('is-drag-over');
+    });
+    document.addEventListener('dragover', (e) => {
+      if (!hasFiles(e)) return;
+      // preventDefault so the browser doesn't open the file when it falls
+      // outside the form — and so the form sees a 'copy' cursor.
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    });
+    document.addEventListener('dragleave', (e) => {
+      if (!hasFiles(e)) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) form.classList.remove('is-drag-over');
+    });
+    document.addEventListener('drop', (e) => {
+      // Always clear the overlay on drop, regardless of target.
+      dragDepth = 0;
+      form.classList.remove('is-drag-over');
+      // Outside the form → don't pick up the file. Inside → handle it.
+      const inForm = e.target instanceof Node && form.contains(e.target);
+      if (!inForm) return;
+      if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+      e.preventDefault();
+      addFilesToPending(Array.from(e.dataTransfer.files));
+    });
+  }
+  if (input) {
+    input.addEventListener('paste', (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files = [];
+      for (const item of items) {
+        if (item.kind === 'file') {
+          const f = item.getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      if (files.length === 0) return;
+      e.preventDefault();
+      addFilesToPending(files);
+    });
+  }
+
   if (form && input) {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -2291,14 +2546,26 @@
         return;
       }
       const content = input.value.trim();
-      if (!content) return;
+      if (!content && pendingAttachments.length === 0) return;
       const replySnap = pendingComposerReply;
       pendingComposerReply = null;
       updateComposerReplyBar();
+      // Snapshot + clear immediately so the user can start composing the next
+      // message while this one streams.
+      const attachmentsSnap = pendingAttachments.map((a) => ({
+        id: a.id,
+        mimeType: a.mimeType,
+        fileName: a.fileName,
+        sizeBytes: a.sizeBytes,
+        dataUrl: a.dataUrl,
+        base64: a.base64,
+      }));
+      clearPendingAttachments();
       waitingItems.push({
         content,
         id: 'q-' + nextQueueItemId++,
         replyTo: replySnap || undefined,
+        attachments: attachmentsSnap.length > 0 ? attachmentsSnap : undefined,
       });
       input.value = '';
       renderQueue();

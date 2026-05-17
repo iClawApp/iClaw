@@ -61,6 +61,18 @@ export interface Chat {
   updated_at: string;
 }
 
+/** Metadata for a user-attached file (image / doc / etc) persisted to disk under /uploads. */
+export interface MessageAttachment {
+  /** Public URL served by express.static — e.g. `/uploads/49/<uuid>.png`. */
+  url: string;
+  /** MIME from the browser (or 'application/octet-stream' fallback). */
+  mimeType: string;
+  /** Original filename from the user's machine. */
+  fileName: string;
+  /** Decoded byte size, used for UI hints + size cap enforcement. */
+  sizeBytes: number;
+}
+
 export interface Message {
   id: number;
   chat_id: number;
@@ -73,5 +85,7 @@ export interface Message {
   reply_quote?: string | null;
   /** Role of the referenced message (`user` | `assistant`) for UI labels. */
   reply_to_role?: string | null;
+  /** Persisted user-uploaded files (image / doc). `null` row column is parsed to undefined here. */
+  attachments?: MessageAttachment[] | null;
   created_at: string;
 }

@@ -3356,3 +3356,166 @@ code {
   line-height: 1.4;
 }
 .share-pw-reminder[hidden] { display: none !important; }
+
+/* ---------- Composer attachments ---------- */
+
+.composer-attach {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  margin-left: -8px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.composer-attach:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+.composer-attach:active { transform: scale(0.94); }
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 0 8px 0;
+  max-width: 100%;
+}
+.composer-attachments[hidden] { display: none !important; }
+
+.composer-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 4px 6px 4px 8px;
+  background: color-mix(in srgb, var(--text) 6%, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-size: 0.82em;
+  line-height: 1.2;
+}
+.composer-attachment-chip.is-image {
+  padding: 4px;
+}
+.composer-attachment-chip-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex: 0 0 auto;
+}
+.composer-attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.composer-attachment-chip-remove {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.composer-attachment-chip-remove:hover {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text);
+}
+
+.composer .composer-field {
+  position: relative;
+}
+
+.composer-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--text) 6%, var(--surface));
+  border: 2px dashed color-mix(in srgb, var(--text) 35%, var(--border));
+  color: var(--text);
+  font-size: 0.95em;
+  font-weight: 500;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.985);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 2;
+}
+.composer.is-drag-over .composer-drop-overlay {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Visually hide the inner controls while the overlay covers them — they
+ * stay in the DOM (and keep their drop event listeners) but the user sees
+ * only the drop-zone hint. */
+.composer.is-drag-over .composer-field > :not(.composer-drop-overlay) {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+/* ---------- Message attachments (persisted user uploads) ---------- */
+
+.msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.msg-attachments:empty { display: none; }
+.msg-attachment-image {
+  max-width: min(360px, 100%);
+  max-height: 360px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  display: block;
+}
+.msg-attachment-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--text) 5%, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.85em;
+  color: var(--text);
+  text-decoration: none;
+  max-width: 320px;
+}
+.msg-attachment-file:hover {
+  background: color-mix(in srgb, var(--text) 10%, var(--surface));
+}
+.msg-attachment-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-attachment-file-size {
+  color: var(--muted);
+  font-size: 0.85em;
+}

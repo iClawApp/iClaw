@@ -34,6 +34,17 @@ export type ClientMsg =
       projectId?: number | null;
       /** Reply to an existing user/assistant row in this chat (quote ≤240 chars). */
       replyTo?: { messageId: number; quote: string; role?: string };
+      /**
+       * Optional inline attachments. Each `content` is base64 (with or without
+       * `data:<mime>;base64,` prefix). Server validates size + count, writes
+       * the bytes under `data/uploads/<chatId>/...`, and forwards the original
+       * base64 to OpenClaw's `chat.send` so the model receives the file too.
+       */
+      attachments?: Array<{
+        mimeType: string;
+        fileName: string;
+        content: string;
+      }>;
     }
   /** Abort a running turn for this chat. */
   | { type: 'abort'; chatId: number }

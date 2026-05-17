@@ -14,6 +14,11 @@ import { openclawWs, type TurnEvent } from './openclawWs';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
 import { toolActivityLabel } from './toolLabels';
 import { wsHub } from './wsHub';
+import {
+  persistIncomingAttachments,
+  type IncomingAttachment,
+  type ProcessedAttachment,
+} from './uploads';
 import type { Message } from '../types';
 
 const DEFAULT_AGENT = 'openclaw/default';
@@ -48,8 +53,9 @@ export function gatewayBridgeFailureUserMessage(): string {
 }
 
 /**
- * Ensure the chat has a real OpenClaw session key (agent:…). Creates one on
- * demand for new or legacy rows. Idempotent.
+ * Ensure the chat has a real OpenClaw session key (agent:…). New chats are
+ * created with a uuid placeholder; this swaps it for a real gateway key on
+ * the first turn. Idempotent.
  */
 async function ensureSession(chatId: number): Promise<string> {
   const chat = chats.get(chatId);
@@ -224,10 +230,21 @@ async function runTurnLocked(opts: {
   content: string;
   isFirstTurn: boolean;
   replyTo?: unknown;
+  incomingAttachments?: IncomingAttachment[];
 }): Promise<void> {
-  const { chatId, content, isFirstTurn, replyTo } = opts;
+  const { chatId, content, isFirstTurn, replyTo, incomingAttachments } = opts;
   const chat = chats.get(chatId)!;
   const sessionKey = await ensureSession(chatId);
+
+  // Decode + persist attachments BEFORE the user-msg row so the row carries
+  // the file URLs in the same broadcast. Validation errors throw and bubble up
+  // to sendMessage's catch which surfaces them as turn-error.
+  const processed: ProcessedAttachment[] = persistIncomingAttachments(
+    chatId,
+    incomingAttachments,
+  );
+  const persistedAttachments = processed.map((p) => p.persisted);
+  const gatewayAttachments = processed.map((p) => p.forGateway);
 
   const reply = parseReplyForChat(chatId, replyTo);
   let gatewayBody = content;
@@ -256,6 +273,7 @@ async function runTurnLocked(opts: {
           replyToRole,
         }
       : null,
+    persistedAttachments.length > 0 ? persistedAttachments : null,
   );
   wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: userMsg });
 
@@ -377,6 +395,7 @@ async function runTurnLocked(opts: {
     sessionKey,
     message: gatewayMessage,
     onEvent,
+    attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
   });
 
   // Prefer chat.history's last assistant text — it's the gateway's
@@ -466,6 +485,8 @@ export async function sendMessage(opts: {
    * `await sendMessage(...)` returns (the entire streaming turn).
    */
   subscriber?: WebSocket;
+  /** Inline attachments from the browser. Decoded + persisted in runTurnLocked. */
+  incomingAttachments?: IncomingAttachment[];
 }): Promise<{ chatId: number }> {
   let chatId = opts.chatId;
   let isFirstTurn = false;
@@ -513,6 +534,7 @@ export async function sendMessage(opts: {
         content: opts.content,
         isFirstTurn,
         replyTo: opts.replyTo,
+        incomingAttachments: opts.incomingAttachments,
       }),
     );
   } catch (err) {

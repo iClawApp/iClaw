@@ -49,12 +49,13 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
 
     case 'send': {
       const content = String(msg.content ?? '').trim();
-      if (!content) {
+      const hasAttachments = Array.isArray(msg.attachments) && msg.attachments.length > 0;
+      if (!content && !hasAttachments) {
         send(socket, {
           type: 'turn-error',
           chatId: msg.chatId ?? 0,
           requestId: msg.requestId,
-          error: 'content required',
+          error: 'content or attachments required',
         });
         return;
       }
@@ -69,6 +70,7 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
           requestId: msg.requestId,
           subscriber: socket,
           replyTo: msg.replyTo,
+          incomingAttachments: msg.attachments,
         });
       } catch (err) {
         // Errors are already broadcast via chatRunner; nothing more to do.
