@@ -39,7 +39,7 @@ function makeSocket(): FakeSocket {
 beforeEach(() => {
   // Reset the singleton by closing all registered sockets.
   // (wsHub doesn't expose a `.clear()` — close() removes from the map.)
-  // We close fresh sockets we control in each test; legacy sockets from
+  // We close fresh sockets we control in each test; stale sockets from
   // other tests are gone because we use new ones each time.
 });
 

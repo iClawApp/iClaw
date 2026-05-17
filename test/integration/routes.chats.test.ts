@@ -166,9 +166,9 @@ describe('POST /chats/:id/delete', () => {
     expect(openclawWsMock.deleteSession).toHaveBeenCalledWith('agent:to-be-deleted');
   });
 
-  it('skips sessions.delete for legacy non-agent keys', async () => {
+  it('skips sessions.delete when the chat never had a real OpenClaw session', async () => {
     const c = chats.create('openclaw/default');
-    // create() defaults to a uuid (not starting with agent:)
+    // create() defaults to a uuid placeholder (not starting with agent:)
     expect(c.openclaw_session_id.startsWith('agent:')).toBe(false);
     await request(app).post(`/chats/${c.id}/delete`).redirects(0);
     expect(openclawWsMock.deleteSession).not.toHaveBeenCalled();
