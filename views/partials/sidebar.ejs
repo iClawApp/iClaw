@@ -1,23 +1,104 @@
+<%
+  const _projectsList = typeof allProjects !== 'undefined' && Array.isArray(allProjects)
+    ? allProjects
+    : (typeof projectsList !== 'undefined' ? projectsList : []);
+  const _projectsMap = new Map();
+  for (const p of _projectsList) {
+    _projectsMap.set(p.id, p);
+  }
+%>
 <aside class="col col-left">
   <div class="sidebar-top">
-    <a href="/" class="new-chat-btn <%= !activeChat ? 'active' : '' %>">+ New chat</a>
+    <div class="sidebar-toolbar">
+      <a href="/" class="new-chat-btn <%= !activeChat && !activeProject && !(typeof activeProjectsList !== 'undefined' && activeProjectsList) ? 'active' : '' %>">New chat</a>
+      <div class="sidebar-search-slot">
+        <button
+          type="button"
+          class="sidebar-search-toggle"
+          id="sidebar-search-toggle"
+          aria-label="Search chats"
+          aria-expanded="false"
+          aria-controls="sidebar-search-input"
+        >
+          <svg class="sidebar-search-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path
+              fill="currentColor"
+              d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"
+            />
+          </svg>
+        </button>
+        <div class="sidebar-search-field-wrap" id="sidebar-search-field-wrap">
+          <input
+            type="search"
+            id="sidebar-search-input"
+            name="sidebar-search"
+            placeholder="Search chats…"
+            autocomplete="off"
+            aria-label="Search chats by title or message text"
+            spellcheck="false"
+          />
+          <button type="button" class="sidebar-search-close" id="sidebar-search-close" aria-label="Close search">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <p id="sidebar-search-status" class="sidebar-search-status" hidden aria-live="polite"></p>
+    <div class="sidebar-projects-nav">
+      <a
+        href="/projects"
+        class="sidebar-projects-btn<%= typeof activeProjectsList !== 'undefined' && activeProjectsList ? ' active' : '' %>"
+      >Projects</a>
+    </div>
   </div>
 
   <nav class="chat-list" id="chat-list">
-    <% if (chats.length === 0) { %>
-      <p class="muted empty-list">No chats yet.</p>
+    <% if (chats.length > 0) { %>
+      <% chats.forEach(function (c) {
+        const dotWorking = workingIds.indexOf(c.id) >= 0;
+        const dotUnread = !dotWorking && c.unread;
+        const p = c.project_id ? _projectsMap.get(c.project_id) : null;
+      %>
+        <a
+          href="/chats/<%= c.id %>"
+          class="chat-item<%= activeChat && activeChat.id === c.id ? ' active' : '' %>"
+          data-chat-id="<%= c.id %>"
+          data-project-id="<%= c.project_id != null ? c.project_id : '' %>"
+          data-updated-at="<%= c.updated_at %>"
+          title="<%= c.title %>"
+        >
+          <span class="chat-item-avatar-wrap">
+          <% if (p) { %>
+            <span class="chat-item-project-mark" aria-hidden="true">
+              <%- include('./projectLogo', {
+                emojiIndex: typeof p.logo_emoji === 'number' ? p.logo_emoji : 0,
+                colorIndex: typeof p.logo_color === 'number' ? p.logo_color : 0,
+              }) %>
+            </span>
+          <% } else if (c.project_id) { %>
+            <span class="chat-item-project-mark" aria-hidden="true">
+              <%- include('./projectLogo', { emojiIndex: 0, colorIndex: 0 }) %>
+            </span>
+          <% } else { %>
+            <span class="chat-item-project-mark chat-item-project-mark--spacer" aria-hidden="true"></span>
+          <% } %>
+            <span
+              class="status-dot<%= dotWorking ? ' working' : (dotUnread ? ' unread' : '') %>"
+              aria-hidden="true"
+            ></span>
+          </span>
+          <span class="chat-item-title"><%= c.title %></span>
+        </a>
+      <% }); %>
     <% } %>
-    <% chats.forEach(function (c) { %>
-      <a
-        href="/chats/<%= c.id %>"
-        class="chat-item <%= activeChat && activeChat.id === c.id ? 'active' : '' %>"
-        data-chat-id="<%= c.id %>"
-        title="<%= c.title %>"
-      >
-        <span class="working-dot <%= workingIds.indexOf(c.id) >= 0 ? 'on' : '' %>" aria-hidden="true"></span>
-        <span class="chat-item-title"><%= c.title %></span>
-      </a>
-    <% }); %>
+
+    <% if (chats.length === 0 && _projectsList.length === 0) { %>
+      <p class="muted empty-list">No projects or chats yet.</p>
+    <% } else if (chats.length === 0) { %>
+      <p class="muted empty-list">Ще немає чатів. Натисніть <strong>+ Новий чат</strong> і оберіть проєкт на головній.</p>
+    <% } %>
+
+    <div id="sidebar-list-tail" class="sidebar-list-tail" aria-hidden="true"></div>
   </nav>
 </aside>
 

@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions & discussions
-    url: https://github.com/tmlxrd/iClaw/discussions
+    url: https://github.com/iClawApp/iClaw/discussions
     about: Ask questions, share usage tips, propose ideas before opening a formal issue.
   - name: OpenClaw Gateway issues
     url: https://github.com/openclaw/openclaw/issues

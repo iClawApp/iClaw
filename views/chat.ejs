@@ -14,8 +14,9 @@
         />
       </form>
 
-      <form method="post" action="/chats/<%= activeChat.id %>/agent" class="agent-form">
-        <select name="agent" onchange="this.form.submit()" aria-label="Agent">
+      <form class="agent-form header-field" method="post" action="/chats/<%= activeChat.id %>/agent">
+        <label class="header-field-label" for="chat-agent-select">Agent</label>
+        <select name="agent" id="chat-agent-select" onchange="this.form.submit()" aria-label="Agent">
           <% agents.forEach(function (a) { %>
             <option value="<%= a.id %>" <%= a.id === activeChat.agent ? 'selected' : '' %>>
               <%= a.id %>
@@ -27,14 +28,64 @@
         </select>
       </form>
 
+      <label
+        class="reasoning-toggle header-field"
+        title="Show the model's reasoning / thinking inline. Type /reasoning on in chat to actually enable it on OpenClaw side."
+      >
+        <input
+          type="checkbox"
+          id="chat-reasoning-toggle"
+          <%= activeChat.reasoning_mode && activeChat.reasoning_mode !== 'off' ? 'checked' : '' %>
+        />
+        <span>Reasoning</span>
+      </label>
+
+      <span
+        class="cost-chip chip chip--accent"
+        id="cost-chip"
+        title="Total OpenClaw spend today (refreshes every 30s)"
+        hidden
+      ></span>
+
+      <% if (activeChat.project_id) { %>
+        <form
+          method="post"
+          action="/chats/<%= activeChat.id %>/shares"
+          class="share-form"
+          title="When on, after each assistant reply you get suggested facts to add to the project (you confirm each)."
+        >
+          <label class="share-toggle">
+            <input
+              type="checkbox"
+              name="shares"
+              value="1"
+              <%= activeChat.shares_to_project ? 'checked' : '' %>
+              onchange="this.form.submit()"
+            />
+            <span>Suggest facts for project</span>
+          </label>
+        </form>
+      <% } %>
+
       <button
         type="button"
-        class="stop-btn"
+        class="stop-btn btn btn--danger btn--sm"
         id="stop-btn"
         aria-label="Stop generation"
         title="Stop this turn"
         <%= isWorking ? '' : 'hidden' %>
       >■ Stop</button>
+
+      <% if (cloudShareBaseUrl) { %>
+        <button
+          type="button"
+          class="share-btn btn btn--ghost btn--sm"
+          id="share-btn"
+          data-cloud-base-url="<%= cloudShareBaseUrl %>"
+          title="Encrypted in your browser; the key is in the # part of the link. Optional password."
+          aria-label="Share this chat"
+        >🔗 Share</button>
+      <% } %>
 
       <form method="post" action="/chats/<%= activeChat.id %>/delete" class="delete-form">
         <button type="submit" onclick="return confirm('Delete this chat?')" aria-label="Delete">
@@ -47,59 +98,106 @@
       class="messages"
       id="messages"
       data-chat-id="<%= activeChat.id %>"
+      data-defer-paint="1"
     >
-      <% if (chatMessages.length === 0) { %>
-        <p class="muted empty-state">No messages yet. Say something.</p>
-      <% } else { %>
-        <% chatMessages.forEach(function (m) { %>
-          <div class="msg <%= m.role %>" data-msg-id="<%= m.id %>">
-            <div class="role"><%= m.role %></div>
-            <div class="msg-body"><%= m.content %></div>
+      <div class="messages-thread">
+        <% if (chatMessages.length === 0) { %>
+          <p class="muted empty-state">No messages yet. Say something.</p>
+        <% } else { %>
+          <% chatMessages.forEach(function (m) { %>
+            <div class="msg <%= m.role %>" data-msg-id="<%= m.id %>">
+              <div class="role"><%= m.role %></div>
+              <% if (m.reply_to_message_id && m.reply_quote) { %>
+                <%
+                  const _rr = m.reply_to_role || '';
+                  const _who = _rr === 'user' ? 'Ви' : (_rr === 'assistant' ? 'Асистент' : 'Чат');
+                %>
+                <button
+                  type="button"
+                  class="msg-reply-stub"
+                  data-jump-to-msg="<%= m.reply_to_message_id %>"
+                  data-reply-quote="<%= encodeURIComponent(m.reply_quote) %>"
+                  aria-label="Перейти до цитованого повідомлення"
+                >
+                  <span class="msg-reply-stub-track">
+                    <span class="msg-reply-stub-bar" aria-hidden="true"></span>
+                    <span class="msg-reply-stub-body">
+                      <span class="msg-reply-stub-label"><%= _who %></span>
+                      <span class="msg-reply-stub-quote"><%= m.reply_quote %></span>
+                    </span>
+                  </span>
+                </button>
+              <% } %>
+              <div class="msg-body"><%= m.content %></div>
+              <% if (Array.isArray(m.attachments) && m.attachments.length > 0) { %>
+                <div class="msg-attachments">
+                  <% m.attachments.forEach(function (a) {
+                    const _mime = String(a.mimeType || '');
+                    const _url = String(a.url || '');
+                    const _name = String(a.fileName || 'file');
+                    const _sz = Number(a.sizeBytes) || 0;
+                    function _humanSize(b){ if(b<1024)return b+' B'; if(b<1024*1024)return (b/1024).toFixed(1)+' KB'; return (b/(1024*1024)).toFixed(1)+' MB'; }
+                  %>
+                    <% if (_mime.indexOf('image/') === 0) { %>
+                      <a class="msg-attachment" href="<%= _url %>" target="_blank" rel="noopener noreferrer">
+                        <img class="msg-attachment-image" src="<%= _url %>" alt="<%= _name %>" loading="lazy" />
+                      </a>
+                    <% } else { %>
+                      <a class="msg-attachment-file" href="<%= _url %>" target="_blank" rel="noopener noreferrer" title="<%= _name %>">
+                        <span class="msg-attachment-file-name"><%= _name %></span>
+                        <% if (_sz > 0) { %>
+                          <span class="msg-attachment-file-size"><%= _humanSize(_sz) %></span>
+                        <% } %>
+                      </a>
+                    <% } %>
+                  <% }); %>
+                </div>
+              <% } %>
+            </div>
+          <% }); %>
+        <% } %>
+        <% if (isWorking) { %>
+          <%
+            // Activity persists across page reloads — server side state. The
+            // client's WS connection picks up live events after subscribing.
+            const _act = currentActivity || { kind: 'thinking', label: 'Thinking…' };
+            const _waitingClass = _act.kind === 'tool' || _act.kind === 'lifecycle'
+              ? 'stream-tool'
+              : (_act.kind === 'generating' ? 'stream-generating' : 'stream-waiting');
+            const _detail = _act.kind === 'tool' && _act.detail && _act.detail !== _act.label
+              ? _act.detail
+              : '';
+          %>
+          <div class="msg assistant streaming <%= _waitingClass %>" id="reload-placeholder">
+            <div class="role">assistant</div>
+            <div
+              class="stream-status<%= _detail ? ' has-detail' : '' %>"
+              <% if (_detail) { %>
+                data-detail="<%= _detail %>"
+                data-label="<%= _act.label %>"
+                title="<%= _detail %>"
+              <% } %>
+            ><%= _act.label %></div>
+            <div class="msg-body stream-body"></div>
           </div>
-        <% }); %>
-      <% } %>
-      <% if (isWorking) { %>
-        <%
-          // Activity persists across page reloads — server side state. The
-          // client's WS connection picks up live events after subscribing.
-          const _act = currentActivity || { kind: 'thinking', label: 'Thinking…' };
-          const _waitingClass = _act.kind === 'tool' || _act.kind === 'lifecycle'
-            ? 'stream-tool'
-            : (_act.kind === 'generating' ? 'stream-generating' : 'stream-waiting');
-          const _detail = _act.kind === 'tool' && _act.detail && _act.detail !== _act.label
-            ? _act.detail
-            : '';
-        %>
-        <div class="msg assistant streaming <%= _waitingClass %>" id="reload-placeholder">
-          <div class="role">assistant</div>
-          <div
-            class="stream-status<%= _detail ? ' has-detail' : '' %>"
-            <% if (_detail) { %>
-              data-detail="<%= _detail %>"
-              data-label="<%= _act.label %>"
-              title="<%= _detail %>"
-            <% } %>
-          ><%= _act.label %></div>
-          <div class="msg-body stream-body"></div>
-        </div>
-      <% } %>
+        <% } %>
+      </div>
     </section>
 
     <section class="queue" id="queue" aria-live="polite"></section>
 
-    <form id="send-form" class="composer">
-      <textarea
-        id="composer-input"
-        name="content"
-        placeholder="Message <%= activeChat.agent %>… (Enter to send, Shift+Enter for newline)"
-        rows="2"
-        required
-      ></textarea>
-      <button type="submit">Send</button>
-    </form>
+    <%- include('partials/composer') %>
+
+    <% if (cloudShareBaseUrl) { %>
+      <%- include('partials/share-modal') %>
+    <% } %>
 
     <script src="/js/vendor/marked.min.js"></script>
+    <script src="/js/vendor/highlight.min.js"></script>
     <script src="/js/iclaw.js"></script>
+    <% if (cloudShareBaseUrl) { %>
+      <script src="/js/share.js" defer></script>
+    <% } %>
   </main>
 </div>
 

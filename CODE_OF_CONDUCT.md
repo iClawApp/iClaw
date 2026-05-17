@@ -29,7 +29,7 @@ Maintainers have the right and responsibility to remove, edit, or reject comment
 
 ## Reporting
 
-If you experience or witness unacceptable behavior, please report it by opening a confidential issue or contacting the maintainers via the channels listed on the [repository page](https://github.com/tmlxrd/iClaw). All reports will be reviewed and investigated promptly and fairly.
+If you experience or witness unacceptable behavior, please report it by opening a confidential issue or contacting the maintainers via the channels listed on the [repository page](https://github.com/iClawApp/iClaw). All reports will be reviewed and investigated promptly and fairly.
 
 ## Attribution
 

@@ -15,7 +15,8 @@
         />
       </form>
 
-      <form class="agent-form" onsubmit="return false">
+      <form class="agent-form header-field" onsubmit="return false">
+        <label class="header-field-label" for="draft-agent">Agent</label>
         <select id="draft-agent" aria-label="Agent">
           <% if (agentsError && agents.length === 0) { %>
             <option value="<%= defaultAgent %>" selected><%= defaultAgent %></option>
@@ -29,33 +30,91 @@
         </select>
       </form>
 
-      <span class="gateway <%= gatewayUp ? 'ok' : 'down' %>" title="<%= openclawBaseUrl %>">
+      <button
+        type="button"
+        class="stop-btn"
+        id="stop-btn"
+        aria-label="Stop generation"
+        title="Stop this turn"
+        hidden
+      >■ Stop</button>
+
+      <span
+        class="gateway <%= gatewayUp ? 'ok' : 'down' %>"
+        id="gateway-badge"
+        data-base-url="<%= openclawBaseUrl %>"
+        title="<%= openclawBaseUrl %>"
+      >
         OpenClaw: <%= gatewayUp ? 'connected' : 'unreachable' %>
       </span>
     </header>
 
-    <section class="messages" id="messages" data-chat-id="" data-draft="1">
-      <% if (agentsError) { %>
-        <p class="error">Gateway unreachable: <code><%= agentsError %></code></p>
-      <% } else { %>
-        <p class="muted empty-state">Type a message to start a new chat.</p>
+    <div
+      class="draft-body<%= agentsError ? ' draft-body--gateway-error' : ' is-picking' %>"
+      id="draft-body"
+    >
+      <% if (!agentsError) { %>
+      <div class="draft-pick-stage" id="draft-pick-stage">
+        <section
+          class="project-pick"
+          id="project-pick"
+          role="region"
+          aria-labelledby="project-pick-title"
+          data-initial-project-id="<%= preselectedProject ? String(preselectedProject.id) : '' %>"
+        >
+          <h2 class="project-pick-title" id="project-pick-title">Оберіть проєкт</h2>
+          <div class="project-pick-grid">
+            <button
+              type="button"
+              class="project-pick-card project-pick-card--none"
+              data-project-id=""
+              data-project-name="Без проєкту"
+            >
+              <span class="project-pick-card-inner">
+                <span class="project-logo project-logo--none" data-logo-color="0" aria-hidden="true">◇</span>
+                <span class="project-pick-name">Без проєкту</span>
+              </span>
+            </button>
+            <% allProjects.forEach(function (p) {
+              const _ei = typeof p.logo_emoji === 'number' ? p.logo_emoji : 0;
+              const _ci = typeof p.logo_color === 'number' ? p.logo_color : 0;
+            %>
+            <button
+              type="button"
+              class="project-pick-card"
+              data-project-id="<%= p.id %>"
+              data-project-name="<%= p.name %>"
+            >
+              <span class="project-pick-card-inner">
+                <%- include('partials/projectLogo', { emojiIndex: _ei, colorIndex: _ci }) %>
+                <span class="project-pick-name"><%= p.name %></span>
+              </span>
+            </button>
+            <% }); %>
+          </div>
+        </section>
+      </div>
       <% } %>
-    </section>
 
-    <section class="queue" id="queue" aria-live="polite"></section>
+      <section class="messages" id="messages" data-chat-id="" data-draft="1">
+        <div class="messages-thread">
+          <% if (agentsError) { %>
+            <p class="error">Gateway unreachable: <code><%= agentsError %></code></p>
+          <% } else { %>
+            <p class="muted empty-state" id="draft-empty-hint" hidden>Напишіть перше повідомлення.</p>
+          <% } %>
+        </div>
+      </section>
 
-    <form id="send-form" class="composer">
-      <textarea
-        id="composer-input"
-        name="content"
-        placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"
-        rows="2"
-        required
-      ></textarea>
-      <button type="submit">Send</button>
-    </form>
+      <section class="queue" id="queue" aria-live="polite"></section>
+
+      <div id="draft-composer-wrap" class="draft-composer-wrap" hidden>
+        <%- include('partials/composer') %>
+      </div>
+    </div>
 
     <script src="/js/vendor/marked.min.js"></script>
+    <script src="/js/vendor/highlight.min.js"></script>
     <script src="/js/iclaw.js"></script>
   </main>
 </div>

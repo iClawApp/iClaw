@@ -6,8 +6,10 @@
 
 import type { Server as HttpServer, IncomingMessage } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { chats } from '../services/store';
 import { wsHub } from '../services/wsHub';
 import { sendMessage, abortChatRun } from '../services/chatRunner';
+import { openclawWs } from '../services/openclawWs';
 import type { ClientMsg, ServerMsg } from '../types/protocol';
 
 const PATH = '/ws';
@@ -29,9 +31,13 @@ function parseClientMsg(raw: unknown): ClientMsg | null {
 
 async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void> {
   switch (msg.type) {
-    case 'subscribe':
-      if (typeof msg.chatId === 'number') wsHub.subscribe(socket, msg.chatId);
+    case 'subscribe': {
+      const chatId = msg.chatId;
+      if (typeof chatId !== 'number') return;
+      wsHub.subscribe(socket, chatId);
+      if (chats.markRead(chatId)) wsHub.broadcastAll({ type: 'chat-read', chatId });
       return;
+    }
 
     case 'unsubscribe':
       if (typeof msg.chatId === 'number') wsHub.unsubscribe(socket, msg.chatId);
@@ -43,12 +49,13 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
 
     case 'send': {
       const content = String(msg.content ?? '').trim();
-      if (!content) {
+      const hasAttachments = Array.isArray(msg.attachments) && msg.attachments.length > 0;
+      if (!content && !hasAttachments) {
         send(socket, {
           type: 'turn-error',
           chatId: msg.chatId ?? 0,
           requestId: msg.requestId,
-          error: 'content required',
+          error: 'content or attachments required',
         });
         return;
       }
@@ -59,8 +66,11 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
           chatId: msg.chatId,
           content,
           agentLabel: msg.agent,
+          projectId: msg.chatId == null ? (msg.projectId ?? null) : undefined,
           requestId: msg.requestId,
           subscriber: socket,
+          replyTo: msg.replyTo,
+          incomingAttachments: msg.attachments,
         });
       } catch (err) {
         // Errors are already broadcast via chatRunner; nothing more to do.
@@ -76,6 +86,24 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
         });
       }
       return;
+
+    case 'exec-approval': {
+      const approvalId = String(msg.approvalId ?? '').trim();
+      const decision = msg.decision === 'denied' ? 'denied' : 'approved';
+      if (!approvalId) return;
+      try {
+        await openclawWs.resolveExecApproval({
+          approvalId,
+          decision,
+          reason: msg.reason,
+        });
+        // The gateway broadcasts `exec.approval.resolved` after we resolve, so
+        // the UI card-removal flows through the same path as external resolves.
+      } catch (err) {
+        console.error('[ws] exec.approval.resolve failed', err);
+      }
+      return;
+    }
   }
 }
 

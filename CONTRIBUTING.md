@@ -6,8 +6,9 @@ Thanks for considering a contribution. iClaw is a thin local UI on top of [OpenC
 
 - Bug reports with steps to reproduce
 - Small UX improvements (keyboard shortcuts, markdown rendering, dark theme, etc.)
-- Streaming/SSE robustness fixes
-- New surface features that fit "ChatGPT-style UI over OpenClaw" — pinned messages, chat search, export, themes, accessibility
+- Robustness fixes around the native OpenClaw WS protocol (reconnect, lifecycle terminal phases, tick watchdog, exec approvals, etc.)
+- New surface features that fit "ChatGPT-style UI over OpenClaw" — pinned messages, chat search, export, themes, accessibility, voice mode bridging
+- Tests for any of the above (Vitest unit + integration is set up — `npm test`)
 - Documentation, examples, and screenshots
 
 ## What we don't want
@@ -21,10 +22,10 @@ If you want to propose something larger, **open an issue first** so we can talk 
 
 ## Development setup
 
-Requirements: Node.js 20+ and a running [OpenClaw Gateway](https://docs.openclaw.ai) on `127.0.0.1:18789` with the OpenAI-compatible endpoint enabled.
+Requirements: Node.js 20+ and a running [OpenClaw Gateway](https://docs.openclaw.ai) on `127.0.0.1:18789`. iClaw talks to the gateway over its **native WebSocket protocol** — no extra endpoint to enable.
 
 ```bash
-git clone https://github.com/tmlxrd/iClaw.git
+git clone https://github.com/iClawApp/iClaw.git
 cd iClaw
 npm install
 npm run dev    # http://localhost:3000
@@ -38,20 +39,24 @@ The dev server reads the gateway token from `~/.openclaw/openclaw.json` automati
 | --- | --- |
 | `npm run dev` | tsx watch — auto-reload on save |
 | `npm run typecheck` | `tsc --noEmit`, must be clean before PR |
+| `npm test` | Run the Vitest suite (unit + integration, ~100 tests) |
+| `npm run test:watch` | Vitest in watch mode |
+| `npm run test:coverage` | Vitest with v8 coverage |
 | `npm run build` | Emit JS to `dist/` |
 | `npm start` | Run compiled build |
 
-### Test against a local gateway
+### Tests
 
-If you don't want to run real OpenClaw during dev, the OpenAI-compat endpoint is mocked in `/tmp/fake-openclaw.cjs` in older commits — you can adapt that as a starting point.
+Tests live under `test/` and run against an isolated SQLite DB per worker (a vitest setup file pins `DB_PATH` before any `src/db/database.ts` import). All gateway-facing code (`openclawWs`, `gatewayWs`) is stubbed — tests never reach a real gateway. See `test/helpers/setup.ts` and `test/helpers/gatewayStubs.ts`.
 
 ## Code style
 
 - TypeScript strict mode, no `any` unless commented why
 - Express + EJS for routes/views, plain CSS for styling, vanilla JS on the client — no frontend framework
 - SQLite via `better-sqlite3` (synchronous)
-- All client-server communication via JSON or SSE
+- Browser ↔ iClaw and iClaw ↔ OpenClaw both run over native WebSocket (no SSE anywhere)
 - File naming: `kebab-case.ts` for modules; one default export per route file
+- New UI components: reach for the design-system primitives in `public/css/style.css` (`.btn`, `.chip`, `.card`, `.menu`) before inventing new selectors. Tokens are `--space-*`, `--radius-*`, `--shadow-*`, `--text-*`, `--z-*`, plus semantic colours (`--warn`, `--info`, `--approve`, `--danger`).
 
 ### Commits
 

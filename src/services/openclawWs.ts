@@ -49,6 +49,8 @@ export type TurnEvent =
   | { type: 'tool-end'; name: string; itemId?: string }
   | { type: 'lifecycle'; phase: string; label: string }
   | { type: 'attachment'; url: string; mime: string; label?: string; itemId?: string }
+  /** Model reasoning / analysis text — only emitted, chatRunner decides whether to surface. */
+  | { type: 'reasoning'; text: string }
   | { type: 'text-final'; text: string };
 
 // ---------- helpers --------------------------------------------------------
@@ -118,6 +120,39 @@ export const openclawWs = {
     return res.messages ?? [];
   },
 
+  /**
+   * Resolve a pending exec approval (gateway broadcasts `exec.approval.requested`
+   * when the agent needs human OK to run a shell command). `decision` is
+   * "approved" | "denied". `reason` is optional and surfaced to the agent.
+   */
+  async resolveExecApproval(opts: {
+    approvalId: string;
+    decision: 'approved' | 'denied';
+    reason?: string;
+  }): Promise<void> {
+    const params: Record<string, unknown> = {
+      approvalId: opts.approvalId,
+      decision: opts.decision,
+    };
+    if (opts.reason) params.reason = opts.reason;
+    await gatewayWs.request('exec.approval.resolve', params);
+  },
+
+  /** Get usage cost summary for a date range. */
+  async usageCost(opts: { from?: string; to?: string } = {}): Promise<unknown> {
+    return gatewayWs.request('usage.cost', opts as Record<string, unknown>);
+  },
+
+  /** Slash-command catalog for an agent — feeds the `/` autocomplete. */
+  async listCommands(opts: { agentId?: string } = {}): Promise<unknown> {
+    return gatewayWs.request('commands.list', opts as Record<string, unknown>);
+  },
+
+  /** Subscribe to the global session index — needed for `sessions.changed`. */
+  async subscribeSessions(): Promise<void> {
+    await gatewayWs.request('sessions.subscribe', {});
+  },
+
   /** Abort an in-flight turn (no-op if already finished). */
   async abortRun(sessionKey: string, runId?: string): Promise<void> {
     const params: Record<string, unknown> = { key: sessionKey };
@@ -139,6 +174,17 @@ export const openclawWs = {
     onEvent: (ev: TurnEvent) => void;
     /** Optional custom idempotency key — defaults to random uuid. */
     idempotencyKey?: string;
+    /**
+     * Optional inline attachments forwarded verbatim to OpenClaw `chat.send`.
+     * Shape matches the dashboard's normalized payload — `content` is base64
+     * with or without `data:<mime>;base64,` prefix.
+     */
+    attachments?: Array<{
+      type: 'image' | 'file';
+      mimeType: string;
+      fileName: string;
+      content: string;
+    }>;
   }): Promise<{ runId: string; text: string }> {
     let runId: string | null = null;
     let accumulatedText = '';
@@ -174,23 +220,38 @@ export const openclawWs = {
           'failed', 'terminated', 'stopped',
         ]);
         if (TERMINAL.has(phase)) {
+          if (phase === 'end') {
+            // Successful completion: the gateway's canonical assistant message and
+            // turn resolution come from the `chat` event (`state:final`). Resolving
+            // here used to race ahead of that event, so chatRunner persisted from
+            // chat.history before the final merged assistant row existed.
+            return;
+          }
           if (!finalEmitted) {
             finalEmitted = true;
             opts.onEvent({ type: 'text-final', text: accumulatedText });
           }
-          if (phase === 'end') {
-            resolveTurn();
-          } else {
-            // Reject so chatRunner broadcasts turn-error and the lock unwinds.
-            rejectTurn(new Error(`agent run ${phase}`));
-          }
+          rejectTurn(new Error(`agent run ${phase}`));
+          return;
         }
         return;
       }
 
       if (stream === 'item') {
         const kind = safeString(data.kind);
-        if (kind === 'analysis') return; // reasoning — skipped in v1
+        if (kind === 'analysis') {
+          // Reasoning / chain-of-thought. We always emit; chatRunner gates
+          // delivery to subscribers based on per-chat reasoning_mode.
+          const phase = data.phase;
+          if (phase === 'start' || phase === 'end' || phase === 'completed') return;
+          const text =
+            safeString(data.text) ??
+            safeString(data.deltaText) ??
+            safeString(data.content) ??
+            '';
+          if (text) opts.onEvent({ type: 'reasoning', text });
+          return;
+        }
         const name = safeString(data.name) ?? kind ?? 'tool';
         const phase = data.phase;
         const itemId = safeString(data.itemId);
@@ -251,11 +312,14 @@ export const openclawWs = {
       if (payload.state === 'final') {
         const text = contentToString(payload.message?.content) || accumulatedText;
         accumulatedText = text;
+        // Always emit — lifecycle:end no longer resolves the turn, so this is the
+        // primary signal for consumers that need the gateway's final assistant text.
+        opts.onEvent({ type: 'text-final', text });
         if (!finalEmitted) {
           finalEmitted = true;
-          opts.onEvent({ type: 'text-final', text });
         }
         resolveTurn();
+        return;
       }
     };
 
@@ -294,6 +358,9 @@ export const openclawWs = {
           sessionKey: opts.sessionKey,
           message: opts.message,
           idempotencyKey: opts.idempotencyKey ?? `iclaw-${randomUUID()}`,
+          ...(opts.attachments && opts.attachments.length > 0
+            ? { attachments: opts.attachments }
+            : {}),
         },
         { timeoutMs: 30_000 },
       );
@@ -303,11 +370,15 @@ export const openclawWs = {
       for (const f of buffered) dispatch(f);
       buffered.length = 0;
 
-      // Wait for the turn to finish (chat:final or lifecycle:end).
-      // 5 min upper bound — agent runs can be slow with tool calls.
+      // Wait for the turn to finish (`chat` state:final resolves the promise;
+      // agent lifecycle:end alone does not — see handleAgent).
+      // 60 min upper bound — OpenClaw itself defaults to 48h for agent runs,
+      // and real tool-heavy turns can comfortably run for 20–30 minutes. The
+      // old 5 min cap was killing legitimate long runs on our side while the
+      // gateway happily kept executing them.
       const timeout = setTimeout(() => {
         rejectTurn(new Error('runTurn: timed out waiting for turn to finish'));
-      }, 5 * 60_000);
+      }, 60 * 60_000);
       try {
         await turnDone;
       } finally {

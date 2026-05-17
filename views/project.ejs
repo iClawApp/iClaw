@@ -1,0 +1,285 @@
+<%- include('partials/head', { title: project.name + ' — iClaw' }) %>
+<% const _ei = (function () {
+  const n = Number(project.logo_emoji);
+  const em = Array.isArray(projectLogoEmojis) ? projectLogoEmojis : [];
+  const max = em.length ? em.length - 1 : 9;
+  if (!Number.isFinite(n) || n < 0) return 0;
+  if (n > max) return max;
+  return Math.floor(n);
+})(); %>
+<% const _ci = (function () {
+  const n = Number(project.logo_color);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  if (n > 9) return 9;
+  return Math.floor(n);
+})(); %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main project-page" data-project-id="<%= project.id %>">
+    <header class="chat-header project-header">
+      <div class="project-header-primary">
+        <div class="project-title-cluster">
+          <button
+            type="button"
+            class="project-logo-trigger"
+            id="project-logo-trigger"
+            aria-haspopup="true"
+            aria-expanded="false"
+            aria-label="Change project icon and color"
+          >
+            <%- include('partials/projectLogo', { emojiIndex: _ei, colorIndex: _ci }) %>
+          </button>
+          <form
+            method="post"
+            action="/projects/<%= project.id %>/rename"
+            class="rename-form project-title-form"
+            id="project-rename-form"
+          >
+            <input
+              type="text"
+              name="name"
+              value="<%= project.name %>"
+              aria-label="Project name"
+              placeholder="Name"
+            />
+          </form>
+
+          <div id="project-logo-popover" class="project-logo-popover" hidden>
+            <p class="project-logo-popover-label">Emoji</p>
+            <div class="project-logo-popover-row" role="group" aria-label="Emoji">
+              <% (projectLogoEmojis || []).forEach(function (emo, idx) { %>
+                <button
+                  type="button"
+                  class="project-logo-swatch project-logo-swatch--emoji<%= idx === _ei ? ' is-selected' : '' %>"
+                  data-logo-emoji="<%= idx %>"
+                  aria-label="Emoji <%= idx + 1 %>"
+                  aria-pressed="<%= idx === _ei ? 'true' : 'false' %>"
+                ><span class="project-logo-swatch-emoji"><%- emo %></span></button>
+              <% }); %>
+            </div>
+            <p class="project-logo-popover-label">Color</p>
+            <div class="project-logo-popover-row" role="group" aria-label="Background color">
+              <% for (var c = 0; c < 12; c++) { %>
+                <button
+                  type="button"
+                  class="project-logo-swatch project-logo-swatch--color<%= c === _ci ? ' is-selected' : '' %>"
+                  data-logo-color="<%= c %>"
+                  aria-label="Color <%= c + 1 %>"
+                  aria-pressed="<%= c === _ci ? 'true' : 'false' %>"
+                ><span class="project-logo-color-dot" data-logo-color="<%= c %>"></span></button>
+              <% } %>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="project-header-actions">
+        <form method="post" action="/projects/<%= project.id %>/delete" class="delete-form project-delete-form">
+          <button
+            type="submit"
+            class="project-delete-btn"
+            onclick="return confirm('Delete this project? Chats inside will detach (not deleted).')"
+            aria-label="Delete project"
+          >Delete</button>
+        </form>
+      </div>
+    </header>
+
+    <section class="project-body">
+      <div class="project-body-inner">
+        <nav class="project-tabs" role="tablist" aria-label="Розділи проєкту">
+          <button
+            type="button"
+            class="project-tab is-active"
+            role="tab"
+            id="project-tab-chats"
+            aria-controls="project-panel-chats"
+            aria-selected="true"
+            tabindex="0"
+            data-project-tab="chats"
+            data-tab-base="Чати"
+            data-tab-count="<%= projectChats.length %>"
+          >Чати (<%= projectChats.length %>)</button>
+          <button
+            type="button"
+            class="project-tab"
+            role="tab"
+            id="project-tab-memory"
+            aria-controls="project-panel-memory"
+            aria-selected="false"
+            tabindex="-1"
+            data-project-tab="memory"
+            data-tab-base="Памʼять"
+            data-tab-count="<%= facts.length %>"
+          >Памʼять</button>
+          <button
+            type="button"
+            class="project-tab"
+            role="tab"
+            id="project-tab-links"
+            aria-controls="project-panel-links"
+            aria-selected="false"
+            tabindex="-1"
+            data-project-tab="links"
+            data-tab-base="Посилання"
+            data-tab-count="<%= projectWebLinks.length %>"
+          >Посилання</button>
+          <button
+            type="button"
+            class="project-tab"
+            role="tab"
+            id="project-tab-files"
+            aria-controls="project-panel-files"
+            aria-selected="false"
+            tabindex="-1"
+            data-project-tab="files"
+            data-tab-base="Файли"
+            data-tab-count="<%= projectFileLinks.length %>"
+          >Файли</button>
+        </nav>
+
+        <div
+          id="project-panel-chats"
+          class="project-panel project-panel--active"
+          role="tabpanel"
+          aria-labelledby="project-tab-chats"
+        >
+          <div class="project-sheet project-sheet--flush">
+            <% if (projectChats.length === 0) { %>
+              <p class="project-empty-chats muted">Ще немає чатів. Почніть чат з головної, коли обрано цей проєкт.</p>
+            <% } else { %>
+              <ul class="project-chats">
+                <% projectChats.forEach(function (c) { %>
+                  <li>
+                    <a href="/chats/<%= c.id %>" class="project-chat-link">
+                      <span class="project-chat-title"><%= c.title %></span>
+                      <span class="project-chat-tail">
+                        <% if (c.shares_to_project === 0) { %>
+                          <span class="project-chat-badge" title="Не пропонує факти в проєкт">Вимк.</span>
+                        <% } %>
+                      </span>
+                    </a>
+                  </li>
+                <% }); %>
+              </ul>
+            <% } %>
+          </div>
+        </div>
+
+        <div
+          id="project-panel-memory"
+          class="project-panel"
+          role="tabpanel"
+          aria-labelledby="project-tab-memory"
+          hidden
+        >
+          <div class="project-sheet project-sheet--flush project-sheet--stacked">
+            <ul id="facts-list" class="project-chats">
+              <% facts.forEach(function (f) { %>
+                <li class="fact" data-fact-id="<%= f.id %>">
+                  <% if (f.source_chat_id) { %>
+                    <div class="project-row-head muted">
+                      <a href="/chats/<%= f.source_chat_id %>" class="project-chat-source"><%= (f.source_chat_title || '').trim() || 'Чат' %></a>
+                    </div>
+                  <% } else { %>
+                    <div class="project-row-head muted"><span>—</span></div>
+                  <% } %>
+                  <textarea
+                    class="fact-content"
+                    aria-label="Текст факту"
+                    rows="2"
+                  ><%= f.content %></textarea>
+                  <div class="fact-meta">
+                    <button
+                      type="button"
+                      class="fact-delete"
+                      aria-label="Видалити факт"
+                    >Прибрати</button>
+                  </div>
+                </li>
+              <% }); %>
+              <% if (facts.length === 0) { %>
+                <li class="project-chats-empty muted">Поки немає фактів. Підтвердіть пропозицію в чаті цього проєкту.</li>
+              <% } %>
+            </ul>
+          </div>
+        </div>
+
+        <div
+          id="project-panel-links"
+          class="project-panel"
+          role="tabpanel"
+          aria-labelledby="project-tab-links"
+          hidden
+        >
+          <div class="project-sheet project-sheet--flush">
+            <% if (projectWebLinks.length === 0) { %>
+              <p class="project-empty-chats muted">Поки немає посилань у повідомленнях цього проєкту.</p>
+            <% } else { %>
+              <ul class="project-chats">
+                <% projectWebLinks.forEach(function (entry) { %>
+                  <li>
+                    <div class="project-chat-link project-chat-link--stacked">
+                      <div class="project-row-head muted">
+                        <% entry.sources.forEach(function (s, i) { %>
+                          <% if (i > 0) { %><span aria-hidden="true"> · </span><% } %>
+                          <a href="/chats/<%= s.chatId %>" class="project-chat-source"><%= s.chatTitle %></a>
+                        <% }); %>
+                      </div>
+                      <a
+                        href="<%= entry.url %>"
+                        class="project-row-element project-chat-title--url"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      ><%= entry.url %></a>
+                    </div>
+                  </li>
+                <% }); %>
+              </ul>
+            <% } %>
+          </div>
+        </div>
+
+        <div
+          id="project-panel-files"
+          class="project-panel"
+          role="tabpanel"
+          aria-labelledby="project-tab-files"
+          hidden
+        >
+          <div class="project-sheet project-sheet--flush">
+            <% if (projectFileLinks.length === 0) { %>
+              <p class="project-empty-chats muted">Поки немає шляхів чи file:// у повідомленнях цього проєкту.</p>
+            <% } else { %>
+              <ul class="project-chats">
+                <% projectFileLinks.forEach(function (entry) { %>
+                  <li>
+                    <div
+                      class="project-chat-link project-chat-link--stacked project-chat-link--path"
+                      title="<%= entry.kind === 'file' ? 'file:// — браузер зі сторінки http зазвичай не відкриває.' : 'Шлях з чату — для копіювання; браузер не відкриває локальні шляхи напряму.' %>"
+                    >
+                      <div class="project-row-head muted">
+                        <% entry.sources.forEach(function (s, i) { %>
+                          <% if (i > 0) { %><span aria-hidden="true"> · </span><% } %>
+                          <a href="/chats/<%= s.chatId %>" class="project-chat-source"><%= s.chatTitle %></a>
+                        <% }); %>
+                      </div>
+                      <span class="project-row-element project-file-line"><%= entry.url %></span>
+                    </div>
+                  </li>
+                <% }); %>
+              </ul>
+            <% } %>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script src="/js/vendor/marked.min.js"></script>
+    <script src="/js/iclaw.js"></script>
+  </main>
+</div>
+
+<%- include('partials/foot') %>

@@ -34,6 +34,14 @@ class WsHub {
     this.subs.get(socket)?.chats.delete(chatId);
   }
 
+  /** True when at least one connected tab is subscribed to this chat. */
+  hasSubscriber(chatId: number): boolean {
+    for (const sub of this.subs.values()) {
+      if (sub.chats.has(chatId)) return true;
+    }
+    return false;
+  }
+
   /** Send a single message to one socket. */
   send(socket: WebSocket, msg: ServerMsg): void {
     if (socket.readyState !== socket.OPEN) return;

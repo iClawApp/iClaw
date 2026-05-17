@@ -1,7 +1,17 @@
 import { Router } from 'express';
-import { chats, messages } from '../services/store';
-import { openclaw } from '../services/openclaw';
+import {
+  chats,
+  messages,
+  chatSearch,
+  projects,
+  projectFactSuggestions,
+  projectFacts,
+  scheduledMessages,
+  enrichFactWithSourceChatTitle,
+} from '../services/store';
+import { compactProjectFacts } from '../services/projectMemory';
 import { openclawWs } from '../services/openclawWs';
+import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
 
@@ -31,6 +41,80 @@ chatsRouter.get('/status', (_req, res) => {
   });
 });
 
+/** JSON search — must stay above `/:id` so "search" is not parsed as an id. */
+chatsRouter.get('/search', (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q : '';
+  const ids = chatSearch.matchingChatIds(q);
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.type('application/json').json({ ids });
+});
+
+/** Pending project-fact suggestions for this chat (JSON). */
+chatsRouter.get('/:id/fact-suggestions', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || !chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const suggestions = projectFactSuggestions.listByChat(id);
+  const first = suggestions[0];
+  const projectName =
+    first != null ? (projects.get(first.project_id)?.name?.trim() ?? 'проєкт') : null;
+  res.type('application/json').json({ suggestions, projectName });
+});
+
+chatsRouter.post('/:id/fact-suggestions/:suggestionId/accept', (req, res) => {
+  const chatId = Number(req.params.id);
+  const sid = Number(req.params.suggestionId);
+  if (!Number.isFinite(chatId) || !Number.isFinite(sid)) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+  const chat = chats.get(chatId);
+  const sug = projectFactSuggestions.get(sid);
+  if (!chat || !sug || sug.chat_id !== chatId) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  if (!chat.project_id || chat.project_id !== sug.project_id) {
+    res.status(400).json({ error: 'project mismatch' });
+    return;
+  }
+  const fact = projectFacts.append({
+    projectId: sug.project_id,
+    content: sug.content,
+    sourceChatId: chatId,
+    sourceMessageId: sug.assistant_message_id,
+  });
+  projectFactSuggestions.remove(sid);
+  wsHub.broadcastAll({
+    type: 'project-fact-added',
+    projectId: sug.project_id,
+    fact: enrichFactWithSourceChatTitle(fact),
+  });
+  wsHub.broadcastAll({ type: 'project-fact-suggestion-removed', chatId, suggestionId: sid });
+  void compactProjectFacts(sug.project_id).catch(() => {});
+  res.type('application/json').json({ fact });
+});
+
+chatsRouter.post('/:id/fact-suggestions/:suggestionId/reject', (req, res) => {
+  const chatId = Number(req.params.id);
+  const sid = Number(req.params.suggestionId);
+  if (!Number.isFinite(chatId) || !Number.isFinite(sid)) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+  const sug = projectFactSuggestions.get(sid);
+  if (!sug || sug.chat_id !== chatId) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  projectFactSuggestions.remove(sid);
+  wsHub.broadcastAll({ type: 'project-fact-suggestion-removed', chatId, suggestionId: sid });
+  res.type('application/json').json({ ok: true });
+});
+
 chatsRouter.get('/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -39,18 +123,22 @@ chatsRouter.get('/:id', async (req, res, next) => {
       res.status(404).send('chat not found');
       return;
     }
+    if (chats.markRead(id)) wsHub.broadcastAll({ type: 'chat-read', chatId: id });
     const { agents, error: agentsError } = await getAgentsSafe();
     res.render('chat', {
       chats: chats.list(),
+      allProjects: projects.list(),
       activeChat: chat,
       chatMessages: messages.listByChat(id),
       agents,
       agentsError,
       defaultAgent: DEFAULT_AGENT,
       openclawBaseUrl: openclaw.baseUrl,
+      cloudShareBaseUrl,
       workingIds: chatStatus.workingIds(),
       isWorking: chatStatus.isWorking(id),
       currentActivity: chatStatus.getActivity(id),
+      scheduledList: scheduledMessages.listByChat(id),
     });
   } catch (err) {
     next(err);
@@ -69,7 +157,12 @@ chatsRouter.patch('/:id', (req, res) => {
     return;
   }
   chats.rename(id, title, { manual: true });
-  wsHub.broadcastAll({ type: 'chat-updated', chatId: id, title });
+  wsHub.broadcastAll({
+    type: 'chat-updated',
+    chatId: id,
+    title,
+    updatedAt: chats.get(id)!.updated_at,
+  });
   res.json({ id, title });
 });
 
@@ -77,7 +170,12 @@ chatsRouter.post('/:id/rename', (req, res) => {
   const id = Number(req.params.id);
   const next = String(req.body?.title ?? '').trim() || 'New chat';
   chats.rename(id, next, { manual: true });
-  wsHub.broadcastAll({ type: 'chat-updated', chatId: id, title: next });
+  wsHub.broadcastAll({
+    type: 'chat-updated',
+    chatId: id,
+    title: next,
+    updatedAt: chats.get(id)!.updated_at,
+  });
   res.redirect(`/chats/${id}`);
 });
 
@@ -86,13 +184,88 @@ chatsRouter.post('/:id/agent', (req, res) => {
   const agent = String(req.body?.agent ?? '').trim();
   if (agent) {
     chats.setAgent(id, agent);
-    wsHub.broadcastAll({ type: 'chat-updated', chatId: id, agent });
+    wsHub.broadcastAll({
+      type: 'chat-updated',
+      chatId: id,
+      agent,
+      updatedAt: chats.get(id)!.updated_at,
+    });
   }
   res.redirect(`/chats/${id}`);
 });
 
-chatsRouter.post('/:id/delete', (req, res) => {
+chatsRouter.post('/:id/shares', (req, res) => {
   const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).send('chat not found');
+    return;
+  }
+  // checkbox sends "1" when checked, nothing when unchecked
+  const shares = !!req.body?.shares;
+  chats.setSharesToProject(id, shares);
+  wsHub.broadcastAll({
+    type: 'chat-updated',
+    chatId: id,
+    sharesToProject: shares,
+    updatedAt: chats.get(id)!.updated_at,
+  });
+  res.redirect(`/chats/${id}`);
+});
+
+/**
+ * Toggle reasoning visibility on the active session by sending the slash
+ * command through the normal chat flow. The mode is mirrored locally so the
+ * UI toggle stays in sync across reloads.
+ */
+chatsRouter.post('/:id/reasoning', (req, res) => {
+  const id = Number(req.params.id);
+  const chat = chats.get(id);
+  if (!chat) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const raw = String(req.body?.mode ?? '').trim().toLowerCase();
+  const mode: 'off' | 'on' | 'stream' =
+    raw === 'on' ? 'on' : raw === 'stream' ? 'stream' : 'off';
+  chats.setReasoningMode(id, mode);
+  wsHub.broadcastAll({
+    type: 'chat-updated',
+    chatId: id,
+    reasoningMode: mode,
+    updatedAt: chats.get(id)!.updated_at,
+  });
+  res.json({ id, mode });
+});
+
+chatsRouter.post('/:id/unread', (req, res) => {
+  const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  chats.forceUnread(id);
+  wsHub.broadcastAll({ type: 'chat-unread', chatId: id });
+  res.json({ ok: true });
+});
+
+chatsRouter.post('/:id/delete', async (req, res) => {
+  const id = Number(req.params.id);
+  const chat = chats.get(id);
+  if (chat?.openclaw_session_id?.startsWith('agent:')) {
+    // Tell the gateway too — otherwise the underlying OpenClaw session row
+    // and its transcript on disk linger after the iClaw chat is gone.
+    // Failures here are non-fatal: we still drop the local row and broadcast
+    // the deletion so the UI doesn't get stuck on a gateway hiccup.
+    try {
+      await openclawWs.deleteSession(chat.openclaw_session_id);
+    } catch (err) {
+      console.warn(
+        '[chats] sessions.delete failed for chat',
+        id,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
   chats.remove(id);
   wsHub.broadcastAll({ type: 'chat-deleted', chatId: id });
   res.redirect('/');
@@ -127,4 +300,85 @@ chatsRouter.get('/:id/messages', (req, res) => {
     return;
   }
   res.json(messages.listByChat(id));
+});
+
+// ---------- scheduled messages (Telegram-style "send later") ----------
+
+/** List everything still pending for this chat. Used to hydrate the banner. */
+chatsRouter.get('/:id/scheduled', (req, res) => {
+  const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  res.json({ scheduled: scheduledMessages.listByChat(id) });
+});
+
+/**
+ * Queue a message to fire at a specific UTC instant.
+ *
+ * Body: { content: string, scheduledAt: ISO string }
+ *
+ * The scheduler service picks up rows where `scheduled_at <= datetime('now')`
+ * on every tick and dispatches them through `sendMessage` as if the user had
+ * just hit Send — so persistence, broadcasts, and project-context injection
+ * all behave identically.
+ */
+chatsRouter.post('/:id/scheduled', (req, res) => {
+  const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const content = String(req.body?.content ?? '').trim();
+  if (!content) {
+    res.status(400).json({ error: 'content required' });
+    return;
+  }
+  const rawAt = String(req.body?.scheduledAt ?? '').trim();
+  if (!rawAt) {
+    res.status(400).json({ error: 'scheduledAt required' });
+    return;
+  }
+  const when = new Date(rawAt);
+  if (Number.isNaN(when.getTime())) {
+    res.status(400).json({ error: 'invalid scheduledAt' });
+    return;
+  }
+  // Allow scheduling for "now" or even slightly in the past — the next sweep
+  // will fire it. This also covers clock skew between browser and server.
+  try {
+    const row = scheduledMessages.create({ chatId: id, content, scheduledAt: when });
+    wsHub.broadcastAll({
+      type: 'scheduled-added',
+      chatId: id,
+      scheduled: row,
+    });
+    res.json({ scheduled: row });
+  } catch (err) {
+    res
+      .status(400)
+      .json({ error: err instanceof Error ? err.message : 'failed to schedule' });
+  }
+});
+
+chatsRouter.post('/:id/scheduled/:scheduledId/delete', (req, res) => {
+  const id = Number(req.params.id);
+  const sid = Number(req.params.scheduledId);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const row = scheduledMessages.get(sid);
+  if (!row || row.chat_id !== id) {
+    res.status(404).json({ error: 'scheduled message not found' });
+    return;
+  }
+  scheduledMessages.remove(sid);
+  wsHub.broadcastAll({
+    type: 'scheduled-deleted',
+    chatId: id,
+    scheduledId: sid,
+  });
+  res.json({ ok: true });
 });
