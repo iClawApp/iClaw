@@ -1895,7 +1895,7 @@
       '</div>' +
       '<div class="scheduled-item-text">' + escapeHtml(scheduled.content) + '</div>' +
       '</div>' +
-      '<button type="button" class="scheduled-item-cancel" data-scheduled-id="' +
+      '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-scheduled-id="' +
       scheduled.id + '" aria-label="Скасувати заплановане повідомлення" title="Скасувати">×</button>';
     scheduledListEl.appendChild(row);
     scheduledListEl.classList.remove('is-empty');
@@ -2265,8 +2265,8 @@
       '<pre class="exec-approval-cmd"><code>' + safeCmd + '</code></pre>' +
       cwdLine + reasonLine +
       '<div class="exec-approval-actions">' +
-      '<button type="button" class="exec-approval-btn exec-approval-deny" data-decision="denied">Відхилити</button>' +
-      '<button type="button" class="exec-approval-btn exec-approval-approve" data-decision="approved">Дозволити</button>' +
+      '<button type="button" class="exec-approval-btn exec-approval-deny btn btn--danger btn--sm" data-decision="denied">Відхилити</button>' +
+      '<button type="button" class="exec-approval-btn exec-approval-approve btn btn--approve btn--sm" data-decision="approved">Дозволити</button>' +
       '</div>' +
       '</div>';
     messagesAppendRoot().appendChild(card);

@@ -789,54 +789,12 @@ code {
   text-overflow: ellipsis;
 }
 
-.stop-btn {
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 0.8rem;
-  font-weight: 500;
-  line-height: 1;
-  color: var(--text);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
+/* Chat header buttons — visuals come from the `.btn` primitive in the design
+   system block at the top of this file. The snowflake selectors below remain
+   only as JS hooks (id=stop-btn etc.) and a single hide-when-idle shorthand. */
 .stop-btn[hidden],
 .interrupt-btn[hidden] {
   display: none !important;
-}
-
-/* ---------- Chat header — interrupt / compact / reasoning / model / cost ---------- */
-
-.interrupt-btn,
-.header-secondary-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  font-size: 0.85em;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
-}
-.interrupt-btn:hover,
-.header-secondary-btn:hover {
-  background: color-mix(in srgb, var(--text) 7%, transparent);
-}
-.interrupt-btn:disabled,
-.header-secondary-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.compact-btn {
-  /* alias header-secondary-btn */
 }
 
 .reasoning-toggle {
@@ -851,20 +809,8 @@ code {
   margin: 0;
 }
 
-.cost-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  font-size: 0.8em;
-  background: color-mix(in srgb, var(--accent, var(--text)) 8%, var(--surface));
-  border: 1px solid var(--border);
-  color: var(--muted);
-  border-radius: 999px;
-  white-space: nowrap;
-}
-.cost-chip[hidden] {
-  display: none !important;
-}
+/* Today's cost — `.chip .chip--accent` from the primitive owns the look;
+   .cost-chip remains as a JS hook (#cost-chip getElementById). */
 
 .model-form[hidden] {
   display: none !important;
@@ -933,36 +879,9 @@ code {
   justify-content: flex-end;
   margin-top: 2px;
 }
-.exec-approval-btn {
-  padding: 5px 14px;
-  font-size: 0.88em;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-}
-.exec-approval-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.exec-approval-approve {
-  background: color-mix(in srgb, var(--approve) 20%, var(--surface));
-  border-color: color-mix(in srgb, var(--approve) 45%, var(--border));
-  color: var(--approve-soft-fg);
-  font-weight: 600;
-}
-.exec-approval-approve:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--approve) 32%, var(--surface));
-}
-.exec-approval-deny {
-  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
-  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
-  color: var(--danger);
-}
-.exec-approval-deny:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 20%, var(--surface));
-}
+/* Exec approval buttons are .btn .btn--approve / .btn .btn--danger primitives —
+   no per-class CSS needed. The .exec-approval-* selectors live on for JS hooks
+   (closest('.exec-approval-btn'), querySelectorAll for disabling) only. */
 .exec-approval-trace {
   font-size: 0.85em;
   opacity: 0.7;
@@ -996,23 +915,26 @@ code {
 }
 
 /* ---------- Slash autocomplete menu ---------- */
+/* Could be replaced wholesale by `.menu` / `.menu-item` primitives once we
+   refactor iclaw.js to emit those class names. The position/anchor + the
+   monospace command name are the only deviations from the primitive shape. */
 
 .slash-menu {
   position: absolute;
-  left: 12px;
-  bottom: calc(100% + 8px);
-  z-index: 25;
+  left: var(--space-6);
+  bottom: calc(100% + var(--space-4));
+  z-index: var(--z-popover);
   min-width: 280px;
   max-width: 480px;
   max-height: 280px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  padding: 4px;
+  padding: var(--space-2);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
 }
 .slash-menu[hidden] {
   display: none;
@@ -1022,10 +944,10 @@ code {
   flex-direction: column;
   align-items: flex-start;
   text-align: left;
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font: inherit;
   gap: 1px;
@@ -1036,16 +958,12 @@ code {
 }
 .slash-item-name {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.88em;
+  font-size: var(--text-sm);
   color: var(--text);
 }
 .slash-item-desc {
-  font-size: 0.78em;
+  font-size: var(--text-xs);
   color: var(--muted);
-}
-.stop-btn:hover {
-  color: var(--danger);
-  border-color: var(--danger);
 }
 .stop-btn:disabled { opacity: 0.5; cursor: progress; }
 
@@ -1886,24 +1804,16 @@ code {
   color: var(--text);
   line-height: 1.35;
 }
+/* Cancel × on a scheduled message — `.btn .btn--icon .btn--ghost` from the
+   primitive, plus a danger hover override and a tight 22px size for the
+   compact pending-list row. */
 .scheduled-item-cancel {
-  flex: 0 0 auto;
   width: 22px;
   height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 50%;
+  font-size: var(--text-md);
   color: var(--muted);
-  cursor: pointer;
-  font-size: 1.05em;
-  line-height: 1;
-  padding: 0;
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
-.scheduled-item-cancel:hover {
+.scheduled-item-cancel:hover:not(:disabled) {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 28%, transparent);
   background: color-mix(in srgb, var(--danger) 8%, transparent);
@@ -1913,20 +1823,21 @@ code {
 .composer-field {
   position: relative;
 }
+/* Schedule popover — uses the `.menu` primitive shape but pins to the composer. */
 .schedule-menu {
   position: absolute;
-  right: 6px;
-  bottom: calc(100% + 8px);
-  z-index: 30;
+  right: var(--space-3);
+  bottom: calc(100% + var(--space-4));
+  z-index: var(--z-popover);
   min-width: 220px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px;
+  gap: var(--space-1);
+  padding: var(--space-3);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
   font-size: 0.92em;
 }
 .schedule-menu[hidden] {
@@ -1934,11 +1845,11 @@ code {
 }
 .schedule-menu-item {
   text-align: left;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: none;
   background: transparent;
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font: inherit;
 }
