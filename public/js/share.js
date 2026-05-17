@@ -176,15 +176,23 @@
     if (!res.ok) throw new Error('Could not fetch transcript: HTTP ' + res.status);
     /** @type {Array<{id?:number,role:string,content:string,created_at?:string,reply_to_message_id?:number|null,reply_quote?:string|null,reply_to_role?:string|null}>} */
     const rows = await res.json();
-    return rows.map((m) => ({
-      id: m.id,
-      role: m.role,
-      content: m.content,
-      createdAt: m.created_at || null,
-      replyToMessageId: m.reply_to_message_id ?? null,
-      replyQuote: m.reply_quote ?? null,
-      replyToRole: m.reply_to_role ?? null,
-    }));
+    return rows
+      .filter((m) => {
+        if ((m.role || '').toLowerCase() !== 'system') return true;
+        const c = String(m.content ?? '').trim();
+        // Never ship internal gateway bridge errors in encrypted shares (legacy rows).
+        if (/^Error:\s*gatewayWs/i.test(c)) return false;
+        return true;
+      })
+      .map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        createdAt: m.created_at || null,
+        replyToMessageId: m.reply_to_message_id ?? null,
+        replyQuote: m.reply_quote ?? null,
+        replyToRole: m.reply_to_role ?? null,
+      }));
   }
 
   /* ----------------------------------------- submit ------------------- */
@@ -273,13 +281,19 @@
         const t = await res.text();
         throw new Error('Server rejected the upload: ' + (t || res.status));
       }
-      /** @type {{id:string, url:string, expiresAt:string}} */
+      /** @type {{id:string, url?:string, expiresAt:string}} */
       const data = await res.json();
+      if (!data.id || typeof data.id !== 'string') {
+        throw new Error('Share server response missing id.');
+      }
+      // Build the link from the same origin we POSTed to — do not trust `data.url`
+      // (iClaw-cloud sets that from its own BASE_URL, which may still point at prod).
+      const sharePageUrl = cloudBaseUrl + '/s/' + encodeURIComponent(data.id);
 
       // 5) compose URL (with fragment key only when no password)
       const finalUrl = password
-        ? data.url
-        : data.url + '#k=' + bytesToBase64Url(realKeyBytes);
+        ? sharePageUrl
+        : sharePageUrl + '#k=' + bytesToBase64Url(realKeyBytes);
 
       urlInput.value = finalUrl;
       const expires = new Date(data.expiresAt);

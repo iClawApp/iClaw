@@ -29,6 +29,25 @@ export function normalizeAgentId(label: string | null | undefined): string {
 }
 
 /**
+ * Failures inside the OpenClaw WS bridge — never persist or share; the live
+ * tab still gets `turn-error` with a human message.
+ */
+export function isGatewayBridgeFailure(err: unknown): boolean {
+  const t = (err instanceof Error ? err.message : String(err)).trim();
+  if (!t) return false;
+  if (/gatewayws:/i.test(t) || /^gatewayws\b/i.test(t)) return true;
+  if (/no auth token/i.test(t)) return true;
+  return false;
+}
+
+export function gatewayBridgeFailureUserMessage(): string {
+  return (
+    'Не вдалося з’єднатися зі шлюзом OpenClaw. Перевірте, що шлюз запущений ' +
+    'і токен налаштований, потім спробуйте ще раз.'
+  );
+}
+
+/**
  * Ensure the chat has a real OpenClaw session key (agent:…). Creates one on
  * demand for new or legacy rows. Idempotent.
  */
@@ -498,25 +517,29 @@ export async function sendMessage(opts: {
     );
   } catch (err) {
     const errorText = err instanceof Error ? err.message : String(err);
-    // Persist a system "error" row so F5 / cross-tab still see what happened
-    // — without this an errored turn just shows a user msg with no reply.
-    const errorMsg = messages.append(
-      chatId,
-      'system',
-      `Error: ${errorText}`,
-      null,
-    );
-    wsHub.broadcastToChat(chatId, {
-      type: 'message-appended',
-      chatId,
-      message: errorMsg,
-    });
-    wsHub.broadcastToChat(chatId, {
-      type: 'turn-error',
-      chatId,
-      requestId: opts.requestId,
-      error: errorText,
-    });
+    if (isGatewayBridgeFailure(err)) {
+      wsHub.broadcastToChat(chatId, {
+        type: 'turn-error',
+        chatId,
+        requestId: opts.requestId,
+        error: gatewayBridgeFailureUserMessage(),
+      });
+    } else {
+      // Persist a system "error" row so F5 / cross-tab still see what happened
+      // — without this an errored turn just shows a user msg with no reply.
+      const errorMsg = messages.append(chatId, 'system', `Error: ${errorText}`, null);
+      wsHub.broadcastToChat(chatId, {
+        type: 'message-appended',
+        chatId,
+        message: errorMsg,
+      });
+      wsHub.broadcastToChat(chatId, {
+        type: 'turn-error',
+        chatId,
+        requestId: opts.requestId,
+        error: errorText,
+      });
+    }
     // don't rethrow — we've already broadcast + persisted. Rethrowing only
     // leaks the error up to the WS handler which logs it again.
   }

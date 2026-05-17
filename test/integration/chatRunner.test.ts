@@ -155,6 +155,15 @@ describe('sendMessage — error path', () => {
     expect(errorMsg!.content).toMatch(/Error/);
     expect(findChatBroadcast('turn-error')).toBeDefined();
   });
+
+  it('does not persist gatewayWs bridge failures (share-safe)', async () => {
+    openclawWsMock.runTurn.mockRejectedValueOnce(new Error('gatewayWs: connection failed'));
+    const { chatId } = await sendMessage({ content: 'no row' });
+    expect(messages.listByChat(chatId).some((m) => m.role === 'system')).toBe(false);
+    const row = findChatBroadcast('turn-error') as { msg: { error?: string } } | undefined;
+    expect(row).toBeDefined();
+    expect(String(row!.msg.error ?? '')).not.toMatch(/gatewayWs/i);
+  });
 });
 
 describe('sendMessage — project context injection', () => {
