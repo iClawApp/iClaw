@@ -176,23 +176,15 @@
     if (!res.ok) throw new Error('Could not fetch transcript: HTTP ' + res.status);
     /** @type {Array<{id?:number,role:string,content:string,created_at?:string,reply_to_message_id?:number|null,reply_quote?:string|null,reply_to_role?:string|null}>} */
     const rows = await res.json();
-    return rows
-      .filter((m) => {
-        if ((m.role || '').toLowerCase() !== 'system') return true;
-        const c = String(m.content ?? '').trim();
-        // Never ship internal gateway bridge errors in encrypted shares (legacy rows).
-        if (/^Error:\s*gatewayWs/i.test(c)) return false;
-        return true;
-      })
-      .map((m) => ({
-        id: m.id,
-        role: m.role,
-        content: m.content,
-        createdAt: m.created_at || null,
-        replyToMessageId: m.reply_to_message_id ?? null,
-        replyQuote: m.reply_quote ?? null,
-        replyToRole: m.reply_to_role ?? null,
-      }));
+    return rows.map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      createdAt: m.created_at || null,
+      replyToMessageId: m.reply_to_message_id ?? null,
+      replyQuote: m.reply_quote ?? null,
+      replyToRole: m.reply_to_role ?? null,
+    }));
   }
 
   /* ----------------------------------------- submit ------------------- */
