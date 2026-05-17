@@ -455,20 +455,20 @@ code {
 
 .sidebar-top {
   flex: 0 0 auto;
-  padding: 10px 12px 12px;
+  padding: 10px 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-  background: color-mix(in srgb, var(--sidebar-elevated) 35%, var(--sidebar-bg));
+  gap: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  background: transparent;
 }
 
 .sidebar-toolbar {
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  gap: 8px;
-  min-height: 40px;
+  gap: 6px;
+  min-height: 38px;
 }
 
 .sidebar-search-slot {
@@ -490,17 +490,17 @@ code {
 
 .sidebar-search-toggle {
   flex: 0 0 auto;
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
   margin: 0;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--border) 88%, var(--sidebar-bg));
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--sidebar-bg));
   border-radius: 10px;
-  background: var(--sidebar-elevated);
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
   transition:
@@ -511,8 +511,8 @@ code {
 }
 .sidebar-search-toggle:hover {
   color: var(--text);
-  background: color-mix(in srgb, var(--hover) 70%, var(--sidebar-elevated));
-  border-color: color-mix(in srgb, var(--border) 100%, var(--sidebar-bg));
+  background: color-mix(in srgb, var(--hover) 55%, transparent);
+  border-color: color-mix(in srgb, var(--border) 90%, var(--sidebar-bg));
 }
 .sidebar-search-toggle:focus-visible {
   outline: none;
@@ -582,9 +582,9 @@ code {
   align-self: stretch;
   margin: 0;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--border) 88%, var(--sidebar-bg));
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--sidebar-bg));
   border-radius: 10px;
-  background: var(--sidebar-elevated);
+  background: transparent;
   color: var(--muted);
   font-size: 1.25rem;
   line-height: 1;
@@ -596,7 +596,7 @@ code {
 }
 .sidebar-search-close:hover {
   color: var(--text);
-  background: color-mix(in srgb, var(--hover) 65%, var(--sidebar-elevated));
+  background: color-mix(in srgb, var(--hover) 55%, transparent);
 }
 .sidebar-search-close:focus-visible {
   outline: none;
@@ -617,10 +617,10 @@ code {
   gap: 6px;
   flex: 1;
   min-width: 0;
-  padding: 10px 12px;
-  background: color-mix(in srgb, var(--btn-bg) 92%, var(--sidebar-bg));
-  color: var(--btn-fg);
-  border: none;
+  padding: 9px 12px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--sidebar-bg));
   border-radius: 10px;
   cursor: pointer;
   font-weight: 600;
@@ -628,19 +628,14 @@ code {
   text-decoration: none;
   font-size: 0.8125rem;
   letter-spacing: -0.01em;
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
-  transition: background 0.15s ease, transform 0.08s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.12s ease, transform 0.08s ease;
 }
 .new-chat-btn:hover {
-  background: var(--btn-bg-hover);
-  box-shadow: 0 2px 6px color-mix(in srgb, var(--text) 10%, transparent);
+  background: color-mix(in srgb, var(--hover) 55%, transparent);
+  border-color: color-mix(in srgb, var(--border) 90%, var(--sidebar-bg));
 }
 .new-chat-btn:active {
   transform: scale(0.99);
-}
-.new-chat-btn.active {
-  background: color-mix(in srgb, var(--btn-bg) 78%, var(--sidebar-bg));
-  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text) 12%, transparent);
 }
 
 .draft-header { gap: 12px; }
@@ -750,9 +745,9 @@ code {
 .chat-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 92%, var(--chat-pane-bg));
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, var(--chat-pane-bg));
   background: var(--header-surface);
 }
 
@@ -779,14 +774,21 @@ code {
 
 .agent-form { margin: 0; }
 .agent-form select {
-  font-size: 0.8rem;
-  padding: 6px 10px;
+  height: 32px;
+  font-size: 0.78rem;
+  padding: 0 28px 0 10px;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--header-surface));
+  background: transparent;
+  color: var(--text);
   cursor: pointer;
   max-width: 200px;
   text-overflow: ellipsis;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.agent-form select:hover {
+  background: color-mix(in srgb, var(--hover) 50%, transparent);
+  border-color: color-mix(in srgb, var(--border) 95%, var(--header-surface));
 }
 
 /* Chat header buttons — visuals come from the `.btn` primitive in the design
@@ -796,16 +798,40 @@ code {
   display: none !important;
 }
 
+/* All header controls (selects, toggles, buttons) standardise on 32px height
+   + 10px radius so the row reads as one consistent strip of pills. */
+.chat-header .btn--sm {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 10px;
+}
+
 .reasoning-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.85em;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--header-surface));
+  background: transparent;
   cursor: pointer;
   user-select: none;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.12s ease;
+}
+.reasoning-toggle:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--hover) 50%, transparent);
+  border-color: color-mix(in srgb, var(--border) 95%, var(--header-surface));
 }
 .reasoning-toggle input[type="checkbox"] {
   margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--md-link);
+  cursor: pointer;
 }
 
 /* Today's cost — `.chip .chip--accent` from the primitive owns the look;
@@ -964,17 +990,25 @@ code {
 
 .delete-form { margin: 0; }
 .delete-form button {
-  width: 34px;
-  height: 34px;
-  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--header-surface));
+  background: transparent;
   border-radius: 10px;
   cursor: pointer;
-  font-size: 1.15em;
+  font-size: 1.1em;
   line-height: 1;
   color: var(--muted);
+  transition: background 0.15s ease, color 0.12s ease, border-color 0.15s ease;
 }
-.delete-form button:hover { color: var(--danger); border-color: var(--danger); }
+.delete-form button:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
 
 .gateway {
   font-size: 0.72rem;
@@ -1951,9 +1985,9 @@ code {
   align-items: center;
   justify-content: center;
   width: 100%;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--border) 78%, var(--sidebar-bg));
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--sidebar-bg));
   background: transparent;
   color: var(--text);
   font-weight: 600;
@@ -1961,19 +1995,12 @@ code {
   letter-spacing: -0.01em;
   text-decoration: none;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.12s ease;
 }
 
 .sidebar-projects-btn:hover {
-  background: color-mix(in srgb, var(--hover) 65%, var(--sidebar-bg));
-  border-color: color-mix(in srgb, var(--border) 100%, var(--sidebar-bg));
-}
-
-.sidebar-projects-btn.active {
-  background: color-mix(in srgb, var(--btn-bg) 78%, var(--sidebar-bg));
-  border-color: color-mix(in srgb, var(--btn-bg) 55%, var(--sidebar-bg));
-  color: var(--btn-fg);
-  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text) 10%, transparent);
+  background: color-mix(in srgb, var(--hover) 55%, transparent);
+  border-color: color-mix(in srgb, var(--border) 90%, var(--sidebar-bg));
 }
 
 /* ---------- Projects hub (/projects) ---------- */
@@ -2384,27 +2411,40 @@ code {
 
 .header-field {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
   margin: 0;
 }
 .header-field-label {
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  padding-left: 2px;
+  /* Accessible name is on the control via aria-label; the tiny uppercase
+   * label above each select crowded the header. Kept in DOM for screen
+   * readers but hidden visually. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 .header-field select {
+  height: 32px;
   font-size: 0.78rem;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  padding: 0 28px 0 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--header-surface));
+  background: transparent;
+  color: var(--text);
   cursor: pointer;
   max-width: 11rem;
   text-overflow: ellipsis;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.header-field select:hover {
+  background: color-mix(in srgb, var(--hover) 50%, transparent);
+  border-color: color-mix(in srgb, var(--border) 95%, var(--header-surface));
 }
 
 .share-form {
@@ -2414,18 +2454,21 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  height: 32px;
+  padding: 0 10px;
   font-size: 0.78rem;
   color: var(--muted);
   cursor: pointer;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--header-surface));
+  background: transparent;
   user-select: none;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.12s ease;
 }
 .share-toggle:hover {
-  border-color: color-mix(in srgb, var(--text) 12%, var(--border));
   color: var(--text);
+  background: color-mix(in srgb, var(--hover) 50%, transparent);
+  border-color: color-mix(in srgb, var(--border) 95%, var(--header-surface));
 }
 .share-toggle input {
   width: 14px;
