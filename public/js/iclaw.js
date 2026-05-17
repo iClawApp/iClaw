@@ -88,6 +88,8 @@
   /** the assistant DOM node we're streaming into right now */
   let currentStreamEl = null;
   let currentStreamFullText = '';
+  /** Debounce hljs while `turn-delta` re-renders markdown (innerHTML each chunk). */
+  let streamSyntaxHlTimer = null;
 
   /** Single-character ellipsis used in tool / lifecycle labels (`Running command…`). */
   const STATUS_UNICODE_ELLIPSIS = '\u2026';
@@ -303,9 +305,53 @@
     });
   }
 
-  function decorateMessageBody(root) {
+  function clearStreamSyntaxHighlightSchedule() {
+    if (streamSyntaxHlTimer != null) {
+      clearTimeout(streamSyntaxHlTimer);
+      streamSyntaxHlTimer = null;
+    }
+  }
+
+  function scheduleStreamSyntaxHighlight(root) {
+    clearStreamSyntaxHighlightSchedule();
+    streamSyntaxHlTimer = setTimeout(() => {
+      streamSyntaxHlTimer = null;
+      if (root && document.contains(root)) highlightCodeBlocks(root);
+    }, 280);
+  }
+
+  /** Apply highlight.js to fenced blocks (after marked + copy-wrap). Safe no-op if hljs not loaded. */
+  function highlightCodeBlocks(root) {
+    const hl = window.hljs;
+    if (!root || root.nodeType !== 1 || !hl || typeof hl.highlightElement !== 'function') return;
+    root.querySelectorAll(
+      '.msg-body pre code, .stream-body pre code, .reasoning-body pre code',
+    ).forEach((code) => {
+      const pre = code.parentElement;
+      if (!pre || pre.tagName !== 'PRE') return;
+      if (pre.closest('.exec-approval-card')) return;
+      if (code.classList.contains('hljs')) return;
+      try {
+        hl.highlightElement(code);
+      } catch (_) {
+        /* unknown language / empty */
+      }
+    });
+  }
+
+  /**
+   * @param {Element} root
+   * @param {{ deferSyntaxHighlight?: boolean }} [opts] — set during streaming deltas to avoid hljs on every token.
+   */
+  function decorateMessageBody(root, opts) {
     decorateLinks(root);
     enhanceCodeBlocks(root);
+    if (opts && opts.deferSyntaxHighlight) {
+      scheduleStreamSyntaxHighlight(root);
+      return;
+    }
+    clearStreamSyntaxHighlightSchedule();
+    highlightCodeBlocks(root);
   }
 
   // -------------------------------------------------------------------------
@@ -401,8 +447,123 @@
     const row = messagesEl.querySelector('.fact-suggestion-row[data-suggestion-id="' + sid + '"]');
     if (!row) return;
     const card = row.closest('.fact-suggestions-card');
+    cancelFactSuggestionRowExpiry(row);
     row.remove();
     if (card && !card.querySelector('.fact-suggestion-row')) card.remove();
+  }
+
+  const FACT_SUGGESTION_AUTO_REJECT_MS = 15_000;
+  const FACT_REJECT_COUNTDOWN_RING_SVG =
+    '<svg class="fact-reject-countdown-ring" aria-hidden="true" viewBox="0 0 36 36">' +
+    '<circle cx="18" cy="18" r="14" fill="none" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-dasharray="87.965 87.965" stroke-dashoffset="0"/>' +
+    '</svg>';
+
+  /** @type {HTMLElement[]} */
+  const factSuggestionExpiryQueue = [];
+  let processingFactSuggestionExpiry = false;
+
+  function buildFactSuggestionRowHtml(s) {
+    const id = Number(s.id);
+    if (!Number.isFinite(id)) return '';
+    return (
+      '<li class="fact-suggestion-row" data-suggestion-id="' +
+      id +
+      '" role="listitem">' +
+      '<p class="fact-suggestion-text">' +
+      escapeHtml(s.content || '') +
+      '</p>' +
+      '<div class="fact-suggestion-actions">' +
+      '<button type="button" class="fact-suggestion-btn fact-suggestion-reject" data-suggestion-id="' +
+      id +
+      '" aria-label="Пропустити">' +
+      FACT_REJECT_COUNTDOWN_RING_SVG +
+      '<span class="fact-suggestion-btn-glyph" aria-hidden="true">✕</span>' +
+      '</button>' +
+      '<button type="button" class="fact-suggestion-btn fact-suggestion-accept" data-suggestion-id="' +
+      id +
+      '" aria-label="Зберегти в проєкт">' +
+      '<span class="fact-suggestion-btn-glyph" aria-hidden="true">✓</span>' +
+      '</button>' +
+      '</div></li>'
+    );
+  }
+
+  function cancelFactSuggestionRowExpiry(row) {
+    if (!row) return;
+    if (typeof row._factExpiryClear === 'function') {
+      row._factExpiryClear();
+      return;
+    }
+    const i = factSuggestionExpiryQueue.indexOf(row);
+    if (i >= 0) factSuggestionExpiryQueue.splice(i, 1);
+  }
+
+  function enqueueFactSuggestionExpiryRows(rows) {
+    if (!rows || !rows.length) return;
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      if (row && row.nodeType === 1) factSuggestionExpiryQueue.push(row);
+    }
+    void processFactSuggestionExpiryQueue();
+  }
+
+  function runSingleFactRejectExpiry(row, btn) {
+    return new Promise((resolve) => {
+      const sid = Number(btn.dataset.suggestionId);
+      const cid = activeChatId;
+      let t = null;
+      btn.classList.add('fact-suggestion-reject--expiring');
+      row._factExpiryClear = () => {
+        if (t != null) clearTimeout(t);
+        t = null;
+        btn.classList.remove('fact-suggestion-reject--expiring');
+        delete row._factExpiryClear;
+        resolve();
+      };
+      t = setTimeout(() => {
+        t = null;
+        delete row._factExpiryClear;
+        btn.classList.remove('fact-suggestion-reject--expiring');
+        if (document.contains(row) && Number.isFinite(sid) && cid != null) {
+          fetch(
+            '/chats/' +
+              encodeURIComponent(cid) +
+              '/fact-suggestions/' +
+              encodeURIComponent(sid) +
+              '/reject',
+            { method: 'POST', headers: { Accept: 'application/json' } },
+          ).then((res) => {
+            if (res.ok) removeFactSuggestionRow(cid, sid);
+          });
+        }
+        resolve();
+      }, FACT_SUGGESTION_AUTO_REJECT_MS);
+    });
+  }
+
+  async function processFactSuggestionExpiryQueue() {
+    if (processingFactSuggestionExpiry) return;
+    processingFactSuggestionExpiry = true;
+    try {
+      while (factSuggestionExpiryQueue.length > 0) {
+        const row = factSuggestionExpiryQueue[0];
+        if (!row || !document.contains(row)) {
+          factSuggestionExpiryQueue.shift();
+          continue;
+        }
+        const btn = row.querySelector('.fact-suggestion-reject');
+        if (!btn) {
+          factSuggestionExpiryQueue.shift();
+          continue;
+        }
+        await runSingleFactRejectExpiry(row, btn);
+        factSuggestionExpiryQueue.shift();
+      }
+    } finally {
+      processingFactSuggestionExpiry = false;
+      if (factSuggestionExpiryQueue.length > 0) void processFactSuggestionExpiryQueue();
+    }
   }
 
   function appendFactSuggestionsCard(opts) {
@@ -411,44 +572,50 @@
     if (!suggestions || suggestions.length === 0) return;
     clearEmptyState();
     const safeName = escapeHtml((projectName || '').trim() || 'проєкт');
+    const rowsHtml = suggestions.map(buildFactSuggestionRowHtml).filter(Boolean).join('');
+    if (!rowsHtml) return;
+
+    const pidEsc = String(projectId);
+    const cidEsc = String(chatId);
+    const existing = messagesEl.querySelector(
+      '.fact-suggestions-card[data-project-id="' + pidEsc + '"][data-chat-id="' + cidEsc + '"]',
+    );
+    if (existing) {
+      const ul = existing.querySelector('.fact-suggestions-list');
+      if (!ul) return;
+      const tpl = document.createElement('template');
+      tpl.innerHTML = rowsHtml.trim();
+      const added = [];
+      tpl.content.childNodes.forEach((n) => {
+        if (n.nodeType !== 1) return;
+        const el = /** @type {HTMLElement} */ (n);
+        const sid = el.dataset.suggestionId;
+        if (!sid || ul.querySelector('.fact-suggestion-row[data-suggestion-id="' + sid + '"]')) return;
+        ul.appendChild(el);
+        added.push(el);
+      });
+      scrollToBottom();
+      enqueueFactSuggestionExpiryRows(added);
+      return;
+    }
+
     const card = document.createElement('div');
     card.className = 'msg system fact-suggestions-card';
-    card.dataset.projectId = String(projectId);
-    card.dataset.chatId = String(chatId);
-    const rows = suggestions
-      .map(
-        (s) =>
-          '<li class="fact-suggestion-row" data-suggestion-id="' +
-          s.id +
-          '" role="listitem">' +
-          '<p class="fact-suggestion-text">' +
-          escapeHtml(s.content) +
-          '</p>' +
-          '<div class="fact-suggestion-actions">' +
-          '<button type="button" class="fact-suggestion-btn fact-suggestion-reject" data-suggestion-id="' +
-          s.id +
-          '" aria-label="Пропустити">' +
-          '<span class="fact-suggestion-btn-glyph" aria-hidden="true">✕</span>' +
-          '</button>' +
-          '<button type="button" class="fact-suggestion-btn fact-suggestion-accept" data-suggestion-id="' +
-          s.id +
-          '" aria-label="Зберегти в проєкт">' +
-          '<span class="fact-suggestion-btn-glyph" aria-hidden="true">✓</span>' +
-          '</button>' +
-          '</div></li>',
-      )
-      .join('');
+    card.dataset.projectId = pidEsc;
+    card.dataset.chatId = cidEsc;
     card.innerHTML =
       '<div class="fact-suggestions-shell">' +
       '<p class="fact-suggestions-lead">Зберегти в памʼять «' +
       safeName +
       '»?</p>' +
       '<ul class="fact-suggestions-list" role="list">' +
-      rows +
+      rowsHtml +
       '</ul>' +
       '</div>';
     messagesAppendRoot().appendChild(card);
     scrollToBottom();
+    const addedRows = Array.from(card.querySelectorAll('.fact-suggestion-row'));
+    enqueueFactSuggestionExpiryRows(addedRows);
   }
 
   async function loadPendingFactSuggestions() {
@@ -539,6 +706,8 @@
       const acc = e.target.closest('.fact-suggestion-accept');
       const rej = e.target.closest('.fact-suggestion-reject');
       if (acc || rej) {
+        const row = (acc || rej).closest('.fact-suggestion-row');
+        cancelFactSuggestionRowExpiry(row);
         const sid = Number((acc || rej).dataset.suggestionId);
         if (!Number.isFinite(sid) || activeChatId == null) return;
         e.preventDefault();
@@ -1216,7 +1385,7 @@
         const body = el.querySelector('.stream-body, .msg-body');
         if (body) {
           body.innerHTML = renderMarkdown(currentStreamFullText);
-          decorateMessageBody(body);
+          decorateMessageBody(body, { deferSyntaxHighlight: true });
         }
         scrollToBottom();
         return;
@@ -1320,7 +1489,7 @@
       case 'project-fact-suggestions': {
         if (msg.chatId !== activeChatId) return;
         const have = existingFactSuggestionIds();
-        const fresh = (msg.suggestions || []).filter((s) => s && !have.has(s.id));
+        const fresh = (msg.suggestions || []).filter((s) => s && !have.has(Number(s.id)));
         if (fresh.length === 0) return;
         appendFactSuggestionsCard({
           projectId: msg.projectId,

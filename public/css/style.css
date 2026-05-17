@@ -958,6 +958,16 @@ code {
   font-style: normal;
   font-weight: 600;
 }
+/* Tool labels like “Running command…” already read as actionable; skip the
+   underline so they don’t look like hyperlinks. */
+.msg.assistant.stream-tool .stream-status.has-detail {
+  text-decoration: none;
+  text-underline-offset: unset;
+  text-decoration-thickness: unset;
+}
+.msg.assistant.stream-tool .stream-status.has-detail:hover {
+  text-decoration: none;
+}
 /* When the agent gave a detail (e.g. specific command summary), the status
    becomes interactable: hover reveals the OS-native tooltip, click toggles
    the inline-expanded text. */
@@ -1091,6 +1101,7 @@ code {
 }
 
 .fact-suggestion-btn {
+  position: relative;
   width: 30px;
   height: 30px;
   padding: 0;
@@ -1109,10 +1120,43 @@ code {
 }
 
 .fact-suggestion-btn-glyph {
+  position: relative;
+  z-index: 1;
   font-size: 0.8rem;
   font-weight: 700;
   line-height: 1;
   display: block;
+}
+
+/* Auto-reject countdown on ✕: ring shrinks over 15s, then the row is rejected. */
+.fact-reject-countdown-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0;
+  transform: rotate(-90deg);
+}
+.fact-suggestion-reject--expiring .fact-reject-countdown-ring {
+  opacity: 1;
+}
+.fact-reject-countdown-ring circle {
+  fill: none;
+  stroke: color-mix(in srgb, var(--muted) 78%, var(--border));
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 87.965 87.965;
+  stroke-dashoffset: 0;
+}
+.fact-suggestion-reject--expiring .fact-reject-countdown-ring circle {
+  /* Keep in sync with FACT_SUGGESTION_AUTO_REJECT_MS in public/js/iclaw.js */
+  animation: fact-reject-ring-shrink 15000ms linear forwards;
+}
+@keyframes fact-reject-ring-shrink {
+  to {
+    stroke-dashoffset: 87.965;
+  }
 }
 
 .fact-suggestion-accept,
