@@ -41,7 +41,6 @@
   const urlInput = $('#share-url');
   const copyBtn = $('#share-copy');
   const pwReminder = $('#share-pw-reminder');
-  const newBtn = $('#share-new');
   const doneBtn = $('#share-done');
 
   /* ----------------------------------------- helpers ----------------- */
@@ -78,7 +77,6 @@
   closeBtn.addEventListener('click', closeModal);
   cancelBtn.addEventListener('click', closeModal);
   doneBtn.addEventListener('click', closeModal);
-  newBtn.addEventListener('click', showFormView);
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeModal();
   });

@@ -22,15 +22,14 @@
     <div id="share-form-view">
       <h2 id="share-modal-title" class="share-modal-title">Share chat</h2>
       <p id="share-modal-help" class="muted share-modal-help">
-        The chat is encrypted in your browser with AES-256-GCM. The server
-        stores only ciphertext — the key lives in the URL fragment (after
-        <code>#</code>) and never reaches us. Add a password for an extra
-        layer the URL alone can't unlock.
+        We encrypt the chat in your browser before upload<br /><br />
+        The key stays in the <code>#</code> part of the link — not on our servers<br /><br />
+        Add a password if the link alone shouldn't be enough to open it
       </p>
 
       <form id="share-form" class="share-form" onsubmit="return false">
         <label class="share-field">
-          <span class="share-field-label">Expires in</span>
+          <span class="share-field-label">Deleted from server after</span>
           <select id="share-ttl">
             <option value="1">1 day</option>
             <option value="3">3 days</option>
@@ -83,7 +82,6 @@
       </div>
 
       <div class="share-actions">
-        <button type="button" class="btn btn--ghost" id="share-new">New share</button>
         <button type="button" class="btn btn--primary" id="share-done">Done</button>
       </div>
     </div>
