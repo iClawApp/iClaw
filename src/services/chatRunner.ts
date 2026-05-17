@@ -71,6 +71,37 @@ async function canonicalAssistantText(sessionKey: string, limit = 20): Promise<s
   return '';
 }
 
+/**
+ * When OpenClaw is configured with `visibleReplies: "message_tool"`, the
+ * agent's freeform output and the `tools.message.send` payload get merged
+ * by the gateway into a single assistant row. The freeform half is the
+ * agent's own narration about what it sent — looks like
+ * "Надіслав у чат рекомендацію..." / "Sent X in chat." / "Отправил..." —
+ * and clutters the user-visible reply.
+ *
+ * This heuristic strips that opening narration when:
+ *   - the FIRST paragraph matches the self-action verb pattern, AND
+ *   - there is substantive (≥ 50 chars) content after it.
+ *
+ * Conservative: if removing the preamble would leave less than 50 chars,
+ * we keep the text unchanged. We won't accidentally swallow a short reply
+ * whose first sentence happens to start with "Sent…".
+ */
+// JS regex `\b` is ASCII-only, so it doesn't fire for Cyrillic verbs. We use
+// a lookahead onto a non-letter character (space / period) instead, with the
+// `/u` flag so the Cyrillic part of the alternation matches reliably.
+const SELF_ACTION_PREAMBLE_RE =
+  /^(?:Надіслав(?:ши)?|Відправ(?:ив|лено)|I sent|I've sent|Sent|Send|Отправил|Послал|Posted)(?=[^\p{L}])[^\n]{0,200}\.\s*\n\s*\n/iu;
+const MIN_KEEP_CHARS = 50;
+
+export function stripAgentSelfActionPreamble(text: string): string {
+  if (!text) return text;
+  const m = text.match(SELF_ACTION_PREAMBLE_RE);
+  if (!m) return text;
+  const stripped = text.slice(m[0].length).trimStart();
+  return stripped.length >= MIN_KEEP_CHARS ? stripped : text;
+}
+
 /** Rewrite OpenClaw's `/api/chat/media/*` URL into our `/media/*` proxy. */
 function rewriteMediaUrl(url: string): string {
   if (!url) return url;
@@ -249,12 +280,18 @@ async function runTurnLocked(opts: {
   // it — no race. gatewayAccumulated stays as a fallback for cases where
   // history fetch fails, and our own streaming buffer is the last resort.
   const canonicalText = await canonicalAssistantText(sessionKey).catch(() => null);
-  const finalText =
+  const rawFinalText =
     canonicalText && canonicalText.trim().length > 0
       ? canonicalText
       : gatewayAccumulated.trim().length > 0
         ? gatewayAccumulated
         : assistantText;
+
+  // Strip the "Надіслав у чат…" / "Sent in chat…" self-narration preamble
+  // that OpenClaw emits when `agents.defaults.visibleReplies` is set to
+  // "message_tool". Conservative — only fires when there's a real reply
+  // after the preamble (see stripAgentSelfActionPreamble for details).
+  const finalText = stripAgentSelfActionPreamble(rawFinalText);
 
   // Persist the assistant message + broadcast.
   const assistantMsg = messages.append(chatId, 'assistant', finalText, null);

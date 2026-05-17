@@ -3142,19 +3142,3 @@ code {
   line-height: 1.4;
 }
 .share-pw-reminder[hidden] { display: none !important; }
-
-.share-revoke-block {
-  margin: var(--space-7) 0 0;
-  padding: var(--space-5) var(--space-6);
-  background: color-mix(in srgb, var(--text) 3%, transparent);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-}
-.share-revoke-block summary {
-  cursor: pointer;
-  color: var(--muted);
-  user-select: none;
-}
-.share-revoke-block summary:hover { color: var(--text); }
-.share-revoke-block p { margin: var(--space-3) 0; }

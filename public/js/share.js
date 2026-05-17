@@ -8,8 +8,7 @@
  *   3. If a password is set: derive a wrap-key with PBKDF2-SHA256 (200 000
  *      iterations) and wrap the real AES key with AES-GCM. The fragment key
  *      in the URL is NOT used in that case — only the password unlocks.
- *   4. POST ciphertext + metadata to iClaw-cloud → receive {id, deleteToken,
- *      expiresAt}.
+ *   4. POST ciphertext + metadata to iClaw-cloud → receive {id, url, expiresAt}.
  *   5. Show the URL (with `#k=<base64url(key)>` if no password).
  *
  * No part of this flow lets the share server see plaintext or keys.
@@ -42,14 +41,8 @@
   const urlInput = $('#share-url');
   const copyBtn = $('#share-copy');
   const pwReminder = $('#share-pw-reminder');
-  const deleteTokenInput = $('#share-delete-token');
-  const revokeBtn = $('#share-revoke');
-  const revokeStatus = $('#share-revoke-status');
   const newBtn = $('#share-new');
   const doneBtn = $('#share-done');
-
-  /** @type {{id:string, deleteToken:string} | null} */
-  let lastShare = null;
 
   /* ----------------------------------------- helpers ----------------- */
 
@@ -71,7 +64,6 @@
   function showFormView() {
     formView.hidden = false;
     resultView.hidden = true;
-    lastShare = null;
   }
   function showResultView() {
     formView.hidden = true;
@@ -244,9 +236,8 @@
         const t = await res.text();
         throw new Error('Server rejected the upload: ' + (t || res.status));
       }
-      /** @type {{id:string, url:string, deleteToken:string, expiresAt:string}} */
+      /** @type {{id:string, url:string, expiresAt:string}} */
       const data = await res.json();
-      lastShare = { id: data.id, deleteToken: data.deleteToken };
 
       // 5) compose URL (with fragment key only when no password)
       const finalUrl = password
@@ -254,7 +245,6 @@
         : data.url + '#k=' + bytesToBase64Url(realKeyBytes);
 
       urlInput.value = finalUrl;
-      deleteTokenInput.value = data.deleteToken;
       const expires = new Date(data.expiresAt);
       const parts = [
         'expires ' + expires.toLocaleString(),
@@ -274,7 +264,7 @@
     }
   });
 
-  /* ----------------------------------------- copy + revoke ------------ */
+  /* ----------------------------------------- copy --------------------- */
 
   copyBtn.addEventListener('click', async () => {
     if (!urlInput.value) return;
@@ -289,30 +279,6 @@
       }, 1500);
     } catch {
       urlInput.select();
-    }
-  });
-
-  revokeBtn.addEventListener('click', async () => {
-    if (!lastShare) return;
-    revokeStatus.hidden = true;
-    revokeBtn.disabled = true;
-    try {
-      const res = await fetch(
-        cloudBaseUrl + '/api/shares/' + encodeURIComponent(lastShare.id),
-        {
-          method: 'DELETE',
-          headers: { 'x-delete-token': lastShare.deleteToken },
-        },
-      );
-      revokeStatus.hidden = false;
-      revokeStatus.textContent = res.ok
-        ? 'Share revoked. Anyone with the URL will see a 404 now.'
-        : 'Could not revoke: HTTP ' + res.status;
-    } catch (err) {
-      revokeStatus.hidden = false;
-      revokeStatus.textContent = 'Network error: ' + (err && err.message ? err.message : err);
-    } finally {
-      // Leave button disabled — share is gone.
     }
   });
 })();
