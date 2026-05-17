@@ -1789,7 +1789,34 @@
     }
   }
 
-  if (form) {
+  /**
+   * Shift+Enter on a line like "1. …" at end-of-line inserts "\n2. " (keeps indent).
+   * Plain Enter still submits the composer.
+   * @param {HTMLTextAreaElement} ta
+   */
+  function maybeContinueOrderedList(ta) {
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (start !== end) return false;
+    const text = ta.value;
+    const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+    const nextNl = text.indexOf('\n', start);
+    const atLineEnd = nextNl === -1 ? start === text.length : start === nextNl;
+    if (!atLineEnd) return false;
+    const lineText = text.slice(lineStart, start);
+    const m = /^(\s*)(\d+)\.\s*(.*)$/.exec(lineText);
+    if (!m) return false;
+    const n = parseInt(m[2], 10);
+    if (!Number.isFinite(n) || n < 1 || n > 999) return false;
+    const indent = m[1];
+    const insert = '\n' + indent + (n + 1) + '. ';
+    ta.value = text.slice(0, start) + insert + text.slice(start);
+    const pos = start + insert.length;
+    ta.setSelectionRange(pos, pos);
+    return true;
+  }
+
+  if (form && input) {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       if (startedOnDraft && !draftProjectLocked) return;
@@ -1807,10 +1834,15 @@
       flushNextQueued();
     });
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        form.requestSubmit();
+      if (e.key !== 'Enter' || e.isComposing) return;
+      if (e.shiftKey) {
+        if (maybeContinueOrderedList(input)) {
+          e.preventDefault();
+        }
+        return;
       }
+      e.preventDefault();
+      form.requestSubmit();
     });
     if (!startedOnDraft || draftProjectLocked) input.focus();
   }

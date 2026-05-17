@@ -126,7 +126,7 @@ This module also re-fires `sessions.subscribe` on every `gatewayWs.onReconnect` 
 
 ### Cloud share (`public/js/share.js` + `ICLAW_CLOUD_URL`)
 
-Optional companion to [iClaw-cloud](https://github.com/tmlxrd/iClaw-cloud). When `ICLAW_CLOUD_URL` is set, the chat header shows a **Share** button that opens a modal driven by `public/js/share.js`. The whole crypto flow runs in the browser:
+Companion to [iClaw-cloud](https://github.com/tmlxrd/iClaw-cloud). `loadCloudShareBaseUrl()` in `src/services/config.ts` supplies the POST target. **When `ICLAW_CLOUD_URL` is unset**, it defaults to `https://app.iclaw.digital`. Set to `0`, `false`, `off`, `no`, or `disabled` (case-insensitive) to hide the **Share** button. The modal is driven by `public/js/share.js`; crypto runs in the browser:
 
 1. `fetch('/chats/:id/messages')` to get the canonical transcript.
 2. JSON.stringify → gzip via `CompressionStream` → AES-256-GCM with a random 256-bit key + 96-bit nonce.

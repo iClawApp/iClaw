@@ -18,7 +18,7 @@ Optional env vars: [.env.example](.env.example). Notes for AI agents on this rep
 
 ## Encrypted chat sharing (optional)
 
-Set `ICLAW_CLOUD_URL` to a running [iClaw-cloud](https://github.com/tmlxrd/iClaw-cloud) instance and a **Share** button appears in the chat header. The chat is encrypted in your browser (AES-256-GCM + optional PBKDF2 password); the share server stores ciphertext only and the symmetric key lives in the URL fragment. TTL 1/3/7/30 days, optional burn-after-read, optional password.
+Set `ICLAW_CLOUD_URL` to your [iClaw-cloud](https://github.com/tmlxrd/iClaw-cloud) origin, or leave it unset to use the default `https://app.iclaw.digital`. Set to `false`, `0`, `off`, or `disabled` to hide **Share**. The chat is encrypted in your browser (AES-256-GCM + optional PBKDF2 password); the share server stores ciphertext only and the symmetric key lives in the URL fragment. TTL 1/3/7/30 days, optional burn-after-read, optional password.
 
 ## Contributing
 

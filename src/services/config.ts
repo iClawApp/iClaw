@@ -32,14 +32,16 @@ function readHomeConfig(): { token: string; port?: number } | null {
 }
 
 /**
- * Optional iClaw-cloud (encrypted share server) base URL. Empty / missing
- * means the share feature stays hidden in the UI. The browser talks to this
- * URL directly — iClaw itself never relays share traffic.
+ * iClaw-cloud base URL for end-to-end chat sharing. When unset, defaults to
+ * the public iClaw-cloud host. Set to 0, false, off, no, or disabled (case
+ * insensitive) to hide the Share button. The browser POSTs ciphertext here
+ * directly — iClaw never relays share traffic.
  */
 export function loadCloudShareBaseUrl(): string {
   const raw = (process.env.ICLAW_CLOUD_URL ?? '').trim();
-  if (!raw) return '';
-  return raw.replace(/\/+$/, '');
+  if (/^(0|false|off|no|disabled)$/i.test(raw)) return '';
+  const base = (raw || 'https://app.iclaw.digital').replace(/\/+$/, '');
+  return base;
 }
 
 export function loadOpenClawConfig(): OpenClawConfig {
