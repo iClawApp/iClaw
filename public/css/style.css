@@ -3022,3 +3022,139 @@ code {
   border: none;
 }
 
+
+/* ============================================================================
+ * Share modal (E2E-encrypted chat sharing via iClaw-cloud).
+ * Uses .card primitive for the shell; .btn primitives for actions.
+ * ========================================================================== */
+
+.share-modal {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-7);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+}
+.share-modal[hidden] { display: none !important; }
+
+.share-modal-shell {
+  position: relative;
+  width: 100%;
+  max-width: 28rem;
+  padding: var(--space-9);
+  background: var(--surface);
+  /* Override the .card border-left accent — modals are neutral. */
+  border-left-width: 1px;
+}
+.share-modal-close {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  width: 30px;
+  height: 30px;
+  font-size: var(--text-base);
+  color: var(--muted);
+}
+.share-modal-title {
+  margin: 0 0 var(--space-3);
+  font-size: 1.2em;
+  font-weight: 600;
+}
+.share-modal-help {
+  margin: 0 0 var(--space-8);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.share-modal-help code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--code-inline-bg);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+}
+
+.share-form { display: flex; flex-direction: column; gap: var(--space-6); }
+.share-field { display: flex; align-items: center; gap: var(--space-4); }
+.share-field-label {
+  flex: 0 0 100px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.share-field select,
+.share-pw-wrap input {
+  flex: 1;
+  padding: var(--space-4) var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.share-pw-wrap { padding-left: 100px; }
+.share-pw-wrap[hidden] { display: none !important; }
+
+.share-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  margin-top: var(--space-7);
+}
+
+.share-error {
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4) var(--space-6);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+  color: var(--danger);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+.share-error[hidden] { display: none !important; }
+
+.share-url-row {
+  display: flex;
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+}
+.share-url-row input {
+  flex: 1;
+  padding: var(--space-4) var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--text-sm);
+}
+
+.share-pw-reminder {
+  margin: var(--space-5) 0;
+  padding: var(--space-5) var(--space-7);
+  background: var(--warn-soft-bg);
+  border: 1px solid var(--warn-soft-border);
+  border-radius: var(--radius-md);
+  color: var(--warn);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+.share-pw-reminder[hidden] { display: none !important; }
+
+.share-revoke-block {
+  margin: var(--space-7) 0 0;
+  padding: var(--space-5) var(--space-6);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+.share-revoke-block summary {
+  cursor: pointer;
+  color: var(--muted);
+  user-select: none;
+}
+.share-revoke-block summary:hover { color: var(--text); }
+.share-revoke-block p { margin: var(--space-3) 0; }

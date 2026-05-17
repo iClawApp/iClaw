@@ -76,6 +76,17 @@
         <%= isWorking ? '' : 'hidden' %>
       >■ Stop</button>
 
+      <% if (cloudShareBaseUrl) { %>
+        <button
+          type="button"
+          class="share-btn btn btn--ghost btn--sm"
+          id="share-btn"
+          data-cloud-base-url="<%= cloudShareBaseUrl %>"
+          title="Generate an end-to-end encrypted share link. The chat is encrypted in your browser; the server stores only ciphertext."
+          aria-label="Share this chat"
+        >🔗 Share</button>
+      <% } %>
+
       <form method="post" action="/chats/<%= activeChat.id %>/delete" class="delete-form">
         <button type="submit" onclick="return confirm('Delete this chat?')" aria-label="Delete">
           ×
@@ -132,9 +143,16 @@
 
     <%- include('partials/composer') %>
 
+    <% if (cloudShareBaseUrl) { %>
+      <%- include('partials/share-modal') %>
+    <% } %>
+
     <script src="/js/vendor/marked.min.js"></script>
     <script src="/js/vendor/highlight.min.js"></script>
     <script src="/js/iclaw.js"></script>
+    <% if (cloudShareBaseUrl) { %>
+      <script src="/js/share.js" defer></script>
+    <% } %>
   </main>
 </div>
 

@@ -16,6 +16,10 @@ Then open <http://localhost:3000>. Bearer token is read from `~/.openclaw/opencl
 
 Optional env vars: [.env.example](.env.example). Notes for AI agents on this repo: [AGENTS.md](AGENTS.md).
 
+## Encrypted chat sharing (optional)
+
+Set `ICLAW_CLOUD_URL` to a running [iClaw-cloud](https://github.com/tmlxrd/iClaw-cloud) instance and a **Share** button appears in the chat header. The chat is encrypted in your browser (AES-256-GCM + optional PBKDF2 password); the share server stores ciphertext only and the symmetric key lives in the URL fragment. TTL 1/3/7/30 days, optional burn-after-read, optional password.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), the [roadmap](ROADMAP.md), and the [changelog](CHANGELOG.md). Bug reports and small PRs welcome. For anything bigger, open an issue first to talk scope.

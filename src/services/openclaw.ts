@@ -10,7 +10,11 @@
  * certainly want openclawWs instead. See AGENTS.md.
  */
 
-import { loadOpenClawConfig, type OpenClawConfig } from './config';
+import {
+  loadOpenClawConfig,
+  loadCloudShareBaseUrl,
+  type OpenClawConfig,
+} from './config';
 
 const config: OpenClawConfig = loadOpenClawConfig();
 
@@ -28,3 +32,10 @@ export const openclaw = {
     }
   },
 };
+
+/**
+ * Optional iClaw-cloud base URL. Empty string = feature disabled (Share button
+ * hidden in the UI). Read at import time so a single process never changes
+ * mid-flight; restart iClaw to pick up a config change.
+ */
+export const cloudShareBaseUrl: string = loadCloudShareBaseUrl();

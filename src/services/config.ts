@@ -31,6 +31,17 @@ function readHomeConfig(): { token: string; port?: number } | null {
   }
 }
 
+/**
+ * Optional iClaw-cloud (encrypted share server) base URL. Empty / missing
+ * means the share feature stays hidden in the UI. The browser talks to this
+ * URL directly — iClaw itself never relays share traffic.
+ */
+export function loadCloudShareBaseUrl(): string {
+  const raw = (process.env.ICLAW_CLOUD_URL ?? '').trim();
+  if (!raw) return '';
+  return raw.replace(/\/+$/, '');
+}
+
 export function loadOpenClawConfig(): OpenClawConfig {
   const envToken = process.env.OPENCLAW_API_KEY?.trim();
   const envUrl = process.env.OPENCLAW_BASE_URL?.trim();

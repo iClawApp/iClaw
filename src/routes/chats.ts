@@ -11,7 +11,7 @@ import {
 } from '../services/store';
 import { compactProjectFacts } from '../services/projectMemory';
 import { openclawWs } from '../services/openclawWs';
-import { openclaw } from '../services/openclaw';
+import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
 
@@ -134,6 +134,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
       agentsError,
       defaultAgent: DEFAULT_AGENT,
       openclawBaseUrl: openclaw.baseUrl,
+      cloudShareBaseUrl,
       workingIds: chatStatus.workingIds(),
       isWorking: chatStatus.isWorking(id),
       currentActivity: chatStatus.getActivity(id),

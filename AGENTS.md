@@ -124,6 +124,18 @@ Background broadcasts from the gateway:
 
 This module also re-fires `sessions.subscribe` on every `gatewayWs.onReconnect` so a WS bounce (laptop sleep/wake) doesn't leave us deaf.
 
+### Cloud share (`public/js/share.js` + `ICLAW_CLOUD_URL`)
+
+Optional companion to [iClaw-cloud](https://github.com/tmlxrd/iClaw-cloud). When `ICLAW_CLOUD_URL` is set, the chat header shows a **Share** button that opens a modal driven by `public/js/share.js`. The whole crypto flow runs in the browser:
+
+1. `fetch('/chats/:id/messages')` to get the canonical transcript.
+2. JSON.stringify → gzip via `CompressionStream` → AES-256-GCM with a random 256-bit key + 96-bit nonce.
+3. If password protection is on, derive a wrap-key via `PBKDF2-SHA256(200_000)` from the password + a random 16-byte salt, then AES-GCM-wrap the real key.
+4. POST `{ ciphertext, nonce, salt?, wrappedKey?, hasPassword, ttlDays, maxViews? }` (all binary base64) to `${ICLAW_CLOUD_URL}/api/shares`. The iClaw server is NOT on the path — the browser talks to iClaw-cloud directly. CORS must allow iClaw's origin on the cloud side.
+5. The returned share URL is `${cloudUrl}/s/<id>` plus a `#k=<base64url(key)>` fragment when there's no password. With a password, the URL has no fragment.
+
+iClaw never sees the symmetric key, the password, or the plaintext after step 1. The cloud server stores ciphertext only.
+
 ### Project memory (`projectMemory.ts`)
 
 - `buildGatewayUserMessage(content, projectId)` prepends a `[Project context]` block of facts under a ~1500-token budget. The user message stored in iClaw is always the raw text; only the gateway sees the augmented version.

@@ -1,0 +1,106 @@
+<!-- End-to-end encrypted share modal. Rendered only when ICLAW_CLOUD_URL is
+     set; JS toggles `[hidden]` and drives the encrypt → upload flow. -->
+<div
+  id="share-modal"
+  class="share-modal"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="share-modal-title"
+  aria-describedby="share-modal-help"
+  hidden
+>
+  <div class="share-modal-shell card">
+    <button
+      type="button"
+      class="share-modal-close btn btn--icon btn--ghost"
+      id="share-modal-close"
+      aria-label="Close"
+      title="Close"
+    >×</button>
+
+    <!-- ── Form view ───────────────────────────────────────────── -->
+    <div id="share-form-view">
+      <h2 id="share-modal-title" class="share-modal-title">Share chat</h2>
+      <p id="share-modal-help" class="muted share-modal-help">
+        The chat is encrypted in your browser with AES-256-GCM. The server
+        stores only ciphertext — the key lives in the URL fragment (after
+        <code>#</code>) and never reaches us. Add a password for an extra
+        layer the URL alone can't unlock.
+      </p>
+
+      <form id="share-form" class="share-form" onsubmit="return false">
+        <label class="share-field">
+          <span class="share-field-label">Expires in</span>
+          <select id="share-ttl">
+            <option value="1">1 day</option>
+            <option value="3">3 days</option>
+            <option value="7" selected>7 days</option>
+            <option value="30">30 days</option>
+          </select>
+        </label>
+
+        <label class="share-field">
+          <input type="checkbox" id="share-burn" />
+          <span>Burn after first view</span>
+        </label>
+
+        <label class="share-field">
+          <input type="checkbox" id="share-pw-enable" />
+          <span>Require a password</span>
+        </label>
+        <div id="share-pw-wrap" class="share-field share-pw-wrap" hidden>
+          <input
+            id="share-pw"
+            type="password"
+            autocomplete="new-password"
+            placeholder="password"
+          />
+        </div>
+
+        <div class="share-actions">
+          <button type="button" class="btn btn--ghost" id="share-cancel">Cancel</button>
+          <button type="submit" class="btn btn--primary" id="share-submit">
+            Generate link
+          </button>
+        </div>
+        <p id="share-error" class="share-error" hidden></p>
+      </form>
+    </div>
+
+    <!-- ── Result view ─────────────────────────────────────────── -->
+    <div id="share-result-view" hidden>
+      <h2 class="share-modal-title">Share link ready</h2>
+      <p class="muted share-modal-help" id="share-result-meta"></p>
+
+      <div class="share-url-row">
+        <input id="share-url" type="text" readonly />
+        <button type="button" class="btn btn--primary" id="share-copy">Copy</button>
+      </div>
+
+      <div id="share-pw-reminder" class="share-pw-reminder" hidden>
+        ⚠ The receiver also needs the password. Send it through a separate
+        channel — never alongside the link.
+      </div>
+
+      <details class="share-revoke-block">
+        <summary>Revoke this share</summary>
+        <p class="muted">
+          Save this revoke token if you might want to delete the share later.
+          We never store it on this device.
+        </p>
+        <div class="share-url-row">
+          <input id="share-delete-token" type="text" readonly />
+          <button type="button" class="btn btn--danger btn--sm" id="share-revoke">
+            Revoke now
+          </button>
+        </div>
+        <p id="share-revoke-status" class="muted" hidden></p>
+      </details>
+
+      <div class="share-actions">
+        <button type="button" class="btn btn--ghost" id="share-new">New share</button>
+        <button type="button" class="btn btn--primary" id="share-done">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
