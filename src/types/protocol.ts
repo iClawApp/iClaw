@@ -169,4 +169,11 @@ export type ServerMsg =
       decision: string;
     }
   /** A turn lost a reasoning/analysis chunk — only emitted when reasoning is on. */
-  | { type: 'turn-reasoning'; chatId: number; text: string };
+  | { type: 'turn-reasoning'; chatId: number; text: string }
+
+  /** Live mirror of the OpenClaw gateway health — drives the header badge. */
+  | {
+      type: 'gateway-status';
+      status: 'ok' | 'degraded' | 'shutdown' | 'down';
+      detail: string | null;
+    };

@@ -278,8 +278,24 @@ chatsRouter.post('/:id/reasoning', (req, res) => {
   res.json({ id, mode });
 });
 
-chatsRouter.post('/:id/delete', (req, res) => {
+chatsRouter.post('/:id/delete', async (req, res) => {
   const id = Number(req.params.id);
+  const chat = chats.get(id);
+  if (chat?.openclaw_session_id?.startsWith('agent:')) {
+    // Tell the gateway too — otherwise the underlying OpenClaw session row
+    // and its transcript on disk linger after the iClaw chat is gone.
+    // Failures here are non-fatal: we still drop the local row and broadcast
+    // the deletion so the UI doesn't get stuck on a gateway hiccup.
+    try {
+      await openclawWs.deleteSession(chat.openclaw_session_id);
+    } catch (err) {
+      console.warn(
+        '[chats] sessions.delete failed for chat',
+        id,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
   chats.remove(id);
   wsHub.broadcastAll({ type: 'chat-deleted', chatId: id });
   res.redirect('/');

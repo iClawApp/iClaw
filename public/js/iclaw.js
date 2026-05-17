@@ -1696,7 +1696,38 @@
         // wire protocol again.
         console.debug('[iclaw] gateway-session-changed', msg.kind, msg.sessionKey);
         return;
+
+      case 'gateway-status':
+        applyGatewayStatus(msg.status, msg.detail);
+        return;
     }
+  }
+
+  /**
+   * Live mirror of the OpenClaw gateway badge — the EJS-rendered snapshot is
+   * only true at page load. After a `gateway-status` push (health/shutdown/
+   * reconnect) we update the existing chip in place so users see when the
+   * gateway is unhealthy without needing F5.
+   */
+  function applyGatewayStatus(status, detail) {
+    const badge = document.getElementById('gateway-badge');
+    if (!badge) return;
+    badge.classList.remove('ok', 'down', 'degraded', 'shutdown');
+    if (status === 'ok') {
+      badge.classList.add('ok');
+      badge.textContent = 'OpenClaw: connected';
+    } else if (status === 'degraded') {
+      badge.classList.add('degraded');
+      badge.textContent = 'OpenClaw: degraded';
+    } else if (status === 'shutdown') {
+      badge.classList.add('shutdown');
+      badge.textContent = 'OpenClaw: shutting down';
+    } else {
+      badge.classList.add('down');
+      badge.textContent = 'OpenClaw: unreachable';
+    }
+    const baseUrl = badge.dataset.baseUrl || '';
+    badge.title = detail ? detail + (baseUrl ? ' — ' + baseUrl : '') : baseUrl;
   }
 
   // -------------------------------------------------------------------------
@@ -2085,6 +2116,7 @@
     reasoningToggle.addEventListener('change', async () => {
       const mode = reasoningToggle.checked ? 'on' : 'off';
       try {
+        // Persist the iClaw mirror first so a slow gateway doesn't desync the UI.
         await fetch('/chats/' + encodeURIComponent(activeChatId) + '/reasoning', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -2093,7 +2125,19 @@
       } catch {
         // revert if the server didn't accept
         reasoningToggle.checked = !reasoningToggle.checked;
+        return;
       }
+      // The OpenClaw gateway only actually emits reasoning when the session
+      // has been told to via /reasoning. Without this the toggle was a UI
+      // placebo — checked but no analysis events ever arrived. Now we push
+      // the slash command through the normal queue so OpenClaw flips state
+      // server-side too. The /reasoning turn is small and bookkeeping-only.
+      waitingItems.push({
+        content: '/reasoning ' + mode,
+        id: 'q-' + nextQueueItemId++,
+      });
+      renderQueue();
+      flushNextQueued();
     });
   }
 

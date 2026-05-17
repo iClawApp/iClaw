@@ -39,7 +39,12 @@
         hidden
       >■ Stop</button>
 
-      <span class="gateway <%= gatewayUp ? 'ok' : 'down' %>" title="<%= openclawBaseUrl %>">
+      <span
+        class="gateway <%= gatewayUp ? 'ok' : 'down' %>"
+        id="gateway-badge"
+        data-base-url="<%= openclawBaseUrl %>"
+        title="<%= openclawBaseUrl %>"
+      >
         OpenClaw: <%= gatewayUp ? 'connected' : 'unreachable' %>
       </span>
     </header>

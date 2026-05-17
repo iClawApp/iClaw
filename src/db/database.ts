@@ -76,6 +76,14 @@ CREATE TABLE IF NOT EXISTS scheduled_messages (
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_messages(scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_scheduled_chat ON scheduled_messages(chat_id, scheduled_at);
+
+-- Robustness: any new message bumps the parent chat's updated_at so sidebar
+-- sorting is always correct even if a caller forgets the manual chats.touch().
+CREATE TRIGGER IF NOT EXISTS trg_chats_touch_on_message
+AFTER INSERT ON messages
+BEGIN
+  UPDATE chats SET updated_at = datetime('now') WHERE id = NEW.chat_id;
+END;
 `;
 
 function dropObsoleteTables(db: Database.Database): void {

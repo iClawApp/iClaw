@@ -24,6 +24,17 @@ function httpToWsUrl(httpUrl: string): string {
 /** Default RPC timeout — chat.send takes up to ~30s for big agent runs. */
 const DEFAULT_RPC_TIMEOUT_MS = 120_000;
 
+/**
+ * Hello-ok defaults from `docs/gateway/protocol.md`. Used while we wait for
+ * the actual policy.tickIntervalMs to arrive on connect.
+ */
+const DEFAULT_TICK_INTERVAL_MS = 30_000;
+/** When N ticks pass without any frame from the gateway, treat the socket as dead. */
+const TICK_MISS_MULTIPLIER = 2;
+
+/** Listener for connection-up edges. Fires once per successful hello-ok. */
+type ReconnectListener = () => void;
+
 class GatewayWsBridge {
   private ws: WebSocket | null = null;
   private connectTask: Promise<void> | null = null;
@@ -31,11 +42,18 @@ class GatewayWsBridge {
   private nextRpcSeq = 1;
 
   private readonly rawListeners = new Set<RawFrameListener>();
+  private readonly reconnectListeners = new Set<ReconnectListener>();
   private readonly pending = new Map<
     string,
     { resolve: (payload: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }
   >();
   private readonly subscribedSessions = new Set<string>();
+
+  // --- liveness watchdog -----------------------------------------------------
+  /** Effective tick window negotiated from `hello-ok.policy.tickIntervalMs`. */
+  private tickIntervalMs = DEFAULT_TICK_INTERVAL_MS;
+  /** Timer that closes a stale socket if no frame arrived in TICK_MISS_MULTIPLIER × tickIntervalMs. */
+  private tickWatchdog: NodeJS.Timeout | null = null;
 
   // --- request/response RPC ---------------------------------------------
 
@@ -103,6 +121,9 @@ class GatewayWsBridge {
       return;
     }
 
+    // Any frame from the gateway counts as proof of life — reset the watchdog.
+    this.armTickWatchdog();
+
     // notify raw listeners first — they may want to see everything
     if (this.rawListeners.size > 0) {
       for (const fn of this.rawListeners) {
@@ -130,15 +151,73 @@ class GatewayWsBridge {
       if (frame.ok === true) {
         const p = frame.payload as Record<string, unknown> | undefined;
         if (p?.type === 'hello-ok' || p?.protocol != null) {
+          this.adoptPolicy(p);
           this.onConnected();
         }
       }
     }
   }
 
+  /** Read tick interval and any other useful budgets out of hello-ok. */
+  private adoptPolicy(payload: Record<string, unknown> | undefined): void {
+    const policy = payload?.policy as Record<string, unknown> | undefined;
+    const tick = policy?.tickIntervalMs;
+    if (typeof tick === 'number' && tick > 1_000) {
+      this.tickIntervalMs = tick;
+    }
+  }
+
+  /**
+   * (Re)arm the dead-socket timer. Called whenever we see a frame; closes
+   * the socket if no frame arrives within `tickIntervalMs × TICK_MISS_MULTIPLIER`.
+   * The close triggers our normal reconnect path the next time anyone calls
+   * an RPC through `ensureConnected`.
+   */
+  private armTickWatchdog(): void {
+    if (this.tickWatchdog) clearTimeout(this.tickWatchdog);
+    this.tickWatchdog = setTimeout(() => {
+      const ws = this.ws;
+      if (!ws) return;
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        console.warn(
+          '[gatewayWs] tick watchdog: no frames for',
+          this.tickIntervalMs * TICK_MISS_MULTIPLIER,
+          'ms — closing socket to force reconnect',
+        );
+        try {
+          ws.close(4000, 'tick-timeout');
+        } catch {
+          /* close errors don't matter — the close handler does the cleanup */
+        }
+      }
+    }, this.tickIntervalMs * TICK_MISS_MULTIPLIER);
+    // Don't keep the event loop alive solely on the watchdog.
+    this.tickWatchdog.unref?.();
+  }
+
+  private clearTickWatchdog(): void {
+    if (this.tickWatchdog) {
+      clearTimeout(this.tickWatchdog);
+      this.tickWatchdog = null;
+    }
+  }
+
+  /** Run all connect-up listeners (gatewayEvents re-subscribes here). */
+  onReconnect(listener: ReconnectListener): () => void {
+    this.reconnectListeners.add(listener);
+    return () => this.reconnectListeners.delete(listener);
+  }
+
   private onConnected(): void {
     for (const sk of this.subscribedSessions) {
       this.sendSessionSubscribe(sk);
+    }
+    for (const fn of this.reconnectListeners) {
+      try {
+        fn();
+      } catch (err) {
+        console.error('[gatewayWs] reconnect listener error', err);
+      }
     }
   }
 
@@ -186,6 +265,7 @@ class GatewayWsBridge {
         this.ws = null;
         this.connectTask = null;
         this.connectSent = false;
+        this.clearTickWatchdog();
         // fail any pending RPCs
         for (const [, entry] of this.pending) {
           clearTimeout(entry.timer);

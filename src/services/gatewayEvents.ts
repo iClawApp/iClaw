@@ -104,6 +104,39 @@ function handleExecApprovalResolved(payload: Record<string, unknown>): void {
   });
 }
 
+/**
+ * Push the gateway-status mirror to all browser clients. We keep it dumb on
+ * the server (last-known label + tone), and let the client decide how loud to
+ * be — that way an existing index.ejs "OpenClaw: connected" badge can update
+ * in place without a hard reload.
+ */
+type GatewayStatus = 'ok' | 'degraded' | 'shutdown' | 'down';
+let lastStatus: GatewayStatus = 'ok';
+function pushStatus(next: GatewayStatus, detail?: string | null): void {
+  if (next === lastStatus) return;
+  lastStatus = next;
+  wsHub.broadcastAll({
+    type: 'gateway-status',
+    status: next,
+    detail: detail ?? null,
+  });
+}
+
+function handleHealth(payload: Record<string, unknown>): void {
+  const ok = payload.ok === true || payload.status === 'ok' || payload.status === 'healthy';
+  if (ok) {
+    pushStatus('ok', null);
+    return;
+  }
+  const reason =
+    pickString(payload, 'reason', 'status', 'detail') ?? 'gateway reported degraded health';
+  pushStatus('degraded', reason);
+}
+
+function handleShutdown(payload: Record<string, unknown>): void {
+  pushStatus('shutdown', pickString(payload, 'reason', 'detail') ?? 'gateway is shutting down');
+}
+
 function dispatch(frame: RawGatewayFrame): void {
   if (frame.type !== 'event') return;
   const name = frame.event;
@@ -122,6 +155,23 @@ function dispatch(frame: RawGatewayFrame): void {
     handleExecApprovalResolved(payload);
     return;
   }
+  if (name === 'health') {
+    handleHealth(payload);
+    return;
+  }
+  if (name === 'shutdown') {
+    handleShutdown(payload);
+    return;
+  }
+}
+
+function subscribeIndex(): void {
+  void openclawWs.subscribeSessions().catch((err) => {
+    console.warn(
+      '[gatewayEvents] sessions.subscribe failed:',
+      err instanceof Error ? err.message : err,
+    );
+  });
 }
 
 export const gatewayEvents = {
@@ -129,13 +179,15 @@ export const gatewayEvents = {
     if (started) return;
     started = true;
     gatewayWs.onFrame(dispatch);
-    // Fire the index subscribe — fail loud since this is the only way we get
-    // sessions.changed events. We retry on reconnect via the same path.
-    void openclawWs.subscribeSessions().catch((err) => {
-      console.warn(
-        '[gatewayEvents] sessions.subscribe failed:',
-        err instanceof Error ? err.message : err,
-      );
+    // Re-subscribe on every hello-ok so a WS reconnect (laptop sleep/wake,
+    // network blip) doesn't leave us silently deaf to sessions.changed and
+    // exec approval broadcasts.
+    gatewayWs.onReconnect(() => {
+      subscribeIndex();
+      // If we previously announced a degraded/shutdown state, a fresh
+      // hello-ok means the gateway is back — clear the badge.
+      if (lastStatus !== 'ok') pushStatus('ok', null);
     });
+    subscribeIndex();
   },
 };

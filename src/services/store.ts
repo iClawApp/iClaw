@@ -159,7 +159,10 @@ export const messages = {
         'INSERT INTO messages (chat_id, role, content, finish_reason) VALUES (?, ?, ?, ?)',
       )
       .run(chatId, role, content, finishReason);
-    chats.touch(chatId);
+    // chats.updated_at is bumped by the trg_chats_touch_on_message SQLite
+    // trigger; no manual touch() needed here. We keep chats.touch() public
+    // for callers that mutate parents without writing a message (e.g.
+    // project deletion detaching chats).
     if (role === 'user') {
       const count = (db
         .prepare("SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND role = 'user'")
