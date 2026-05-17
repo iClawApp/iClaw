@@ -1,6 +1,7 @@
 /**
- * Project header/sidebar icon: one of 10 Apple-style emoji + one of 10
- * background tones. Stored as `projects.logo_emoji` and `projects.logo_color` (each 0–9).
+ * Project header/sidebar icon: one of 15 Apple-style emoji + one of 12
+ * background tones. Stored as `projects.logo_emoji` (0–14) and
+ * `projects.logo_color` (0–11).
  */
 
 /** Common emoji from the Apple keyboard set — single grapheme each. */
@@ -15,10 +16,15 @@ export const PROJECT_LOGO_EMOJIS = [
   '✨',
   '🌐',
   '🔧',
+  '📦',
+  '📊',
+  '📚',
+  '🧪',
+  '🎨',
 ] as const;
 
 export const PROJECT_LOGO_EMOJI_COUNT = PROJECT_LOGO_EMOJIS.length;
-export const PROJECT_LOGO_COLOR_COUNT = 10;
+export const PROJECT_LOGO_COLOR_COUNT = 12;
 
 export function clampLogoEmoji(n: unknown): number {
   const max = PROJECT_LOGO_EMOJI_COUNT - 1;

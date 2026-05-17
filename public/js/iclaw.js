@@ -179,7 +179,7 @@
   function clampLogoColorJs(n) {
     let v = Number(n);
     if (!Number.isFinite(v) || v < 0) return 0;
-    if (v > 9) return 9;
+    if (v > 11) return 11;
     return Math.floor(v);
   }
   function buildProjectLogoHtml(emojiIdx, colorIdx) {

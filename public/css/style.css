@@ -2210,35 +2210,24 @@ code {
   user-select: none;
 }
 
-.project-logo[data-logo-color='0'] {
-  background: color-mix(in srgb, var(--md-link) 16%, var(--surface));
-}
-.project-logo[data-logo-color='1'] {
-  background: color-mix(in srgb, var(--muted) 16%, var(--surface));
-}
-.project-logo[data-logo-color='2'] {
-  background: color-mix(in srgb, var(--ok) 14%, var(--surface));
-}
-.project-logo[data-logo-color='3'] {
-  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
-}
-.project-logo[data-logo-color='4'] {
-  background: color-mix(in srgb, var(--border) 42%, var(--surface));
-}
-.project-logo[data-logo-color='5'] {
-  background: color-mix(in srgb, var(--text) 8%, var(--surface));
-}
-.project-logo[data-logo-color='6'] {
-  background: color-mix(in srgb, var(--msg-user-fill) 70%, var(--surface));
-}
-.project-logo[data-logo-color='7'] {
-  background: color-mix(in srgb, var(--md-link) 8%, color-mix(in srgb, var(--ok) 10%, var(--surface)));
-}
-.project-logo[data-logo-color='8'] {
-  background: color-mix(in srgb, var(--ok) 8%, color-mix(in srgb, var(--danger) 8%, var(--surface)));
-}
-.project-logo[data-logo-color='9'] {
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+/* Project logo palette — 12 distinct hues stepped around the wheel.
+ * `--logo-tone` is the saturated source; the actual background is mixed
+ * with `--surface` so it auto-adapts to light/dark themes. */
+[data-logo-color='0']  { --logo-tone: hsl(212, 90%, 56%); } /* azure   */
+[data-logo-color='1']  { --logo-tone: hsl(248, 78%, 64%); } /* indigo  */
+[data-logo-color='2']  { --logo-tone: hsl(278, 70%, 62%); } /* violet  */
+[data-logo-color='3']  { --logo-tone: hsl(322, 76%, 60%); } /* magenta */
+[data-logo-color='4']  { --logo-tone: hsl(348, 82%, 62%); } /* rose    */
+[data-logo-color='5']  { --logo-tone: hsl(12,  86%, 58%); } /* coral   */
+[data-logo-color='6']  { --logo-tone: hsl(30,  92%, 54%); } /* orange  */
+[data-logo-color='7']  { --logo-tone: hsl(45,  90%, 52%); } /* amber   */
+[data-logo-color='8']  { --logo-tone: hsl(88,  58%, 48%); } /* lime    */
+[data-logo-color='9']  { --logo-tone: hsl(148, 60%, 44%); } /* green   */
+[data-logo-color='10'] { --logo-tone: hsl(178, 68%, 42%); } /* teal    */
+[data-logo-color='11'] { --logo-tone: hsl(198, 84%, 50%); } /* cyan    */
+
+.project-logo[data-logo-color] {
+  background: color-mix(in srgb, var(--logo-tone) 28%, var(--surface));
 }
 
 .project-title-cluster {
@@ -2335,35 +2324,9 @@ code {
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
 }
-.project-logo-color-dot[data-logo-color='0'] {
-  background: color-mix(in srgb, var(--md-link) 35%, var(--surface));
-}
-.project-logo-color-dot[data-logo-color='1'] {
-  background: color-mix(in srgb, var(--muted) 35%, var(--surface));
-}
-.project-logo-color-dot[data-logo-color='2'] {
-  background: color-mix(in srgb, var(--ok) 32%, var(--surface));
-}
-.project-logo-color-dot[data-logo-color='3'] {
-  background: color-mix(in srgb, var(--danger) 28%, var(--surface));
-}
-.project-logo-color-dot[data-logo-color='4'] {
-  background: color-mix(in srgb, var(--border) 55%, var(--surface));
-}
-.project-logo-color-dot[data-logo-color='5'] {
-  background: color-mix(in srgb, var(--text) 12%, var(--surface));
-}
-.project-logo-color-dot[data-logo-color='6'] {
-  background: color-mix(in srgb, var(--msg-user-fill) 85%, var(--surface));
-}
-.project-logo-color-dot[data-logo-color='7'] {
-  background: color-mix(in srgb, var(--md-link) 22%, color-mix(in srgb, var(--ok) 18%, var(--surface)));
-}
-.project-logo-color-dot[data-logo-color='8'] {
-  background: color-mix(in srgb, var(--ok) 18%, color-mix(in srgb, var(--danger) 14%, var(--surface)));
-}
-.project-logo-color-dot[data-logo-color='9'] {
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+.project-logo-color-dot[data-logo-color] {
+  background: color-mix(in srgb, var(--logo-tone) 28%, var(--surface));
+  border-color: color-mix(in srgb, var(--logo-tone) 45%, var(--border));
 }
 .project-logo-swatch:hover {
   background: color-mix(in srgb, var(--hover) 50%, transparent);
