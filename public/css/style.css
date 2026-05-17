@@ -1202,8 +1202,7 @@ code {
   50% { opacity: 0.85; }
 }
 .msg.assistant.stream-tool .stream-status {
-  /* Stronger than --muted so tool names / paths stay readable in dark mode */
-  color: var(--msg-prose);
+  color: var(--muted);
   font-style: normal;
   font-weight: 600;
 }

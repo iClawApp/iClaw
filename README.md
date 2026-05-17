@@ -12,6 +12,8 @@ Site: <https://iclaw.digital>
 
 Chat-style web UI for a **local** [OpenClaw Gateway](https://docs.openclaw.ai): sidebar, streaming replies, tool activity, SQLite history on disk. The browser only connects to iClaw; iClaw connects to the gateway (native WebSocket). **Node.js 20+**; gateway must be running (default `http://127.0.0.1:18789`).
 
+![iClaw screenshot](./docs/readme-screenshot.png)
+
 ```bash
 git clone https://github.com/iClawApp/iClaw.git && cd iClaw && npm install && npm run dev
 ```
