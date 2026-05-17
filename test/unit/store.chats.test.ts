@@ -16,7 +16,6 @@ describe('store.chats', () => {
     expect(c.openclaw_session_id.length).toBeGreaterThan(8);
     expect(c.shares_to_project).toBe(1);
     expect(c.reasoning_mode).toBe('off');
-    expect(c.model_override).toBeNull();
   });
 
   it('list() returns chats newest-updated first', () => {
@@ -70,16 +69,6 @@ describe('store.chats', () => {
     expect(chats.markUnread(c.id)).toBe(false); // already 1
     expect(chats.markRead(c.id)).toBe(true);
     expect(chats.markRead(c.id)).toBe(false); // already 0
-  });
-
-  it('setModelOverride normalizes blank → null', () => {
-    const c = chats.create('openclaw/default');
-    chats.setModelOverride(c.id, '   ');
-    expect(chats.get(c.id)!.model_override).toBeNull();
-    chats.setModelOverride(c.id, 'openai/gpt-4o');
-    expect(chats.get(c.id)!.model_override).toBe('openai/gpt-4o');
-    chats.setModelOverride(c.id, null);
-    expect(chats.get(c.id)!.model_override).toBeNull();
   });
 
   it('setReasoningMode persists allowed values', () => {

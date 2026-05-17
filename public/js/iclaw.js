@@ -693,10 +693,17 @@
       el.className = 'queue-item queued';
       el.dataset.itemId = item.id;
       const preview = item.content.length > 80 ? item.content.slice(0, 79) + '…' : item.content;
+      // ⏵ Interrupt = "send THIS one now": move it to the front of the queue,
+      // then abort the current turn. The existing turn-error handler will
+      // auto-flush, which picks up our new-head item next.
       el.innerHTML =
         '<span class="queue-status">Queued #' + (idx + 1) + '</span>' +
         '<span class="queue-text">' + escapeHtml(preview) + '</span>' +
-        '<button type="button" class="queue-remove" aria-label="Remove from queue" title="Remove from queue">×</button>';
+        '<button type="button" class="queue-interrupt btn btn--icon btn--ghost" ' +
+        'aria-label="Interrupt current and send this one now" ' +
+        'title="Interrupt the current turn and send this message next">⏵</button>' +
+        '<button type="button" class="queue-remove btn btn--icon btn--ghost" ' +
+        'aria-label="Remove from queue" title="Remove from queue">×</button>';
       queueEl.appendChild(el);
     });
   }
@@ -768,19 +775,41 @@
     });
   }
 
-  // Delete from queue via event delegation
+  // Delete from queue + interrupt-and-promote via event delegation.
   if (queueEl) {
     queueEl.addEventListener('click', (e) => {
-      const btn = e.target.closest('.queue-remove');
+      const removeBtn = e.target.closest('.queue-remove');
+      const interruptBtn = e.target.closest('.queue-interrupt');
+      const btn = removeBtn || interruptBtn;
       if (!btn) return;
-      const item = btn.closest('.queue-item');
-      const id = item?.dataset.itemId;
+      const itemEl = btn.closest('.queue-item');
+      const id = itemEl?.dataset.itemId;
       if (!id) return;
       const idx = waitingItems.findIndex((it) => it.id === id);
-      if (idx >= 0) {
+      if (idx < 0) return;
+
+      if (removeBtn) {
         waitingItems.splice(idx, 1);
         renderQueue();
+        return;
       }
+
+      // Interrupt: move this item to the front and abort the running turn.
+      // The turn-error handler clears inFlight and calls flushNextQueued(),
+      // which now picks up our promoted item.
+      if (activeChatId == null) return;
+      const [picked] = waitingItems.splice(idx, 1);
+      waitingItems.unshift(picked);
+      renderQueue();
+      // If nothing is actually running, just flush now — no need to abort.
+      if (!inFlight) {
+        flushNextQueued();
+        return;
+      }
+      // Optimistically disable buttons to prevent rapid double-clicks.
+      btn.disabled = true;
+      setTimeout(() => { btn.disabled = false; }, 3000);
+      wsSend({ type: 'abort', chatId: activeChatId });
     });
   }
 
@@ -1302,11 +1331,6 @@
         }
         if (msg.chatId === activeChatId && msg.title != null) applyTitleForActive(msg.title);
         // Sync header controls when another tab/CLI flipped these.
-        if (msg.chatId === activeChatId && msg.modelOverride !== undefined && modelSelect) {
-          const v = msg.modelOverride == null ? '' : String(msg.modelOverride);
-          modelSelect.dataset.current = v;
-          if (modelSelect.value !== v) modelSelect.value = v;
-        }
         if (msg.chatId === activeChatId && msg.reasoningMode !== undefined && reasoningToggle) {
           reasoningToggle.checked = msg.reasoningMode !== 'off';
         }
@@ -1380,7 +1404,6 @@
         setWorkingDot(msg.chatId, true);
         if (msg.chatId !== activeChatId) return;
         setStopVisible(true);
-        setInterruptVisible(true);
         ensureStreamEl();
         {
           const status = currentStreamEl?.querySelector('.stream-status');
@@ -1473,7 +1496,6 @@
         setWorkingDot(msg.chatId, false);
         if (msg.chatId !== activeChatId) return;
         setStopVisible(false);
-        setInterruptVisible(false);
         finalizeReasoningBlock();
         // Belt + suspenders: kill any leftover reload-placeholder that might
         // still be on the page if events arrived in a weird order.
@@ -1493,7 +1515,6 @@
           return;
         }
         setStopVisible(false);
-        setInterruptVisible(false);
         finalizeReasoningBlock();
         if (currentStreamEl) {
           const st = currentStreamEl.querySelector('.stream-status');
@@ -2076,41 +2097,12 @@
   }
 
   // -------------------------------------------------------------------------
-  // Chat header extras: Interrupt, Compact, Reasoning toggle, Model picker
+  // Chat header extras: Reasoning toggle
+  // (Interrupt moved to per-queue-item buttons; Compact removed — OpenClaw
+  // auto-compacts at context limit, and users who want it can still type
+  // /compact in the composer.)
   // -------------------------------------------------------------------------
-  const interruptBtn = document.getElementById('interrupt-btn');
-  const compactBtn = document.getElementById('compact-btn');
   const reasoningToggle = document.getElementById('chat-reasoning-toggle');
-  const modelForm = document.getElementById('model-form');
-  const modelSelect = document.getElementById('chat-model-select');
-
-  function setInterruptVisible(visible) {
-    if (!interruptBtn) return;
-    interruptBtn.hidden = !visible;
-  }
-
-  if (interruptBtn) {
-    interruptBtn.addEventListener('click', () => {
-      if (activeChatId == null) return;
-      // Abort drops the active turn; the resulting `turn-error` re-triggers
-      // flushNextQueued which picks up the next queued message immediately.
-      wsSend({ type: 'abort', chatId: activeChatId });
-      interruptBtn.disabled = true;
-      setTimeout(() => { interruptBtn.disabled = false; }, 3000);
-    });
-  }
-
-  if (compactBtn) {
-    compactBtn.addEventListener('click', () => {
-      if (activeChatId == null) return;
-      // /compact is a slash command — runs through the normal send pipeline so
-      // queue ordering, lock, and broadcasts behave like a regular turn.
-      const id = 'q-' + nextQueueItemId++;
-      waitingItems.push({ content: '/compact', id });
-      renderQueue();
-      flushNextQueued();
-    });
-  }
 
   if (reasoningToggle && activeChatId != null) {
     reasoningToggle.addEventListener('change', async () => {
@@ -2138,65 +2130,6 @@
       });
       renderQueue();
       flushNextQueued();
-    });
-  }
-
-  // Populate the model picker. The list is small enough that a one-shot fetch
-  // on chat open is fine — no polling.
-  let modelsLoaded = false;
-  async function loadModelOptions() {
-    if (!modelForm || !modelSelect || modelsLoaded) return;
-    try {
-      const res = await fetch('/api/gateway/models', { headers: { Accept: 'application/json' } });
-      if (!res.ok) return;
-      const data = await res.json();
-      const models = Array.isArray(data.models) ? data.models : [];
-      if (models.length === 0) return;
-      const current = modelSelect.dataset.current || '';
-      // Wipe everything except the "agent default" option.
-      const defaultOpt = modelSelect.querySelector('option[value=""]');
-      modelSelect.replaceChildren();
-      if (defaultOpt) modelSelect.appendChild(defaultOpt);
-      else {
-        const o = document.createElement('option');
-        o.value = '';
-        o.textContent = '(agent default)';
-        modelSelect.appendChild(o);
-      }
-      for (const m of models) {
-        const o = document.createElement('option');
-        o.value = m.id;
-        o.textContent = m.label || m.id;
-        if (m.id === current) o.selected = true;
-        modelSelect.appendChild(o);
-      }
-      modelForm.hidden = false;
-      modelsLoaded = true;
-    } catch {
-      /* network error — leave picker hidden */
-    }
-  }
-  if (modelSelect && activeChatId != null) {
-    loadModelOptions();
-    modelSelect.addEventListener('change', async () => {
-      const model = modelSelect.value;
-      try {
-        const res = await fetch('/chats/' + encodeURIComponent(activeChatId) + '/model', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ model }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          alert('Model change failed: ' + (err.error || res.statusText));
-          modelSelect.value = modelSelect.dataset.current || '';
-          return;
-        }
-        modelSelect.dataset.current = model;
-      } catch (err) {
-        alert('Network error: ' + (err && err.message ? err.message : String(err)));
-        modelSelect.value = modelSelect.dataset.current || '';
-      }
     });
   }
 

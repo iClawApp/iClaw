@@ -40,33 +40,7 @@ beforeAll(() => resetTestDb());
 afterEach(() => {
   resetTestDb();
   openclawWsMock.usageCost.mockClear();
-  openclawWsMock.listModels.mockClear();
   openclawWsMock.listCommands.mockClear();
-});
-
-describe('GET /api/gateway/models', () => {
-  it('normalises gateway shape into {models:[{id,label,provider}]}', async () => {
-    openclawWsMock.listModels.mockResolvedValueOnce({
-      models: [
-        { id: 'openai/gpt-4o', label: 'GPT-4o', provider: 'openai' },
-        { id: 'anthropic/claude-sonnet' }, // missing label
-        { id: '', label: 'BAD' }, // skipped — no id
-      ],
-    });
-    const res = await request(app).get('/api/gateway/models');
-    expect(res.status).toBe(200);
-    expect(res.body.models).toEqual([
-      { id: 'openai/gpt-4o', label: 'GPT-4o', provider: 'openai' },
-      { id: 'anthropic/claude-sonnet', label: 'anthropic/claude-sonnet', provider: null },
-    ]);
-  });
-
-  it('502 on gateway error, still returns empty models array', async () => {
-    openclawWsMock.listModels.mockRejectedValueOnce(new Error('gateway hiccup'));
-    const res = await request(app).get('/api/gateway/models');
-    expect(res.status).toBe(502);
-    expect(res.body.models).toEqual([]);
-  });
 });
 
 describe('GET /api/gateway/commands', () => {

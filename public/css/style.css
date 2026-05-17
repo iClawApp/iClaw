@@ -791,9 +791,8 @@ code {
 
 /* Chat header buttons — visuals come from the `.btn` primitive in the design
    system block at the top of this file. The snowflake selectors below remain
-   only as JS hooks (id=stop-btn etc.) and a single hide-when-idle shorthand. */
-.stop-btn[hidden],
-.interrupt-btn[hidden] {
+   only as JS hooks (id=stop-btn) and a single hide-when-idle shorthand. */
+.stop-btn[hidden] {
   display: none !important;
 }
 
@@ -811,10 +810,6 @@ code {
 
 /* Today's cost — `.chip .chip--accent` from the primitive owns the look;
    .cost-chip remains as a JS hook (#cost-chip getElementById). */
-
-.model-form[hidden] {
-  display: none !important;
-}
 
 /* ---------- Exec approval card ---------- */
 
@@ -1659,21 +1654,26 @@ code {
   color: var(--muted);
 }
 
+/* Queue row controls — both ride the `.btn .btn--icon .btn--ghost` primitive
+   from the design system. We only add a compact 22 × 22 footprint here. */
+.queue-interrupt,
 .queue-remove {
-  flex: 0 0 auto;
   width: 22px;
   height: 22px;
-  margin-left: 6px;
-  border: 1px solid var(--border);
-  background: transparent;
+  margin-left: var(--space-3);
   color: var(--muted);
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 1rem;
-  line-height: 1;
-  padding: 0;
+  font-size: var(--text-base);
 }
-.queue-remove:hover { color: var(--danger); border-color: var(--danger); }
+.queue-interrupt:hover:not(:disabled) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text) 30%, transparent);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.queue-remove:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
 
 .queue-text {
   flex: 1;

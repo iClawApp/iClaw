@@ -80,8 +80,6 @@ export type ServerMsg =
       projectName?: string | null;
       /** Toggle on whether the chat writes facts back to the project. */
       sharesToProject?: boolean;
-      /** Per-chat model override (null = agent default). */
-      modelOverride?: string | null;
       /** Reasoning visibility mode mirror — 'off' | 'on' | 'stream'. */
       reasoningMode?: 'off' | 'on' | 'stream';
       /** Present after mutations that bump `chats.updated_at` — flat sidebar order. */

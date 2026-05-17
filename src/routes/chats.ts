@@ -212,48 +212,6 @@ chatsRouter.post('/:id/shares', (req, res) => {
 });
 
 /**
- * Swap the per-session model override (sessions.patch). Empty body = revert to
- * agent default. We mirror the override in iClaw's DB so the UI shows the
- * current selection on next render; the gateway is still the source of truth.
- */
-chatsRouter.post('/:id/model', async (req, res, next) => {
-  try {
-    const id = Number(req.params.id);
-    const chat = chats.get(id);
-    if (!chat) {
-      res.status(404).json({ error: 'chat not found' });
-      return;
-    }
-    const raw = String(req.body?.model ?? '').trim();
-    const model = raw === '' ? null : raw;
-    if (chat.openclaw_session_id?.startsWith('agent:')) {
-      try {
-        await openclawWs.patchSession({
-          key: chat.openclaw_session_id,
-          model: model ?? undefined,
-        });
-      } catch (err) {
-        // Surface the gateway error but don't persist on failure.
-        res
-          .status(502)
-          .json({ error: err instanceof Error ? err.message : 'patchSession failed' });
-        return;
-      }
-    }
-    chats.setModelOverride(id, model);
-    wsHub.broadcastAll({
-      type: 'chat-updated',
-      chatId: id,
-      modelOverride: model,
-      updatedAt: chats.get(id)!.updated_at,
-    });
-    res.json({ id, model });
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
  * Toggle reasoning visibility on the active session by sending the slash
  * command through the normal chat flow. The mode is mirrored locally so the
  * UI toggle stays in sync across reloads.

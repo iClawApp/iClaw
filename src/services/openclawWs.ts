@@ -143,24 +143,9 @@ export const openclawWs = {
     return gatewayWs.request('usage.cost', opts as Record<string, unknown>);
   },
 
-  /** Configured + discoverable models (used by the model picker UI). */
-  async listModels(view: 'configured' | 'all' | 'default' = 'configured'): Promise<unknown> {
-    return gatewayWs.request('models.list', { view });
-  },
-
   /** Slash-command catalog for an agent — feeds the `/` autocomplete. */
   async listCommands(opts: { agentId?: string } = {}): Promise<unknown> {
     return gatewayWs.request('commands.list', opts as Record<string, unknown>);
-  },
-
-  /** Apply a per-session override (e.g. swap the model). */
-  async patchSession(opts: {
-    key: string;
-    model?: string;
-  }): Promise<unknown> {
-    const params: Record<string, unknown> = { key: opts.key };
-    if (opts.model) params.model = opts.model;
-    return gatewayWs.request('sessions.patch', params);
   },
 
   /** Subscribe to the global session index — needed for `sessions.changed`. */

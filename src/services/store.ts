@@ -97,11 +97,6 @@ export const chats = {
       "UPDATE chats SET shares_to_project = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(shares ? 1 : 0, id);
   },
-  setModelOverride(id: number, model: string | null): void {
-    db.prepare(
-      "UPDATE chats SET model_override = ?, updated_at = datetime('now') WHERE id = ?",
-    ).run(model && model.trim() ? model.trim() : null, id);
-  },
   setReasoningMode(id: number, mode: 'off' | 'on' | 'stream'): void {
     db.prepare(
       "UPDATE chats SET reasoning_mode = ?, updated_at = datetime('now') WHERE id = ?",

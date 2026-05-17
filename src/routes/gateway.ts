@@ -1,39 +1,14 @@
 /**
  * Thin HTTP proxies for OpenClaw RPCs that the browser UI needs:
  *
- *   GET  /api/gateway/models           — model picker source
  *   GET  /api/gateway/commands         — slash-command catalog for `/` autocomplete
  *   GET  /api/gateway/usage/today      — gateway-side spend (cached 30s)
- *
- * Per-chat side effects (model override) live in routes/chats.ts.
  */
 
 import { Router } from 'express';
 import { openclawWs } from '../services/openclawWs';
 
 export const gatewayRouter: Router = Router();
-
-interface ModelsResult {
-  models?: Array<{ id?: string; label?: string; provider?: string }>;
-}
-
-gatewayRouter.get('/models', async (_req, res) => {
-  try {
-    const result = (await openclawWs.listModels('configured')) as ModelsResult;
-    const models = Array.isArray(result?.models) ? result.models : [];
-    res.json({
-      models: models.map((m) => ({
-        id: typeof m.id === 'string' ? m.id : '',
-        label: typeof m.label === 'string' ? m.label : (typeof m.id === 'string' ? m.id : ''),
-        provider: typeof m.provider === 'string' ? m.provider : null,
-      })).filter((m) => m.id),
-    });
-  } catch (err) {
-    res
-      .status(502)
-      .json({ error: err instanceof Error ? err.message : 'gateway error', models: [] });
-  }
-});
 
 interface CommandsResult {
   commands?: Array<{

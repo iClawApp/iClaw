@@ -165,49 +165,6 @@ describe('POST /chats/:id/delete', () => {
   });
 });
 
-describe('POST /chats/:id/model', () => {
-  it('updates DB mirror and calls patchSession on the gateway', async () => {
-    const c = chats.create('openclaw/default');
-    chats.replaceSessionKey(c.id, 'agent:has-key');
-    const res = await request(app)
-      .post(`/chats/${c.id}/model`)
-      .set('content-type', 'application/json')
-      .send({ model: 'openai/gpt-4o' });
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ id: c.id, model: 'openai/gpt-4o' });
-    expect(chats.get(c.id)!.model_override).toBe('openai/gpt-4o');
-    expect(openclawWsMock.patchSession).toHaveBeenCalledWith({
-      key: 'agent:has-key',
-      model: 'openai/gpt-4o',
-    });
-  });
-
-  it('empty model clears the override', async () => {
-    const c = chats.create('openclaw/default');
-    chats.replaceSessionKey(c.id, 'agent:has-key');
-    chats.setModelOverride(c.id, 'openai/gpt-4o');
-    const res = await request(app)
-      .post(`/chats/${c.id}/model`)
-      .set('content-type', 'application/json')
-      .send({ model: '' });
-    expect(res.status).toBe(200);
-    expect(chats.get(c.id)!.model_override).toBeNull();
-  });
-
-  it('502s when gateway rejects', async () => {
-    const c = chats.create('openclaw/default');
-    chats.replaceSessionKey(c.id, 'agent:has-key');
-    openclawWsMock.patchSession.mockRejectedValueOnce(new Error('bad model'));
-    const res = await request(app)
-      .post(`/chats/${c.id}/model`)
-      .set('content-type', 'application/json')
-      .send({ model: 'bogus/model' });
-    expect(res.status).toBe(502);
-    // The DB should NOT have changed
-    expect(chats.get(c.id)!.model_override).toBeNull();
-  });
-});
-
 describe('POST /chats/:id/reasoning', () => {
   it('mirrors the requested mode (on/off/stream)', async () => {
     const c = chats.create('openclaw/default');
