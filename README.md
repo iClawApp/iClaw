@@ -1,8 +1,18 @@
-# iClaw
+<p align="center">
+  <img src="./public/icon-192.png" alt="iClaw logo" width="96" height="96">
+</p>
+
+<h1 align="center">iClaw</h1>
+
+<p align="center">
+  <a href="https://iclaw.digital">iclaw.digital</a>
+</p>
 
 Site: <https://iclaw.digital>
 
 Chat-style web UI for a **local** [OpenClaw Gateway](https://docs.openclaw.ai): sidebar, streaming replies, tool activity, SQLite history on disk. The browser only connects to iClaw; iClaw connects to the gateway (native WebSocket). **Node.js 20+**; gateway must be running (default `http://127.0.0.1:18789`).
+
+![iClaw screenshot](./docs/readme-screenshot.png)
 
 ```bash
 git clone https://github.com/iClawApp/iClaw.git && cd iClaw && npm install && npm run dev
