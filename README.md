@@ -1,4 +1,12 @@
-# iClaw
+<p align="center">
+  <img src="./public/icon-192.png" alt="iClaw logo" width="96" height="96">
+</p>
+
+<h1 align="center">iClaw</h1>
+
+<p align="center">
+  <a href="https://iclaw.digital">iclaw.digital</a>
+</p>
 
 Site: <https://iclaw.digital>
 
