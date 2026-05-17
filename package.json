@@ -4,13 +4,13 @@
   "description": "Local web UI for OpenClaw Gateway",
   "private": true,
   "license": "MIT",
-  "homepage": "https://github.com/tmlxrd/iClaw",
+  "homepage": "https://github.com/iClawApp/iClaw",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tmlxrd/iClaw.git"
+    "url": "https://github.com/iClawApp/iClaw.git"
   },
   "bugs": {
-    "url": "https://github.com/tmlxrd/iClaw/issues"
+    "url": "https://github.com/iClawApp/iClaw/issues"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",

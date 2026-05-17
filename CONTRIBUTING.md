@@ -25,7 +25,7 @@ If you want to propose something larger, **open an issue first** so we can talk 
 Requirements: Node.js 20+ and a running [OpenClaw Gateway](https://docs.openclaw.ai) on `127.0.0.1:18789`. iClaw talks to the gateway over its **native WebSocket protocol** — no extra endpoint to enable.
 
 ```bash
-git clone https://github.com/tmlxrd/iClaw.git
+git clone https://github.com/iClawApp/iClaw.git
 cd iClaw
 npm install
 npm run dev    # http://localhost:3000

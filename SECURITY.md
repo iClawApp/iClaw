@@ -30,7 +30,7 @@ If you expose iClaw on a network beyond loopback, you are responsible for adding
 
 **Please do not open a public issue for security problems.** Instead:
 
-1. Open a **private** security advisory on GitHub: <https://github.com/tmlxrd/iClaw/security/advisories/new>
+1. Open a **private** security advisory on GitHub: <https://github.com/iClawApp/iClaw/security/advisories/new>
 2. Or contact the maintainers via the email listed on the GitHub profile
 
 Please include:
