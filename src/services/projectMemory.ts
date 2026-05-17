@@ -36,7 +36,7 @@ function sleep<T = null>(ms: number, value: T | null = null): Promise<T | null> 
 }
 
 /** Strip leading bullet/number markers from a parsed model output line. */
-function stripBulletPrefix(line: string): string {
+export function stripBulletPrefix(line: string): string {
   return line
     .trim()
     .replace(/^[-*•]+\s*/, '')
@@ -87,11 +87,11 @@ export function buildGatewayUserMessage(
   return `${prefixBase}${lines.join('\n')}${suffix}`;
 }
 
-function normalizeForDedup(s: string): string {
+export function normalizeForDedup(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-function isDuplicateFact(candidate: string, existing: string[]): boolean {
+export function isDuplicateFact(candidate: string, existing: string[]): boolean {
   const c = normalizeForDedup(candidate);
   if (!c || c.length < 4) return true;
   for (const ex of existing) {
@@ -102,7 +102,7 @@ function isDuplicateFact(candidate: string, existing: string[]): boolean {
   return false;
 }
 
-function parseExtractedFactLines(raw: string): string[] {
+export function parseExtractedFactLines(raw: string): string[] {
   const t = raw.trim();
   if (!t || /^none\.?$/i.test(t) || /^no facts\.?$/i.test(t) || /^nothing\.?$/i.test(t)) {
     return [];
