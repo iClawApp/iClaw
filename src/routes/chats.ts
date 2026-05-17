@@ -7,6 +7,7 @@ import {
   projectFactSuggestions,
   projectFacts,
   scheduledMessages,
+  enrichFactWithSourceChatTitle,
 } from '../services/store';
 import { compactProjectFacts } from '../services/projectMemory';
 import { openclawWs } from '../services/openclawWs';
@@ -87,7 +88,11 @@ chatsRouter.post('/:id/fact-suggestions/:suggestionId/accept', (req, res) => {
     sourceMessageId: sug.assistant_message_id,
   });
   projectFactSuggestions.remove(sid);
-  wsHub.broadcastAll({ type: 'project-fact-added', projectId: sug.project_id, fact });
+  wsHub.broadcastAll({
+    type: 'project-fact-added',
+    projectId: sug.project_id,
+    fact: enrichFactWithSourceChatTitle(fact),
+  });
   wsHub.broadcastAll({ type: 'project-fact-suggestion-removed', chatId, suggestionId: sid });
   void compactProjectFacts(sug.project_id).catch(() => {});
   res.type('application/json').json({ fact });

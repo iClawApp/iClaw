@@ -1,5 +1,6 @@
 /**
  * Project CRUD + project-facts edit/delete (facts are created from chat flows).
+ * Project page has separate «Посилання» (http) and «Файли» (paths, file://) mined from messages.
  *
  * HTTP-form style (POST + 302 redirect) for mutations so vanilla HTML forms
  * work. JSON variants (PATCH) for inline edits on the project page.
@@ -8,8 +9,8 @@
  */
 
 import { Router } from 'express';
-import { listProjectLinkEntries } from '../services/projectLinks';
-import { chats, projects, projectFacts } from '../services/store';
+import { listProjectLinkGroups } from '../services/projectLinks';
+import { chats, projects, projectFacts, enrichFactsWithSourceChatTitles, enrichFactWithSourceChatTitle } from '../services/store';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
 
@@ -69,13 +70,15 @@ projectsRouter.get('/:id', (req, res) => {
     res.status(404).send('project not found');
     return;
   }
+  const linkGroups = listProjectLinkGroups(id);
   res.render('project', {
     chats: chats.list(),
     workingIds: chatStatus.workingIds(),
     project,
     projectChats: chats.listByProject(id),
-    facts: projectFacts.listByProject(id),
-    projectLinks: listProjectLinkEntries(id),
+    facts: enrichFactsWithSourceChatTitles(projectFacts.listByProject(id)),
+    projectWebLinks: linkGroups.web,
+    projectFileLinks: linkGroups.files,
     allProjects: projects.list(),
     activeChat: null,
     activeProject: project,
@@ -168,7 +171,11 @@ projectsRouter.patch('/:id/facts/:factId', (req, res) => {
   }
   projectFacts.edit(factId, content);
   const updated = projectFacts.get(factId)!;
-  wsHub.broadcastAll({ type: 'project-fact-updated', projectId, fact: updated });
+  wsHub.broadcastAll({
+    type: 'project-fact-updated',
+    projectId,
+    fact: enrichFactWithSourceChatTitle(updated),
+  });
   res.json(updated);
 });
 

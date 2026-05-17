@@ -2453,10 +2453,35 @@ code {
 
 .project-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 20px 20px 72px;
   scroll-padding-bottom: 40px;
+  /* Match `#messages` scrollbar (main column edge). */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 30%, transparent) transparent;
+}
+
+.project-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.project-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.project-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 26%, transparent);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.project-body::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted) 44%, transparent);
+  background-clip: padding-box;
 }
 
 .project-body-inner {
@@ -2522,64 +2547,7 @@ code {
   display: none !important;
 }
 
-.project-links-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.project-link-item {
-  padding: 10px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-}
-
-.project-link-item:last-child {
-  border-bottom: none;
-}
-
-.project-link-url {
-  display: block;
-  font-size: 0.875rem;
-  font-weight: 500;
-  word-break: break-all;
-  color: var(--accent);
-  text-decoration: none;
-}
-
-.project-link-url:hover {
-  text-decoration: underline;
-}
-
-.project-link-sources {
-  margin-top: 4px;
-  font-size: 0.75rem;
-  line-height: 1.45;
-}
-
-.project-link-chat {
-  color: inherit;
-  text-decoration: none;
-}
-
-.project-link-chat:hover {
-  text-decoration: underline;
-  color: var(--text);
-}
-
-.project-links-empty {
-  margin: 0;
-  padding: 14px 12px;
-  font-size: 0.875rem;
-}
-
-.project-page-intro {
-  margin: 0;
-  padding: 0 2px;
-  font-size: 0.8125rem;
-  line-height: 1.5;
-  max-width: 32rem;
-}
-
+/* Legacy section chrome — unused on project page after tabs carry counts; kept for reuse. */
 .project-section {
   display: flex;
   flex-direction: column;
@@ -2642,32 +2610,31 @@ code {
   padding: 0;
 }
 
-.facts-list {
-  list-style: none;
+.project-chats > li.fact {
   margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.facts-list .fact {
-  margin: 0;
-  padding: 14px 16px 12px;
-  border: none;
-  border-radius: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  padding: 12px 16px 14px;
   background: transparent;
 }
 
-.facts-list .fact:last-child {
-  border-bottom: none;
+.project-chats > li.fact .project-row-head {
+  margin-bottom: 6px;
+}
+
+.project-chats > li.project-chats-empty {
+  margin: 0;
+  padding: 28px 20px;
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  list-style: none;
+  border: none;
 }
 
 .fact-content {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   border: none;
   background: transparent;
   padding: 2px 0;
@@ -2691,16 +2658,6 @@ code {
   flex-wrap: wrap;
 }
 
-.fact-source {
-  font-size: 0.75rem;
-  text-decoration: none;
-  color: var(--md-link);
-}
-
-.fact-source:hover {
-  text-decoration: underline;
-}
-
 .fact-delete {
   margin-left: auto;
   font-size: 0.75rem;
@@ -2715,16 +2672,6 @@ code {
 
 .fact-delete:hover {
   color: var(--danger);
-}
-
-.facts-empty {
-  list-style: none;
-  margin: 0;
-  padding: 28px 20px;
-  text-align: center;
-  font-size: 0.875rem;
-  line-height: 1.5;
-  border: none;
 }
 
 .project-empty-chats {
@@ -2790,18 +2737,65 @@ code {
   gap: 6px;
 }
 
-.project-chat-chevron {
-  display: block;
-  width: 5px;
-  height: 5px;
-  border-right: 1.5px solid var(--muted);
-  border-bottom: 1.5px solid var(--muted);
-  transform: rotate(-45deg);
-  opacity: 0.4;
+/* Stacked rows: chat name(s) on top, URL / path / fact body below. */
+.project-chat-link--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  align-content: flex-start;
+  gap: 6px;
+  min-height: 0;
 }
 
-.project-chat-link:hover .project-chat-chevron {
-  opacity: 0.65;
+.project-chat-link--stacked.project-chat-link--path {
+  cursor: default;
+}
+
+.project-row-head {
+  font-size: 0.75rem;
+  line-height: 1.35;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 2px;
+  align-items: center;
+}
+
+.project-row-element {
+  display: block;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  word-break: break-all;
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.project-file-line {
+  color: var(--text);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+.project-chat-title--url {
+  font-weight: 500;
+  color: var(--md-link);
+  text-decoration: none;
+  letter-spacing: -0.02em;
+  white-space: normal;
+  word-break: break-all;
+}
+
+.project-chat-title--url:hover {
+  text-decoration: underline;
+  color: var(--md-link-hover);
+}
+
+.project-chat-source {
+  color: inherit;
+  text-decoration: none;
+}
+
+.project-chat-source:hover {
+  text-decoration: underline;
+  color: var(--md-link);
 }
 
 .project-chat-badge {

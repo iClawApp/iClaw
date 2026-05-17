@@ -127,6 +127,19 @@ export const chats = {
   },
 };
 
+/** UI: attach source chat title from `chats` (not persisted on `project_facts`). */
+export function enrichFactWithSourceChatTitle(fact: ProjectFact): ProjectFact {
+  const sid = fact.source_chat_id;
+  if (sid == null) return { ...fact };
+  const c = chats.get(sid);
+  const source_chat_title = (c?.title ?? '').trim() || 'Чат';
+  return { ...fact, source_chat_title };
+}
+
+export function enrichFactsWithSourceChatTitles(facts: ProjectFact[]): ProjectFact[] {
+  return facts.map(enrichFactWithSourceChatTitle);
+}
+
 // ---------- messages ----------
 
 export const messages = {

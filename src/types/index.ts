@@ -18,6 +18,8 @@ export interface ProjectFact {
   source_message_id: number | null;
   created_at: string;
   updated_at: string;
+  /** Filled by server for UI (not a DB column). */
+  source_chat_title?: string;
 }
 
 /** A user message queued to fire at a specific time (Telegram-style schedule). */

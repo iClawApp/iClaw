@@ -4,7 +4,7 @@
  */
 
 import { openclawWs } from './openclawWs';
-import { projectFacts, projects, chats, projectFactSuggestions } from './store';
+import { projectFacts, projects, chats, projectFactSuggestions, enrichFactsWithSourceChatTitles } from './store';
 import { wsHub } from './wsHub';
 
 /** Rough token budget for the prepended project block (80/20 vs full window). */
@@ -214,7 +214,7 @@ export async function compactProjectFacts(projectId: number): Promise<void> {
 
     if (merged.length === 0) return;
     projectFacts.replaceAll(projectId, merged);
-    const facts = projectFacts.listByProject(projectId);
+    const facts = enrichFactsWithSourceChatTitles(projectFacts.listByProject(projectId));
     wsHub.broadcastAll({ type: 'project-facts-synced', projectId, facts });
   } catch (err) {
     console.error('[projectMemory] compaction failed', err instanceof Error ? err.message : err);

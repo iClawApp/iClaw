@@ -246,26 +246,54 @@
     const n = Number(m.dataset.projectId);
     return Number.isFinite(n) ? n : null;
   }
+
+  function refreshProjectTabLabels(activeTabName) {
+    const root = document.querySelector('main.project-page[data-project-id]');
+    if (!root) return;
+    root.querySelectorAll('[data-project-tab]').forEach((btn) => {
+      const name = btn.getAttribute('data-project-tab');
+      const base = btn.getAttribute('data-tab-base') || '';
+      const n = btn.getAttribute('data-tab-count');
+      const active = name === activeTabName;
+      const hasCount = n != null && String(n).trim() !== '';
+      btn.textContent = active && hasCount ? base + ' (' + n + ')' : base;
+    });
+  }
+
+  function syncProjectMemoryTabCountFromDom() {
+    const root = document.querySelector('main.project-page[data-project-id]');
+    const btn = root?.querySelector('[data-project-tab="memory"]');
+    const ul = document.getElementById('facts-list');
+    if (!btn || !ul) return;
+    btn.setAttribute('data-tab-count', String(ul.querySelectorAll('li.fact').length));
+    const active = root.querySelector('.project-tab.is-active')?.getAttribute('data-project-tab');
+    refreshProjectTabLabels(active || 'chats');
+  }
+
   /** Build a fact row matching `views/project.ejs` (WS-driven updates on project page). */
   function buildFactLi(f) {
     const li = document.createElement('li');
     li.className = 'fact';
     li.dataset.factId = String(f.id);
-    const src =
+    const titleRaw =
+      f.source_chat_title != null && String(f.source_chat_title).trim() !== ''
+        ? String(f.source_chat_title).trim()
+        : 'Чат';
+    const head =
       f.source_chat_id != null
-        ? '<a href="/chats/' +
+        ? '<div class="project-row-head muted"><a href="/chats/' +
           f.source_chat_id +
-          '" class="fact-source">Chat #' +
-          f.source_chat_id +
-          '</a>'
-        : '';
+          '" class="project-chat-source">' +
+          escapeHtml(titleRaw) +
+          '</a></div>'
+        : '<div class="project-row-head muted"><span>—</span></div>';
     li.innerHTML =
-      '<textarea class="fact-content" aria-label="Fact text" rows="2">' +
+      head +
+      '<textarea class="fact-content" aria-label="Текст факту" rows="2">' +
       escapeHtml(f.content || '') +
       '</textarea>' +
       '<div class="fact-meta">' +
-      src +
-      '<button type="button" class="fact-delete" aria-label="Delete fact">Remove</button></div>';
+      '<button type="button" class="fact-delete" aria-label="Видалити факт">Прибрати</button></div>';
     const ta = li.querySelector('.fact-content');
     if (ta) ta.dataset.saved = String(f.content || '').trim();
     return li;
@@ -1574,11 +1602,10 @@
       case 'project-fact-added': {
         if (currentProjectPageId() !== msg.projectId) return;
         const ul = document.getElementById('facts-list');
-        const cnt = document.getElementById('facts-count');
         if (!ul) return;
-        ul.querySelector('.facts-empty')?.remove();
+        ul.querySelector('li.project-chats-empty')?.remove();
         ul.appendChild(buildFactLi(msg.fact));
-        if (cnt) cnt.textContent = String(ul.querySelectorAll('li.fact').length);
+        syncProjectMemoryTabCountFromDom();
         return;
       }
 
@@ -1597,22 +1624,20 @@
         if (currentProjectPageId() !== msg.projectId) return;
         document.querySelector('#facts-list li.fact[data-fact-id="' + msg.factId + '"]')?.remove();
         const ul = document.getElementById('facts-list');
-        const cnt = document.getElementById('facts-count');
         if (ul && !ul.querySelector('li.fact')) {
           const empty = document.createElement('li');
-          empty.className = 'facts-empty muted';
+          empty.className = 'project-chats-empty muted';
           empty.textContent =
-            'No facts yet. Accept a suggestion in a chat in this project to add one.';
+            'Поки немає фактів. Підтвердіть пропозицію в чаті цього проєкту.';
           ul.appendChild(empty);
         }
-        if (cnt && ul) cnt.textContent = String(ul.querySelectorAll('li.fact').length);
+        syncProjectMemoryTabCountFromDom();
         return;
       }
 
       case 'project-facts-synced': {
         if (currentProjectPageId() !== msg.projectId) return;
         const ul = document.getElementById('facts-list');
-        const cnt = document.getElementById('facts-count');
         if (!ul) return;
         ul.replaceChildren();
         for (let i = 0; i < msg.facts.length; i++) {
@@ -1620,12 +1645,12 @@
         }
         if (msg.facts.length === 0) {
           const empty = document.createElement('li');
-          empty.className = 'facts-empty muted';
+          empty.className = 'project-chats-empty muted';
           empty.textContent =
-            'No facts yet. Accept a suggestion in a chat in this project to add one.';
+            'Поки немає фактів. Підтвердіть пропозицію в чаті цього проєкту.';
           ul.appendChild(empty);
         }
-        if (cnt) cnt.textContent = String(msg.facts.length);
+        syncProjectMemoryTabCountFromDom();
         return;
       }
 
@@ -2511,8 +2536,9 @@
       chats: document.getElementById('project-panel-chats'),
       memory: document.getElementById('project-panel-memory'),
       links: document.getElementById('project-panel-links'),
+      files: document.getElementById('project-panel-files'),
     };
-    if (!tabs.length || !panels.chats || !panels.memory || !panels.links) return;
+    if (!tabs.length || !panels.chats || !panels.memory || !panels.links || !panels.files) return;
 
     function activate(name) {
       tabs.forEach((btn) => {
@@ -2528,6 +2554,7 @@
         el.classList.toggle('project-panel--active', on);
         el.hidden = !on;
       });
+      refreshProjectTabLabels(name);
     }
 
     tabs.forEach((btn) => {
