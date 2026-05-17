@@ -233,15 +233,27 @@ async function runTurnLocked(opts: {
     onEvent,
   });
 
-  // `gatewayAccumulated` is openclawWs's buffer — on successful turns it is set
-  // from the `chat` state:final payload before the turn promise resolves (we no
-  // longer resolve on agent lifecycle:end alone, which used to race chat.history).
+  // Prefer chat.history's last assistant text — it's the gateway's
+  // display-normalised view of the turn, which is the only place that
+  // correctly resolves message-tool routing.
+  //
+  // When an agent picks `sourceReplyDeliveryMode: "message_tool_only"`, its
+  // streamed freeform output (what `chat:final` carries) is an internal
+  // status note like "Надіслав у чат короткий зведений висновок…", while the
+  // real user-facing reply is appended to the transcript as a SEPARATE
+  // projected assistant row by `tools.message.send`. canonicalAssistantText()
+  // walks history backwards and returns that projected row.
+  //
+  // Since `runTurn` now waits for `chat:state=final` before resolving (see
+  // openclawWs.ts), `chat.history` is guaranteed fresh by the time we fetch
+  // it — no race. gatewayAccumulated stays as a fallback for cases where
+  // history fetch fails, and our own streaming buffer is the last resort.
   const canonicalText = await canonicalAssistantText(sessionKey).catch(() => null);
   const finalText =
-    gatewayAccumulated.trim().length > 0
-      ? gatewayAccumulated
-      : canonicalText && canonicalText.length > 0
-        ? canonicalText
+    canonicalText && canonicalText.trim().length > 0
+      ? canonicalText
+      : gatewayAccumulated.trim().length > 0
+        ? gatewayAccumulated
         : assistantText;
 
   // Persist the assistant message + broadcast.
