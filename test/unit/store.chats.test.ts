@@ -71,6 +71,27 @@ describe('store.chats', () => {
     expect(chats.markRead(c.id)).toBe(false); // already 0
   });
 
+  it('forceUnread always sets unread=1', () => {
+    const c = chats.create('openclaw/default');
+    expect(chats.get(c.id)!.unread).toBe(0);
+    expect(chats.forceUnread(c.id)).toBe(true);
+    expect(chats.get(c.id)!.unread).toBe(1);
+    expect(chats.forceUnread(c.id)).toBe(true);
+    expect(chats.get(c.id)!.unread).toBe(1);
+  });
+
+  it('forceUnread does not change updated_at (list order unchanged)', () => {
+    const a = chats.create('openclaw/default');
+    db.prepare("UPDATE chats SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(a.id);
+    const b = chats.create('openclaw/default');
+    const orderBefore = chats.list().map((c) => c.id);
+    const bRowBefore = chats.get(b.id)!;
+    expect(chats.forceUnread(b.id)).toBe(true);
+    expect(chats.list().map((c) => c.id)).toEqual(orderBefore);
+    expect(chats.get(b.id)!.updated_at).toBe(bRowBefore.updated_at);
+    expect(chats.get(b.id)!.unread).toBe(1);
+  });
+
   it('setReasoningMode persists allowed values', () => {
     const c = chats.create('openclaw/default');
     chats.setReasoningMode(c.id, 'on');
@@ -101,6 +122,20 @@ describe('store.messages', () => {
     const list = messages.listByChat(c.id);
     expect(list.map((m) => m.id)).toEqual([u.id, a.id]);
     expect(list.map((m) => m.role)).toEqual(['user', 'assistant']);
+  });
+
+  it('append() stores reply_to fields for user messages', () => {
+    const c = chats.create('openclaw/default');
+    const a = messages.append(c.id, 'assistant', 'context line');
+    const u = messages.append(c.id, 'user', 'follow up', null, {
+      replyToMessageId: a.id,
+      replyQuote: 'context line',
+      replyToRole: 'assistant',
+    });
+    const row = messages.get(u.id)!;
+    expect(row.reply_to_message_id).toBe(a.id);
+    expect(row.reply_quote).toBe('context line');
+    expect(row.reply_to_role).toBe('assistant');
   });
 
   it('first user message derives title when current is "New chat"', () => {

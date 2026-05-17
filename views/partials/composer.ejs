@@ -31,6 +31,21 @@
 <% }); %></div>
 
 <form id="send-form" class="composer">
+  <div id="composer-reply-bar" class="composer-reply-bar" hidden>
+    <div class="composer-reply-bar-inner">
+      <span class="composer-reply-accent" aria-hidden="true"></span>
+      <div class="composer-reply-main">
+        <div class="composer-reply-meta" id="composer-reply-meta"></div>
+        <div class="composer-reply-text" id="composer-reply-text"></div>
+      </div>
+      <button
+        type="button"
+        class="composer-reply-clear btn btn--icon btn--ghost"
+        id="composer-reply-clear"
+        aria-label="Скасувати цитату"
+      >×</button>
+    </div>
+  </div>
   <div class="composer-field">
     <textarea
       id="composer-input"

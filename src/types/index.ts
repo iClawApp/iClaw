@@ -67,5 +67,11 @@ export interface Message {
   role: 'user' | 'assistant' | 'system' | string;
   content: string;
   finish_reason: string | null;
+  /** When set, this user message visually replies to an earlier row in the same chat. */
+  reply_to_message_id?: number | null;
+  /** Truncated excerpt (≤240 chars) shown in the reply preview bar. */
+  reply_quote?: string | null;
+  /** Role of the referenced message (`user` | `assistant`) for UI labels. */
+  reply_to_role?: string | null;
   created_at: string;
 }

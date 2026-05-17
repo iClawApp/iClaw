@@ -237,6 +237,17 @@ chatsRouter.post('/:id/reasoning', (req, res) => {
   res.json({ id, mode });
 });
 
+chatsRouter.post('/:id/unread', (req, res) => {
+  const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  chats.forceUnread(id);
+  wsHub.broadcastAll({ type: 'chat-unread', chatId: id });
+  res.json({ ok: true });
+});
+
 chatsRouter.post('/:id/delete', async (req, res) => {
   const id = Number(req.params.id);
   const chat = chats.get(id);

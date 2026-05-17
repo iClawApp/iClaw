@@ -84,6 +84,13 @@
   initDraftProjectPick();
   // serializes turns per chat too, so this is just for the visible label
   const waitingItems = [];
+  const REPLY_QUOTE_MAX = 240;
+  /** @type {{ messageId: number; quote: string; role: string } | null} */
+  let pendingComposerReply = null;
+  const composerReplyBar = document.getElementById('composer-reply-bar');
+  const composerReplyText = document.getElementById('composer-reply-text');
+  const composerReplyMeta = document.getElementById('composer-reply-meta');
+  const composerReplyClearBtn = document.getElementById('composer-reply-clear');
   let inFlight = false;
   /** the assistant DOM node we're streaming into right now */
   let currentStreamEl = null;
@@ -391,6 +398,43 @@
       if (empty) empty.remove();
     }
   }
+  function replyStubRoleLabel(role) {
+    if (role === 'user') return 'Користувач';
+    if (role === 'assistant') return 'Асистент';
+    return 'Повідомлення';
+  }
+
+  function msgReplyStubHtml(replyToId, quote, replyToRole) {
+    const rid = String(replyToId);
+    const q = escapeHtml(quote);
+    const who = escapeHtml(replyStubRoleLabel(replyToRole || ''));
+    return (
+      '<button type="button" class="msg-reply-stub" data-jump-to-msg="' +
+      rid +
+      '" aria-label="Перейти до цитованого повідомлення">' +
+      '<span class="msg-reply-stub-track">' +
+      '<span class="msg-reply-stub-bar" aria-hidden="true"></span>' +
+      '<span class="msg-reply-stub-body">' +
+      '<span class="msg-reply-stub-label">' +
+      who +
+      '</span>' +
+      '<span class="msg-reply-stub-quote">' +
+      q +
+      '</span></span></button>'
+    );
+  }
+
+  function syncPendingUserReplyPreview(pendingEl, serverMsg) {
+    if (!pendingEl || !serverMsg) return;
+    if (pendingEl.querySelector('.msg-reply-stub')) return;
+    const rId = Number(serverMsg.reply_to_message_id);
+    const rQu = serverMsg.reply_quote != null ? String(serverMsg.reply_quote) : '';
+    if (!Number.isFinite(rId) || !rQu) return;
+    const rRole = serverMsg.reply_to_role != null ? String(serverMsg.reply_to_role) : '';
+    const roleEl = pendingEl.querySelector('.role');
+    if (roleEl) roleEl.insertAdjacentHTML('afterend', msgReplyStubHtml(rId, rQu, rRole));
+  }
+
   function scrollToBottom() {
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
   }
@@ -401,8 +445,13 @@
     div.className = 'msg ' + (msg.role || 'system');
     if (msg.id) div.dataset.msgId = String(msg.id);
     if (opts?.pendingId) div.classList.add('pending-id');
+    const rId = msg.reply_to_message_id != null ? Number(msg.reply_to_message_id) : NaN;
+    const rQuote = msg.reply_quote != null ? String(msg.reply_quote) : '';
+    const rRole = msg.reply_to_role != null ? String(msg.reply_to_role) : '';
+    const replyHtml = Number.isFinite(rId) && rQuote ? msgReplyStubHtml(rId, rQuote, rRole) : '';
     div.innerHTML =
       '<div class="role">' + escapeHtml(msg.role || 'system') + '</div>' +
+      (replyHtml ? replyHtml : '') +
       '<div class="msg-body">' + renderMarkdown(msg.content || '') + '</div>';
     decorateMessageBody(div);
     messagesAppendRoot().appendChild(div);
@@ -713,6 +762,19 @@
   // events keep showing detail until the user collapses or the turn ends.
   if (messagesEl) {
     messagesEl.addEventListener('click', (e) => {
+      const replyStub = e.target.closest('.msg-reply-stub');
+      if (replyStub) {
+        const mid = replyStub.getAttribute('data-jump-to-msg');
+        if (!mid) return;
+        e.preventDefault();
+        const targetMsg = messagesEl.querySelector('.msg[data-msg-id="' + mid + '"]');
+        if (targetMsg) {
+          targetMsg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          targetMsg.classList.add('msg-highlight-flash');
+          setTimeout(() => targetMsg.classList.remove('msg-highlight-flash'), 1200);
+        }
+        return;
+      }
       const copyBtn = e.target.closest('.code-copy-btn');
       if (copyBtn) {
         const wrap = copyBtn.closest('.code-block-wrap');
@@ -1170,6 +1232,245 @@
     if (searchMatchSet !== null) applySidebarSearchFilter();
   }
 
+  // -------------------------------------------------------------------------
+  // Sidebar chat context menu (share, rename, unread, delete) + text selection → reply
+  // -------------------------------------------------------------------------
+  const sidebarChatMenu = document.createElement('div');
+  sidebarChatMenu.id = 'sidebar-chat-context-menu';
+  sidebarChatMenu.className = 'sidebar-context-menu';
+  sidebarChatMenu.hidden = true;
+  document.body.appendChild(sidebarChatMenu);
+  let sidebarMenuChatId = null;
+
+  function buildSidebarContextMenuHtml() {
+    const hasShare =
+      Boolean(document.getElementById('share-modal')) &&
+      Boolean(document.getElementById('share-btn'));
+    const shareBtnHtml = hasShare
+      ? '<button type="button" class="sidebar-context-menu-item" data-action="share">Поділитися</button>'
+      : '';
+    return (
+      shareBtnHtml +
+      '<button type="button" class="sidebar-context-menu-item" data-action="rename">Перейменувати</button>' +
+      '<button type="button" class="sidebar-context-menu-item" data-action="unread">Непрочитане</button>' +
+      '<button type="button" class="sidebar-context-menu-item sidebar-context-menu-danger" data-action="delete">Видалити чат</button>'
+    );
+  }
+
+  function closeSidebarChatMenu() {
+    sidebarChatMenu.hidden = true;
+    sidebarMenuChatId = null;
+  }
+
+  function openSidebarChatMenu(clientX, clientY, chatId) {
+    sidebarMenuChatId = chatId;
+    sidebarChatMenu.innerHTML = buildSidebarContextMenuHtml();
+    sidebarChatMenu.hidden = false;
+    const pad = 8;
+    const mw = 200;
+    const n = sidebarChatMenu.querySelectorAll('[data-action]').length || 1;
+    const mh = Math.min(400, 28 + n * 42);
+    let x = clientX;
+    let y = clientY;
+    x = Math.max(pad, Math.min(x, window.innerWidth - mw - pad));
+    y = Math.max(pad, Math.min(y, window.innerHeight - mh - pad));
+    sidebarChatMenu.style.left = x + 'px';
+    sidebarChatMenu.style.top = y + 'px';
+  }
+
+  document.addEventListener('pointerdown', (e) => {
+    if (sidebarChatMenu.hidden) return;
+    if (sidebarChatMenu.contains(e.target)) return;
+    closeSidebarChatMenu();
+  });
+
+  sidebarChatMenu.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.getAttribute('data-action');
+    const cid = sidebarMenuChatId;
+    closeSidebarChatMenu();
+    if (!Number.isFinite(cid)) return;
+    if (action === 'share') {
+      const list = document.getElementById('chat-list');
+      const link = list?.querySelector('a.chat-item[data-chat-id="' + cid + '"]');
+      const titleEl = link?.querySelector('.chat-item-title');
+      const title = (titleEl && titleEl.textContent ? titleEl.textContent : '').trim() || 'Shared chat';
+      window.dispatchEvent(
+        new CustomEvent('iclaw-open-share', { detail: { chatId: cid, title } }),
+      );
+      return;
+    }
+    if (action === 'rename') {
+      const list = document.getElementById('chat-list');
+      const link = list?.querySelector('a.chat-item[data-chat-id="' + cid + '"]');
+      const titleEl = link?.querySelector('.chat-item-title');
+      const curTitle = (titleEl && titleEl.textContent ? titleEl.textContent : '').trim() || 'Чат';
+      const next = window.prompt('Нова назва чату:', curTitle);
+      if (next == null) return;
+      const t = next.trim();
+      if (!t || t === curTitle) return;
+      try {
+        const res = await fetch('/chats/' + encodeURIComponent(cid), {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: t }),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.json();
+        const nextTitle = data.title != null ? String(data.title) : t;
+        if (link) {
+          const te = link.querySelector('.chat-item-title');
+          if (te) te.textContent = nextTitle;
+          link.title = nextTitle;
+        }
+        if (activeChatId === cid && titleInput) {
+          titleInput.value = nextTitle;
+          titleInput.defaultValue = nextTitle;
+        }
+      } catch (err) {
+        console.error('[iclaw] sidebar rename failed', err);
+        window.alert('Не вдалось зберегти назву.');
+      }
+      return;
+    }
+    if (action === 'unread') {
+      try {
+        const res = await fetch('/chats/' + encodeURIComponent(cid) + '/unread', {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        window.location.assign('/');
+      } catch (err) {
+        console.error('[iclaw] mark unread failed', err);
+      }
+      return;
+    }
+    if (action === 'delete') {
+      if (!confirm('Видалити цей чат?')) return;
+      const f = document.createElement('form');
+      f.method = 'POST';
+      f.action = '/chats/' + encodeURIComponent(cid) + '/delete';
+      document.body.appendChild(f);
+      f.submit();
+    }
+  });
+
+  const chatListNav = document.getElementById('chat-list');
+  if (chatListNav) {
+    chatListNav.addEventListener('contextmenu', (e) => {
+      const link = e.target.closest('a.chat-item[data-chat-id]');
+      if (!link) return;
+      e.preventDefault();
+      const id = Number(link.dataset.chatId);
+      if (!Number.isFinite(id)) return;
+      openSidebarChatMenu(e.clientX, e.clientY, id);
+    });
+  }
+
+  const selectionReplyFab = document.createElement('div');
+  selectionReplyFab.id = 'msg-selection-reply-fab';
+  selectionReplyFab.hidden = true;
+  selectionReplyFab.innerHTML =
+    '<button type="button" class="msg-selection-reply-btn">Відповісти</button>';
+  document.body.appendChild(selectionReplyFab);
+
+  function hideSelectionReplyFab() {
+    selectionReplyFab.hidden = true;
+  }
+
+  function getReplySelectionContext() {
+    if (!messagesEl || activeChatId == null) return null;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+    const raw = sel.toString().trim();
+    if (!raw) return null;
+    const quote = raw.length > REPLY_QUOTE_MAX ? raw.slice(0, REPLY_QUOTE_MAX) : raw;
+    const anchorRoot =
+      sel.anchorNode && sel.anchorNode.nodeType === 3
+        ? sel.anchorNode.parentElement
+        : /** @type {Element | null} */ (sel.anchorNode);
+    const focusRoot =
+      sel.focusNode && sel.focusNode.nodeType === 3
+        ? sel.focusNode.parentElement
+        : /** @type {Element | null} */ (sel.focusNode);
+    const el = anchorRoot && anchorRoot.closest ? anchorRoot.closest('.msg') : null;
+    const el2 = focusRoot && focusRoot.closest ? focusRoot.closest('.msg') : null;
+    if (!el || el !== el2) return null;
+    if (!messagesEl.contains(el)) return null;
+    if (
+      el.classList.contains('streaming') ||
+      el.classList.contains('fact-suggestions-card') ||
+      el.classList.contains('reasoning-block')
+    ) {
+      return null;
+    }
+    const msgBody = anchorRoot && anchorRoot.closest ? anchorRoot.closest('.msg-body') : null;
+    if (!msgBody || !el.contains(msgBody)) return null;
+    const roleEl = el.querySelector('.role');
+    const role = (roleEl && roleEl.textContent ? roleEl.textContent : '').trim();
+    if (role !== 'user' && role !== 'assistant') return null;
+    const messageId = Number(el.dataset.msgId);
+    if (!Number.isFinite(messageId)) return null;
+    const range = sel.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    return { messageId, quote, rect, role };
+  }
+
+  selectionReplyFab.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+  });
+  selectionReplyFab.querySelector('button')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const mid = Number(selectionReplyFab.dataset.pendingMsgId);
+    const quote = selectionReplyFab.dataset.pendingQuote || '';
+    const role = selectionReplyFab.dataset.pendingRole || '';
+    hideSelectionReplyFab();
+    const sel = window.getSelection();
+    if (sel) sel.removeAllRanges();
+    if (Number.isFinite(mid) && quote) {
+      pendingComposerReply = { messageId: mid, quote, role };
+      updateComposerReplyBar();
+      input?.focus();
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    requestAnimationFrame(() => {
+      const ctx = getReplySelectionContext();
+      if (!ctx) {
+        hideSelectionReplyFab();
+        return;
+      }
+      const fabW = selectionReplyFab.offsetWidth || 120;
+      const fabH = selectionReplyFab.offsetHeight || 40;
+      const gap = 6;
+      /** Center under selection horizontally; `translate(-50%, …)` in CSS aligns to this point. */
+      let x = ctx.rect.left + ctx.rect.width / 2;
+      /** Anchor Y = top of selection; CSS `translateY(-100%)` places the pill just above this line. */
+      let anchorY = ctx.rect.top;
+      const minAnchorY = fabH + gap + 8;
+      if (anchorY < minAnchorY) anchorY = minAnchorY;
+      x = Math.max(8 + fabW / 2, Math.min(x, window.innerWidth - fabW / 2 - 8));
+      selectionReplyFab.style.left = x + 'px';
+      selectionReplyFab.style.top = anchorY + 'px';
+      selectionReplyFab.dataset.pendingMsgId = String(ctx.messageId);
+      selectionReplyFab.dataset.pendingQuote = ctx.quote;
+      selectionReplyFab.dataset.pendingRole = ctx.role || '';
+      selectionReplyFab.hidden = false;
+    });
+  });
+
+  messagesEl?.addEventListener(
+    'scroll',
+    () => {
+      hideSelectionReplyFab();
+    },
+    { passive: true },
+  );
+
   function openSidebarSearchPanel() {
     if (!sidebarToolbar || !searchToggleBtn) return;
     sidebarToolbar.classList.add('is-search-open');
@@ -1361,6 +1662,7 @@
           if (pending) {
             pending.classList.remove('pending-id');
             pending.dataset.msgId = String(msg.message.id);
+            syncPendingUserReplyPreview(pending, msg.message);
           } else if (!messagesEl?.querySelector('.msg[data-msg-id="' + msg.message.id + '"]')) {
             appendMessage(msg.message);
           }
@@ -1765,7 +2067,13 @@
     // Optimistically append user msg. Mark it as pending-id so the
     // upcoming `message-appended` for the same user msg adopts this node
     // instead of duplicating.
-    appendMessage({ role: 'user', content: item.content }, { pendingId: true });
+    const optimistic = { role: 'user', content: item.content };
+    if (item.replyTo) {
+      optimistic.reply_to_message_id = item.replyTo.messageId;
+      optimistic.reply_quote = item.replyTo.quote;
+      if (item.replyTo.role) optimistic.reply_to_role = item.replyTo.role;
+    }
+    appendMessage(optimistic, { pendingId: true });
     currentStreamFullText = '';
     currentStreamEl = ensureStreamEl();
     const payload = {
@@ -1773,6 +2081,13 @@
       requestId: 'r-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
       content: item.content,
     };
+    if (item.replyTo) {
+      payload.replyTo = {
+        messageId: item.replyTo.messageId,
+        quote: item.replyTo.quote,
+      };
+      if (item.replyTo.role) payload.replyTo.role = item.replyTo.role;
+    }
     if (activeChatId != null) payload.chatId = activeChatId;
     else {
       payload.agent = draftAgentSelect?.value || 'openclaw/default';
@@ -1816,6 +2131,34 @@
     return true;
   }
 
+  function updateComposerReplyBar() {
+    if (!composerReplyBar || !composerReplyText) return;
+    if (pendingComposerReply && pendingComposerReply.quote) {
+      if (composerReplyMeta) {
+        const r = pendingComposerReply.role;
+        composerReplyMeta.textContent =
+          r === 'user'
+            ? 'Відповідь · Користувач'
+            : r === 'assistant'
+              ? 'Відповідь · Асистент'
+              : 'Відповідь';
+      }
+      composerReplyText.textContent = pendingComposerReply.quote;
+      composerReplyBar.hidden = false;
+    } else {
+      composerReplyBar.hidden = true;
+      composerReplyText.textContent = '';
+      if (composerReplyMeta) composerReplyMeta.textContent = '';
+    }
+  }
+
+  if (composerReplyClearBtn) {
+    composerReplyClearBtn.addEventListener('click', () => {
+      pendingComposerReply = null;
+      updateComposerReplyBar();
+    });
+  }
+
   if (form && input) {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -1828,7 +2171,14 @@
       }
       const content = input.value.trim();
       if (!content) return;
-      waitingItems.push({ content, id: 'q-' + nextQueueItemId++ });
+      const replySnap = pendingComposerReply;
+      pendingComposerReply = null;
+      updateComposerReplyBar();
+      waitingItems.push({
+        content,
+        id: 'q-' + nextQueueItemId++,
+        replyTo: replySnap || undefined,
+      });
       input.value = '';
       renderQueue();
       flushNextQueued();
@@ -1859,20 +2209,46 @@
   const LONG_PRESS_MS = 450;
   let schedulePressTimer = null;
   let scheduleMenuJustOpened = false;
+  let scheduleMenuAutoCloseTimer = null;
 
   function isScheduleMenuOpen() {
     return scheduleMenu != null && !scheduleMenu.hidden;
   }
+
+  function onScheduleMenuOutsidePointerDown(ev) {
+    if (!isScheduleMenuOpen()) return;
+    const t = ev.target;
+    if (scheduleMenu.contains(t)) return;
+    if (sendBtn && sendBtn.contains(t)) return;
+    closeScheduleMenu();
+  }
+
   function closeScheduleMenu() {
     if (!scheduleMenu) return;
     scheduleMenu.hidden = true;
     if (scheduleCustomRow) scheduleCustomRow.hidden = true;
+    scheduleMenuJustOpened = false;
+    if (scheduleMenuAutoCloseTimer != null) {
+      clearTimeout(scheduleMenuAutoCloseTimer);
+      scheduleMenuAutoCloseTimer = null;
+    }
+    document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
   }
+
   function openScheduleMenu() {
     if (!scheduleMenu) return;
-    if (!input.value.trim()) return; // nothing to schedule
+    if (!input.value.trim()) return;
+    document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
     scheduleMenu.hidden = false;
     if (scheduleCustomRow) scheduleCustomRow.hidden = true;
+    if (scheduleMenuAutoCloseTimer != null) clearTimeout(scheduleMenuAutoCloseTimer);
+    scheduleMenuAutoCloseTimer = setTimeout(() => {
+      scheduleMenuAutoCloseTimer = null;
+      closeScheduleMenu();
+    }, 10_000);
+    setTimeout(() => {
+      document.addEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
+    }, 0);
   }
 
   /** Parse the SQLite UTC stamp ("YYYY-MM-DD HH:MM:SS") as a real UTC instant. */
@@ -2001,15 +2377,24 @@
         openScheduleMenu();
       }, LONG_PRESS_MS);
     });
-    const clearPress = () => {
+    sendBtn.addEventListener('pointerup', () => {
+      if (!isScheduleMenuOpen() && schedulePressTimer) {
+        clearTimeout(schedulePressTimer);
+        schedulePressTimer = null;
+      }
+    });
+    sendBtn.addEventListener('pointerleave', () => {
+      if (!isScheduleMenuOpen() && schedulePressTimer) {
+        clearTimeout(schedulePressTimer);
+        schedulePressTimer = null;
+      }
+    });
+    sendBtn.addEventListener('pointercancel', () => {
       if (schedulePressTimer) {
         clearTimeout(schedulePressTimer);
         schedulePressTimer = null;
       }
-    };
-    sendBtn.addEventListener('pointerup', clearPress);
-    sendBtn.addEventListener('pointerleave', clearPress);
-    sendBtn.addEventListener('pointercancel', clearPress);
+    });
     // Capture-phase click guard — swallows the synthetic click that follows
     // the pointerup at the end of a long-press, which would otherwise submit
     // the form.
@@ -2046,17 +2431,6 @@
       submitScheduled(d);
     });
   }
-
-  // Close the schedule menu on outside click or Esc.
-  document.addEventListener('click', (e) => {
-    if (!isScheduleMenuOpen()) return;
-    if (scheduleMenu.contains(e.target)) return;
-    if (sendBtn?.contains(e.target)) return;
-    closeScheduleMenu();
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && isScheduleMenuOpen()) closeScheduleMenu();
-  });
 
   // Cancel buttons on the scheduled-list banner.
   if (scheduledListEl) {
@@ -2344,6 +2718,50 @@
     slashFiltered = [];
     slashActiveIndex = 0;
   }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    if (isScheduleMenuOpen()) {
+      closeScheduleMenu();
+      return;
+    }
+    const shareModal = document.getElementById('share-modal');
+    if (shareModal && !shareModal.hidden) return;
+    const logoPop = document.getElementById('project-logo-popover');
+    const logoTrig = document.getElementById('project-logo-trigger');
+    if (logoPop && !logoPop.hidden) {
+      logoPop.hidden = true;
+      if (logoTrig) logoTrig.setAttribute('aria-expanded', 'false');
+      return;
+    }
+    if (sidebarToolbar?.classList.contains('is-search-open')) {
+      closeSidebarSearchPanel();
+      return;
+    }
+    if (!sidebarChatMenu.hidden) {
+      closeSidebarChatMenu();
+      return;
+    }
+    const selFab = document.getElementById('msg-selection-reply-fab');
+    if (selFab && !selFab.hidden) {
+      hideSelectionReplyFab();
+      const sel = window.getSelection();
+      if (sel) sel.removeAllRanges();
+      return;
+    }
+    if (slashMenuEl && !slashMenuEl.hidden) {
+      closeSlashMenu();
+      return;
+    }
+    if (pendingComposerReply) {
+      pendingComposerReply = null;
+      updateComposerReplyBar();
+      return;
+    }
+    if (location.pathname === '/' || location.pathname === '') return;
+    window.location.assign('/');
+  });
+
   function renderSlashMenu() {
     const m = buildSlashMenu();
     if (slashFiltered.length === 0) {

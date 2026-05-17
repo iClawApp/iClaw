@@ -117,6 +117,12 @@ export const chats = {
       .run(id);
     return info.changes > 0;
   },
+  /** Force unread=1 (Telegram-style "mark unread" from sidebar). Idempotent. Does not touch `updated_at` so the chat stays in place in the sidebar. */
+  forceUnread(id: number): boolean {
+    if (!this.get(id)) return false;
+    db.prepare('UPDATE chats SET unread = 1 WHERE id = ?').run(id);
+    return true;
+  },
   remove(id: number): void {
     db.prepare('DELETE FROM chats WHERE id = ?').run(id);
   },
@@ -143,17 +149,24 @@ export const messages = {
       .prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC')
       .all(chatId) as Message[];
   },
+  get(id: number): Message | undefined {
+    return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message | undefined;
+  },
   append(
     chatId: number,
     role: string,
     content: string,
     finishReason: string | null = null,
+    reply?: { replyToMessageId: number; replyQuote: string; replyToRole: string } | null,
   ): Message {
+    const rid = reply?.replyToMessageId ?? null;
+    const rq = reply?.replyQuote ?? null;
+    const rrole = reply?.replyToRole ?? null;
     const info = db
       .prepare(
-        'INSERT INTO messages (chat_id, role, content, finish_reason) VALUES (?, ?, ?, ?)',
+        'INSERT INTO messages (chat_id, role, content, finish_reason, reply_to_message_id, reply_quote, reply_to_role) VALUES (?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(chatId, role, content, finishReason);
+      .run(chatId, role, content, finishReason, rid, rq, rrole);
     // chats.updated_at is bumped by the trg_chats_touch_on_message SQLite
     // trigger; no manual touch() needed here. We keep chats.touch() public
     // for callers that mutate parents without writing a message (e.g.

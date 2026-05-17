@@ -31,12 +31,15 @@ CREATE TABLE IF NOT EXISTS chats (
 );
 
 CREATE TABLE IF NOT EXISTS messages (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  chat_id       INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-  role          TEXT NOT NULL,
-  content       TEXT NOT NULL,
-  finish_reason TEXT,
-  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id              INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  role                 TEXT NOT NULL,
+  content              TEXT NOT NULL,
+  finish_reason        TEXT,
+  reply_to_message_id  INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+  reply_quote          TEXT,
+  reply_to_role        TEXT,
+  created_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS project_facts (
@@ -130,6 +133,20 @@ function migrateSchema(database: Database.Database): void {
   }
   if (!chatColNames.has('reasoning_mode')) {
     database.exec("ALTER TABLE chats ADD COLUMN reasoning_mode TEXT NOT NULL DEFAULT 'off'");
+  }
+
+  const msgCols = database.prepare('PRAGMA table_info(messages)').all() as { name: string }[];
+  const msgColNames = new Set(msgCols.map((c) => c.name));
+  if (!msgColNames.has('reply_to_message_id')) {
+    database.exec(
+      'ALTER TABLE messages ADD COLUMN reply_to_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL',
+    );
+  }
+  if (!msgColNames.has('reply_quote')) {
+    database.exec('ALTER TABLE messages ADD COLUMN reply_quote TEXT');
+  }
+  if (!msgColNames.has('reply_to_role')) {
+    database.exec('ALTER TABLE messages ADD COLUMN reply_to_role TEXT');
   }
 
   // projects — older installs (pre-v0.1) might have a projects table without

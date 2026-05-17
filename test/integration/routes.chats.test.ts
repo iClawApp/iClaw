@@ -138,6 +138,24 @@ describe('PATCH /chats/:id', () => {
   });
 });
 
+describe('POST /chats/:id/unread', () => {
+  it('marks chat unread and is idempotent', async () => {
+    const c = chats.create('openclaw/default');
+    const res = await request(app).post(`/chats/${c.id}/unread`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(chats.get(c.id)!.unread).toBe(1);
+    const res2 = await request(app).post(`/chats/${c.id}/unread`);
+    expect(res2.status).toBe(200);
+    expect(chats.get(c.id)!.unread).toBe(1);
+  });
+
+  it('404 for missing chat', async () => {
+    const res = await request(app).post('/chats/99999/unread');
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('POST /chats/:id/delete', () => {
   it('drops the row AND calls sessions.delete on the gateway when key is agent:*', async () => {
     const c = chats.create('openclaw/default');

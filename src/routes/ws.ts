@@ -68,6 +68,7 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
           projectId: msg.chatId == null ? (msg.projectId ?? null) : undefined,
           requestId: msg.requestId,
           subscriber: socket,
+          replyTo: msg.replyTo,
         });
       } catch (err) {
         // Errors are already broadcast via chatRunner; nothing more to do.

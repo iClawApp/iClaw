@@ -107,6 +107,26 @@
           <% chatMessages.forEach(function (m) { %>
             <div class="msg <%= m.role %>" data-msg-id="<%= m.id %>">
               <div class="role"><%= m.role %></div>
+              <% if (m.reply_to_message_id && m.reply_quote) { %>
+                <%
+                  const _rr = m.reply_to_role || '';
+                  const _who = _rr === 'user' ? 'Користувач' : (_rr === 'assistant' ? 'Асистент' : 'Повідомлення');
+                %>
+                <button
+                  type="button"
+                  class="msg-reply-stub"
+                  data-jump-to-msg="<%= m.reply_to_message_id %>"
+                  aria-label="Перейти до цитованого повідомлення"
+                >
+                  <span class="msg-reply-stub-track">
+                    <span class="msg-reply-stub-bar" aria-hidden="true"></span>
+                    <span class="msg-reply-stub-body">
+                      <span class="msg-reply-stub-label"><%= _who %></span>
+                      <span class="msg-reply-stub-quote"><%= m.reply_quote %></span>
+                    </span>
+                  </span>
+                </button>
+              <% } %>
               <div class="msg-body"><%= m.content %></div>
             </div>
           <% }); %>

@@ -14,6 +14,7 @@ import { openclawWs, type TurnEvent } from './openclawWs';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
 import { toolActivityLabel } from './toolLabels';
 import { wsHub } from './wsHub';
+import type { Message } from '../types';
 
 const DEFAULT_AGENT = 'openclaw/default';
 
@@ -119,6 +120,80 @@ function syncSidebarUnread(chatId: number): void {
   }
 }
 
+const REPLY_QUOTE_MAX = 240;
+
+function normalizeReplyQuote(s: string): string {
+  return s.replace(/\s+/g, ' ').trim().slice(0, REPLY_QUOTE_MAX);
+}
+
+/** Validate client-supplied reply pointer; only user/assistant rows in this chat. */
+function parseReplyForChat(
+  chatId: number,
+  raw: unknown,
+): { messageId: number; quote: string; ref: Message } | null {
+  if (raw == null || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const mid = Number(o.messageId);
+  if (!Number.isFinite(mid) || mid <= 0) return null;
+  const ref = messages.get(mid);
+  if (!ref || ref.chat_id !== chatId) return null;
+  if (ref.role !== 'user' && ref.role !== 'assistant') return null;
+  const q = normalizeReplyQuote(String(o.quote ?? ''));
+  if (!q) return null;
+  return { messageId: mid, quote: q, ref };
+}
+
+/** Enough for the model to understand the parent message; capped for token budget. */
+const GATEWAY_REPLY_BODY_MAX = 1200;
+
+function excerptForGateway(content: string): string {
+  const s = String(content ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (s.length <= GATEWAY_REPLY_BODY_MAX) return s;
+  return s.slice(0, GATEWAY_REPLY_BODY_MAX) + '…';
+}
+
+/**
+ * Rich reply context for the LLM: full (truncated) parent message body, not
+ * only the short UI quote — so the assistant can answer coherently when the
+ * highlight is a single word like "Downloads".
+ */
+function formatReplyGatewayBlock(ref: Message, clientQuote: string): string {
+  const roleLabel =
+    ref.role === 'user' ? 'user' : ref.role === 'assistant' ? 'assistant' : String(ref.role);
+  const body = excerptForGateway(ref.content);
+  const clip = clientQuote.trim().replace(/\r\n/g, '\n');
+  const bodyOneLine = body.replace(/\s+/g, ' ');
+  const clipOne = clip.replace(/\s+/g, ' ');
+  const quoteMatchesBody =
+    clipOne.length === 0 ||
+    bodyOneLine.includes(clipOne) ||
+    body.trimStart().startsWith(clip);
+  /** Always tell the model what substring the UI used as the reply anchor (even when it is part of the parent body). */
+  const anchorLine =
+    clipOne.length > 0
+      ? `\nSelected UI reply excerpt (the exact substring the user chose in the thread as the reply anchor; interpret the user's new text in relation to this and the parent body above): «${clipOne}»`
+      : '';
+  const mismatchNote =
+    clipOne.length > 0 && !quoteMatchesBody
+      ? `\nNote: that excerpt does not appear verbatim in the parent body above (normalization or truncation) — still treat it as the user's intended anchor.`
+      : '';
+  return (
+    `[CONTEXT — threaded reply. The user's NEW message starts at USER_REPLY_START below. ` +
+      `Above that marker is the full earlier message they refer to (role=${roleLabel}, id=${ref.id}). ` +
+      `If they ask what they replied to / whether you see their reply, mention both the parent message and the «Selected UI reply excerpt» line when relevant. ` +
+      `Otherwise read for continuity and answer the new text directly.]\n\n` +
+      `--- BEGIN parent message (role=${roleLabel}, id=${ref.id}) ---\n` +
+      body +
+      anchorLine +
+      mismatchNote +
+      `\n--- END parent message ---\n\n` +
+      `USER_REPLY_START\n`
+  );
+}
+
 /**
  * Run one turn end-to-end: ensure session exists, write user msg, stream
  * events to subscribers, persist assistant msg, optionally generate title.
@@ -129,19 +204,40 @@ async function runTurnLocked(opts: {
   chatId: number;
   content: string;
   isFirstTurn: boolean;
+  replyTo?: unknown;
 }): Promise<void> {
-  const { chatId, content, isFirstTurn } = opts;
+  const { chatId, content, isFirstTurn, replyTo } = opts;
   const chat = chats.get(chatId)!;
   const sessionKey = await ensureSession(chatId);
 
+  const reply = parseReplyForChat(chatId, replyTo);
+  let gatewayBody = content;
+  if (reply) {
+    gatewayBody = formatReplyGatewayBlock(reply.ref, reply.quote) + content;
+  }
+
   const gatewayMessage =
     chat.project_id != null && projects.get(chat.project_id)
-      ? buildGatewayUserMessage(content, chat.project_id)
-      : content;
+      ? buildGatewayUserMessage(gatewayBody, chat.project_id)
+      : gatewayBody;
 
   // Persist user message + broadcast (stored text is the literal user input —
   // project context is only prepended for the gateway).
-  const userMsg = messages.append(chatId, 'user', content);
+  const replyToRole =
+    reply && (reply.ref.role === 'user' || reply.ref.role === 'assistant') ? reply.ref.role : null;
+  const userMsg = messages.append(
+    chatId,
+    'user',
+    content,
+    null,
+    reply && replyToRole
+      ? {
+          replyToMessageId: reply.messageId,
+          replyQuote: reply.quote,
+          replyToRole,
+        }
+      : null,
+  );
   wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: userMsg });
 
   // `messages.append` bumped `chats.updated_at`. Tell every tab so the sidebar
@@ -343,6 +439,8 @@ export async function sendMessage(opts: {
   /** Project to attach this NEW chat to. Ignored when chatId is provided. */
   projectId?: number | null;
   requestId?: string;
+  /** Optional reply-to snippet (validated server-side). */
+  replyTo?: unknown;
   /**
    * Optional socket to subscribe to the chat the moment it's resolved/created.
    * Without this the originating socket would miss events emitted before the
@@ -391,7 +489,12 @@ export async function sendMessage(opts: {
 
   try {
     await chatStatus.withLock(chatId, () =>
-      runTurnLocked({ chatId: chatId!, content: opts.content, isFirstTurn }),
+      runTurnLocked({
+        chatId: chatId!,
+        content: opts.content,
+        isFirstTurn,
+        replyTo: opts.replyTo,
+      }),
     );
   } catch (err) {
     const errorText = err instanceof Error ? err.message : String(err);

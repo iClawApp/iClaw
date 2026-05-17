@@ -190,6 +190,96 @@ describe('sendMessage — project context injection', () => {
   });
 });
 
+describe('sendMessage — reply-to (quoted message)', () => {
+  it('persists reply metadata and prepends context for the gateway', async () => {
+    openclawWsMock.runTurn.mockResolvedValueOnce({ runId: 'r0', text: 'first reply' });
+    const { chatId } = await sendMessage({ content: 'context from assistant' });
+
+    let gatewayMsg = '';
+    openclawWsMock.runTurn.mockImplementationOnce(async (params) => {
+      gatewayMsg = params.message;
+      return { runId: 'r1', text: 'second reply' };
+    });
+
+    const list0 = messages.listByChat(chatId);
+    const assistantRow = list0.find((m) => m.role === 'assistant');
+    expect(assistantRow).toBeDefined();
+
+    await sendMessage({
+      chatId,
+      content: 'my follow-up',
+      replyTo: { messageId: assistantRow!.id, quote: 'context from assistant' },
+    });
+
+    const list = messages.listByChat(chatId);
+    const userFollowUp = list.filter((m) => m.role === 'user').pop()!;
+    expect(userFollowUp.content).toBe('my follow-up');
+    expect(userFollowUp.reply_to_message_id).toBe(assistantRow!.id);
+    expect(userFollowUp.reply_quote).toBe('context from assistant');
+    expect(userFollowUp.reply_to_role).toBe('assistant');
+    expect(gatewayMsg).toContain('USER_REPLY_START');
+    expect(gatewayMsg).toContain('BEGIN parent message');
+    expect(gatewayMsg).toContain('context from assistant');
+    expect(gatewayMsg).toContain('my follow-up');
+  });
+
+  it('ignores replyTo when the referenced message is in another chat', async () => {
+    openclawWsMock.runTurn.mockResolvedValueOnce({ runId: 'a', text: 'A' });
+    const { chatId: idA } = await sendMessage({ content: 'only in A' });
+    const mid = messages.listByChat(idA).find((m) => m.role === 'assistant')!.id;
+
+    openclawWsMock.runTurn.mockResolvedValueOnce({ runId: 'b', text: 'B' });
+    const { chatId: idB } = await sendMessage({ content: 'start B' });
+
+    let gatewayMsg = '';
+    openclawWsMock.runTurn.mockImplementationOnce(async (params) => {
+      gatewayMsg = params.message;
+      return { runId: 'c', text: 'C' };
+    });
+
+    await sendMessage({
+      chatId: idB,
+      content: 'cross-chat reply attempt',
+      replyTo: { messageId: mid, quote: 'nope' },
+    });
+
+    const userRow = messages.listByChat(idB).filter((m) => m.role === 'user').pop()!;
+    expect(userRow.reply_to_message_id).toBeNull();
+    expect(userRow.reply_quote).toBeNull();
+    expect(gatewayMsg).toBe('cross-chat reply attempt');
+  });
+
+  it('combines reply prefix with project context for the gateway', async () => {
+    const p = projects.create('ReplyProj');
+    projectFacts.append({ projectId: p.id, content: 'Fact one' });
+    openclawWsMock.runTurn.mockResolvedValueOnce({ runId: 'r0', text: 'assistant' });
+    const { chatId } = await sendMessage({
+      content: 'seed',
+      projectId: p.id,
+    });
+    const assistantId = messages.listByChat(chatId).find((m) => m.role === 'assistant')!.id;
+
+    let gatewayMsg = '';
+    openclawWsMock.runTurn.mockImplementationOnce(async (params) => {
+      gatewayMsg = params.message;
+      return { runId: 'r1', text: 'ok' };
+    });
+
+    await sendMessage({
+      chatId,
+      content: 'with reply',
+      replyTo: { messageId: assistantId, quote: 'short quote' },
+    });
+
+    expect(gatewayMsg).toContain('Project context');
+    expect(gatewayMsg).toContain('Fact one');
+    expect(gatewayMsg).toContain('USER_REPLY_START');
+    expect(gatewayMsg).toContain('BEGIN parent message');
+    expect(gatewayMsg).toContain('short quote');
+    expect(gatewayMsg).toContain('with reply');
+  });
+});
+
 describe('sendMessage — reasoning gate', () => {
   it('does not broadcast turn-reasoning when chat.reasoning_mode = "off"', async () => {
     openclawWsMock.runTurn.mockImplementationOnce(async (params) => {

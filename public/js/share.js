@@ -43,6 +43,10 @@
   const pwReminder = $('#share-pw-reminder');
   const doneBtn = $('#share-done');
 
+  /** Set from sidebar context menu — share a chat other than the one open in the main pane. */
+  let shareChatIdOverride = null;
+  let shareTitleOverride = null;
+
   /* ----------------------------------------- helpers ----------------- */
 
   function openModal() {
@@ -59,6 +63,8 @@
     burnChk.checked = false;
     submitBtn.disabled = false;
     submitBtn.textContent = 'Generate link';
+    shareChatIdOverride = null;
+    shareTitleOverride = null;
   }
   function showFormView() {
     formView.hidden = false;
@@ -73,7 +79,20 @@
     errorEl.hidden = !msg;
   }
 
-  shareBtn.addEventListener('click', openModal);
+  shareBtn.addEventListener('click', () => {
+    shareChatIdOverride = null;
+    shareTitleOverride = null;
+    openModal();
+  });
+
+  window.addEventListener('iclaw-open-share', (ev) => {
+    const d = ev && ev.detail ? ev.detail : {};
+    const id = Number(d.chatId);
+    if (!Number.isFinite(id) || id <= 0) return;
+    shareChatIdOverride = id;
+    shareTitleOverride = typeof d.title === 'string' ? d.title : '';
+    openModal();
+  });
   closeBtn.addEventListener('click', closeModal);
   cancelBtn.addEventListener('click', closeModal);
   doneBtn.addEventListener('click', closeModal);
@@ -135,17 +154,36 @@
     return Number.isFinite(n) && n > 0 ? n : null;
   }
 
+  function resolveShareChatId() {
+    if (shareChatIdOverride != null && Number.isFinite(shareChatIdOverride) && shareChatIdOverride > 0) {
+      return shareChatIdOverride;
+    }
+    return getActiveChatId();
+  }
+
+  function resolveShareTitle() {
+    if (shareTitleOverride != null && String(shareTitleOverride).trim()) {
+      return String(shareTitleOverride).trim();
+    }
+    const titleEl = document.getElementById('chat-title-input');
+    return titleEl ? titleEl.value.trim() : '';
+  }
+
   async function fetchTranscript(chatId) {
     const res = await fetch(`/chats/${encodeURIComponent(chatId)}/messages`, {
       headers: { Accept: 'application/json' },
     });
     if (!res.ok) throw new Error('Could not fetch transcript: HTTP ' + res.status);
-    /** @type {Array<{id:number,role:string,content:string,created_at?:string}>} */
+    /** @type {Array<{id?:number,role:string,content:string,created_at?:string,reply_to_message_id?:number|null,reply_quote?:string|null,reply_to_role?:string|null}>} */
     const rows = await res.json();
     return rows.map((m) => ({
+      id: m.id,
       role: m.role,
       content: m.content,
       createdAt: m.created_at || null,
+      replyToMessageId: m.reply_to_message_id ?? null,
+      replyQuote: m.reply_quote ?? null,
+      replyToRole: m.reply_to_role ?? null,
     }));
   }
 
@@ -158,8 +196,8 @@
     submitBtn.textContent = 'Encrypting…';
 
     try {
-      const chatId = getActiveChatId();
-      if (!chatId) throw new Error('Open a chat first.');
+      const chatId = resolveShareChatId();
+      if (!chatId) throw new Error('No chat selected to share.');
 
       const ttlDays = Number(ttlSel.value);
       const burn = burnChk.checked;
@@ -169,14 +207,15 @@
       }
 
       // 1) gather data
-      const titleEl = document.getElementById('chat-title-input');
       const agentSel = document.getElementById('chat-agent-select');
       const messages = await fetchTranscript(chatId);
+      const activeId = getActiveChatId();
+      const titleResolved = resolveShareTitle() || 'Shared chat';
 
       const payload = {
-        version: 1,
-        title: titleEl ? titleEl.value : 'Shared chat',
-        agent: agentSel ? agentSel.value : null,
+        version: 2,
+        title: titleResolved,
+        agent: chatId === activeId && agentSel ? agentSel.value : null,
         sharedAt: new Date().toISOString(),
         messages,
       };

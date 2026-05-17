@@ -32,6 +32,8 @@ export type ClientMsg =
       content: string;
       agent?: string;
       projectId?: number | null;
+      /** Reply to an existing user/assistant row in this chat (quote ≤240 chars). */
+      replyTo?: { messageId: number; quote: string; role?: string };
     }
   /** Abort a running turn for this chat. */
   | { type: 'abort'; chatId: number }
