@@ -376,7 +376,7 @@
         '" data-secret-label="' +
         safeAttr +
         '">' +
-        '<button type="button" class="iclaw-secret-reveal" aria-expanded="false" aria-label="Секрет: ' +
+        '<button type="button" class="iclaw-secret-reveal" aria-expanded="false" aria-label="Secret: ' +
         safeAttr +
         '">' +
         '<span class="iclaw-secret-spoiler-body"' +
@@ -527,7 +527,7 @@
       lenCh +
       '" style="--secret-len-ch:' +
       lenCh +
-      '" aria-label="Показати значення секрету">' +
+      '" aria-label="Show secret value">' +
       '<span class="iclaw-secret-spoiler-grain" aria-hidden="true"></span></button>' +
       '</div>';
     return li;
@@ -541,7 +541,7 @@
     const titleRaw =
       f.source_chat_title != null && String(f.source_chat_title).trim() !== ''
         ? String(f.source_chat_title).trim()
-        : 'Чат';
+        : 'Chat';
     const head =
       f.source_chat_id != null
         ? '<div class="project-row-head muted"><a href="/chats/' +
@@ -552,11 +552,11 @@
         : '<div class="project-row-head muted"><span>—</span></div>';
     li.innerHTML =
       head +
-      '<textarea class="fact-content" aria-label="Текст факту" rows="2">' +
+      '<textarea class="fact-content" aria-label="Fact text" rows="2">' +
       escapeHtml(f.content || '') +
       '</textarea>' +
       '<div class="fact-meta">' +
-      '<button type="button" class="fact-delete" aria-label="Видалити факт">Прибрати</button></div>';
+      '<button type="button" class="fact-delete" aria-label="Remove fact">Remove</button></div>';
     const ta = li.querySelector('.fact-content');
     if (ta) ta.dataset.saved = String(f.content || '').trim();
     return li;
@@ -586,8 +586,8 @@
       btn.type = 'button';
       btn.className = 'code-copy-btn';
       btn.innerHTML = CODE_COPY_ICON_SVG;
-      btn.setAttribute('aria-label', 'Копіювати код');
-      btn.title = 'Копіювати';
+      btn.setAttribute('aria-label', 'Copy code');
+      btn.title = 'Copy';
       const parent = pre.parentElement;
       if (!parent) return;
       parent.insertBefore(wrap, pre);
@@ -655,9 +655,9 @@
     }
   }
   function replyStubRoleLabel(role) {
-    if (role === 'user') return 'Ви';
-    if (role === 'assistant') return 'Асистент';
-    return 'Чат';
+    if (role === 'user') return 'You';
+    if (role === 'assistant') return 'Assistant';
+    return 'Chat';
   }
 
   function msgReplyStubHtml(replyToId, quote, replyToRole) {
@@ -669,7 +669,7 @@
       rid +
       '" data-reply-quote="' +
       encodeURIComponent(quote) +
-      '" aria-label="Перейти до цитованого повідомлення">' +
+      '" aria-label="Jump to quoted message">' +
       '<span class="msg-reply-stub-track">' +
       '<span class="msg-reply-stub-bar" aria-hidden="true"></span>' +
       '<span class="msg-reply-stub-body">' +
@@ -954,13 +954,13 @@
       '<div class="fact-suggestion-actions">' +
       '<button type="button" class="fact-suggestion-btn fact-suggestion-reject" data-suggestion-id="' +
       id +
-      '" aria-label="Пропустити">' +
+      '" aria-label="Skip">' +
       FACT_REJECT_COUNTDOWN_RING_SVG +
       '<span class="fact-suggestion-btn-glyph" aria-hidden="true">✕</span>' +
       '</button>' +
       '<button type="button" class="fact-suggestion-btn fact-suggestion-accept" data-suggestion-id="' +
       id +
-      '" aria-label="Зберегти в проєкт">' +
+      '" aria-label="Save to project">' +
       '<span class="fact-suggestion-btn-glyph" aria-hidden="true">✓</span>' +
       '</button>' +
       '</div></li>'
@@ -1049,7 +1049,7 @@
     const { projectId, chatId, suggestions, projectName } = opts;
     if (!suggestions || suggestions.length === 0) return;
     clearEmptyState();
-    const safeName = escapeHtml((projectName || '').trim() || 'проєкт');
+    const safeName = escapeHtml((projectName || '').trim() || 'project');
     const rowsHtml = suggestions.map(buildFactSuggestionRowHtml).filter(Boolean).join('');
     if (!rowsHtml) return;
 
@@ -1083,7 +1083,7 @@
     card.dataset.chatId = cidEsc;
     card.innerHTML =
       '<div class="fact-suggestions-shell">' +
-      '<p class="fact-suggestions-lead">Зберегти в памʼять «' +
+      '<p class="fact-suggestions-lead">Save to project memory «' +
       safeName +
       '»?</p>' +
       '<ul class="fact-suggestions-list" role="list">' +
@@ -1117,7 +1117,7 @@
         typeof data.projectName === 'string' && data.projectName.trim()
           ? data.projectName.trim()
           : null;
-      const projectLabel = pname || 'проєкт';
+      const projectLabel = pname || 'project';
       appendFactSuggestionsCard({
         projectId: pid,
         chatId: activeChatId,
@@ -1193,13 +1193,13 @@
         e.preventDefault();
         const showCopied = () => {
           copyBtn.innerHTML = CODE_COPIED_ICON_SVG;
-          copyBtn.setAttribute('aria-label', 'Скопійовано');
+          copyBtn.setAttribute('aria-label', 'Copied');
           copyBtn.removeAttribute('title');
           copyBtn.disabled = true;
           setTimeout(() => {
             copyBtn.innerHTML = CODE_COPY_ICON_SVG;
-            copyBtn.setAttribute('aria-label', 'Копіювати код');
-            copyBtn.title = 'Копіювати';
+            copyBtn.setAttribute('aria-label', 'Copy code');
+            copyBtn.title = 'Copy';
             copyBtn.disabled = false;
           }, 1700);
         };
@@ -1315,7 +1315,7 @@
       const pb = key(b);
       if (pb.msgs !== pa.msgs) return pb.msgs - pa.msgs;
       if (pb.chats !== pa.chats) return pb.chats - pa.chats;
-      const cmp = pa.name.localeCompare(pb.name, 'uk', { sensitivity: 'base' });
+      const cmp = pa.name.localeCompare(pb.name, 'en', { sensitivity: 'base' });
       if (cmp !== 0) return cmp;
       return pa.id - pb.id;
     });
@@ -1655,13 +1655,13 @@
       Boolean(document.getElementById('share-modal')) &&
       Boolean(document.getElementById('share-btn'));
     const shareBtnHtml = hasShare
-      ? '<button type="button" class="sidebar-context-menu-item" data-action="share">Поділитися</button>'
+      ? '<button type="button" class="sidebar-context-menu-item" data-action="share">Share</button>'
       : '';
     return (
       shareBtnHtml +
-      '<button type="button" class="sidebar-context-menu-item" data-action="rename">Перейменувати</button>' +
-      '<button type="button" class="sidebar-context-menu-item" data-action="unread">Непрочитане</button>' +
-      '<button type="button" class="sidebar-context-menu-item sidebar-context-menu-danger" data-action="delete">Видалити чат</button>'
+      '<button type="button" class="sidebar-context-menu-item" data-action="rename">Rename</button>' +
+      '<button type="button" class="sidebar-context-menu-item" data-action="unread">Mark unread</button>' +
+      '<button type="button" class="sidebar-context-menu-item sidebar-context-menu-danger" data-action="delete">Delete chat</button>'
     );
   }
 
@@ -1713,8 +1713,8 @@
       const list = document.getElementById('chat-list');
       const link = list?.querySelector('a.chat-item[data-chat-id="' + cid + '"]');
       const titleEl = link?.querySelector('.chat-item-title');
-      const curTitle = (titleEl && titleEl.textContent ? titleEl.textContent : '').trim() || 'Чат';
-      const next = window.prompt('Нова назва чату:', curTitle);
+      const curTitle = (titleEl && titleEl.textContent ? titleEl.textContent : '').trim() || 'Chat';
+      const next = window.prompt('New chat title:', curTitle);
       if (next == null) return;
       const t = next.trim();
       if (!t || t === curTitle) return;
@@ -1738,7 +1738,7 @@
         }
       } catch (err) {
         console.error('[iclaw] sidebar rename failed', err);
-        window.alert('Не вдалось зберегти назву.');
+        window.alert('Could not save title.');
       }
       return;
     }
@@ -1756,7 +1756,7 @@
       return;
     }
     if (action === 'delete') {
-      if (!confirm('Видалити цей чат?')) return;
+      if (!confirm('Delete this chat?')) return;
       const f = document.createElement('form');
       f.method = 'POST';
       f.action = '/chats/' + encodeURIComponent(cid) + '/delete';
@@ -1781,7 +1781,7 @@
   selectionReplyFab.id = 'msg-selection-reply-fab';
   selectionReplyFab.hidden = true;
   selectionReplyFab.innerHTML =
-    '<button type="button" class="msg-selection-reply-btn">Відповісти</button>';
+    '<button type="button" class="msg-selection-reply-btn">Reply</button>';
   document.body.appendChild(selectionReplyFab);
 
   function hideSelectionReplyFab() {
@@ -2271,7 +2271,7 @@
         appendFactSuggestionsCard({
           projectId: msg.projectId,
           chatId: msg.chatId,
-          projectName: typeof msg.projectName === 'string' ? msg.projectName : 'проєкт',
+          projectName: typeof msg.projectName === 'string' ? msg.projectName : 'project',
           suggestions: fresh,
         });
         return;
@@ -2377,7 +2377,7 @@
           const empty = document.createElement('li');
           empty.className = 'project-chats-empty muted';
           empty.textContent =
-            'Поки немає фактів. Підтвердіть пропозицію в чаті цього проєкту.';
+            'No facts yet. Accept a suggestion in a chat for this project.';
           ul.appendChild(empty);
         }
         syncProjectMemoryTabCountFromDom();
@@ -2406,7 +2406,7 @@
           const empty = document.createElement('li');
           empty.className = 'project-chats-empty muted';
           empty.textContent =
-            'Поки немає фактів. Підтвердіть пропозицію в чаті цього проєкту.';
+            'No facts yet. Accept a suggestion in a chat for this project.';
           ul.appendChild(empty);
         }
         syncProjectMemoryTabCountFromDom();
@@ -2594,7 +2594,7 @@
       if (composerReplyMeta) {
         const r = pendingComposerReply.role;
         composerReplyMeta.textContent =
-          r === 'user' ? 'Ви' : r === 'assistant' ? 'Асистент' : 'Чат';
+          r === 'user' ? 'You' : r === 'assistant' ? 'Assistant' : 'Chat';
       }
       composerReplyText.textContent = pendingComposerReply.quote;
       composerReplyBar.hidden = false;
@@ -2673,7 +2673,7 @@
           '</span>' +
           '<button type="button" class="composer-attachment-chip-remove" data-att-remove="' +
           a.id +
-          '" aria-label="Прибрати">×</button>' +
+          '" aria-label="Remove">×</button>' +
           '</span>'
         );
       })
@@ -2837,16 +2837,16 @@
     const current = Array.isArray(data?.current) ? data.current : [];
     const other = Array.isArray(data?.other) ? data.other : [];
     let html =
-      '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Назад</button>';
+      '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Back</button>';
     if (current.length === 0 && other.length === 0) {
-      html += '<div class="composer-secret-pick-empty">Немає збережених секретів.</div>';
+      html += '<div class="composer-secret-pick-empty">No saved secrets.</div>';
     } else {
       if (current.length > 0) {
-        html += '<div class="menu-section-label">Цей проєкт</div>';
+        html += '<div class="menu-section-label">This project</div>';
         for (const s of current) html += secretPickItemHtml(s, false);
       }
       if (other.length > 0) {
-        html += '<div class="menu-section-label">Інші проєкти</div>';
+        html += '<div class="menu-section-label">Other projects</div>';
         for (const s of other) html += secretPickItemHtml(s, true);
       }
     }
@@ -2857,14 +2857,14 @@
     if (!composerSecretPickMenu) return;
     const pid = currentComposerProjectId();
     if (pid == null) {
-      alert('Оберіть проєкт для чату — секрети привʼязані до проєкту.');
+      alert('Choose a project for this chat — secrets belong to a project.');
       return;
     }
     if (composerAttachMenu) composerAttachMenu.hidden = true;
     composerSecretPickMenu.hidden = false;
     composerSecretPickMenu.innerHTML =
-      '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Назад</button>' +
-      '<div class="composer-secret-pick-empty">Завантаження…</div>';
+      '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Back</button>' +
+      '<div class="composer-secret-pick-empty">Loading…</div>';
     try {
       const res = await fetch('/projects/' + encodeURIComponent(pid) + '/secrets/picker', {
         headers: { Accept: 'application/json' },
@@ -2874,8 +2874,8 @@
       renderComposerSecretPickMenu(data);
     } catch {
       composerSecretPickMenu.innerHTML =
-        '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Назад</button>' +
-        '<div class="composer-secret-pick-empty">Не вдалося завантажити секрети.</div>';
+        '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Back</button>' +
+        '<div class="composer-secret-pick-empty">Could not load secrets.</div>';
     }
   }
 
@@ -2928,7 +2928,7 @@
           );
         })
         .catch((err) => {
-          alert(err && err.message ? err.message : 'Не вдалося додати секрет');
+          alert(err && err.message ? err.message : 'Could not add secret');
         });
     });
   }
@@ -3077,7 +3077,7 @@
       return;
     }
     composerTokenDetectRange = r;
-    composerTokenHintText.textContent = 'Ймовірно містить чутливі дані';
+    composerTokenHintText.textContent = 'Likely contains sensitive data';
     composerTokenHint.title = t.slice(r.start, r.end);
     composerTokenHint.hidden = false;
   }
@@ -3099,7 +3099,7 @@
     for (const slot of slots) {
       const p = composerSecretBySlot.get(slot);
       if (!p) {
-        throw new Error('Для кожного [[iclaw:sN]] у тексті потрібна назва секрету (додайте через кнопку).');
+        throw new Error('Each [[iclaw:sN]] marker in the message needs a secret name (use the button).');
       }
       out.push({
         slot,
@@ -3132,7 +3132,7 @@
     applyComposerSecretStripLayout();
   }
 
-  /** Маска для модалки: напр. sk***EF; кожен рядок маскується окремо. */
+  /** Modal mask preview, e.g. sk***EF; each line masked separately. */
   function maskSecretPreviewLine(line) {
     const s = String(line ?? '');
     if (!s) return '';
@@ -3178,8 +3178,8 @@
       if (composerSecretValuePreview) composerSecretValuePreview.hidden = true;
       if (composerSecretTokenToggle) {
         composerSecretTokenToggle.setAttribute('aria-pressed', 'true');
-        composerSecretTokenToggle.setAttribute('aria-label', 'Приховати токен');
-        composerSecretTokenToggle.title = 'Приховати токен';
+        composerSecretTokenToggle.setAttribute('aria-label', 'Hide token');
+        composerSecretTokenToggle.title = 'Hide token';
       }
     } else {
       if (composerSecretValuePreview) {
@@ -3189,8 +3189,8 @@
       if (composerSecretValueInput) composerSecretValueInput.hidden = true;
       if (composerSecretTokenToggle) {
         composerSecretTokenToggle.setAttribute('aria-pressed', 'false');
-        composerSecretTokenToggle.setAttribute('aria-label', 'Редагувати токен');
-        composerSecretTokenToggle.title = 'Редагувати токен';
+        composerSecretTokenToggle.setAttribute('aria-label', 'Edit token');
+        composerSecretTokenToggle.title = 'Edit token';
       }
     }
   }
@@ -3239,11 +3239,11 @@
     if (composerSecretTokenEditing) syncComposerSecretPlainFromInput();
     const lab = String(label ?? '').trim();
     if (!lab) {
-      alert('Введіть назву секрету.');
+      alert('Enter a secret name.');
       return;
     }
     if (/[\[\]|]/.test(lab)) {
-      alert('Назва не може містити [ ] |');
+      alert('Name cannot contain [ ] |');
       return;
     }
     const t = input.value;
@@ -3252,7 +3252,7 @@
       .replace(/\r/g, '')
       .trim();
     if (!plain) {
-      alert('Порожній секрет.');
+      alert('Empty secret.');
       return;
     }
     const slot = composerSecretNextSlot++;
@@ -3283,7 +3283,7 @@
     plain.className = 'iclaw-secret-revealed';
     plain.setAttribute('role', 'button');
     plain.setAttribute('tabindex', '0');
-    plain.setAttribute('title', 'Натисніть, щоб приховати');
+    plain.setAttribute('title', 'Click to hide');
     plain.textContent = value;
     chip.appendChild(plain);
     chip.classList.add('iclaw-secret-chip--revealed');
@@ -3327,7 +3327,7 @@
           revealSecretChip(chip, data && data.value != null ? String(data.value) : '');
         })
         .catch(() => {
-          revealSecretChip(chip, '(не вдалося завантажити)');
+          revealSecretChip(chip, '(could not load)');
         });
     });
   }
@@ -3349,7 +3349,7 @@
   if (composerMarkSecretBtn && input) {
     composerMarkSecretBtn.addEventListener('click', () => {
       if (currentComposerProjectId() == null) {
-        alert('Оберіть проєкт для чату — секрети зберігаються в межах проєкту.');
+        alert('Choose a project for this chat — secrets are stored per project.');
         return;
       }
       const s = input.selectionStart;
@@ -3544,8 +3544,8 @@
     const sameDay = d.toDateString() === now.toDateString();
     const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
     const isTomorrow = d.toDateString() === tomorrow.toDateString();
-    if (sameDay) return 'сьогодні ' + time;
-    if (isTomorrow) return 'завтра ' + time;
+    if (sameDay) return 'today ' + time;
+    if (isTomorrow) return 'tomorrow ' + time;
     return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ', ' + time;
   }
 
@@ -3594,7 +3594,7 @@
       '<div class="scheduled-item-text">' + escapeHtml(scheduled.content) + '</div>' +
       '</div>' +
       '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-scheduled-id="' +
-      scheduled.id + '" aria-label="Скасувати заплановане повідомлення" title="Скасувати">×</button>';
+      scheduled.id + '" aria-label="Cancel scheduled message" title="Cancel">×</button>';
     scheduledListEl.appendChild(row);
     scheduledListEl.classList.remove('is-empty');
   }
@@ -3613,7 +3613,7 @@
     if (!content) return;
     if (when.getTime() <= Date.now() - 60_000) {
       // 60s of tolerance; older than that is almost certainly a mistake.
-      alert('Час уже минув — оберіть час у майбутньому.');
+      alert('That time has passed — pick a future time.');
       return;
     }
     let inlineSecrets;
@@ -3642,7 +3642,7 @@
       closeScheduleMenu();
       // Live `scheduled-added` broadcast will render the row.
     } catch (err) {
-      alert('Не вдалось запланувати: ' + (err instanceof Error ? err.message : err));
+      alert('Could not schedule: ' + (err instanceof Error ? err.message : err));
     }
   }
 
@@ -3820,7 +3820,7 @@
   // One-click fix via /api/gateway/session-reset-fix; if the gateway token
   // lacks admin scope we degrade to a copy-pasteable snippet for openclaw.json.
   //
-  // Snooze model: instead of a permanent dismiss, "Нагадати за 3 дні" stores
+  // Snooze model: instead of a permanent dismiss, "Remind me in 3 days" stores
   // a timestamp in localStorage and the banner stays hidden until that point.
   // The × in the corner sets a far-future snooze (effectively never).
   // -------------------------------------------------------------------------
@@ -3873,8 +3873,8 @@
   function showResetBannerFixed() {
     if (!resetBannerBody || !resetBannerActions) return;
     resetBannerBody.innerHTML =
-      '<p class="reset-policy-banner-lead">Готово ✓</p>' +
-      '<p class="reset-policy-banner-detail">OpenClaw більше не скидатиме чати щодня.</p>';
+      '<p class="reset-policy-banner-lead">Done ✓</p>' +
+      '<p class="reset-policy-banner-detail">OpenClaw will no longer reset chats daily.</p>';
     resetBannerActions.innerHTML = '';
     // Banner already explains the success — auto-close after a beat.
     setTimeout(hideResetBanner, 2400);
@@ -3883,17 +3883,17 @@
   function showResetBannerManualFallback() {
     if (!resetBannerBody || !resetBannerActions) return;
     resetBannerBody.innerHTML =
-      '<p class="reset-policy-banner-lead">Автоматично не вдалось — потрібен admin scope в gateway-токені.</p>' +
+      '<p class="reset-policy-banner-lead">Automatic setup failed — the gateway token needs admin scope.</p>' +
       '<p class="reset-policy-banner-detail">' +
-      'Додай цей блок у <code>~/.openclaw/openclaw.json</code> під ключем <code>session</code> ' +
-      '(або злий з існуючим), збережи і перезапусти gateway.' +
+      'Add this block to <code>~/.openclaw/openclaw.json</code> under the <code>session</code> key ' +
+      '(or merge with an existing block), save and restart the gateway.' +
       '</p>' +
       '<div class="reset-policy-manual">' +
       '<pre id="reset-policy-snippet">' +
       escapeHtml(RESET_POLICY_MANUAL_PATCH) +
       '</pre>' +
       '<div class="reset-policy-manual-row">' +
-      '<button type="button" class="btn btn--ghost btn--sm" id="reset-policy-copy">Копіювати</button>' +
+      '<button type="button" class="btn btn--ghost btn--sm" id="reset-policy-copy">Copy</button>' +
       '<span class="muted" id="reset-policy-copy-status"></span>' +
       '</div>' +
       '</div>';
@@ -3903,7 +3903,7 @@
         await navigator.clipboard.writeText(RESET_POLICY_MANUAL_PATCH);
         const s = document.getElementById('reset-policy-copy-status');
         if (s) {
-          s.textContent = '✓ скопійовано';
+          s.textContent = '✓ copied';
           setTimeout(() => { s.textContent = ''; }, 2000);
         }
       } catch {
@@ -3940,7 +3940,7 @@
     resetFixBtn.addEventListener('click', async () => {
       const original = resetFixBtn.textContent;
       resetFixBtn.disabled = true;
-      resetFixBtn.textContent = '⏳ Налаштовую…';
+      resetFixBtn.textContent = '⏳ Applying…';
       try {
         const res = await fetch('/api/gateway/session-reset-fix', {
           method: 'POST',
@@ -3962,7 +3962,7 @@
       } catch (err) {
         if (resetBannerBody) {
           resetBannerBody.innerHTML =
-            '<strong>Не вдалось налаштувати.</strong>' +
+            '<strong>Could not apply settings.</strong>' +
             '<span class="muted">' +
             escapeHtml(String(err && err.message ? err.message : err)) +
             '</span>';
@@ -4040,14 +4040,14 @@
       '<div class="exec-approval-shell">' +
       '<div class="exec-approval-head">' +
       '<span class="exec-approval-icon" aria-hidden="true">🔐</span>' +
-      '<span class="exec-approval-title">Дозвіл на виконання команди</span>' +
+      '<span class="exec-approval-title">Command execution approval</span>' +
       '<span class="exec-approval-host">' + escapeHtml(opts.host || 'gateway') + '</span>' +
       '</div>' +
       '<pre class="exec-approval-cmd"><code>' + safeCmd + '</code></pre>' +
       cwdLine + reasonLine +
       '<div class="exec-approval-actions">' +
-      '<button type="button" class="exec-approval-btn exec-approval-deny btn btn--danger btn--sm" data-decision="denied">Відхилити</button>' +
-      '<button type="button" class="exec-approval-btn exec-approval-approve btn btn--approve btn--sm" data-decision="approved">Дозволити</button>' +
+      '<button type="button" class="exec-approval-btn exec-approval-deny btn btn--danger btn--sm" data-decision="denied">Deny</button>' +
+      '<button type="button" class="exec-approval-btn exec-approval-approve btn btn--approve btn--sm" data-decision="approved">Allow</button>' +
       '</div>' +
       '</div>';
     messagesAppendRoot().appendChild(card);
@@ -4359,7 +4359,7 @@
       plain.className = 'project-secret-revealed iclaw-secret-revealed';
       plain.setAttribute('role', 'button');
       plain.setAttribute('tabindex', '0');
-      plain.setAttribute('title', 'Натисніть, щоб приховати');
+      plain.setAttribute('title', 'Click to hide');
       preview?.insertAdjacentElement('afterend', plain);
     }
     plain.textContent = valueText != null ? String(valueText) : '';
@@ -4406,7 +4406,7 @@
             revealProjectSecretRow(li, val);
           })
           .catch(() => {
-            revealProjectSecretRow(li, '(не вдалося завантажити)');
+            revealProjectSecretRow(li, '(could not load)');
           });
         return;
       }

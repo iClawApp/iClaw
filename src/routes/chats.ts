@@ -63,7 +63,7 @@ chatsRouter.get('/:id/fact-suggestions', (req, res) => {
   const suggestions = projectFactSuggestions.listByChat(id);
   const first = suggestions[0];
   const projectName =
-    first != null ? (projects.get(first.project_id)?.name?.trim() ?? 'проєкт') : null;
+    first != null ? (projects.get(first.project_id)?.name?.trim() ?? 'project') : null;
   res.type('application/json').json({ suggestions, projectName });
 });
 
@@ -450,7 +450,7 @@ chatsRouter.post('/:id/scheduled', (req, res) => {
     const pid = chat.project_id;
     if (pid == null) {
       res.status(400).json({
-        error: 'Заплановані повідомлення з секретами доступні лише для чатів у проєкті.',
+        error: 'Scheduled messages with secrets are only available for chats in a project.',
       });
       return;
     }

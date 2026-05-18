@@ -135,7 +135,7 @@ export function enrichFactWithSourceChatTitle(fact: ProjectFact): ProjectFact {
   const sid = fact.source_chat_id;
   if (sid == null) return { ...fact };
   const c = chats.get(sid);
-  const source_chat_title = (c?.title ?? '').trim() || 'Чат';
+  const source_chat_title = (c?.title ?? '').trim() || 'Chat';
   return { ...fact, source_chat_title };
 }
 

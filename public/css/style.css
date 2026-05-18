@@ -2071,7 +2071,7 @@ code {
   position: relative;
   box-sizing: border-box;
   width: max-content;
-  /* Ширина = max(назва, токен) у ch; без штучного мінімуму в em і з мінімальним padding. */
+  /* Width = max(label, token) in ch; minimal padding. */
   min-width: max(
     calc(var(--secret-label-ch, 1) * 1ch),
     calc(var(--secret-len-ch, 0) * 1ch)
@@ -2111,7 +2111,7 @@ code {
   background: var(--iclaw-spoiler-bg);
   image-rendering: pixelated;
 }
-/* Різке «зерно»: дрібна сітка + другий шар у зсуві (як dither, не розмиті плями). */
+/* Sharp grain: fine grid + offset layer (dither-like). */
 .iclaw-secret-spoiler-body .iclaw-secret-spoiler-grain::before,
 .iclaw-secret-spoiler-body .iclaw-secret-spoiler-grain::after {
   content: '';
@@ -2167,7 +2167,7 @@ code {
     transform: none;
   }
 }
-/* Відкрито: звичайний текст у потоці повідомлення */
+/* Revealed: plain text in the message flow */
 .iclaw-secret-chip--revealed .iclaw-secret-reveal {
   display: none !important;
 }
@@ -3370,7 +3370,7 @@ code {
   gap: 16px;
 }
 
-/* Telegram-style segments: Чати | Памʼять | Посилання */
+/* Telegram-style segments: Chats | Memory | Links */
 .project-tabs {
   display: flex;
   flex-wrap: wrap;

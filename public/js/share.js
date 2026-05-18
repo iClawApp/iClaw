@@ -117,7 +117,7 @@
     if (step2Panel) step2Panel.hidden = !onSecretsStep;
     if (modalTitle) {
       modalTitle.textContent = onSecretsStep
-        ? 'Включити в чат секрети?'
+        ? 'Include secrets in the chat?'
         : 'Share chat';
     }
     if (modalHelp) modalHelp.hidden = onSecretsStep;
@@ -173,7 +173,7 @@
         const label = escapeForAttr(String(s.label || ''));
         const len = Number(s.length) || 0;
         const occ = Number(s.occurrences) || 0;
-        const metaTitle = len + ' симв., ' + occ + (occ === 1 ? ' згадка' : ' згадки');
+        const metaTitle = len + ' chars, ' + occ + (occ === 1 ? ' mention' : ' mentions');
         return (
           '<li class="share-secret-row">' +
           '<label class="share-secret-label" title="' + metaTitle + '">' +
@@ -227,7 +227,7 @@
       .filter((s) => pickedSecretIds.has(Number(s.id)))
       .map((s) => '"' + s.label + '"')
       .join(', ');
-    secretsWarning.textContent = '⚠ Отримувач побачить: ' + names;
+    secretsWarning.textContent = '⚠ Recipient will see: ' + names;
     secretsWarning.hidden = false;
   }
 
@@ -454,7 +454,7 @@
         try {
           revealById = await fetchRevealedValues(chatId, pickedSecretIds);
         } catch (err) {
-          throw new Error('Не вдалось отримати значення секретів: ' +
+          throw new Error('Could not fetch secret values: ' +
             (err && err.message ? err.message : 'unknown'));
         }
       }
@@ -546,7 +546,7 @@
         password ? 'password-protected' : 'fragment-key only',
         revealedCount > 0
           ? '⚠ ' + revealedCount +
-            (revealedCount === 1 ? ' секрет видно отримувачу' : ' секрети видно отримувачу')
+            (revealedCount === 1 ? ' secret visible to recipient' : ' secrets visible to recipient')
           : null,
       ].filter(Boolean);
       resultMeta.textContent = parts.join(' · ');

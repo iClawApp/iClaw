@@ -1,6 +1,6 @@
 /**
  * Project CRUD + project-facts edit/delete (facts are created from chat flows).
- * Project page has separate «Посилання» (http) and «Файли» (paths, file://) mined from messages.
+ * Project page has separate Links (http) and Files (paths, file://) mined from messages.
  *
  * HTTP-form style (POST + 302 redirect) for mutations so vanilla HTML forms
  * work. JSON variants (PATCH) for inline edits on the project page.

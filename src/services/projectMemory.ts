@@ -280,7 +280,7 @@ async function runProjectFactExtraction(opts: {
       type: 'project-fact-suggestions',
       chatId: opts.chatId,
       projectId: opts.projectId,
-      projectName: proj?.name?.trim() || 'проєкт',
+      projectName: proj?.name?.trim() || 'project',
       suggestions: inserted,
     });
   }

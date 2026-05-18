@@ -53,8 +53,8 @@ export function isGatewayBridgeFailure(err: unknown): boolean {
 
 export function gatewayBridgeFailureUserMessage(): string {
   return (
-    'Не вдалося з’єднатися зі шлюзом OpenClaw. Перевірте, що шлюз запущений ' +
-    'і токен налаштований, потім спробуйте ще раз.'
+    'Could not connect to the OpenClaw gateway. Check that the gateway is running ' +
+    'and the token is configured, then try again.'
   );
 }
 
@@ -308,7 +308,7 @@ async function runTurnLocked(opts: {
   if (/\[\[iclaw:s\d+\]\]/.test(content)) {
     if (projectId == null) {
       throw new Error(
-        'Щоб зберігати секрети в проєкті, прив’яжіть чат до проєкту (або створіть чат уже в проєкті).',
+        'To save secrets in a project, attach this chat to a project (or start the chat in a project).',
       );
     }
     const resolved = resolveInlineSecretMarkersInContent({
@@ -320,7 +320,7 @@ async function runTurnLocked(opts: {
     storedUserContent = resolved.storedContent;
     newSecretIds = resolved.newSecretIds;
   } else if (inlineSecrets && inlineSecrets.length > 0) {
-    throw new Error('Поле inlineSecrets передано без маркерів [[iclaw:sN]] у тексті.');
+    throw new Error('inlineSecrets was sent without [[iclaw:sN]] markers in the message text.');
   }
 
   // Decode + persist attachments BEFORE the user-msg row so the row carries

@@ -121,9 +121,9 @@ function extractLinkStringsFromMessageContent(text: string): string[] {
 }
 
 export type ProjectLinkGroups = {
-  /** http(s) only — for the «Посилання» tab. */
+  /** http(s) only — for the «Links» tab. */
   web: ProjectLinkEntry[];
-  /** file:// and filesystem paths — for the «Файли» tab. */
+  /** file:// and filesystem paths — for the Files tab. */
   files: ProjectLinkEntry[];
 };
 
@@ -184,7 +184,7 @@ export function listProjectLinkGroups(projectId: number): ProjectLinkGroups {
       const prev = agg.sources.get(r.cid);
       const next: ProjectLinkSource = {
         chatId: r.cid,
-        chatTitle: (r.ctitle || '').trim() || 'Чат',
+        chatTitle: (r.ctitle || '').trim() || 'Chat',
         messageId: r.mid,
         createdAt: r.mcat,
       };

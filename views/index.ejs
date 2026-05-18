@@ -62,17 +62,17 @@
           aria-labelledby="project-pick-title"
           data-initial-project-id="<%= preselectedProject ? String(preselectedProject.id) : '' %>"
         >
-          <h2 class="project-pick-title" id="project-pick-title">Оберіть проєкт</h2>
+          <h2 class="project-pick-title" id="project-pick-title">Choose a project</h2>
           <div class="project-pick-grid">
             <button
               type="button"
               class="project-pick-card project-pick-card--none"
               data-project-id=""
-              data-project-name="Без проєкту"
+              data-project-name="No project"
             >
               <span class="project-pick-card-inner">
                 <span class="project-logo project-logo--none" data-logo-color="0" aria-hidden="true">◇</span>
-                <span class="project-pick-name">Без проєкту</span>
+                <span class="project-pick-name">No project</span>
               </span>
             </button>
             <% allProjects.forEach(function (p) {
@@ -101,7 +101,7 @@
           <% if (agentsError) { %>
             <p class="error">Gateway unreachable: <code><%= agentsError %></code></p>
           <% } else { %>
-            <p class="muted empty-state" id="draft-empty-hint" hidden>Напишіть перше повідомлення.</p>
+            <p class="muted empty-state" id="draft-empty-hint" hidden>Write your first message.</p>
           <% } %>
         </div>
       </section>

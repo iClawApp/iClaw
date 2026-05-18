@@ -104,10 +104,10 @@
     >
       <div class="reset-policy-banner-main">
         <div class="reset-policy-banner-body" id="reset-policy-banner-body">
-          <p class="reset-policy-banner-lead">Контекст чатів скидатиметься щодня о 04:00.</p>
+          <p class="reset-policy-banner-lead">Chat context resets daily at 04:00.</p>
           <p class="reset-policy-banner-detail">
-            Це дефолт OpenClaw — після 4 ранку наступного дня агент забуває старі чати.
-            Налаштувати, щоб такого не було?
+            This is the OpenClaw default — after 4 AM the next day the agent forgets older chats.
+            Change this behavior?
           </p>
         </div>
       </div>
@@ -116,13 +116,13 @@
           type="button"
           class="btn btn--primary btn--sm"
           id="reset-policy-fix"
-        >Так, налаштувати</button>
+        >Yes, configure</button>
         <button
           type="button"
           class="btn btn--ghost btn--sm"
           id="reset-policy-snooze"
-          title="Не показувати наступні 3 дні"
-        >Нагадати за 3 дні</button>
+          title="Do not show for 3 days"
+        >Remind me in 3 days</button>
       </div>
     </aside>
 
@@ -143,14 +143,14 @@
               <% if (m.reply_to_message_id && m.reply_quote) { %>
                 <%
                   const _rr = m.reply_to_role || '';
-                  const _who = _rr === 'user' ? 'Ви' : (_rr === 'assistant' ? 'Асистент' : 'Чат');
+                  const _who = _rr === 'user' ? 'You' : (_rr === 'assistant' ? 'Assistant' : 'Chat');
                 %>
                 <button
                   type="button"
                   class="msg-reply-stub"
                   data-jump-to-msg="<%= m.reply_to_message_id %>"
                   data-reply-quote="<%= encodeURIComponent(m.reply_quote) %>"
-                  aria-label="Перейти до цитованого повідомлення"
+                  aria-label="Jump to quoted message"
                 >
                   <span class="msg-reply-stub-track">
                     <span class="msg-reply-stub-bar" aria-hidden="true"></span>

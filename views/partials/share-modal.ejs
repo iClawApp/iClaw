@@ -63,28 +63,28 @@
         <!-- Step 2: secrets (only when chat references ≥1 secret; see share.js) -->
         <div id="share-step-2" class="share-step-panel" hidden>
           <p class="share-secrets-hint">
-            Обрані секрети буде видно всім, хто має посилання. Не обрані секрети не буде передано
+            Selected secrets will be visible to anyone with the link. Unselected secrets will not be included
           </p>
           <p class="share-secrets-hint">
-            Обрані секрети на сервері зберігатимуться в зашифрованому вигляді
+            Selected secrets are stored encrypted on the server
           </p>
 
           <ul class="share-secrets-list" id="share-secrets-list"></ul>
 
           <div class="share-secrets-example" aria-hidden="true">
-            <div class="share-secrets-example-label">Приклад у чаті</div>
+            <div class="share-secrets-example-label">Example in chat</div>
             <div class="share-secrets-example-thread">
               <div class="msg user share-secrets-example-msg">
                 <div class="role">user</div>
                 <div class="msg-body">
-                  Не обрано —
+                  Not selected —
                   <span class="share-secrets-example-redacted">[secret: hidden]</span>
                 </div>
               </div>
               <div class="msg user share-secrets-example-msg">
                 <div class="role">user</div>
                 <div class="msg-body">
-                  Обрано —
+                  Selected —
                   <span class="share-secrets-example-token">sk-proj-ABCDEFGH123</span>
                 </div>
               </div>
@@ -101,8 +101,8 @@
         </div>
 
         <div class="share-actions" id="share-actions">
-          <button type="button" class="btn btn--ghost share-actions-back" id="share-back" hidden>Назад</button>
-          <button type="button" class="btn btn--primary" id="share-next" hidden>Далі</button>
+          <button type="button" class="btn btn--ghost share-actions-back" id="share-back" hidden>Back</button>
+          <button type="button" class="btn btn--primary" id="share-next" hidden>Next</button>
           <button type="submit" class="btn btn--primary" id="share-submit" hidden>
             Generate link
           </button>
