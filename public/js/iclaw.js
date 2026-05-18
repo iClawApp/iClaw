@@ -3554,8 +3554,8 @@
   function showResetBannerFixed() {
     if (!resetBannerBody || !resetBannerActions) return;
     resetBannerBody.innerHTML =
-      '<strong>Готово ✓</strong>' +
-      '<span class="muted">OpenClaw більше не скидатиме чати щодня.</span>';
+      '<p class="reset-policy-banner-lead">Готово ✓</p>' +
+      '<p class="reset-policy-banner-detail">OpenClaw більше не скидатиме чати щодня.</p>';
     resetBannerActions.innerHTML = '';
     // Banner already explains the success — auto-close after a beat.
     setTimeout(hideResetBanner, 2400);
@@ -3564,11 +3564,11 @@
   function showResetBannerManualFallback() {
     if (!resetBannerBody || !resetBannerActions) return;
     resetBannerBody.innerHTML =
-      '<strong>Автоматично не вдалось — потрібен admin scope в gateway-токені.</strong>' +
-      '<span class="muted">' +
+      '<p class="reset-policy-banner-lead">Автоматично не вдалось — потрібен admin scope в gateway-токені.</p>' +
+      '<p class="reset-policy-banner-detail">' +
       'Додай цей блок у <code>~/.openclaw/openclaw.json</code> під ключем <code>session</code> ' +
       '(або злий з існуючим), збережи і перезапусти gateway.' +
-      '</span>' +
+      '</p>' +
       '<div class="reset-policy-manual">' +
       '<pre id="reset-policy-snippet">' +
       escapeHtml(RESET_POLICY_MANUAL_PATCH) +
