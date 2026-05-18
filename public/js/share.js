@@ -41,7 +41,6 @@
   const urlInput = $('#share-url');
   const copyBtn = $('#share-copy');
   const pwReminder = $('#share-pw-reminder');
-  const doneBtn = $('#share-done');
 
   /** Set from sidebar context menu — share a chat other than the one open in the main pane. */
   let shareChatIdOverride = null;
@@ -95,7 +94,6 @@
   });
   closeBtn.addEventListener('click', closeModal);
   cancelBtn.addEventListener('click', closeModal);
-  doneBtn.addEventListener('click', closeModal);
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeModal();
   });
