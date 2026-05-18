@@ -122,6 +122,44 @@ function ensureColumn(table: string, column: string, ddl: string): void {
 }
 ensureColumn('messages', 'attachments', 'TEXT');
 
+/** Older DBs created project_secrets.project_id as NOT NULL; orphan chat secrets need NULL. */
+function migrateProjectSecretsNullableProjectId(): void {
+  const cols = db.prepare('PRAGMA table_info(project_secrets)').all() as {
+    name: string;
+    notnull: number;
+  }[];
+  const projectIdCol = cols.find((c) => c.name === 'project_id');
+  if (!projectIdCol || projectIdCol.notnull === 0) return;
+
+  const fkOn = db.pragma('foreign_keys', { simple: true }) as number;
+  if (fkOn) db.pragma('foreign_keys = OFF');
+  try {
+    db.exec(`
+      CREATE TABLE project_secrets__migrate (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id           INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        label                TEXT NOT NULL,
+        value                TEXT NOT NULL,
+        source_chat_id       INTEGER REFERENCES chats(id) ON DELETE SET NULL,
+        source_message_id    INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+        created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO project_secrets__migrate (
+        id, project_id, label, value, source_chat_id, source_message_id, created_at
+      )
+      SELECT id, project_id, label, value, source_chat_id, source_message_id, created_at
+      FROM project_secrets;
+      DROP TABLE project_secrets;
+      ALTER TABLE project_secrets__migrate RENAME TO project_secrets;
+      CREATE INDEX IF NOT EXISTS idx_project_secrets_project ON project_secrets(project_id, id);
+      CREATE INDEX IF NOT EXISTS idx_project_secrets_orphan_chat ON project_secrets(source_chat_id, id);
+    `);
+  } finally {
+    if (fkOn) db.pragma('foreign_keys = ON');
+  }
+}
+migrateProjectSecretsNullableProjectId();
+
 /** SQLite's lower() is ASCII-only; JS toLowerCase() folds Cyrillic and other scripts for search. */
 db.function(
   'unicode_lower',

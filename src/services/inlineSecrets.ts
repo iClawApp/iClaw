@@ -68,6 +68,9 @@ export function resolveInlineSecretMarkersInContent(opts: {
   for (const slot of orderedSlots) {
     const w = bySlot.get(slot)!;
     const label = validateSecretLabel(w.label);
+    if (!projectSecrets.isLabelAvailable(label)) {
+      throw new Error('Secret name already exists');
+    }
     const plain = String(w.plain ?? '')
       .replace(/\r/g, '')
       .trim();

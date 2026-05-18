@@ -330,6 +330,17 @@ chatsRouter.get('/:id/secrets/picker', (req, res) => {
   res.json(projectSecrets.listForComposerPickerForChat(chat));
 });
 
+/** Whether a secret name is free app-wide (composer modal validation). */
+chatsRouter.get('/:id/secrets/check-label', (req, res) => {
+  const chatId = Number(req.params.id);
+  if (!chats.get(chatId)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const label = String(req.query.label ?? '');
+  res.json({ available: projectSecrets.isLabelAvailable(label) });
+});
+
 /** Map a secret to a row usable in this chat's transcript. */
 chatsRouter.post('/:id/secrets/:secretId/use-in-chat', (req, res) => {
   const chatId = Number(req.params.id);

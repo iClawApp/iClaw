@@ -82,22 +82,33 @@
     return null;
   }
 
-  /** Open chat required; picker sections depend on project vs orphan chat. */
+  /** Picker / use-in-chat need a chat row; inline secrets on draft only need project pick. */
   function composerSecretContext() {
-    if (activeChatId == null) return null;
-    return {
-      pickerUrl: '/chats/' + encodeURIComponent(activeChatId) + '/secrets/picker',
-      useInChatUrl: (secretId) =>
-        '/chats/' +
-        encodeURIComponent(activeChatId) +
-        '/secrets/' +
-        encodeURIComponent(secretId) +
-        '/use-in-chat',
-    };
+    if (activeChatId != null) {
+      return {
+        pickerUrl: '/chats/' + encodeURIComponent(activeChatId) + '/secrets/picker',
+        useInChatUrl: (secretId) =>
+          '/chats/' +
+          encodeURIComponent(activeChatId) +
+          '/secrets/' +
+          encodeURIComponent(secretId) +
+          '/use-in-chat',
+      };
+    }
+    return null;
   }
 
   function composerSecretsEnabled() {
-    return composerSecretContext() != null;
+    if (activeChatId != null) return true;
+    // Draft home: chat is created on send; inline [[iclaw:sN]] secrets still work.
+    return Boolean(startedOnDraft && draftProjectLocked);
+  }
+
+  function composerSecretsBlockedMessage() {
+    if (startedOnDraft && !draftProjectLocked) {
+      return 'Choose a project (or No project) on the home screen first.';
+    }
+    return 'Open a chat to save secrets.';
   }
 
   function selectionInsideIclawPlaceholder(text, start, end) {
@@ -2887,7 +2898,7 @@
     if (!composerSecretPickMenu) return;
     const ctx = composerSecretContext();
     if (!ctx) {
-      alert('Open a chat to use saved secrets.');
+      alert('Send the first message to open the chat, then use the clip → Secret menu.');
       return;
     }
     if (composerAttachMenu) composerAttachMenu.hidden = true;
@@ -3120,12 +3131,20 @@
     while ((m = re.exec(text)) !== null) uniq.add(Number(m[1]));
     if (uniq.size === 0) return undefined;
     const slots = [...uniq].sort((a, b) => a - b);
+    const labelsSeen = new Set();
     const out = [];
     for (const slot of slots) {
       const p = composerSecretBySlot.get(slot);
       if (!p) {
         throw new Error('Each [[iclaw:sN]] marker in the message needs a secret name (use the button).');
       }
+      const labelKey = String(p.label ?? '')
+        .trim()
+        .toLowerCase();
+      if (labelsSeen.has(labelKey)) {
+        throw new Error('Secret name already exists');
+      }
+      labelsSeen.add(labelKey);
       out.push({
         slot,
         label: p.label,
@@ -3135,6 +3154,20 @@
       });
     }
     return out;
+  }
+
+  async function isComposerSecretLabelAvailable(label) {
+    if (!composerSecretsEnabled()) return true;
+    const q = encodeURIComponent(String(label ?? '').trim());
+    if (!q) return false;
+    const url =
+      activeChatId != null
+        ? '/chats/' + encodeURIComponent(activeChatId) + '/secrets/check-label?label=' + q
+        : '/api/secrets/check-label?label=' + q;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error('Could not verify secret name');
+    const data = await res.json();
+    return data && data.available === true;
   }
 
   function clearComposerSecretDraft() {
@@ -3259,7 +3292,7 @@
     applyComposerSecretStripLayout();
   }
 
-  function applySecretReplace(label) {
+  async function applySecretReplace(label) {
     if (!input || !composerSecretInsert) return;
     if (composerSecretTokenEditing) syncComposerSecretPlainFromInput();
     const lab = String(label ?? '').trim();
@@ -3269,6 +3302,15 @@
     }
     if (/[\[\]|]/.test(lab)) {
       alert('Name cannot contain [ ] |');
+      return;
+    }
+    try {
+      if (!(await isComposerSecretLabelAvailable(lab))) {
+        alert('Secret name already exists');
+        return;
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
       return;
     }
     const t = input.value;
@@ -3374,7 +3416,7 @@
   if (composerMarkSecretBtn && input) {
     composerMarkSecretBtn.addEventListener('click', () => {
       if (!composerSecretsEnabled()) {
-        alert('Open a chat to save secrets.');
+        alert(composerSecretsBlockedMessage());
         return;
       }
       const s = input.selectionStart;
@@ -3403,7 +3445,7 @@
       const fn = composerSecretCommit;
       if (!fn) return;
       if (composerSecretTokenEditing) syncComposerSecretPlainFromInput();
-      fn(composerSecretLabelInput.value);
+      void Promise.resolve(fn(composerSecretLabelInput.value));
     });
   }
   if (composerSecretTokenToggle) {

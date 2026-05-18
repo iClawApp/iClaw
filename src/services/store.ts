@@ -525,15 +525,34 @@ export const projectSecrets = {
       | ProjectSecret
       | undefined;
   },
+  /** Case-insensitive; labels are unique app-wide for user-created secrets. */
+  findByLabel(label: string): ProjectSecret | undefined {
+    const trimmed = label.trim();
+    if (!trimmed) return undefined;
+    return db
+      .prepare(
+        'SELECT * FROM project_secrets WHERE LOWER(TRIM(label)) = LOWER(TRIM(?)) LIMIT 1',
+      )
+      .get(trimmed) as ProjectSecret | undefined;
+  },
+  isLabelAvailable(label: string): boolean {
+    return this.findByLabel(label) === undefined;
+  },
   insert(opts: {
     projectId: number | null;
     label: string;
     value: string;
     sourceChatId: number | null;
     sourceMessageId: number | null;
+    /** Picker copy from another project may reuse an existing label. */
+    allowDuplicateLabel?: boolean;
   }): ProjectSecret {
     const label = opts.label.trim();
     if (!label) throw new Error('secret label required');
+    if (!opts.allowDuplicateLabel) {
+      const existing = this.findByLabel(label);
+      if (existing) throw new Error('Secret name already exists');
+    }
     const value = String(opts.value ?? '')
       .replace(/\r/g, '')
       .trim();
@@ -545,7 +564,7 @@ export const projectSecrets = {
          VALUES (?, ?, ?, ?, ?)`,
       )
       .run(
-        opts.projectId,
+        opts.projectId ?? null,
         label,
         value,
         opts.sourceChatId ?? null,
@@ -672,6 +691,7 @@ export const projectSecrets = {
         value: src.value,
         sourceChatId: scope.chatId,
         sourceMessageId: null,
+        allowDuplicateLabel: true,
       });
     }
     if (scope.chatId == null) throw new Error('chat required');
@@ -685,6 +705,7 @@ export const projectSecrets = {
       value: src.value,
       sourceChatId: scope.chatId,
       sourceMessageId: null,
+      allowDuplicateLabel: true,
     });
   },
 };
