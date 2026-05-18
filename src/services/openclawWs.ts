@@ -169,15 +169,6 @@ export const openclawWs = {
     await gatewayWs.request('sessions.patch', params);
   },
 
-  /** Tools effectively available to a session right now (includes plugin tools). */
-  async toolsEffective(opts: {
-    sessionKey: string;
-    agentId?: string;
-  }): Promise<unknown> {
-    const params: Record<string, unknown> = { sessionKey: opts.sessionKey };
-    if (opts.agentId) params.agentId = opts.agentId;
-    return gatewayWs.request('tools.effective', params);
-  },
 
   /** Subscribe to the global session index — needed for `sessions.changed`. */
   async subscribeSessions(): Promise<void> {
