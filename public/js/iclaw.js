@@ -90,11 +90,54 @@
     return close >= end - 1;
   }
 
+  /**
+   * Detect well-known API-token shapes in `text`. All patterns are anchored to
+   * a specific vendor prefix to keep false-positives near zero — we do NOT do
+   * generic high-entropy matching (would fire on UUIDs / hashes / commit SHAs).
+   * If multiple shapes hit, the LONGEST match wins.
+   */
   function findLikelyTokenRange(text) {
     const patterns = [
+      // ── OpenAI / OpenAI-style (also catches Anthropic sk-ant-* via the same prefix). ──
       /\bsk-[a-zA-Z0-9_-]{16,}\b/g,
+      // ── GitHub: classic PAT and fine-grained PAT. ──
       /\bghp_[a-zA-Z0-9]{36}\b/g,
+      /\bghu_[a-zA-Z0-9]{36}\b/g, // user-to-server OAuth
+      /\bghs_[a-zA-Z0-9]{36}\b/g, // server-to-server OAuth
+      /\bghr_[a-zA-Z0-9]{36}\b/g, // refresh
+      /\bgho_[a-zA-Z0-9]{36}\b/g, // OAuth access
       /\bgithub_pat_[a-zA-Z0-9_]{22,}\b/g,
+      // ── GitLab. ──
+      /\bglpat-[A-Za-z0-9_-]{20,}\b/g,
+      // ── AWS access keys (standard + temporary). ──
+      /\b(?:AKIA|ASIA|AIDA|AROA|ANPA|ANVA|APKA)[0-9A-Z]{16}\b/g,
+      // ── Slack tokens (bot, user, app, refresh, app-level, legacy app-token). ──
+      /\bxox[abprso]-[A-Za-z0-9-]{10,}\b/g,
+      /\bxapp-[0-9]+-[A-Z0-9]+-[0-9]+-[A-Za-z0-9]+\b/g,
+      // ── Stripe (secret / publishable / restricted, live + test). ──
+      /\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{20,}\b/g,
+      // ── Google API keys + OAuth client IDs. ──
+      /\bAIza[0-9A-Za-z_-]{35}\b/g,
+      /\b[0-9]+-[0-9A-Za-z_-]{32}\.apps\.googleusercontent\.com\b/g,
+      // ── Shopify. ──
+      /\bshpat_[a-fA-F0-9]{32}\b/g,
+      /\bshppa_[a-fA-F0-9]{32}\b/g,
+      /\bshpss_[a-fA-F0-9]{32}\b/g,
+      // ── Twilio. ──
+      /\bSK[0-9a-fA-F]{32}\b/g,
+      // ── SendGrid. ──
+      /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g,
+      // ── Mailgun (key-…). ──
+      /\bkey-[a-z0-9]{32}\b/g,
+      // ── Brevo / Sendinblue. ──
+      /\bxkeysib-[a-zA-Z0-9]{64}-[a-zA-Z0-9]{16}\b/g,
+      // ── Telegram bot token. Looks like `<digits>:<35+ chars>`; we
+      //    constrain the prefix length to avoid matching dates/timestamps. ──
+      /\b\d{8,12}:[A-Za-z0-9_-]{35,}\b/g,
+      // ── Discord bot token. Three dot-separated base64url segments. ──
+      /\b[MN][A-Za-z\d]{23}\.[\w-]{6}\.[\w-]{27,}\b/g,
+      // ── JWT (header.payload.signature — header always starts with "eyJ"). ──
+      /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
     ];
     let best = null;
     let bestLen = 0;
@@ -3484,7 +3527,6 @@
   const resetBannerBody = document.getElementById('reset-policy-banner-body');
   const resetFixBtn = document.getElementById('reset-policy-fix');
   const resetSnoozeBtn = document.getElementById('reset-policy-snooze');
-  const resetBannerCloseBtn = document.getElementById('reset-policy-banner-close');
 
   function snoozeResetBanner(ms) {
     try {
@@ -3614,12 +3656,6 @@
   if (resetSnoozeBtn) {
     resetSnoozeBtn.addEventListener('click', () => {
       snoozeResetBanner(SNOOZE_DAYS * 24 * 60 * 60 * 1000);
-      hideResetBanner();
-    });
-  }
-  if (resetBannerCloseBtn) {
-    resetBannerCloseBtn.addEventListener('click', () => {
-      snoozeResetBanner(NEVER_REMIND_MS);
       hideResetBanner();
     });
   }
