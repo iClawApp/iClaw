@@ -471,7 +471,9 @@ export const projectSecrets = {
   }): ProjectSecret {
     const label = opts.label.trim();
     if (!label) throw new Error('secret label required');
-    const value = String(opts.value ?? '');
+    const value = String(opts.value ?? '')
+      .replace(/\r/g, '')
+      .trim();
     if (!value) throw new Error('secret value required');
     if (value.length > 32768) throw new Error('secret too long');
     const info = db
@@ -500,6 +502,69 @@ export const projectSecrets = {
     db.prepare('DELETE FROM project_secrets WHERE id = ?').run(id);
     projects.touch(projectId);
     return true;
+  },
+  findByValueInProject(projectId: number, value: string): ProjectSecret | undefined {
+    return db
+      .prepare('SELECT * FROM project_secrets WHERE project_id = ? AND value = ? LIMIT 1')
+      .get(projectId, value) as ProjectSecret | undefined;
+  },
+  /** Secrets for composer attach menu: current project, then others deduped by value. */
+  listForComposerPicker(projectId: number): {
+    current: (Omit<ProjectSecret, 'value'> & { value_length: number })[];
+    other: (Omit<ProjectSecret, 'value'> & {
+      value_length: number;
+      project_name: string;
+    })[];
+  } {
+    const current = this.listMetaByProject(projectId);
+    const seenValues = new Set<string>();
+    for (const m of current) {
+      const row = this.get(m.id);
+      if (row) seenValues.add(row.value);
+    }
+    const otherRows = db
+      .prepare(
+        `SELECT ps.id, ps.project_id, ps.label, ps.source_chat_id, ps.source_message_id,
+                ps.created_at, LENGTH(ps.value) AS value_length, p.name AS project_name
+         FROM project_secrets ps
+         INNER JOIN projects p ON p.id = ps.project_id
+         WHERE ps.project_id != ?
+         ORDER BY ps.created_at DESC, ps.id DESC`,
+      )
+      .all(projectId) as (Omit<ProjectSecret, 'value'> & {
+      value_length: number;
+      project_name: string;
+      value: string;
+    })[];
+    const other: (Omit<ProjectSecret, 'value'> & {
+      value_length: number;
+      project_name: string;
+    })[] = [];
+    for (const row of otherRows) {
+      if (seenValues.has(row.value)) continue;
+      seenValues.add(row.value);
+      const { value: _v, ...meta } = row;
+      other.push(meta);
+    }
+    return { current, other };
+  },
+  /**
+   * Use an existing secret in the current project's chat: same row if already
+   * in project, otherwise reuse by value or copy from another project.
+   */
+  resolveForChat(projectId: number, secretId: number): ProjectSecret {
+    const src = this.get(secretId);
+    if (!src) throw new Error('secret not found');
+    if (src.project_id === projectId) return src;
+    const sameValue = this.findByValueInProject(projectId, src.value);
+    if (sameValue) return sameValue;
+    return this.insert({
+      projectId,
+      label: src.label,
+      value: src.value,
+      sourceChatId: null,
+      sourceMessageId: null,
+    });
   },
 };
 

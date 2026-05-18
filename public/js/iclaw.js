@@ -2763,8 +2763,181 @@
       }
     });
   }
+  const composerAttachMenu = document.getElementById('composer-attach-menu');
+  const composerSecretPickMenu = document.getElementById('composer-secret-pick-menu');
+  let composerAttachMenuOpen = false;
+
+  function buildStoredSecretPlaceholder(id, label, valueLength) {
+    const enc = encodeURIComponent(String(label || ''));
+    const len = Number(valueLength) || 0;
+    return '[[iclaw:secret:' + id + '|' + enc + '|' + len + ']]';
+  }
+
+  function insertTextAtComposerCursor(text) {
+    if (!input) return;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const v = input.value;
+    input.value = v.slice(0, start) + text + v.slice(end);
+    const pos = start + text.length;
+    input.setSelectionRange(pos, pos);
+    input.focus();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    scheduleTokenDetect();
+    applyComposerSecretStripLayout();
+  }
+
+  function closeComposerAttachMenus() {
+    if (composerAttachMenu) composerAttachMenu.hidden = true;
+    if (composerSecretPickMenu) composerSecretPickMenu.hidden = true;
+    composerAttachMenuOpen = false;
+    if (attachBtn) attachBtn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', onComposerAttachOutside, true);
+  }
+
+  function openComposerAttachMenu() {
+    if (!composerAttachMenu) return;
+    closeScheduleMenu();
+    if (composerSecretPickMenu) composerSecretPickMenu.hidden = true;
+    composerAttachMenu.hidden = false;
+    composerAttachMenuOpen = true;
+    if (attachBtn) attachBtn.setAttribute('aria-expanded', 'true');
+    setTimeout(() => document.addEventListener('pointerdown', onComposerAttachOutside, true), 0);
+  }
+
+  function onComposerAttachOutside(ev) {
+    const t = ev.target;
+    if (attachBtn && attachBtn.contains(t)) return;
+    if (composerAttachMenu && composerAttachMenu.contains(t)) return;
+    if (composerSecretPickMenu && composerSecretPickMenu.contains(t)) return;
+    closeComposerAttachMenus();
+  }
+
+  function secretPickItemHtml(s, showProject) {
+    const id = Number(s.id);
+    const label = escapeHtml(String(s.label || ''));
+    const hint =
+      showProject && s.project_name
+        ? '<span class="menu-item__hint">' + escapeHtml(String(s.project_name)) + '</span>'
+        : '';
+    return (
+      '<button type="button" class="menu-item composer-secret-pick-item" data-secret-id="' +
+      id +
+      '" role="menuitem">' +
+      '<span class="menu-item__title">' +
+      label +
+      '</span>' +
+      hint +
+      '</button>'
+    );
+  }
+
+  function renderComposerSecretPickMenu(data) {
+    if (!composerSecretPickMenu) return;
+    const current = Array.isArray(data?.current) ? data.current : [];
+    const other = Array.isArray(data?.other) ? data.other : [];
+    let html =
+      '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Назад</button>';
+    if (current.length === 0 && other.length === 0) {
+      html += '<div class="composer-secret-pick-empty">Немає збережених секретів.</div>';
+    } else {
+      if (current.length > 0) {
+        html += '<div class="menu-section-label">Цей проєкт</div>';
+        for (const s of current) html += secretPickItemHtml(s, false);
+      }
+      if (other.length > 0) {
+        html += '<div class="menu-section-label">Інші проєкти</div>';
+        for (const s of other) html += secretPickItemHtml(s, true);
+      }
+    }
+    composerSecretPickMenu.innerHTML = html;
+  }
+
+  async function openComposerSecretPickMenu() {
+    if (!composerSecretPickMenu) return;
+    const pid = currentComposerProjectId();
+    if (pid == null) {
+      alert('Оберіть проєкт для чату — секрети привʼязані до проєкту.');
+      return;
+    }
+    if (composerAttachMenu) composerAttachMenu.hidden = true;
+    composerSecretPickMenu.hidden = false;
+    composerSecretPickMenu.innerHTML =
+      '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Назад</button>' +
+      '<div class="composer-secret-pick-empty">Завантаження…</div>';
+    try {
+      const res = await fetch('/projects/' + encodeURIComponent(pid) + '/secrets/picker', {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      renderComposerSecretPickMenu(data);
+    } catch {
+      composerSecretPickMenu.innerHTML =
+        '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Назад</button>' +
+        '<div class="composer-secret-pick-empty">Не вдалося завантажити секрети.</div>';
+    }
+  }
+
+  async function useComposerSecretInChat(secretId) {
+    const pid = currentComposerProjectId();
+    if (pid == null) return null;
+    const res = await fetch(
+      '/projects/' +
+        encodeURIComponent(pid) +
+        '/secrets/' +
+        encodeURIComponent(secretId) +
+        '/use-in-chat',
+      { method: 'POST', headers: { Accept: 'application/json' } },
+    );
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(t || 'HTTP ' + res.status);
+    }
+    return res.json();
+  }
+
+  if (composerAttachMenu) {
+    composerAttachMenu.addEventListener('click', (e) => {
+      const pick = e.target.closest('[data-attach-pick]')?.getAttribute('data-attach-pick');
+      if (pick === 'file') {
+        closeComposerAttachMenus();
+        if (fileInput) fileInput.click();
+        return;
+      }
+      if (pick === 'secret') void openComposerSecretPickMenu();
+    });
+  }
+  if (composerSecretPickMenu) {
+    composerSecretPickMenu.addEventListener('click', (e) => {
+      if (e.target.closest('[data-secret-pick="back"]')) {
+        composerSecretPickMenu.hidden = true;
+        if (composerAttachMenu) composerAttachMenu.hidden = false;
+        return;
+      }
+      const item = e.target.closest('.composer-secret-pick-item');
+      if (!item) return;
+      const sid = Number(item.getAttribute('data-secret-id'));
+      if (!Number.isFinite(sid)) return;
+      closeComposerAttachMenus();
+      void useComposerSecretInChat(sid)
+        .then((row) => {
+          if (!row) return;
+          insertTextAtComposerCursor(
+            buildStoredSecretPlaceholder(row.id, row.label, row.value_length),
+          );
+        })
+        .catch((err) => {
+          alert(err && err.message ? err.message : 'Не вдалося додати секрет');
+        });
+    });
+  }
   if (attachBtn && fileInput) {
-    attachBtn.addEventListener('click', () => fileInput.click());
+    attachBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (composerAttachMenuOpen) closeComposerAttachMenus();
+      else openComposerAttachMenu();
+    });
     fileInput.addEventListener('change', () => {
       addFilesToPending(Array.from(fileInput.files || []));
       // Allow re-selecting the same file later.
@@ -2928,7 +3101,13 @@
       if (!p) {
         throw new Error('Для кожного [[iclaw:sN]] у тексті потрібна назва секрету (додайте через кнопку).');
       }
-      out.push({ slot, label: p.label, plain: p.plain });
+      out.push({
+        slot,
+        label: p.label,
+        plain: String(p.plain ?? '')
+          .replace(/\r/g, '')
+          .trim(),
+      });
     }
     return out;
   }
@@ -2985,7 +3164,7 @@
 
   function syncComposerSecretPlainFromInput() {
     if (!composerSecretInsert || !composerSecretValueInput) return;
-    composerSecretInsert.plain = composerSecretValueInput.value;
+    composerSecretInsert.plain = composerSecretValueInput.value.replace(/\r/g, '').trim();
   }
 
   function syncComposerSecretTokenView() {
@@ -3069,10 +3248,17 @@
     }
     const t = input.value;
     const ins = composerSecretInsert;
+    const plain = String(ins.plain ?? '')
+      .replace(/\r/g, '')
+      .trim();
+    if (!plain) {
+      alert('Порожній секрет.');
+      return;
+    }
     const slot = composerSecretNextSlot++;
     const marker = '[[iclaw:s' + slot + ']]';
     input.value = t.slice(0, ins.start) + marker + t.slice(ins.end);
-    composerSecretBySlot.set(slot, { label: lab, plain: ins.plain });
+    composerSecretBySlot.set(slot, { label: lab, plain });
     closeComposerSecretModal();
     scheduleTokenDetect();
   }
@@ -3320,6 +3506,7 @@
   function openScheduleMenu() {
     if (!scheduleMenu) return;
     if (!input.value.trim()) return;
+    closeComposerAttachMenus();
     document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
     scheduleMenu.hidden = false;
     if (scheduleCustomRow) scheduleCustomRow.hidden = true;

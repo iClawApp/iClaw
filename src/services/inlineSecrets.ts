@@ -68,7 +68,9 @@ export function resolveInlineSecretMarkersInContent(opts: {
   for (const slot of orderedSlots) {
     const w = bySlot.get(slot)!;
     const label = validateSecretLabel(w.label);
-    const plain = String(w.plain ?? '');
+    const plain = String(w.plain ?? '')
+      .replace(/\r/g, '')
+      .trim();
     if (!plain) throw new Error('Порожній секрет.');
     if (plain.length > 32768) throw new Error('Секрет занадто довгий.');
     const row = projectSecrets.insert({
@@ -81,7 +83,7 @@ export function resolveInlineSecretMarkersInContent(opts: {
     newSecretIds.push(row.id);
     const encLabel = encodeURIComponent(label);
     const marker = `[[iclaw:s${slot}]]`;
-    const replacement = `[[iclaw:secret:${row.id}|${encLabel}|${plain.length}]]`;
+    const replacement = `[[iclaw:secret:${row.id}|${encLabel}|${row.value.length}]]`;
     stored = stored.split(marker).join(replacement);
   }
   return { storedContent: stored, newSecretIds };

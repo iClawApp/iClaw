@@ -129,6 +129,36 @@ projectsRouter.patch('/:id', (req, res) => {
   res.json(updated);
 });
 
+/** Composer attach menu — metadata only, no secret values. */
+projectsRouter.get('/:id/secrets/picker', (req, res) => {
+  const projectId = Number(req.params.id);
+  if (!projects.get(projectId)) {
+    res.status(404).json({ error: 'project not found' });
+    return;
+  }
+  res.json(projectSecrets.listForComposerPicker(projectId));
+});
+
+/** Map a secret (any project) to a row usable in this project's chat transcript. */
+projectsRouter.post('/:id/secrets/:secretId/use-in-chat', (req, res) => {
+  const projectId = Number(req.params.id);
+  const secretId = Number(req.params.secretId);
+  if (!projects.get(projectId)) {
+    res.status(404).json({ error: 'project not found' });
+    return;
+  }
+  try {
+    const row = projectSecrets.resolveForChat(projectId, secretId);
+    res.json({
+      id: row.id,
+      label: row.label,
+      value_length: row.value.length,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'secret' });
+  }
+});
+
 /** Reveal secret value on the project page (same project only). */
 projectsRouter.get('/:id/secrets/:secretId/value', (req, res) => {
   const projectId = Number(req.params.id);
