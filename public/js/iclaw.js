@@ -90,11 +90,31 @@
     return close >= end - 1;
   }
 
+  /** Strip line breaks for regex matching; map compact indices back to `text`. */
+  function compactSecretSearchText(text) {
+    const indices = [];
+    let compact = '';
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      if (c === 10 || c === 13) continue;
+      indices.push(i);
+      compact += text[i];
+    }
+    return { compact, indices };
+  }
+
+  function rangeFromCompact(indices, compactStart, compactEnd) {
+    if (!indices.length || compactStart >= indices.length) return null;
+    const endIdx = Math.min(compactEnd, indices.length) - 1;
+    return { start: indices[compactStart], end: indices[endIdx] + 1 };
+  }
+
   /**
    * Detect well-known API-token shapes in `text`. All patterns are anchored to
    * a specific vendor prefix to keep false-positives near zero — we do NOT do
    * generic high-entropy matching (would fire on UUIDs / hashes / commit SHAs).
-   * If multiple shapes hit, the LONGEST match wins.
+   * If multiple shapes hit, the LONGEST match wins. Line breaks inside a token
+   * are ignored for matching (range still spans the original newlines).
    */
   function findLikelyTokenRange(text) {
     const patterns = [
@@ -139,21 +159,49 @@
       // ── JWT (header.payload.signature — header always starts with "eyJ"). ──
       /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
     ];
+    const blockPatterns = [
+      /-----BEGIN [A-Z0-9 ]+-----[\r\n]+(?:[A-Za-z0-9+/=\r\n]+)[\r\n]*-----END [A-Z0-9 ]+-----/g,
+    ];
     let best = null;
     let bestLen = 0;
-    for (const re of patterns) {
+
+    function consider(start, end, spanLen) {
+      if (selectionInsideIclawPlaceholder(text, start, end)) return;
+      if (spanLen > bestLen) {
+        best = { start, end };
+        bestLen = spanLen;
+      }
+    }
+
+    for (const re of blockPatterns) {
       re.lastIndex = 0;
       let m;
       while ((m = re.exec(text)) !== null) {
-        const s = m.index;
-        const e = s + m[0].length;
-        if (selectionInsideIclawPlaceholder(text, s, e)) continue;
-        if (m[0].length > bestLen) {
-          best = { start: s, end: e };
-          bestLen = m[0].length;
+        consider(m.index, m.index + m[0].length, m[0].length);
+      }
+    }
+
+    function scanWithPatterns(source, mapRange) {
+      for (const re of patterns) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(source)) !== null) {
+          const s = m.index;
+          const e = s + m[0].length;
+          const range = mapRange ? mapRange(s, e) : { start: s, end: e };
+          if (!range) continue;
+          consider(range.start, range.end, range.end - range.start);
         }
       }
     }
+
+    scanWithPatterns(text, null);
+
+    const { compact, indices } = compactSecretSearchText(text);
+    if (compact.length > 0) {
+      scanWithPatterns(compact, (cs, ce) => rangeFromCompact(indices, cs, ce));
+    }
+
     return best;
   }
 
@@ -2789,7 +2837,10 @@
   const composerSecretBackdrop = document.getElementById('composer-secret-modal-backdrop');
   const composerSecretLabelInput = document.getElementById('composer-secret-label-input');
   const composerSecretValuePreview = document.getElementById('composer-secret-value-preview');
+  const composerSecretValueInput = document.getElementById('composer-secret-value-input');
+  const composerSecretTokenToggle = document.getElementById('composer-secret-token-toggle');
   const composerSecretOk = document.getElementById('composer-secret-ok');
+  let composerSecretTokenEditing = false;
 
   /** @type {((label: string) => void) | null} */
   let composerSecretCommit = null;
@@ -2902,10 +2953,10 @@
     applyComposerSecretStripLayout();
   }
 
-  /** Маска для модалки: напр. sk***EF, без повного значення. */
-  function formatSecretModalPreview(plain) {
-    const s = String(plain ?? '');
-    if (!s) return '—';
+  /** Маска для модалки: напр. sk***EF; кожен рядок маскується окремо. */
+  function maskSecretPreviewLine(line) {
+    const s = String(line ?? '');
+    if (!s) return '';
     const n = s.length;
     if (n <= 2) return '••';
     if (n <= 3) return s[0] + '**' + s[n - 1];
@@ -2914,16 +2965,73 @@
     return s.slice(0, 2) + '***' + s.slice(-2);
   }
 
+  function formatSecretModalPreview(plain) {
+    const s = String(plain ?? '');
+    if (!s) return '—';
+    if (/[\r\n]/.test(s)) {
+      return s
+        .split(/\r?\n/)
+        .map((line) => maskSecretPreviewLine(line))
+        .join('\n');
+    }
+    return maskSecretPreviewLine(s);
+  }
+
+  function resizeComposerSecretTokenInput() {
+    if (!composerSecretValueInput) return;
+    composerSecretValueInput.style.height = 'auto';
+    composerSecretValueInput.style.height = composerSecretValueInput.scrollHeight + 'px';
+  }
+
+  function syncComposerSecretPlainFromInput() {
+    if (!composerSecretInsert || !composerSecretValueInput) return;
+    composerSecretInsert.plain = composerSecretValueInput.value;
+  }
+
+  function syncComposerSecretTokenView() {
+    const plain = composerSecretInsert ? composerSecretInsert.plain : '';
+    if (composerSecretTokenEditing) {
+      if (composerSecretValueInput) {
+        composerSecretValueInput.value = plain;
+        composerSecretValueInput.hidden = false;
+        resizeComposerSecretTokenInput();
+      }
+      if (composerSecretValuePreview) composerSecretValuePreview.hidden = true;
+      if (composerSecretTokenToggle) {
+        composerSecretTokenToggle.setAttribute('aria-pressed', 'true');
+        composerSecretTokenToggle.setAttribute('aria-label', 'Приховати токен');
+        composerSecretTokenToggle.title = 'Приховати токен';
+      }
+    } else {
+      if (composerSecretValuePreview) {
+        composerSecretValuePreview.textContent = formatSecretModalPreview(plain);
+        composerSecretValuePreview.hidden = false;
+      }
+      if (composerSecretValueInput) composerSecretValueInput.hidden = true;
+      if (composerSecretTokenToggle) {
+        composerSecretTokenToggle.setAttribute('aria-pressed', 'false');
+        composerSecretTokenToggle.setAttribute('aria-label', 'Редагувати токен');
+        composerSecretTokenToggle.title = 'Редагувати токен';
+      }
+    }
+  }
+
+  function setComposerSecretTokenEditing(editing) {
+    if (composerSecretTokenEditing && !editing) syncComposerSecretPlainFromInput();
+    composerSecretTokenEditing = editing;
+    syncComposerSecretTokenView();
+    if (editing && composerSecretValueInput) {
+      setTimeout(() => composerSecretValueInput.focus(), 0);
+    }
+  }
+
   function openComposerSecretModal(onCommit) {
     if (!composerSecretModal || !composerSecretLabelInput) return;
     composerSecretCommit = onCommit;
+    composerSecretTokenEditing = false;
     composerSecretModal.hidden = false;
     composerSecretLabelInput.value = '';
-    if (composerSecretValuePreview) {
-      composerSecretValuePreview.textContent = formatSecretModalPreview(
-        composerSecretInsert && composerSecretInsert.plain
-      );
-    }
+    syncComposerSecretTokenView();
     applyComposerSecretStripLayout();
     setTimeout(() => composerSecretLabelInput.focus(), 0);
   }
@@ -2932,12 +3040,24 @@
     if (composerSecretModal) composerSecretModal.hidden = true;
     composerSecretInsert = null;
     composerSecretCommit = null;
-    if (composerSecretValuePreview) composerSecretValuePreview.textContent = '';
+    composerSecretTokenEditing = false;
+    if (composerSecretValuePreview) {
+      composerSecretValuePreview.textContent = '';
+      composerSecretValuePreview.hidden = false;
+    }
+    if (composerSecretValueInput) {
+      composerSecretValueInput.value = '';
+      composerSecretValueInput.hidden = true;
+    }
+    if (composerSecretTokenToggle) {
+      composerSecretTokenToggle.setAttribute('aria-pressed', 'false');
+    }
     applyComposerSecretStripLayout();
   }
 
   function applySecretReplace(label) {
     if (!input || !composerSecretInsert) return;
+    if (composerSecretTokenEditing) syncComposerSecretPlainFromInput();
     const lab = String(label ?? '').trim();
     if (!lab) {
       alert('Введіть назву секрету.');
@@ -3071,7 +3191,19 @@
     composerSecretOk.addEventListener('click', () => {
       const fn = composerSecretCommit;
       if (!fn) return;
+      if (composerSecretTokenEditing) syncComposerSecretPlainFromInput();
       fn(composerSecretLabelInput.value);
+    });
+  }
+  if (composerSecretTokenToggle) {
+    composerSecretTokenToggle.addEventListener('click', () => {
+      setComposerSecretTokenEditing(!composerSecretTokenEditing);
+    });
+  }
+  if (composerSecretValueInput) {
+    composerSecretValueInput.addEventListener('input', () => {
+      syncComposerSecretPlainFromInput();
+      resizeComposerSecretTokenInput();
     });
   }
   if (composerSecretBackdrop) {

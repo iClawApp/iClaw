@@ -1801,9 +1801,8 @@ code {
 }
 
 .composer-secret-ui {
-  margin: 0;
-  padding: 6px 0 2px;
-  border-top: 0.5px solid color-mix(in srgb, var(--text) 10%, var(--border));
+  margin: var(--space-3) 0 0;
+  padding: 0 var(--space-2);
 }
 .composer-secret-ui[hidden] {
   display: none !important;
@@ -1909,20 +1908,80 @@ code {
   font-weight: 500;
   color: var(--muted);
 }
-.composer-secret-modal__token-mask {
-  display: block;
-  margin: 0;
+.composer-secret-modal__token-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
   padding: 0.2rem 0 0;
+  min-width: 0;
+}
+.composer-secret-modal__token-mask {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
   border: none;
   border-radius: 0;
   background: transparent;
-  font-family: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: inherit;
   font-style: inherit;
   font-weight: 500;
   color: color-mix(in srgb, var(--fg) 62%, transparent);
+  white-space: pre-wrap;
   word-break: break-all;
   line-height: 1.4;
+}
+.composer-secret-modal__token-mask[hidden] {
+  display: none !important;
+}
+.composer-secret-modal__token-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  resize: none;
+  overflow: hidden;
+  max-height: 12rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: inherit;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  field-sizing: content;
+}
+.composer-secret-modal__token-input:focus,
+.composer-secret-modal__token-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.composer-secret-modal__token-input[hidden] {
+  display: none !important;
+}
+.composer-secret-modal__token-toggle {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  margin-top: 0;
+  color: var(--muted);
+}
+.composer-secret-modal__token-toggle:hover {
+  color: var(--text);
+}
+.composer-secret-modal__eye-off {
+  display: none;
+}
+.composer-secret-modal__token-toggle[aria-pressed='true'] .composer-secret-modal__eye-open {
+  display: none;
+}
+.composer-secret-modal__token-toggle[aria-pressed='true'] .composer-secret-modal__eye-off {
+  display: block;
 }
 .composer-secret-modal__field {
   display: flex;
