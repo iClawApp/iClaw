@@ -19,47 +19,91 @@
       title="Close"
     >×</button>
 
-    <!-- ── Form view ───────────────────────────────────────────── -->
+    <!-- ── Form view (wizard: step 1 options → step 2 secrets if any) ── -->
     <div id="share-form-view">
       <h2 id="share-modal-title" class="share-modal-title">Share chat</h2>
-      <p id="share-modal-help" class="muted share-modal-help">
+      <p id="share-modal-help" class="share-modal-help">
         We encrypt the chat in your browser before upload<br /><br />
         The key stays in the <code>#</code> part of the link — not on our servers<br /><br />
         Add a password if the link alone shouldn't be enough to open it
       </p>
 
       <form id="share-form" class="share-form" onsubmit="return false">
-        <label class="share-field">
-          <span class="share-field-label">Deleted from server after</span>
-          <select id="share-ttl">
-            <option value="1">1 day</option>
-            <option value="3">3 days</option>
-            <option value="7" selected>7 days</option>
-            <option value="30">30 days</option>
-          </select>
-        </label>
+        <!-- Step 1: TTL, burn, password -->
+        <div id="share-step-1" class="share-step-panel">
+          <label class="share-field">
+            <span class="share-field-label">Deleted from server after</span>
+            <select id="share-ttl">
+              <option value="1">1 day</option>
+              <option value="3">3 days</option>
+              <option value="7" selected>7 days</option>
+              <option value="30">30 days</option>
+            </select>
+          </label>
 
-        <label class="share-field">
-          <input type="checkbox" id="share-burn" />
-          <span>Burn after first view</span>
-        </label>
+          <label class="share-field">
+            <input type="checkbox" id="share-burn" />
+            <span>Burn after first view</span>
+          </label>
 
-        <label class="share-field">
-          <input type="checkbox" id="share-pw-enable" />
-          <span>Require a password</span>
-        </label>
-        <div id="share-pw-wrap" class="share-field share-pw-wrap" hidden>
-          <input
-            id="share-pw"
-            type="password"
-            autocomplete="new-password"
-            placeholder="password"
-          />
+          <label class="share-field">
+            <input type="checkbox" id="share-pw-enable" />
+            <span>Require a password</span>
+          </label>
+          <div id="share-pw-wrap" class="share-field share-pw-wrap" hidden>
+            <input
+              id="share-pw"
+              type="password"
+              autocomplete="new-password"
+              placeholder="password"
+            />
+          </div>
         </div>
 
-        <div class="share-actions">
-          <button type="button" class="btn btn--ghost" id="share-cancel">Cancel</button>
-          <button type="submit" class="btn btn--primary" id="share-submit">
+        <!-- Step 2: secrets (only when chat references ≥1 secret; see share.js) -->
+        <div id="share-step-2" class="share-step-panel" hidden>
+          <p class="share-secrets-hint">
+            Selected secrets will be visible to anyone with the link. Unselected secrets will not be included
+          </p>
+          <p class="share-secrets-hint">
+            Selected secrets are stored encrypted on the server
+          </p>
+
+          <ul class="share-secrets-list" id="share-secrets-list"></ul>
+
+          <div class="share-secrets-example" aria-hidden="true">
+            <div class="share-secrets-example-label">Example in chat</div>
+            <div class="share-secrets-example-thread">
+              <div class="msg user share-secrets-example-msg">
+                <div class="role">user</div>
+                <div class="msg-body">
+                  Not selected —
+                  <span class="share-secrets-example-redacted">[secret: hidden]</span>
+                </div>
+              </div>
+              <div class="msg user share-secrets-example-msg">
+                <div class="role">user</div>
+                <div class="msg-body">
+                  Selected —
+                  <span class="share-secrets-example-token">sk-proj-ABCDEFGH123</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="share-secrets-warning"
+            id="share-secrets-warning"
+            role="status"
+            aria-live="polite"
+            hidden
+          ></div>
+        </div>
+
+        <div class="share-actions" id="share-actions">
+          <button type="button" class="btn btn--ghost share-actions-back" id="share-back" hidden>Back</button>
+          <button type="button" class="btn btn--primary" id="share-next" hidden>Next</button>
+          <button type="submit" class="btn btn--primary" id="share-submit" hidden>
             Generate link
           </button>
         </div>
@@ -80,10 +124,6 @@
       <div id="share-pw-reminder" class="share-pw-reminder" hidden>
         ⚠ The receiver also needs the password. Send it through a separate
         channel — never alongside the link.
-      </div>
-
-      <div class="share-actions">
-        <button type="button" class="btn btn--primary" id="share-done">Done</button>
       </div>
     </div>
   </div>

@@ -71,6 +71,18 @@ CREATE TABLE IF NOT EXISTS project_fact_suggestions (
 
 CREATE INDEX IF NOT EXISTS idx_fact_suggestions_chat ON project_fact_suggestions(chat_id, id);
 
+CREATE TABLE IF NOT EXISTS project_secrets (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id           INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  label                TEXT NOT NULL,
+  value                TEXT NOT NULL,
+  source_chat_id       INTEGER REFERENCES chats(id) ON DELETE SET NULL,
+  source_message_id    INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+  created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_secrets_project ON project_secrets(project_id, id);
+
 CREATE TABLE IF NOT EXISTS scheduled_messages (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_id      INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,

@@ -60,6 +60,151 @@
   let draftChosenProjectId = null;
   let draftProjectLocked = false;
 
+  let composerSecretNextSlot = 0;
+  /** @type {Map<number, { label: string; plain: string }>} */
+  const composerSecretBySlot = new Map();
+  let composerTokenDetectTimer = null;
+  /** @type {{ start: number; end: number } | null} */
+  let composerTokenDetectRange = null;
+
+  function currentComposerProjectId() {
+    if (activeChatId != null && messagesEl?.dataset.projectId) {
+      const n = Number(messagesEl.dataset.projectId);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    if (
+      draftChosenProjectId != null &&
+      Number.isFinite(draftChosenProjectId) &&
+      draftChosenProjectId > 0
+    ) {
+      return draftChosenProjectId;
+    }
+    return null;
+  }
+
+  function selectionInsideIclawPlaceholder(text, start, end) {
+    const lastOpen = text.lastIndexOf('[[iclaw:', end);
+    if (lastOpen === -1 || lastOpen > start) return false;
+    const close = text.indexOf(']]', lastOpen);
+    if (close === -1) return false;
+    return close >= end - 1;
+  }
+
+  /** Strip line breaks for regex matching; map compact indices back to `text`. */
+  function compactSecretSearchText(text) {
+    const indices = [];
+    let compact = '';
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      if (c === 10 || c === 13) continue;
+      indices.push(i);
+      compact += text[i];
+    }
+    return { compact, indices };
+  }
+
+  function rangeFromCompact(indices, compactStart, compactEnd) {
+    if (!indices.length || compactStart >= indices.length) return null;
+    const endIdx = Math.min(compactEnd, indices.length) - 1;
+    return { start: indices[compactStart], end: indices[endIdx] + 1 };
+  }
+
+  /**
+   * Detect well-known API-token shapes in `text`. All patterns are anchored to
+   * a specific vendor prefix to keep false-positives near zero — we do NOT do
+   * generic high-entropy matching (would fire on UUIDs / hashes / commit SHAs).
+   * If multiple shapes hit, the LONGEST match wins. Line breaks inside a token
+   * are ignored for matching (range still spans the original newlines).
+   */
+  function findLikelyTokenRange(text) {
+    const patterns = [
+      // ── OpenAI / OpenAI-style (also catches Anthropic sk-ant-* via the same prefix). ──
+      /\bsk-[a-zA-Z0-9_-]{16,}\b/g,
+      // ── GitHub: classic PAT and fine-grained PAT. ──
+      /\bghp_[a-zA-Z0-9]{36}\b/g,
+      /\bghu_[a-zA-Z0-9]{36}\b/g, // user-to-server OAuth
+      /\bghs_[a-zA-Z0-9]{36}\b/g, // server-to-server OAuth
+      /\bghr_[a-zA-Z0-9]{36}\b/g, // refresh
+      /\bgho_[a-zA-Z0-9]{36}\b/g, // OAuth access
+      /\bgithub_pat_[a-zA-Z0-9_]{22,}\b/g,
+      // ── GitLab. ──
+      /\bglpat-[A-Za-z0-9_-]{20,}\b/g,
+      // ── AWS access keys (standard + temporary). ──
+      /\b(?:AKIA|ASIA|AIDA|AROA|ANPA|ANVA|APKA)[0-9A-Z]{16}\b/g,
+      // ── Slack tokens (bot, user, app, refresh, app-level, legacy app-token). ──
+      /\bxox[abprso]-[A-Za-z0-9-]{10,}\b/g,
+      /\bxapp-[0-9]+-[A-Z0-9]+-[0-9]+-[A-Za-z0-9]+\b/g,
+      // ── Stripe (secret / publishable / restricted, live + test). ──
+      /\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{20,}\b/g,
+      // ── Google API keys + OAuth client IDs. ──
+      /\bAIza[0-9A-Za-z_-]{35}\b/g,
+      /\b[0-9]+-[0-9A-Za-z_-]{32}\.apps\.googleusercontent\.com\b/g,
+      // ── Shopify. ──
+      /\bshpat_[a-fA-F0-9]{32}\b/g,
+      /\bshppa_[a-fA-F0-9]{32}\b/g,
+      /\bshpss_[a-fA-F0-9]{32}\b/g,
+      // ── Twilio. ──
+      /\bSK[0-9a-fA-F]{32}\b/g,
+      // ── SendGrid. ──
+      /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g,
+      // ── Mailgun (key-…). ──
+      /\bkey-[a-z0-9]{32}\b/g,
+      // ── Brevo / Sendinblue. ──
+      /\bxkeysib-[a-zA-Z0-9]{64}-[a-zA-Z0-9]{16}\b/g,
+      // ── Telegram bot token. Looks like `<digits>:<35+ chars>`; we
+      //    constrain the prefix length to avoid matching dates/timestamps. ──
+      /\b\d{8,12}:[A-Za-z0-9_-]{35,}\b/g,
+      // ── Discord bot token. Three dot-separated base64url segments. ──
+      /\b[MN][A-Za-z\d]{23}\.[\w-]{6}\.[\w-]{27,}\b/g,
+      // ── JWT (header.payload.signature — header always starts with "eyJ"). ──
+      /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+    ];
+    const blockPatterns = [
+      /-----BEGIN [A-Z0-9 ]+-----[\r\n]+(?:[A-Za-z0-9+/=\r\n]+)[\r\n]*-----END [A-Z0-9 ]+-----/g,
+    ];
+    let best = null;
+    let bestLen = 0;
+
+    function consider(start, end, spanLen) {
+      if (selectionInsideIclawPlaceholder(text, start, end)) return;
+      if (spanLen > bestLen) {
+        best = { start, end };
+        bestLen = spanLen;
+      }
+    }
+
+    for (const re of blockPatterns) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        consider(m.index, m.index + m[0].length, m[0].length);
+      }
+    }
+
+    function scanWithPatterns(source, mapRange) {
+      for (const re of patterns) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(source)) !== null) {
+          const s = m.index;
+          const e = s + m[0].length;
+          const range = mapRange ? mapRange(s, e) : { start: s, end: e };
+          if (!range) continue;
+          consider(range.start, range.end, range.end - range.start);
+        }
+      }
+    }
+
+    scanWithPatterns(text, null);
+
+    const { compact, indices } = compactSecretSearchText(text);
+    if (compact.length > 0) {
+      scanWithPatterns(compact, (cs, ce) => rangeFromCompact(indices, cs, ce));
+    }
+
+    return best;
+  }
+
   function commitDraftFromCard(card) {
     if (!card || draftProjectLocked) return;
     const rawId = card.getAttribute('data-project-id');
@@ -75,6 +220,7 @@
     if (draftEmptyHint) draftEmptyHint.hidden = false;
     if (composerWrap) composerWrap.hidden = false;
     input?.focus();
+    syncComposerSecretUi();
   }
 
   function initDraftProjectPick() {
@@ -188,6 +334,64 @@
     if (!window.marked || typeof window.marked.parse !== 'function') return escapeHtml(src);
     try { return window.marked.parse(src); } catch { return escapeHtml(src); }
   }
+
+  const MSG_SECRET_PH_RE = /\[\[iclaw:secret:(\d+)\|([^|\]]+)(?:\|(\d+))?\]\]/g;
+
+  function decodePlaceholderLabel(enc) {
+    try {
+      return decodeURIComponent(String(enc ?? '').replace(/\+/g, ' '));
+    } catch {
+      return String(enc ?? '');
+    }
+  }
+
+  /** Markdown + inline secret chips (values loaded on reveal). */
+  function renderMessageHtml(text) {
+    const html = renderMarkdown(text);
+    if (!html) return html;
+    return html.replace(MSG_SECRET_PH_RE, (_, id, encLabel, lenStr) => {
+      const label = decodePlaceholderLabel(encLabel);
+      const safeL = escapeHtml(label);
+      const safeAttr = String(label)
+        .replaceAll('&', '&amp;')
+        .replaceAll('"', '&quot;')
+        .replaceAll('<', '&lt;');
+      const len = lenStr != null && lenStr !== '' ? Number(lenStr) : NaN;
+      const tokenLen =
+        Number.isFinite(len) && len > 0 ? Math.min(Math.floor(len), 512) : 0;
+      const labelLen = Math.min(Math.max(label.length, 1), 512);
+      const bodySizing =
+        ' data-secret-len="' +
+        tokenLen +
+        '" data-secret-label-ch="' +
+        labelLen +
+        '" style="--secret-len-ch:' +
+        tokenLen +
+        ';--secret-label-ch:' +
+        labelLen +
+        '"';
+      return (
+        '<span class="iclaw-secret-chip" data-secret-id="' +
+        escapeHtml(String(id)) +
+        '" data-secret-label="' +
+        safeAttr +
+        '">' +
+        '<button type="button" class="iclaw-secret-reveal" aria-expanded="false" aria-label="Secret: ' +
+        safeAttr +
+        '">' +
+        '<span class="iclaw-secret-spoiler-body"' +
+        bodySizing +
+        '>' +
+        '<span class="iclaw-secret-spoiler-grain" aria-hidden="true"></span>' +
+        '<span class="iclaw-secret-caption">' +
+        safeL +
+        '</span></span>' +
+        '</button>' +
+        '<span class="iclaw-secret-value" hidden><span class="iclaw-secret-code"></span></span>' +
+        '</span>'
+      );
+    });
+  }
   function escapeHtml(s) {
     return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
   }
@@ -293,6 +497,42 @@
     refreshProjectTabLabels(active || 'chats');
   }
 
+  function syncProjectSecretsTabCountFromDom() {
+    const root = document.querySelector('main.project-page[data-project-id]');
+    const btn = root?.querySelector('[data-project-tab="secrets"]');
+    const ul = document.getElementById('secrets-list');
+    if (!btn || !ul) return;
+    btn.setAttribute('data-tab-count', String(ul.querySelectorAll('li.project-secret-row').length));
+    const active = root.querySelector('.project-tab.is-active')?.getAttribute('data-project-tab');
+    refreshProjectTabLabels(active || 'chats');
+  }
+
+  /** Build a secrets row matching `views/project.ejs` (WS-driven updates on project page). */
+  function buildProjectSecretRowLi(secret) {
+    const label = String(secret?.label ?? '');
+    const tokenLen = Math.min(
+      Math.max(Number(secret?.value_length) || label.length || 1, 1),
+      512,
+    );
+    const lenCh = String(tokenLen);
+    const li = document.createElement('li');
+    li.className = 'project-secret-row';
+    li.dataset.secretId = String(secret.id);
+    li.innerHTML =
+      '<div class="project-chat-link project-chat-link--stacked project-secret-card">' +
+      '<span class="project-chat-title project-secret-title">' +
+      escapeHtml(label) +
+      '</span>' +
+      '<button type="button" class="project-secret-reveal iclaw-secret-spoiler-body project-secret-spoiler-preview" data-secret-len="' +
+      lenCh +
+      '" style="--secret-len-ch:' +
+      lenCh +
+      '" aria-label="Show secret value">' +
+      '<span class="iclaw-secret-spoiler-grain" aria-hidden="true"></span></button>' +
+      '</div>';
+    return li;
+  }
+
   /** Build a fact row matching `views/project.ejs` (WS-driven updates on project page). */
   function buildFactLi(f) {
     const li = document.createElement('li');
@@ -301,7 +541,7 @@
     const titleRaw =
       f.source_chat_title != null && String(f.source_chat_title).trim() !== ''
         ? String(f.source_chat_title).trim()
-        : 'Чат';
+        : 'Chat';
     const head =
       f.source_chat_id != null
         ? '<div class="project-row-head muted"><a href="/chats/' +
@@ -312,11 +552,11 @@
         : '<div class="project-row-head muted"><span>—</span></div>';
     li.innerHTML =
       head +
-      '<textarea class="fact-content" aria-label="Текст факту" rows="2">' +
+      '<textarea class="fact-content" aria-label="Fact text" rows="2">' +
       escapeHtml(f.content || '') +
       '</textarea>' +
       '<div class="fact-meta">' +
-      '<button type="button" class="fact-delete" aria-label="Видалити факт">Прибрати</button></div>';
+      '<button type="button" class="fact-delete" aria-label="Remove fact">Remove</button></div>';
     const ta = li.querySelector('.fact-content');
     if (ta) ta.dataset.saved = String(f.content || '').trim();
     return li;
@@ -346,8 +586,8 @@
       btn.type = 'button';
       btn.className = 'code-copy-btn';
       btn.innerHTML = CODE_COPY_ICON_SVG;
-      btn.setAttribute('aria-label', 'Копіювати код');
-      btn.title = 'Копіювати';
+      btn.setAttribute('aria-label', 'Copy code');
+      btn.title = 'Copy';
       const parent = pre.parentElement;
       if (!parent) return;
       parent.insertBefore(wrap, pre);
@@ -415,9 +655,9 @@
     }
   }
   function replyStubRoleLabel(role) {
-    if (role === 'user') return 'Ви';
-    if (role === 'assistant') return 'Асистент';
-    return 'Чат';
+    if (role === 'user') return 'You';
+    if (role === 'assistant') return 'Assistant';
+    return 'Chat';
   }
 
   function msgReplyStubHtml(replyToId, quote, replyToRole) {
@@ -429,7 +669,7 @@
       rid +
       '" data-reply-quote="' +
       encodeURIComponent(quote) +
-      '" aria-label="Перейти до цитованого повідомлення">' +
+      '" aria-label="Jump to quoted message">' +
       '<span class="msg-reply-stub-track">' +
       '<span class="msg-reply-stub-bar" aria-hidden="true"></span>' +
       '<span class="msg-reply-stub-body">' +
@@ -612,7 +852,7 @@
     div.innerHTML =
       '<div class="role">' + escapeHtml(msg.role || 'system') + '</div>' +
       (replyHtml ? replyHtml : '') +
-      '<div class="msg-body">' + renderMarkdown(msg.content || '') + '</div>' +
+      '<div class="msg-body">' + renderMessageHtml(msg.content || '') + '</div>' +
       attachmentsHtml(msg.attachments);
     decorateMessageBody(div);
     messagesAppendRoot().appendChild(div);
@@ -665,7 +905,7 @@
     messagesEl.querySelectorAll('.msg .msg-body').forEach((body) => {
       const raw = body.textContent ?? '';
       if (!raw) return;
-      body.innerHTML = renderMarkdown(raw);
+      body.innerHTML = renderMessageHtml(raw);
       decorateMessageBody(body);
     });
   }
@@ -714,13 +954,13 @@
       '<div class="fact-suggestion-actions">' +
       '<button type="button" class="fact-suggestion-btn fact-suggestion-reject" data-suggestion-id="' +
       id +
-      '" aria-label="Пропустити">' +
+      '" aria-label="Skip">' +
       FACT_REJECT_COUNTDOWN_RING_SVG +
       '<span class="fact-suggestion-btn-glyph" aria-hidden="true">✕</span>' +
       '</button>' +
       '<button type="button" class="fact-suggestion-btn fact-suggestion-accept" data-suggestion-id="' +
       id +
-      '" aria-label="Зберегти в проєкт">' +
+      '" aria-label="Save to project">' +
       '<span class="fact-suggestion-btn-glyph" aria-hidden="true">✓</span>' +
       '</button>' +
       '</div></li>'
@@ -809,7 +1049,7 @@
     const { projectId, chatId, suggestions, projectName } = opts;
     if (!suggestions || suggestions.length === 0) return;
     clearEmptyState();
-    const safeName = escapeHtml((projectName || '').trim() || 'проєкт');
+    const safeName = escapeHtml((projectName || '').trim() || 'project');
     const rowsHtml = suggestions.map(buildFactSuggestionRowHtml).filter(Boolean).join('');
     if (!rowsHtml) return;
 
@@ -843,7 +1083,7 @@
     card.dataset.chatId = cidEsc;
     card.innerHTML =
       '<div class="fact-suggestions-shell">' +
-      '<p class="fact-suggestions-lead">Зберегти в памʼять «' +
+      '<p class="fact-suggestions-lead">Save to project memory «' +
       safeName +
       '»?</p>' +
       '<ul class="fact-suggestions-list" role="list">' +
@@ -877,7 +1117,7 @@
         typeof data.projectName === 'string' && data.projectName.trim()
           ? data.projectName.trim()
           : null;
-      const projectLabel = pname || 'проєкт';
+      const projectLabel = pname || 'project';
       appendFactSuggestionsCard({
         projectId: pid,
         chatId: activeChatId,
@@ -953,13 +1193,13 @@
         e.preventDefault();
         const showCopied = () => {
           copyBtn.innerHTML = CODE_COPIED_ICON_SVG;
-          copyBtn.setAttribute('aria-label', 'Скопійовано');
+          copyBtn.setAttribute('aria-label', 'Copied');
           copyBtn.removeAttribute('title');
           copyBtn.disabled = true;
           setTimeout(() => {
             copyBtn.innerHTML = CODE_COPY_ICON_SVG;
-            copyBtn.setAttribute('aria-label', 'Копіювати код');
-            copyBtn.title = 'Копіювати';
+            copyBtn.setAttribute('aria-label', 'Copy code');
+            copyBtn.title = 'Copy';
             copyBtn.disabled = false;
           }, 1700);
         };
@@ -1075,7 +1315,7 @@
       const pb = key(b);
       if (pb.msgs !== pa.msgs) return pb.msgs - pa.msgs;
       if (pb.chats !== pa.chats) return pb.chats - pa.chats;
-      const cmp = pa.name.localeCompare(pb.name, 'uk', { sensitivity: 'base' });
+      const cmp = pa.name.localeCompare(pb.name, 'en', { sensitivity: 'base' });
       if (cmp !== 0) return cmp;
       return pa.id - pb.id;
     });
@@ -1415,13 +1655,13 @@
       Boolean(document.getElementById('share-modal')) &&
       Boolean(document.getElementById('share-btn'));
     const shareBtnHtml = hasShare
-      ? '<button type="button" class="sidebar-context-menu-item" data-action="share">Поділитися</button>'
+      ? '<button type="button" class="sidebar-context-menu-item" data-action="share">Share</button>'
       : '';
     return (
       shareBtnHtml +
-      '<button type="button" class="sidebar-context-menu-item" data-action="rename">Перейменувати</button>' +
-      '<button type="button" class="sidebar-context-menu-item" data-action="unread">Непрочитане</button>' +
-      '<button type="button" class="sidebar-context-menu-item sidebar-context-menu-danger" data-action="delete">Видалити чат</button>'
+      '<button type="button" class="sidebar-context-menu-item" data-action="rename">Rename</button>' +
+      '<button type="button" class="sidebar-context-menu-item" data-action="unread">Mark unread</button>' +
+      '<button type="button" class="sidebar-context-menu-item sidebar-context-menu-danger" data-action="delete">Delete chat</button>'
     );
   }
 
@@ -1473,8 +1713,8 @@
       const list = document.getElementById('chat-list');
       const link = list?.querySelector('a.chat-item[data-chat-id="' + cid + '"]');
       const titleEl = link?.querySelector('.chat-item-title');
-      const curTitle = (titleEl && titleEl.textContent ? titleEl.textContent : '').trim() || 'Чат';
-      const next = window.prompt('Нова назва чату:', curTitle);
+      const curTitle = (titleEl && titleEl.textContent ? titleEl.textContent : '').trim() || 'Chat';
+      const next = window.prompt('New chat title:', curTitle);
       if (next == null) return;
       const t = next.trim();
       if (!t || t === curTitle) return;
@@ -1498,7 +1738,7 @@
         }
       } catch (err) {
         console.error('[iclaw] sidebar rename failed', err);
-        window.alert('Не вдалось зберегти назву.');
+        window.alert('Could not save title.');
       }
       return;
     }
@@ -1516,7 +1756,7 @@
       return;
     }
     if (action === 'delete') {
-      if (!confirm('Видалити цей чат?')) return;
+      if (!confirm('Delete this chat?')) return;
       const f = document.createElement('form');
       f.method = 'POST';
       f.action = '/chats/' + encodeURIComponent(cid) + '/delete';
@@ -1541,7 +1781,7 @@
   selectionReplyFab.id = 'msg-selection-reply-fab';
   selectionReplyFab.hidden = true;
   selectionReplyFab.innerHTML =
-    '<button type="button" class="msg-selection-reply-btn">Відповісти</button>';
+    '<button type="button" class="msg-selection-reply-btn">Reply</button>';
   document.body.appendChild(selectionReplyFab);
 
   function hideSelectionReplyFab() {
@@ -1766,6 +2006,11 @@
           if (messagesEl) {
             messagesEl.dataset.chatId = String(msg.chatId);
             delete messagesEl.dataset.draft;
+            if (msg.projectId != null && Number.isFinite(Number(msg.projectId))) {
+              messagesEl.dataset.projectId = String(msg.projectId);
+            } else {
+              messagesEl.dataset.projectId = '';
+            }
           }
           history.replaceState(null, '', '/chats/' + msg.chatId);
           applyTitleForActive(msg.title || 'New chat');
@@ -1803,7 +2048,15 @@
         if (msg.chatId === activeChatId && msg.reasoningMode !== undefined && reasoningToggle) {
           reasoningToggle.checked = msg.reasoningMode !== 'off';
         }
+        if (msg.chatId === activeChatId && msg.projectId !== undefined && messagesEl) {
+          messagesEl.dataset.projectId =
+            msg.projectId != null && Number.isFinite(Number(msg.projectId))
+              ? String(msg.projectId)
+              : '';
+          syncComposerSecretUi();
+        }
         if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
+        syncComposerSecretUi();
         return;
 
       case 'chat-deleted':
@@ -1830,6 +2083,11 @@
           if (pending) {
             pending.classList.remove('pending-id');
             pending.dataset.msgId = String(msg.message.id);
+            const pBody = pending.querySelector('.msg-body');
+            if (pBody) {
+              pBody.innerHTML = renderMessageHtml(msg.message.content || '');
+              decorateMessageBody(pBody);
+            }
             syncPendingUserReplyPreview(pending, msg.message);
           } else if (!messagesEl?.querySelector('.msg[data-msg-id="' + msg.message.id + '"]')) {
             appendMessage(msg.message);
@@ -2013,7 +2271,7 @@
         appendFactSuggestionsCard({
           projectId: msg.projectId,
           chatId: msg.chatId,
-          projectName: typeof msg.projectName === 'string' ? msg.projectName : 'проєкт',
+          projectName: typeof msg.projectName === 'string' ? msg.projectName : 'project',
           suggestions: fresh,
         });
         return;
@@ -2119,10 +2377,20 @@
           const empty = document.createElement('li');
           empty.className = 'project-chats-empty muted';
           empty.textContent =
-            'Поки немає фактів. Підтвердіть пропозицію в чаті цього проєкту.';
+            'No facts yet. Accept a suggestion in a chat for this project.';
           ul.appendChild(empty);
         }
         syncProjectMemoryTabCountFromDom();
+        return;
+      }
+
+      case 'project-secret-added': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        const ul = document.getElementById('secrets-list');
+        if (!ul) return;
+        ul.querySelector('.project-chats-empty')?.remove();
+        ul.insertBefore(buildProjectSecretRowLi(msg.secret), ul.firstChild);
+        syncProjectSecretsTabCountFromDom();
         return;
       }
 
@@ -2138,7 +2406,7 @@
           const empty = document.createElement('li');
           empty.className = 'project-chats-empty muted';
           empty.textContent =
-            'Поки немає фактів. Підтвердіть пропозицію в чаті цього проєкту.';
+            'No facts yet. Accept a suggestion in a chat for this project.';
           ul.appendChild(empty);
         }
         syncProjectMemoryTabCountFromDom();
@@ -2274,6 +2542,9 @@
         content: a.base64,
       }));
     }
+    if (item.inlineSecrets && item.inlineSecrets.length > 0) {
+      payload.inlineSecrets = item.inlineSecrets;
+    }
     if (activeChatId != null) payload.chatId = activeChatId;
     else {
       payload.agent = draftAgentSelect?.value || 'openclaw/default';
@@ -2323,7 +2594,7 @@
       if (composerReplyMeta) {
         const r = pendingComposerReply.role;
         composerReplyMeta.textContent =
-          r === 'user' ? 'Ви' : r === 'assistant' ? 'Асистент' : 'Чат';
+          r === 'user' ? 'You' : r === 'assistant' ? 'Assistant' : 'Chat';
       }
       composerReplyText.textContent = pendingComposerReply.quote;
       composerReplyBar.hidden = false;
@@ -2402,7 +2673,7 @@
           '</span>' +
           '<button type="button" class="composer-attachment-chip-remove" data-att-remove="' +
           a.id +
-          '" aria-label="Прибрати">×</button>' +
+          '" aria-label="Remove">×</button>' +
           '</span>'
         );
       })
@@ -2420,6 +2691,27 @@
     });
   }
 
+  /**
+   * Parse `data:[meta],payload` in O(n) time. Avoids `/…,(.*)$/.exec()` on
+   * multi‑MB screenshots — that pattern can blow the regex stack / RangeError
+   * in browsers when the payload is huge.
+   */
+  function splitDataUrlParts(dataUrl) {
+    const s = String(dataUrl || '');
+    if (!s.startsWith('data:')) {
+      return { mime: '', base64: s };
+    }
+    const comma = s.indexOf(',', 5);
+    if (comma === -1) {
+      return { mime: '', base64: '' };
+    }
+    const meta = s.slice(5, comma);
+    const base64 = s.slice(comma + 1);
+    const semi = meta.indexOf(';');
+    const mime = (semi === -1 ? meta : meta.slice(0, semi)).trim();
+    return { mime, base64 };
+  }
+
   async function addFilesToPending(files) {
     if (!files || files.length === 0) return;
     const accepted = [];
@@ -2434,9 +2726,9 @@
     for (const file of toRead) {
       try {
         const dataUrl = await readFileAsDataUrl(file);
-        const m = /^data:([^;,]+)?(?:;[^,]*)?,(.*)$/.exec(dataUrl);
-        const base64 = m ? m[2] : '';
-        const sniffedMime = m && m[1] ? m[1].trim() : '';
+        const parts = splitDataUrlParts(dataUrl);
+        const base64 = parts.base64;
+        const sniffedMime = parts.mime || '';
         pendingAttachments.push({
           id: 'att-' + ++attachmentSeq,
           file,
@@ -2471,8 +2763,181 @@
       }
     });
   }
+  const composerAttachMenu = document.getElementById('composer-attach-menu');
+  const composerSecretPickMenu = document.getElementById('composer-secret-pick-menu');
+  let composerAttachMenuOpen = false;
+
+  function buildStoredSecretPlaceholder(id, label, valueLength) {
+    const enc = encodeURIComponent(String(label || ''));
+    const len = Number(valueLength) || 0;
+    return '[[iclaw:secret:' + id + '|' + enc + '|' + len + ']]';
+  }
+
+  function insertTextAtComposerCursor(text) {
+    if (!input) return;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const v = input.value;
+    input.value = v.slice(0, start) + text + v.slice(end);
+    const pos = start + text.length;
+    input.setSelectionRange(pos, pos);
+    input.focus();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    scheduleTokenDetect();
+    applyComposerSecretStripLayout();
+  }
+
+  function closeComposerAttachMenus() {
+    if (composerAttachMenu) composerAttachMenu.hidden = true;
+    if (composerSecretPickMenu) composerSecretPickMenu.hidden = true;
+    composerAttachMenuOpen = false;
+    if (attachBtn) attachBtn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', onComposerAttachOutside, true);
+  }
+
+  function openComposerAttachMenu() {
+    if (!composerAttachMenu) return;
+    closeScheduleMenu();
+    if (composerSecretPickMenu) composerSecretPickMenu.hidden = true;
+    composerAttachMenu.hidden = false;
+    composerAttachMenuOpen = true;
+    if (attachBtn) attachBtn.setAttribute('aria-expanded', 'true');
+    setTimeout(() => document.addEventListener('pointerdown', onComposerAttachOutside, true), 0);
+  }
+
+  function onComposerAttachOutside(ev) {
+    const t = ev.target;
+    if (attachBtn && attachBtn.contains(t)) return;
+    if (composerAttachMenu && composerAttachMenu.contains(t)) return;
+    if (composerSecretPickMenu && composerSecretPickMenu.contains(t)) return;
+    closeComposerAttachMenus();
+  }
+
+  function secretPickItemHtml(s, showProject) {
+    const id = Number(s.id);
+    const label = escapeHtml(String(s.label || ''));
+    const hint =
+      showProject && s.project_name
+        ? '<span class="menu-item__hint">' + escapeHtml(String(s.project_name)) + '</span>'
+        : '';
+    return (
+      '<button type="button" class="menu-item composer-secret-pick-item" data-secret-id="' +
+      id +
+      '" role="menuitem">' +
+      '<span class="menu-item__title">' +
+      label +
+      '</span>' +
+      hint +
+      '</button>'
+    );
+  }
+
+  function renderComposerSecretPickMenu(data) {
+    if (!composerSecretPickMenu) return;
+    const current = Array.isArray(data?.current) ? data.current : [];
+    const other = Array.isArray(data?.other) ? data.other : [];
+    let html =
+      '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Back</button>';
+    if (current.length === 0 && other.length === 0) {
+      html += '<div class="composer-secret-pick-empty">No saved secrets.</div>';
+    } else {
+      if (current.length > 0) {
+        html += '<div class="menu-section-label">This project</div>';
+        for (const s of current) html += secretPickItemHtml(s, false);
+      }
+      if (other.length > 0) {
+        html += '<div class="menu-section-label">Other projects</div>';
+        for (const s of other) html += secretPickItemHtml(s, true);
+      }
+    }
+    composerSecretPickMenu.innerHTML = html;
+  }
+
+  async function openComposerSecretPickMenu() {
+    if (!composerSecretPickMenu) return;
+    const pid = currentComposerProjectId();
+    if (pid == null) {
+      alert('Choose a project for this chat — secrets belong to a project.');
+      return;
+    }
+    if (composerAttachMenu) composerAttachMenu.hidden = true;
+    composerSecretPickMenu.hidden = false;
+    composerSecretPickMenu.innerHTML =
+      '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Back</button>' +
+      '<div class="composer-secret-pick-empty">Loading…</div>';
+    try {
+      const res = await fetch('/projects/' + encodeURIComponent(pid) + '/secrets/picker', {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      renderComposerSecretPickMenu(data);
+    } catch {
+      composerSecretPickMenu.innerHTML =
+        '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Back</button>' +
+        '<div class="composer-secret-pick-empty">Could not load secrets.</div>';
+    }
+  }
+
+  async function useComposerSecretInChat(secretId) {
+    const pid = currentComposerProjectId();
+    if (pid == null) return null;
+    const res = await fetch(
+      '/projects/' +
+        encodeURIComponent(pid) +
+        '/secrets/' +
+        encodeURIComponent(secretId) +
+        '/use-in-chat',
+      { method: 'POST', headers: { Accept: 'application/json' } },
+    );
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(t || 'HTTP ' + res.status);
+    }
+    return res.json();
+  }
+
+  if (composerAttachMenu) {
+    composerAttachMenu.addEventListener('click', (e) => {
+      const pick = e.target.closest('[data-attach-pick]')?.getAttribute('data-attach-pick');
+      if (pick === 'file') {
+        closeComposerAttachMenus();
+        if (fileInput) fileInput.click();
+        return;
+      }
+      if (pick === 'secret') void openComposerSecretPickMenu();
+    });
+  }
+  if (composerSecretPickMenu) {
+    composerSecretPickMenu.addEventListener('click', (e) => {
+      if (e.target.closest('[data-secret-pick="back"]')) {
+        composerSecretPickMenu.hidden = true;
+        if (composerAttachMenu) composerAttachMenu.hidden = false;
+        return;
+      }
+      const item = e.target.closest('.composer-secret-pick-item');
+      if (!item) return;
+      const sid = Number(item.getAttribute('data-secret-id'));
+      if (!Number.isFinite(sid)) return;
+      closeComposerAttachMenus();
+      void useComposerSecretInChat(sid)
+        .then((row) => {
+          if (!row) return;
+          insertTextAtComposerCursor(
+            buildStoredSecretPlaceholder(row.id, row.label, row.value_length),
+          );
+        })
+        .catch((err) => {
+          alert(err && err.message ? err.message : 'Could not add secret');
+        });
+    });
+  }
   if (attachBtn && fileInput) {
-    attachBtn.addEventListener('click', () => fileInput.click());
+    attachBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (composerAttachMenuOpen) closeComposerAttachMenus();
+      else openComposerAttachMenu();
+    });
     fileInput.addEventListener('change', () => {
       addFilesToPending(Array.from(fileInput.files || []));
       // Allow re-selecting the same file later.
@@ -2535,6 +3000,412 @@
     });
   }
 
+  const composerSecretUi = document.getElementById('composer-secret-ui');
+  const composerTokenHint = document.getElementById('composer-token-hint');
+  const composerTokenHintText = document.getElementById('composer-token-hint-text');
+  const composerSelectionHint = document.getElementById('composer-selection-hint');
+  const composerTokenSaveBtn = document.getElementById('composer-token-save-btn');
+  const composerMarkSecretBtn = document.getElementById('composer-mark-secret-btn');
+  const composerSecretModal = document.getElementById('composer-secret-modal');
+  const composerSecretBackdrop = document.getElementById('composer-secret-modal-backdrop');
+  const composerSecretLabelInput = document.getElementById('composer-secret-label-input');
+  const composerSecretValuePreview = document.getElementById('composer-secret-value-preview');
+  const composerSecretValueInput = document.getElementById('composer-secret-value-input');
+  const composerSecretTokenToggle = document.getElementById('composer-secret-token-toggle');
+  const composerSecretOk = document.getElementById('composer-secret-ok');
+  let composerSecretTokenEditing = false;
+
+  /** @type {((label: string) => void) | null} */
+  let composerSecretCommit = null;
+  /** @type {{ start: number; end: number; plain: string } | null} */
+  let composerSecretInsert = null;
+
+  function syncComposerSecretUi() {
+    applyComposerSecretStripLayout();
+  }
+
+  /** Non-empty, non-whitespace selection in the composer (for "mark as secret"). */
+  function composerHasNonEmptySelection() {
+    if (!input) return false;
+    const s = input.selectionStart;
+    const e = input.selectionEnd;
+    if (s === e) return false;
+    return input.value.slice(s, e).trim().length > 0;
+  }
+
+  /**
+   * Accessory inside the composer: token row and/or selection row (Apple-style
+   * minimal strip). Token row is synced here via `updateComposerTokenRow` so
+   * selection-only changes are correct without waiting for debounce.
+   */
+  function applyComposerSecretStripLayout() {
+    if (!composerSecretUi) return;
+    if (composerSecretModal && !composerSecretModal.hidden) {
+      if (currentComposerProjectId() != null) composerSecretUi.hidden = false;
+      return;
+    }
+    const pid = currentComposerProjectId();
+    if (pid == null) {
+      composerSecretUi.hidden = true;
+      composerTokenDetectRange = null;
+      if (composerTokenHint) composerTokenHint.hidden = true;
+      if (composerSelectionHint) composerSelectionHint.hidden = true;
+      return;
+    }
+    updateComposerTokenRow();
+    const hasTokenHint = composerTokenHint && !composerTokenHint.hidden;
+    const hasSel = composerHasNonEmptySelection();
+    if (composerSelectionHint) composerSelectionHint.hidden = !hasSel;
+    composerSecretUi.hidden = !hasTokenHint && !hasSel;
+  }
+
+  /** Sync the token-detected row from the current composer value (no debounce). */
+  function updateComposerTokenRow() {
+    if (!input || !composerTokenHint || !composerTokenHintText) return;
+    if (currentComposerProjectId() == null) {
+      composerTokenDetectRange = null;
+      composerTokenHint.hidden = true;
+      composerTokenHint.removeAttribute('title');
+      return;
+    }
+    const t = input.value;
+    const r = findLikelyTokenRange(t);
+    if (!r) {
+      composerTokenDetectRange = null;
+      composerTokenHint.hidden = true;
+      composerTokenHint.removeAttribute('title');
+      return;
+    }
+    composerTokenDetectRange = r;
+    composerTokenHintText.textContent = 'Likely contains sensitive data';
+    composerTokenHint.title = t.slice(r.start, r.end);
+    composerTokenHint.hidden = false;
+  }
+
+  function pruneComposerSecretSlots(text) {
+    for (const slot of [...composerSecretBySlot.keys()]) {
+      if (!text.includes('[[iclaw:s' + slot + ']]')) composerSecretBySlot.delete(slot);
+    }
+  }
+
+  function buildInlineSecretsPayload(text) {
+    const uniq = new Set();
+    const re = /\[\[iclaw:s(\d+)\]\]/g;
+    let m;
+    while ((m = re.exec(text)) !== null) uniq.add(Number(m[1]));
+    if (uniq.size === 0) return undefined;
+    const slots = [...uniq].sort((a, b) => a - b);
+    const out = [];
+    for (const slot of slots) {
+      const p = composerSecretBySlot.get(slot);
+      if (!p) {
+        throw new Error('Each [[iclaw:sN]] marker in the message needs a secret name (use the button).');
+      }
+      out.push({
+        slot,
+        label: p.label,
+        plain: String(p.plain ?? '')
+          .replace(/\r/g, '')
+          .trim(),
+      });
+    }
+    return out;
+  }
+
+  function clearComposerSecretDraft() {
+    composerSecretBySlot.clear();
+    composerSecretNextSlot = 0;
+    composerTokenDetectRange = null;
+    if (composerTokenHint) composerTokenHint.hidden = true;
+    applyComposerSecretStripLayout();
+  }
+
+  function scheduleTokenDetect() {
+    if (!input || currentComposerProjectId() == null) return;
+    if (composerTokenDetectTimer) clearTimeout(composerTokenDetectTimer);
+    composerTokenDetectTimer = setTimeout(runTokenDetect, 380);
+  }
+
+  function runTokenDetect() {
+    composerTokenDetectTimer = null;
+    updateComposerTokenRow();
+    applyComposerSecretStripLayout();
+  }
+
+  /** Modal mask preview, e.g. sk***EF; each line masked separately. */
+  function maskSecretPreviewLine(line) {
+    const s = String(line ?? '');
+    if (!s) return '';
+    const n = s.length;
+    if (n <= 2) return '••';
+    if (n <= 3) return s[0] + '**' + s[n - 1];
+    if (n <= 5) return s[0] + '***' + s[n - 1];
+    if (n < 8) return s.slice(0, 2) + '**' + s.slice(-2);
+    return s.slice(0, 2) + '***' + s.slice(-2);
+  }
+
+  function formatSecretModalPreview(plain) {
+    const s = String(plain ?? '');
+    if (!s) return '—';
+    if (/[\r\n]/.test(s)) {
+      return s
+        .split(/\r?\n/)
+        .map((line) => maskSecretPreviewLine(line))
+        .join('\n');
+    }
+    return maskSecretPreviewLine(s);
+  }
+
+  function resizeComposerSecretTokenInput() {
+    if (!composerSecretValueInput) return;
+    composerSecretValueInput.style.height = 'auto';
+    composerSecretValueInput.style.height = composerSecretValueInput.scrollHeight + 'px';
+  }
+
+  function syncComposerSecretPlainFromInput() {
+    if (!composerSecretInsert || !composerSecretValueInput) return;
+    composerSecretInsert.plain = composerSecretValueInput.value.replace(/\r/g, '').trim();
+  }
+
+  function syncComposerSecretTokenView() {
+    const plain = composerSecretInsert ? composerSecretInsert.plain : '';
+    if (composerSecretTokenEditing) {
+      if (composerSecretValueInput) {
+        composerSecretValueInput.value = plain;
+        composerSecretValueInput.hidden = false;
+        resizeComposerSecretTokenInput();
+      }
+      if (composerSecretValuePreview) composerSecretValuePreview.hidden = true;
+      if (composerSecretTokenToggle) {
+        composerSecretTokenToggle.setAttribute('aria-pressed', 'true');
+        composerSecretTokenToggle.setAttribute('aria-label', 'Hide token');
+        composerSecretTokenToggle.title = 'Hide token';
+      }
+    } else {
+      if (composerSecretValuePreview) {
+        composerSecretValuePreview.textContent = formatSecretModalPreview(plain);
+        composerSecretValuePreview.hidden = false;
+      }
+      if (composerSecretValueInput) composerSecretValueInput.hidden = true;
+      if (composerSecretTokenToggle) {
+        composerSecretTokenToggle.setAttribute('aria-pressed', 'false');
+        composerSecretTokenToggle.setAttribute('aria-label', 'Edit token');
+        composerSecretTokenToggle.title = 'Edit token';
+      }
+    }
+  }
+
+  function setComposerSecretTokenEditing(editing) {
+    if (composerSecretTokenEditing && !editing) syncComposerSecretPlainFromInput();
+    composerSecretTokenEditing = editing;
+    syncComposerSecretTokenView();
+    if (editing && composerSecretValueInput) {
+      setTimeout(() => composerSecretValueInput.focus(), 0);
+    }
+  }
+
+  function openComposerSecretModal(onCommit) {
+    if (!composerSecretModal || !composerSecretLabelInput) return;
+    composerSecretCommit = onCommit;
+    composerSecretTokenEditing = false;
+    composerSecretModal.hidden = false;
+    composerSecretLabelInput.value = '';
+    syncComposerSecretTokenView();
+    applyComposerSecretStripLayout();
+    setTimeout(() => composerSecretLabelInput.focus(), 0);
+  }
+
+  function closeComposerSecretModal() {
+    if (composerSecretModal) composerSecretModal.hidden = true;
+    composerSecretInsert = null;
+    composerSecretCommit = null;
+    composerSecretTokenEditing = false;
+    if (composerSecretValuePreview) {
+      composerSecretValuePreview.textContent = '';
+      composerSecretValuePreview.hidden = false;
+    }
+    if (composerSecretValueInput) {
+      composerSecretValueInput.value = '';
+      composerSecretValueInput.hidden = true;
+    }
+    if (composerSecretTokenToggle) {
+      composerSecretTokenToggle.setAttribute('aria-pressed', 'false');
+    }
+    applyComposerSecretStripLayout();
+  }
+
+  function applySecretReplace(label) {
+    if (!input || !composerSecretInsert) return;
+    if (composerSecretTokenEditing) syncComposerSecretPlainFromInput();
+    const lab = String(label ?? '').trim();
+    if (!lab) {
+      alert('Enter a secret name.');
+      return;
+    }
+    if (/[\[\]|]/.test(lab)) {
+      alert('Name cannot contain [ ] |');
+      return;
+    }
+    const t = input.value;
+    const ins = composerSecretInsert;
+    const plain = String(ins.plain ?? '')
+      .replace(/\r/g, '')
+      .trim();
+    if (!plain) {
+      alert('Empty secret.');
+      return;
+    }
+    const slot = composerSecretNextSlot++;
+    const marker = '[[iclaw:s' + slot + ']]';
+    input.value = t.slice(0, ins.start) + marker + t.slice(ins.end);
+    composerSecretBySlot.set(slot, { label: lab, plain });
+    closeComposerSecretModal();
+    scheduleTokenDetect();
+  }
+
+  function collapseSecretChip(chip) {
+    chip.classList.remove('iclaw-secret-chip--revealed');
+    chip.querySelector('.iclaw-secret-revealed')?.remove();
+    const btn = chip.querySelector('.iclaw-secret-reveal');
+    if (btn) btn.hidden = false;
+    const wrap = chip.querySelector('.iclaw-secret-value');
+    const code = wrap?.querySelector('.iclaw-secret-code');
+    if (wrap) wrap.hidden = true;
+    if (code) code.textContent = '';
+  }
+
+  function revealSecretChip(chip, valueText) {
+    const value = valueText != null ? String(valueText) : '';
+    const btn = chip.querySelector('.iclaw-secret-reveal');
+    if (btn) btn.hidden = true;
+    chip.querySelector('.iclaw-secret-revealed')?.remove();
+    const plain = document.createElement('span');
+    plain.className = 'iclaw-secret-revealed';
+    plain.setAttribute('role', 'button');
+    plain.setAttribute('tabindex', '0');
+    plain.setAttribute('title', 'Click to hide');
+    plain.textContent = value;
+    chip.appendChild(plain);
+    chip.classList.add('iclaw-secret-chip--revealed');
+    const wrap = chip.querySelector('.iclaw-secret-value');
+    const code = wrap?.querySelector('.iclaw-secret-code');
+    if (code) code.textContent = value;
+    if (wrap) wrap.hidden = true;
+  }
+
+  if (messagesEl) {
+    messagesEl.addEventListener('click', (ev) => {
+      const revealed = ev.target.closest('.iclaw-secret-revealed');
+      if (revealed && messagesEl.contains(revealed)) {
+        ev.preventDefault();
+        const chip = revealed.closest('.iclaw-secret-chip');
+        if (chip) collapseSecretChip(chip);
+        return;
+      }
+      const btn = ev.target.closest('.iclaw-secret-reveal');
+      if (!btn || !messagesEl.contains(btn)) return;
+      ev.preventDefault();
+      const chip = btn.closest('.iclaw-secret-chip');
+      if (!chip || chip.classList.contains('iclaw-secret-chip--revealed')) return;
+      const sid = chip.getAttribute('data-secret-id');
+      if (!sid || activeChatId == null) return;
+      const wrap = chip.querySelector('.iclaw-secret-value');
+      const code = wrap?.querySelector('.iclaw-secret-code');
+      if (!wrap || !code) return;
+      if (code.textContent) {
+        revealSecretChip(chip, code.textContent);
+        return;
+      }
+      void fetch('/chats/' + encodeURIComponent(activeChatId) + '/secrets/' + encodeURIComponent(sid) + '/value', {
+        headers: { Accept: 'application/json' },
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
+        .then((data) => {
+          revealSecretChip(chip, data && data.value != null ? String(data.value) : '');
+        })
+        .catch(() => {
+          revealSecretChip(chip, '(could not load)');
+        });
+    });
+  }
+
+  if (input) {
+    input.addEventListener('select', () => {
+      applyComposerSecretStripLayout();
+    });
+    input.addEventListener('keyup', () => {
+      applyComposerSecretStripLayout();
+    });
+    input.addEventListener('input', () => {
+      pruneComposerSecretSlots(input.value);
+      scheduleTokenDetect();
+      applyComposerSecretStripLayout();
+    });
+  }
+
+  if (composerMarkSecretBtn && input) {
+    composerMarkSecretBtn.addEventListener('click', () => {
+      if (currentComposerProjectId() == null) {
+        alert('Choose a project for this chat — secrets are stored per project.');
+        return;
+      }
+      const s = input.selectionStart;
+      const e = input.selectionEnd;
+      if (s === e) return;
+      const plain = input.value.slice(s, e);
+      if (!plain.trim()) return;
+      composerSecretInsert = { start: s, end: e, plain };
+      openComposerSecretModal((label) => applySecretReplace(label));
+    });
+  }
+
+  if (composerTokenSaveBtn && input) {
+    composerTokenSaveBtn.addEventListener('click', () => {
+      if (!composerTokenDetectRange) return;
+      if (currentComposerProjectId() == null) return;
+      const { start, end } = composerTokenDetectRange;
+      const plain = input.value.slice(start, end);
+      composerSecretInsert = { start, end, plain };
+      openComposerSecretModal((label) => applySecretReplace(label));
+    });
+  }
+
+  if (composerSecretOk && composerSecretLabelInput) {
+    composerSecretOk.addEventListener('click', () => {
+      const fn = composerSecretCommit;
+      if (!fn) return;
+      if (composerSecretTokenEditing) syncComposerSecretPlainFromInput();
+      fn(composerSecretLabelInput.value);
+    });
+  }
+  if (composerSecretTokenToggle) {
+    composerSecretTokenToggle.addEventListener('click', () => {
+      setComposerSecretTokenEditing(!composerSecretTokenEditing);
+    });
+  }
+  if (composerSecretValueInput) {
+    composerSecretValueInput.addEventListener('input', () => {
+      syncComposerSecretPlainFromInput();
+      resizeComposerSecretTokenInput();
+    });
+  }
+  if (composerSecretBackdrop) {
+    composerSecretBackdrop.addEventListener('click', () => closeComposerSecretModal());
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (composerSecretModal && !composerSecretModal.hidden) {
+      e.preventDefault();
+      closeComposerSecretModal();
+    }
+  });
+
+  syncComposerSecretUi();
+
   if (form && input) {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -2547,6 +3418,13 @@
       }
       const content = input.value.trim();
       if (!content && pendingAttachments.length === 0) return;
+      let inlineSecrets;
+      try {
+        inlineSecrets = buildInlineSecretsPayload(content);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+        return;
+      }
       const replySnap = pendingComposerReply;
       pendingComposerReply = null;
       updateComposerReplyBar();
@@ -2566,8 +3444,10 @@
         id: 'q-' + nextQueueItemId++,
         replyTo: replySnap || undefined,
         attachments: attachmentsSnap.length > 0 ? attachmentsSnap : undefined,
+        inlineSecrets,
       });
       input.value = '';
+      clearComposerSecretDraft();
       renderQueue();
       flushNextQueued();
     });
@@ -2626,6 +3506,7 @@
   function openScheduleMenu() {
     if (!scheduleMenu) return;
     if (!input.value.trim()) return;
+    closeComposerAttachMenus();
     document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
     scheduleMenu.hidden = false;
     if (scheduleCustomRow) scheduleCustomRow.hidden = true;
@@ -2663,8 +3544,8 @@
     const sameDay = d.toDateString() === now.toDateString();
     const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
     const isTomorrow = d.toDateString() === tomorrow.toDateString();
-    if (sameDay) return 'сьогодні ' + time;
-    if (isTomorrow) return 'завтра ' + time;
+    if (sameDay) return 'today ' + time;
+    if (isTomorrow) return 'tomorrow ' + time;
     return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ', ' + time;
   }
 
@@ -2713,7 +3594,7 @@
       '<div class="scheduled-item-text">' + escapeHtml(scheduled.content) + '</div>' +
       '</div>' +
       '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-scheduled-id="' +
-      scheduled.id + '" aria-label="Скасувати заплановане повідомлення" title="Скасувати">×</button>';
+      scheduled.id + '" aria-label="Cancel scheduled message" title="Cancel">×</button>';
     scheduledListEl.appendChild(row);
     scheduledListEl.classList.remove('is-empty');
   }
@@ -2732,7 +3613,14 @@
     if (!content) return;
     if (when.getTime() <= Date.now() - 60_000) {
       // 60s of tolerance; older than that is almost certainly a mistake.
-      alert('Час уже минув — оберіть час у майбутньому.');
+      alert('That time has passed — pick a future time.');
+      return;
+    }
+    let inlineSecrets;
+    try {
+      inlineSecrets = buildInlineSecretsPayload(content);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
       return;
     }
     try {
@@ -2741,15 +3629,20 @@
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ content, scheduledAt: when.toISOString() }),
+          body: JSON.stringify({
+            content,
+            scheduledAt: when.toISOString(),
+            ...(inlineSecrets && inlineSecrets.length > 0 ? { inlineSecrets } : {}),
+          }),
         },
       );
       if (!res.ok) throw new Error(await res.text());
       input.value = '';
+      clearComposerSecretDraft();
       closeScheduleMenu();
       // Live `scheduled-added` broadcast will render the row.
     } catch (err) {
-      alert('Не вдалось запланувати: ' + (err instanceof Error ? err.message : err));
+      alert('Could not schedule: ' + (err instanceof Error ? err.message : err));
     }
   }
 
@@ -2902,30 +3795,191 @@
     reasoningToggle.addEventListener('change', async () => {
       const mode = reasoningToggle.checked ? 'on' : 'off';
       try {
-        // Persist the iClaw mirror first so a slow gateway doesn't desync the UI.
-        await fetch('/chats/' + encodeURIComponent(activeChatId) + '/reasoning', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ mode }),
-        });
+        // Server route does two things atomically: persists the iClaw mirror
+        // and calls `sessions.patch({ reasoningLevel })` on the OpenClaw
+        // gateway. No more /reasoning slash kludge.
+        const res = await fetch(
+          '/chats/' + encodeURIComponent(activeChatId) + '/reasoning',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ mode }),
+          },
+        );
+        if (!res.ok) throw new Error('HTTP ' + res.status);
       } catch {
         // revert if the server didn't accept
         reasoningToggle.checked = !reasoningToggle.checked;
-        return;
       }
-      // The OpenClaw gateway only actually emits reasoning when the session
-      // has been told to via /reasoning. Without this the toggle was a UI
-      // placebo — checked but no analysis events ever arrived. Now we push
-      // the slash command through the normal queue so OpenClaw flips state
-      // server-side too. The /reasoning turn is small and bookkeeping-only.
-      waitingItems.push({
-        content: '/reasoning ' + mode,
-        id: 'q-' + nextQueueItemId++,
-      });
-      renderQueue();
-      flushNextQueued();
     });
   }
+
+  // -------------------------------------------------------------------------
+  // Daily-reset policy banner — surfaces when OpenClaw's default "reset every
+  // morning at 04:00" policy is active for `direct` (dashboard) sessions.
+  // One-click fix via /api/gateway/session-reset-fix; if the gateway token
+  // lacks admin scope we degrade to a copy-pasteable snippet for openclaw.json.
+  //
+  // Snooze model: instead of a permanent dismiss, "Remind me in 3 days" stores
+  // a timestamp in localStorage and the banner stays hidden until that point.
+  // The × in the corner sets a far-future snooze (effectively never).
+  // -------------------------------------------------------------------------
+  const RESET_REMIND_KEY = 'iclaw:resetPolicyRemindAfter';
+  const SNOOZE_DAYS = 3;
+  const NEVER_REMIND_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+  const RESET_POLICY_MANUAL_PATCH = JSON.stringify(
+    {
+      session: {
+        resetByType: {
+          direct: { mode: 'idle', idleMinutes: 52560000 },
+          group: { mode: 'idle', idleMinutes: 52560000 },
+          thread: { mode: 'idle', idleMinutes: 52560000 },
+        },
+      },
+    },
+    null,
+    2,
+  );
+
+  const resetBanner = document.getElementById('reset-policy-banner');
+  const resetBannerActions = document.getElementById('reset-policy-banner-actions');
+  const resetBannerBody = document.getElementById('reset-policy-banner-body');
+  const resetFixBtn = document.getElementById('reset-policy-fix');
+  const resetSnoozeBtn = document.getElementById('reset-policy-snooze');
+
+  function snoozeResetBanner(ms) {
+    try {
+      const until = Date.now() + ms;
+      localStorage.setItem(RESET_REMIND_KEY, String(until));
+    } catch {}
+  }
+
+  function isResetBannerSnoozed() {
+    try {
+      const raw = localStorage.getItem(RESET_REMIND_KEY);
+      if (!raw) return false;
+      const until = Number(raw);
+      if (!Number.isFinite(until)) return false;
+      return Date.now() < until;
+    } catch {
+      return false;
+    }
+  }
+
+  function hideResetBanner() {
+    if (resetBanner) resetBanner.hidden = true;
+  }
+
+  function showResetBannerFixed() {
+    if (!resetBannerBody || !resetBannerActions) return;
+    resetBannerBody.innerHTML =
+      '<p class="reset-policy-banner-lead">Done ✓</p>' +
+      '<p class="reset-policy-banner-detail">OpenClaw will no longer reset chats daily.</p>';
+    resetBannerActions.innerHTML = '';
+    // Banner already explains the success — auto-close after a beat.
+    setTimeout(hideResetBanner, 2400);
+  }
+
+  function showResetBannerManualFallback() {
+    if (!resetBannerBody || !resetBannerActions) return;
+    resetBannerBody.innerHTML =
+      '<p class="reset-policy-banner-lead">Automatic setup failed — the gateway token needs admin scope.</p>' +
+      '<p class="reset-policy-banner-detail">' +
+      'Add this block to <code>~/.openclaw/openclaw.json</code> under the <code>session</code> key ' +
+      '(or merge with an existing block), save and restart the gateway.' +
+      '</p>' +
+      '<div class="reset-policy-manual">' +
+      '<pre id="reset-policy-snippet">' +
+      escapeHtml(RESET_POLICY_MANUAL_PATCH) +
+      '</pre>' +
+      '<div class="reset-policy-manual-row">' +
+      '<button type="button" class="btn btn--ghost btn--sm" id="reset-policy-copy">Copy</button>' +
+      '<span class="muted" id="reset-policy-copy-status"></span>' +
+      '</div>' +
+      '</div>';
+    resetBannerActions.innerHTML = '';
+    document.getElementById('reset-policy-copy')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(RESET_POLICY_MANUAL_PATCH);
+        const s = document.getElementById('reset-policy-copy-status');
+        if (s) {
+          s.textContent = '✓ copied';
+          setTimeout(() => { s.textContent = ''; }, 2000);
+        }
+      } catch {
+        const snippet = document.getElementById('reset-policy-snippet');
+        if (snippet) {
+          const range = document.createRange();
+          range.selectNodeContents(snippet);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+        }
+      }
+    });
+  }
+
+  async function probeResetPolicyAndMaybeShowBanner() {
+    if (!resetBanner) return;
+    if (isResetBannerSnoozed()) return;
+    try {
+      const res = await fetch('/api/gateway/session-reset-status', {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.defaultPolicyActive === true) {
+        resetBanner.hidden = false;
+      }
+    } catch {
+      // Network/gateway hiccup — silently skip. Banner shows on next page load.
+    }
+  }
+
+  if (resetFixBtn) {
+    resetFixBtn.addEventListener('click', async () => {
+      const original = resetFixBtn.textContent;
+      resetFixBtn.disabled = true;
+      resetFixBtn.textContent = '⏳ Applying…';
+      try {
+        const res = await fetch('/api/gateway/session-reset-fix', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          // Permanent — no need to remind again.
+          snoozeResetBanner(NEVER_REMIND_MS);
+          showResetBannerFixed();
+          return;
+        }
+        if (data?.reason === 'no-admin-scope') {
+          showResetBannerManualFallback();
+          return;
+        }
+        throw new Error(data?.error || 'HTTP ' + res.status);
+      } catch (err) {
+        if (resetBannerBody) {
+          resetBannerBody.innerHTML =
+            '<strong>Could not apply settings.</strong>' +
+            '<span class="muted">' +
+            escapeHtml(String(err && err.message ? err.message : err)) +
+            '</span>';
+        }
+        resetFixBtn.disabled = false;
+        resetFixBtn.textContent = original;
+      }
+    });
+  }
+  if (resetSnoozeBtn) {
+    resetSnoozeBtn.addEventListener('click', () => {
+      snoozeResetBanner(SNOOZE_DAYS * 24 * 60 * 60 * 1000);
+      hideResetBanner();
+    });
+  }
+  // Fire probe once on load. Don't block anything else.
+  probeResetPolicyAndMaybeShowBanner();
 
   // -------------------------------------------------------------------------
   // Usage cost chip — polls /api/gateway/usage/today every 30s
@@ -2986,14 +4040,14 @@
       '<div class="exec-approval-shell">' +
       '<div class="exec-approval-head">' +
       '<span class="exec-approval-icon" aria-hidden="true">🔐</span>' +
-      '<span class="exec-approval-title">Дозвіл на виконання команди</span>' +
+      '<span class="exec-approval-title">Command execution approval</span>' +
       '<span class="exec-approval-host">' + escapeHtml(opts.host || 'gateway') + '</span>' +
       '</div>' +
       '<pre class="exec-approval-cmd"><code>' + safeCmd + '</code></pre>' +
       cwdLine + reasonLine +
       '<div class="exec-approval-actions">' +
-      '<button type="button" class="exec-approval-btn exec-approval-deny btn btn--danger btn--sm" data-decision="denied">Відхилити</button>' +
-      '<button type="button" class="exec-approval-btn exec-approval-approve btn btn--approve btn--sm" data-decision="approved">Дозволити</button>' +
+      '<button type="button" class="exec-approval-btn exec-approval-deny btn btn--danger btn--sm" data-decision="denied">Deny</button>' +
+      '<button type="button" class="exec-approval-btn exec-approval-approve btn btn--approve btn--sm" data-decision="approved">Allow</button>' +
       '</div>' +
       '</div>';
     messagesAppendRoot().appendChild(card);
@@ -3285,6 +4339,80 @@
     );
   }
 
+  function collapseProjectSecretRow(li) {
+    li.classList.remove('project-secret-row--revealed');
+    const preview = li.querySelector('.project-secret-reveal');
+    if (preview) preview.hidden = false;
+    const plain = li.querySelector('.project-secret-revealed');
+    if (plain) {
+      plain.hidden = true;
+      plain.textContent = '';
+    }
+  }
+
+  function revealProjectSecretRow(li, valueText) {
+    const preview = li.querySelector('.project-secret-reveal');
+    if (preview) preview.hidden = true;
+    let plain = li.querySelector('.project-secret-revealed');
+    if (!plain) {
+      plain = document.createElement('span');
+      plain.className = 'project-secret-revealed iclaw-secret-revealed';
+      plain.setAttribute('role', 'button');
+      plain.setAttribute('tabindex', '0');
+      plain.setAttribute('title', 'Click to hide');
+      preview?.insertAdjacentElement('afterend', plain);
+    }
+    plain.textContent = valueText != null ? String(valueText) : '';
+    plain.hidden = false;
+    li.classList.add('project-secret-row--revealed');
+  }
+
+  const secretsListEl = document.getElementById('secrets-list');
+  if (secretsListEl && projectPageId != null) {
+    secretsListEl.addEventListener('click', (e) => {
+      const revealed = e.target.closest('.project-secret-revealed');
+      if (revealed && secretsListEl.contains(revealed)) {
+        e.preventDefault();
+        const li = revealed.closest('li.project-secret-row');
+        if (li) collapseProjectSecretRow(li);
+        return;
+      }
+      const revealBtn = e.target.closest('.project-secret-reveal');
+      if (revealBtn && secretsListEl.contains(revealBtn)) {
+        e.preventDefault();
+        const li = revealBtn.closest('li.project-secret-row');
+        const sid = li?.dataset.secretId;
+        if (!li || !sid || li.classList.contains('project-secret-row--revealed')) return;
+        const cached = li.dataset.secretValue;
+        if (cached) {
+          revealProjectSecretRow(li, cached);
+          return;
+        }
+        void fetch(
+          '/projects/' +
+            encodeURIComponent(projectPageId) +
+            '/secrets/' +
+            encodeURIComponent(sid) +
+            '/value',
+          { headers: { Accept: 'application/json' } },
+        )
+          .then((res) => {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+          })
+          .then((data) => {
+            const val = data && data.value != null ? String(data.value) : '';
+            li.dataset.secretValue = val;
+            revealProjectSecretRow(li, val);
+          })
+          .catch(() => {
+            revealProjectSecretRow(li, '(could not load)');
+          });
+        return;
+      }
+    });
+  }
+
   const projectLogoTrigger = document.getElementById('project-logo-trigger');
   const projectLogoPopover = document.getElementById('project-logo-popover');
   function closeProjectLogoPopover() {
@@ -3352,8 +4480,10 @@
       memory: document.getElementById('project-panel-memory'),
       links: document.getElementById('project-panel-links'),
       files: document.getElementById('project-panel-files'),
+      secrets: document.getElementById('project-panel-secrets'),
     };
-    if (!tabs.length || !panels.chats || !panels.memory || !panels.links || !panels.files) return;
+    if (!tabs.length || !panels.chats || !panels.memory || !panels.links || !panels.files || !panels.secrets)
+      return;
 
     function activate(name) {
       tabs.forEach((btn) => {

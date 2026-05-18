@@ -6,9 +6,12 @@ import {
   projects,
   projectFactSuggestions,
   projectFacts,
+  projectSecrets,
   scheduledMessages,
   enrichFactWithSourceChatTitle,
 } from '../services/store';
+import { resolveInlineSecretMarkersInContent } from '../services/inlineSecrets';
+import type { InlineSecretWire } from '../services/inlineSecrets';
 import { compactProjectFacts } from '../services/projectMemory';
 import { openclawWs } from '../services/openclawWs';
 import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
@@ -60,7 +63,7 @@ chatsRouter.get('/:id/fact-suggestions', (req, res) => {
   const suggestions = projectFactSuggestions.listByChat(id);
   const first = suggestions[0];
   const projectName =
-    first != null ? (projects.get(first.project_id)?.name?.trim() ?? 'проєкт') : null;
+    first != null ? (projects.get(first.project_id)?.name?.trim() ?? 'project') : null;
   res.type('application/json').json({ suggestions, projectName });
 });
 
@@ -217,7 +220,7 @@ chatsRouter.post('/:id/shares', (req, res) => {
  * command through the normal chat flow. The mode is mirrored locally so the
  * UI toggle stays in sync across reloads.
  */
-chatsRouter.post('/:id/reasoning', (req, res) => {
+chatsRouter.post('/:id/reasoning', async (req, res) => {
   const id = Number(req.params.id);
   const chat = chats.get(id);
   if (!chat) {
@@ -227,6 +230,7 @@ chatsRouter.post('/:id/reasoning', (req, res) => {
   const raw = String(req.body?.mode ?? '').trim().toLowerCase();
   const mode: 'off' | 'on' | 'stream' =
     raw === 'on' ? 'on' : raw === 'stream' ? 'stream' : 'off';
+  // Mirror locally first — UI source of truth even if the gateway hiccups.
   chats.setReasoningMode(id, mode);
   wsHub.broadcastAll({
     type: 'chat-updated',
@@ -234,7 +238,19 @@ chatsRouter.post('/:id/reasoning', (req, res) => {
     reasoningMode: mode,
     updatedAt: chats.get(id)!.updated_at,
   });
-  res.json({ id, mode });
+  // Push the real flip to OpenClaw. `sessions.patch` is the proper channel —
+  // it's what the dashboard uses. Failure here doesn't roll back the mirror;
+  // we surface the error to the caller so the UI can warn.
+  let gatewayWarning: string | null = null;
+  try {
+    await openclawWs.patchSession({
+      sessionKey: chat.openclaw_session_id,
+      reasoningLevel: mode === 'off' ? null : mode,
+    });
+  } catch (err) {
+    gatewayWarning = err instanceof Error ? err.message : String(err);
+  }
+  res.json({ id, mode, ...(gatewayWarning ? { gatewayWarning } : {}) });
 });
 
 chatsRouter.post('/:id/unread', (req, res) => {
@@ -302,6 +318,77 @@ chatsRouter.get('/:id/messages', (req, res) => {
   res.json(messages.listByChat(id));
 });
 
+/** Reveal one secret value (same-origin; chat must belong to the secret's project). */
+chatsRouter.get('/:id/secrets/:secretId/value', (req, res) => {
+  const chatId = Number(req.params.id);
+  const secretId = Number(req.params.secretId);
+  const chat = chats.get(chatId);
+  const sec = projectSecrets.get(secretId);
+  if (!chat || !sec || chat.project_id == null || sec.project_id !== chat.project_id) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  res.type('application/json').json({ value: sec.value });
+});
+
+/**
+ * List secrets actually referenced from this chat's transcript. Used by the
+ * cloud-share modal so the user can pick which to include in plaintext.
+ * Each row carries metadata only — no values. Sorted by occurrence desc.
+ */
+chatsRouter.get('/:id/secrets/in-chat', (req, res) => {
+  const chatId = Number(req.params.id);
+  const chat = chats.get(chatId);
+  if (!chat) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  // Walk the transcript once, tally placeholders by secret id.
+  const occurrences = new Map<number, number>();
+  const PH = /\[\[iclaw:secret:(\d+)\|/g;
+  const rows = messages.listByChat(chatId);
+  for (const m of rows) {
+    if (typeof m.content !== 'string') continue;
+    PH.lastIndex = 0;
+    let match;
+    while ((match = PH.exec(m.content)) !== null) {
+      const id = Number(match[1]);
+      if (!Number.isFinite(id)) continue;
+      occurrences.set(id, (occurrences.get(id) ?? 0) + 1);
+    }
+    if (typeof m.reply_quote === 'string') {
+      PH.lastIndex = 0;
+      while ((match = PH.exec(m.reply_quote)) !== null) {
+        const id = Number(match[1]);
+        if (!Number.isFinite(id)) continue;
+        occurrences.set(id, (occurrences.get(id) ?? 0) + 1);
+      }
+    }
+  }
+  // Hydrate label + length for each referenced id. Cross-project references
+  // (a placeholder that points at a secret from a different project — should
+  // not happen but guard anyway) are excluded.
+  const result: Array<{
+    id: number;
+    label: string;
+    length: number;
+    occurrences: number;
+  }> = [];
+  for (const [id, count] of occurrences) {
+    const sec = projectSecrets.get(id);
+    if (!sec) continue;
+    if (chat.project_id == null || sec.project_id !== chat.project_id) continue;
+    result.push({
+      id: sec.id,
+      label: sec.label,
+      length: sec.value.length,
+      occurrences: count,
+    });
+  }
+  result.sort((a, b) => b.occurrences - a.occurrences || a.label.localeCompare(b.label));
+  res.json({ secrets: result });
+});
+
 // ---------- scheduled messages (Telegram-style "send later") ----------
 
 /** List everything still pending for this chat. Used to hydrate the banner. */
@@ -317,7 +404,7 @@ chatsRouter.get('/:id/scheduled', (req, res) => {
 /**
  * Queue a message to fire at a specific UTC instant.
  *
- * Body: { content: string, scheduledAt: ISO string }
+ * Body: { content: string, scheduledAt: ISO string, inlineSecrets?: { slot, label, plain }[] }
  *
  * The scheduler service picks up rows where `scheduled_at <= datetime('now')`
  * on every tick and dispatches them through `sendMessage` as if the user had
@@ -326,7 +413,8 @@ chatsRouter.get('/:id/scheduled', (req, res) => {
  */
 chatsRouter.post('/:id/scheduled', (req, res) => {
   const id = Number(req.params.id);
-  if (!chats.get(id)) {
+  const chat = chats.get(id);
+  if (!chat) {
     res.status(404).json({ error: 'chat not found' });
     return;
   }
@@ -345,10 +433,62 @@ chatsRouter.post('/:id/scheduled', (req, res) => {
     res.status(400).json({ error: 'invalid scheduledAt' });
     return;
   }
+  let inlineSecrets: InlineSecretWire[] | undefined;
+  if (Array.isArray(req.body?.inlineSecrets)) {
+    inlineSecrets = (req.body.inlineSecrets as unknown[])
+      .map((x): InlineSecretWire | null => {
+        if (!x || typeof x !== 'object') return null;
+        const o = x as Record<string, unknown>;
+        const slot = Number(o.slot);
+        if (!Number.isFinite(slot)) return null;
+        return { slot, label: String(o.label ?? ''), plain: String(o.plain ?? '') };
+      })
+      .filter((x): x is InlineSecretWire => x != null);
+  }
+  let toStore = content;
+  if (/\[\[iclaw:s\d+\]\]/.test(content)) {
+    const pid = chat.project_id;
+    if (pid == null) {
+      res.status(400).json({
+        error: 'Scheduled messages with secrets are only available for chats in a project.',
+      });
+      return;
+    }
+    try {
+      const resolved = resolveInlineSecretMarkersInContent({
+        content,
+        inlineSecrets,
+        projectId: pid,
+        sourceChatId: id,
+      });
+      toStore = resolved.storedContent;
+      for (const sid of resolved.newSecretIds) {
+        const row = projectSecrets.get(sid);
+        if (row) {
+          wsHub.broadcastAll({
+            type: 'project-secret-added',
+            projectId: row.project_id,
+            secret: {
+              id: row.id,
+              label: row.label,
+              created_at: row.created_at,
+              value_length: row.value.length,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'secrets' });
+      return;
+    }
+  } else if (inlineSecrets && inlineSecrets.length > 0) {
+    res.status(400).json({ error: 'inlineSecrets without [[iclaw:sN]] markers' });
+    return;
+  }
   // Allow scheduling for "now" or even slightly in the past — the next sweep
   // will fire it. This also covers clock skew between browser and server.
   try {
-    const row = scheduledMessages.create({ chatId: id, content, scheduledAt: when });
+    const row = scheduledMessages.create({ chatId: id, content: toStore, scheduledAt: when });
     wsHub.broadcastAll({
       type: 'scheduled-added',
       chatId: id,

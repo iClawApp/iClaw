@@ -33,15 +33,31 @@
   const pwWrap = $('#share-pw-wrap');
   const pwInput = $('#share-pw');
   const submitBtn = $('#share-submit');
-  const cancelBtn = $('#share-cancel');
+  const nextBtn = $('#share-next');
+  const backBtn = $('#share-back');
+  const shareActions = $('#share-actions');
   const closeBtn = $('#share-modal-close');
   const errorEl = $('#share-error');
+  const modalTitle = $('#share-modal-title');
+  const modalHelp = $('#share-modal-help');
+  const step1Panel = $('#share-step-1');
+  const step2Panel = $('#share-step-2');
 
   const resultMeta = $('#share-result-meta');
   const urlInput = $('#share-url');
   const copyBtn = $('#share-copy');
   const pwReminder = $('#share-pw-reminder');
-  const doneBtn = $('#share-done');
+
+  const secretsList = $('#share-secrets-list');
+  const secretsWarning = $('#share-secrets-warning');
+  if (secretsList) secretsList.addEventListener('change', onSecretsCheckChange);
+
+  /** Per chat: list of secrets referenced + ticked ids the user opted to include. */
+  let secretsByChat = new Map();
+  let pickedSecretIds = new Set();
+  /** Wizard: step 1 = TTL/password; step 2 = secrets (only if chatHasSecrets). */
+  let shareWizardStep = 1;
+  let chatHasSecrets = false;
 
   /** Set from sidebar context menu — share a chat other than the one open in the main pane. */
   let shareChatIdOverride = null;
@@ -49,9 +65,14 @@
 
   /* ----------------------------------------- helpers ----------------- */
 
-  function openModal() {
+  async function openModal() {
     showFormView();
     modal.hidden = false;
+    resetShareWizard();
+    if (nextBtn) nextBtn.disabled = true;
+    await primeSecretsPicker();
+    if (nextBtn) nextBtn.disabled = false;
+    showShareStep(1);
     setTimeout(() => ttlSel.focus(), 0);
   }
   function closeModal() {
@@ -65,7 +86,160 @@
     submitBtn.textContent = 'Generate link';
     shareChatIdOverride = null;
     shareTitleOverride = null;
+    resetShareWizard();
   }
+
+  function resetShareWizard() {
+    shareWizardStep = 1;
+    chatHasSecrets = false;
+    pickedSecretIds = new Set();
+    if (secretsList) secretsList.innerHTML = '';
+    if (secretsWarning) {
+      secretsWarning.hidden = true;
+      secretsWarning.textContent = '';
+    }
+    showShareStep(1);
+  }
+
+  function validateStep1Options() {
+    if (pwEnableChk.checked && (pwInput.value || '').length < 4) {
+      setError('Password must be at least 4 characters.');
+      return false;
+    }
+    setError('');
+    return true;
+  }
+
+  function showShareStep(step) {
+    shareWizardStep = step === 2 ? 2 : 1;
+    const onSecretsStep = shareWizardStep === 2;
+    if (step1Panel) step1Panel.hidden = onSecretsStep;
+    if (step2Panel) step2Panel.hidden = !onSecretsStep;
+    if (modalTitle) {
+      modalTitle.textContent = onSecretsStep
+        ? 'Include secrets in the chat?'
+        : 'Share chat';
+    }
+    if (modalHelp) modalHelp.hidden = onSecretsStep;
+    if (backBtn) backBtn.hidden = !onSecretsStep;
+    if (nextBtn) nextBtn.hidden = onSecretsStep || !chatHasSecrets;
+    if (submitBtn) submitBtn.hidden = chatHasSecrets && !onSecretsStep;
+    if (shareActions) {
+      shareActions.classList.toggle('share-actions--split', onSecretsStep);
+    }
+    if (onSecretsStep) {
+      const first = secretsList?.querySelector('.share-secret-check');
+      if (first instanceof HTMLInputElement) {
+        setTimeout(() => first.focus(), 0);
+      }
+    }
+  }
+
+  function goToSecretsStep() {
+    if (!chatHasSecrets) return;
+    if (!validateStep1Options()) return;
+    showShareStep(2);
+  }
+
+  /** Fetch secrets referenced in this chat; enables step 2 when count ≥ 1. */
+  async function primeSecretsPicker() {
+    chatHasSecrets = false;
+    const chatId = resolveShareChatId();
+    if (!chatId) return;
+    let list = secretsByChat.get(chatId);
+    if (!list) {
+      try {
+        const res = await fetch(`/chats/${encodeURIComponent(chatId)}/secrets/in-chat`, {
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        list = Array.isArray(data?.secrets) ? data.secrets : [];
+        secretsByChat.set(chatId, list);
+      } catch {
+        return;
+      }
+    }
+    if (!list || list.length === 0) return;
+    chatHasSecrets = true;
+    renderSecretsPicker(list);
+  }
+
+  function renderSecretsPicker(list) {
+    if (!secretsList) return;
+    secretsList.innerHTML = list
+      .map((s) => {
+        const id = Number(s.id);
+        const label = escapeForAttr(String(s.label || ''));
+        const len = Number(s.length) || 0;
+        const occ = Number(s.occurrences) || 0;
+        const metaTitle = len + ' chars, ' + occ + (occ === 1 ? ' mention' : ' mentions');
+        return (
+          '<li class="share-secret-row">' +
+          '<label class="share-secret-label" title="' + metaTitle + '">' +
+          '<input type="checkbox" class="share-secret-check" data-secret-id="' + id + '" />' +
+          '<span class="share-secret-name">' + label + '</span>' +
+          '</label>' +
+          '</li>'
+        );
+      })
+      .join('');
+    updateSecretsExample(list);
+    updateSecretsWarning(list);
+  }
+
+  /** Sync mini chat preview with the first secret in this chat. */
+  function updateSecretsExample(list) {
+    const redactedEl = modal.querySelector('.share-secrets-example-redacted');
+    const tokenEl = modal.querySelector('.share-secrets-example-token');
+    if (!tokenEl || !list.length) return;
+    const s = list[0];
+    if (redactedEl) redactedEl.textContent = '[secret: hidden]';
+    tokenEl.textContent = demoSecretToken(Number(s.length) || 0);
+  }
+
+  function demoSecretToken(len) {
+    const head = 'sk-proj-';
+    const sample = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const bodyLen = Math.max(8, Math.min(sample.length, Math.max(0, (len || 20) - head.length)));
+    return head + sample.slice(0, bodyLen);
+  }
+
+  function onSecretsCheckChange(ev) {
+    const t = ev.target;
+    if (!(t instanceof HTMLInputElement) || !t.classList.contains('share-secret-check')) return;
+    const id = Number(t.getAttribute('data-secret-id'));
+    if (!Number.isFinite(id)) return;
+    if (t.checked) pickedSecretIds.add(id);
+    else pickedSecretIds.delete(id);
+    const list = secretsByChat.get(resolveShareChatId()) ?? [];
+    updateSecretsWarning(list);
+  }
+
+  function updateSecretsWarning(list) {
+    if (!secretsWarning) return;
+    if (pickedSecretIds.size === 0) {
+      secretsWarning.hidden = true;
+      secretsWarning.textContent = '';
+      return;
+    }
+    const names = list
+      .filter((s) => pickedSecretIds.has(Number(s.id)))
+      .map((s) => '"' + s.label + '"')
+      .join(', ');
+    secretsWarning.textContent = '⚠ Recipient will see: ' + names;
+    secretsWarning.hidden = false;
+  }
+
+  function escapeForAttr(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
   function showFormView() {
     formView.hidden = false;
     resultView.hidden = true;
@@ -77,6 +251,60 @@
   function setError(msg) {
     errorEl.textContent = msg;
     errorEl.hidden = !msg;
+  }
+
+  const SHARE_SECRET_PH = /\[\[iclaw:secret:(\d+)\|([^|\]]+)(?:\|(\d+))?\]\]/g;
+
+  /**
+   * Replace every `[[iclaw:secret:id|…]]` placeholder.
+   *   - id ∈ revealById     → expanded to plaintext value (user-opted-in).
+   *   - else                → redacted to "[secret: hidden]".
+   */
+  function rewriteSecretPlaceholdersInText(text, revealById) {
+    if (text == null || typeof text !== 'string') return text;
+    return text.replace(SHARE_SECRET_PH, (_, idStr) => {
+      const id = Number(idStr);
+      if (revealById && revealById.has(id)) {
+        return revealById.get(id);
+      }
+      return '[secret: hidden]';
+    });
+  }
+
+  function redactTranscriptForShare(messages, revealById) {
+    if (!Array.isArray(messages)) return messages;
+    return messages.map((m) => {
+      if (!m || typeof m !== 'object') return m;
+      const copy = { ...m };
+      if (typeof copy.content === 'string') {
+        copy.content = rewriteSecretPlaceholdersInText(copy.content, revealById);
+      }
+      if (copy.replyQuote != null && typeof copy.replyQuote === 'string') {
+        copy.replyQuote = rewriteSecretPlaceholdersInText(copy.replyQuote, revealById);
+      }
+      return copy;
+    });
+  }
+
+  /** Fetch plaintext values for every secret the user opted to reveal. */
+  async function fetchRevealedValues(chatId, ids) {
+    if (!ids || ids.size === 0) return new Map();
+    const out = new Map();
+    const tasks = [];
+    for (const id of ids) {
+      tasks.push(
+        fetch(`/chats/${encodeURIComponent(chatId)}/secrets/${encodeURIComponent(id)}/value`, {
+          headers: { Accept: 'application/json' },
+        }).then(async (res) => {
+          if (!res.ok) throw new Error('secret ' + id + ': HTTP ' + res.status);
+          const data = await res.json();
+          if (typeof data?.value !== 'string') throw new Error('secret ' + id + ': bad shape');
+          out.set(id, data.value);
+        }),
+      );
+    }
+    await Promise.all(tasks);
+    return out;
   }
 
   shareBtn.addEventListener('click', () => {
@@ -94,13 +322,19 @@
     openModal();
   });
   closeBtn.addEventListener('click', closeModal);
-  cancelBtn.addEventListener('click', closeModal);
-  doneBtn.addEventListener('click', closeModal);
+  if (nextBtn) nextBtn.addEventListener('click', goToSecretsStep);
+  if (backBtn) backBtn.addEventListener('click', () => showShareStep(1));
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeModal();
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !modal.hidden) closeModal();
+    if (e.key !== 'Escape' || modal.hidden) return;
+    if (chatHasSecrets && shareWizardStep === 2) {
+      showShareStep(1);
+      setError('');
+      return;
+    }
+    closeModal();
   });
   pwEnableChk.addEventListener('change', () => {
     pwWrap.hidden = !pwEnableChk.checked;
@@ -191,6 +425,10 @@
 
   $('#share-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (chatHasSecrets && shareWizardStep === 1) {
+      goToSecretsStep();
+      return;
+    }
     setError('');
     submitBtn.disabled = true;
     submitBtn.textContent = 'Encrypting…';
@@ -202,13 +440,25 @@
       const ttlDays = Number(ttlSel.value);
       const burn = burnChk.checked;
       const password = pwEnableChk.checked ? (pwInput.value || '') : '';
-      if (pwEnableChk.checked && password.length < 4) {
-        throw new Error('Password must be at least 4 characters.');
+      if (!validateStep1Options()) {
+        if (chatHasSecrets) showShareStep(1);
+        return;
       }
 
       // 1) gather data
       const agentSel = document.getElementById('chat-agent-select');
-      const messages = await fetchTranscript(chatId);
+      // Fetch plaintext for secrets the user explicitly opted to reveal. Anything
+      // else stays redacted by rewriteSecretPlaceholdersInText.
+      let revealById = new Map();
+      if (pickedSecretIds.size > 0) {
+        try {
+          revealById = await fetchRevealedValues(chatId, pickedSecretIds);
+        } catch (err) {
+          throw new Error('Could not fetch secret values: ' +
+            (err && err.message ? err.message : 'unknown'));
+        }
+      }
+      const messages = redactTranscriptForShare(await fetchTranscript(chatId), revealById);
       const activeId = getActiveChatId();
       const titleResolved = resolveShareTitle() || 'Shared chat';
 
@@ -289,10 +539,15 @@
 
       urlInput.value = finalUrl;
       const expires = new Date(data.expiresAt);
+      const revealedCount = revealById.size;
       const parts = [
         'expires ' + expires.toLocaleString(),
         burn ? 'burns after first view' : null,
         password ? 'password-protected' : 'fragment-key only',
+        revealedCount > 0
+          ? '⚠ ' + revealedCount +
+            (revealedCount === 1 ? ' secret visible to recipient' : ' secrets visible to recipient')
+          : null,
       ].filter(Boolean);
       resultMeta.textContent = parts.join(' · ');
       pwReminder.hidden = !password;

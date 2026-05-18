@@ -76,6 +76,7 @@
         <%= isWorking ? '' : 'hidden' %>
       >■ Stop</button>
 
+
       <% if (cloudShareBaseUrl) { %>
         <button
           type="button"
@@ -94,10 +95,42 @@
       </form>
     </header>
 
+    <aside
+      class="reset-policy-banner card"
+      id="reset-policy-banner"
+      role="status"
+      aria-live="polite"
+      hidden
+    >
+      <div class="reset-policy-banner-main">
+        <div class="reset-policy-banner-body" id="reset-policy-banner-body">
+          <p class="reset-policy-banner-lead">Chat context resets daily at 04:00.</p>
+          <p class="reset-policy-banner-detail">
+            This is the OpenClaw default — after 4 AM the next day the agent forgets older chats.
+            Change this behavior?
+          </p>
+        </div>
+      </div>
+      <div class="reset-policy-banner-actions" id="reset-policy-banner-actions">
+        <button
+          type="button"
+          class="btn btn--primary btn--sm"
+          id="reset-policy-fix"
+        >Yes, configure</button>
+        <button
+          type="button"
+          class="btn btn--ghost btn--sm"
+          id="reset-policy-snooze"
+          title="Do not show for 3 days"
+        >Remind me in 3 days</button>
+      </div>
+    </aside>
+
     <section
       class="messages"
       id="messages"
       data-chat-id="<%= activeChat.id %>"
+      data-project-id="<%= activeChat.project_id != null ? activeChat.project_id : '' %>"
       data-defer-paint="1"
     >
       <div class="messages-thread">
@@ -110,14 +143,14 @@
               <% if (m.reply_to_message_id && m.reply_quote) { %>
                 <%
                   const _rr = m.reply_to_role || '';
-                  const _who = _rr === 'user' ? 'Ви' : (_rr === 'assistant' ? 'Асистент' : 'Чат');
+                  const _who = _rr === 'user' ? 'You' : (_rr === 'assistant' ? 'Assistant' : 'Chat');
                 %>
                 <button
                   type="button"
                   class="msg-reply-stub"
                   data-jump-to-msg="<%= m.reply_to_message_id %>"
                   data-reply-quote="<%= encodeURIComponent(m.reply_quote) %>"
-                  aria-label="Перейти до цитованого повідомлення"
+                  aria-label="Jump to quoted message"
                 >
                   <span class="msg-reply-stub-track">
                     <span class="msg-reply-stub-bar" aria-hidden="true"></span>

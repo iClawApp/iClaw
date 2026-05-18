@@ -56,13 +56,26 @@ export interface ProcessedAttachment {
   };
 }
 
-const DATA_URL_RE = /^data:([^;,]+)?(?:;[^,]*)?,(.*)$/;
-
+/**
+ * Split a `data:[meta],payload` URL without running a regex over megabyte
+ * payloads — greedy `.*` + `$` on huge strings has caused RangeError/stack
+ * issues in some JS runtimes.
+ */
 function stripDataUrl(content: string): { mime?: string; base64: string } {
   const trimmed = content.trim();
-  const m = DATA_URL_RE.exec(trimmed);
-  if (m) return { mime: m[1]?.trim() || undefined, base64: m[2] };
-  return { base64: trimmed };
+  if (!trimmed.startsWith('data:')) {
+    return { base64: trimmed };
+  }
+  const comma = trimmed.indexOf(',', 5);
+  if (comma === -1) {
+    return { base64: trimmed };
+  }
+  const meta = trimmed.slice(5, comma);
+  const base64 = trimmed.slice(comma + 1);
+  const semi = meta.indexOf(';');
+  const mimePart = semi === -1 ? meta : meta.slice(0, semi);
+  const mime = mimePart.trim() || undefined;
+  return { mime, base64 };
 }
 
 /** Pick a safe lowercase extension for a MIME — empty string when unknown. */

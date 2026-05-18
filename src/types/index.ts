@@ -42,6 +42,17 @@ export interface ProjectFactSuggestion {
   created_at: string;
 }
 
+/** API key / token stored per project; message text uses `[[iclaw:secret:id|…]]` placeholders. */
+export interface ProjectSecret {
+  id: number;
+  project_id: number;
+  label: string;
+  value: string;
+  source_chat_id: number | null;
+  source_message_id: number | null;
+  created_at: string;
+}
+
 export interface Chat {
   id: number;
   title: string;

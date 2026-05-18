@@ -1,6 +1,6 @@
 /**
  * Project CRUD + project-facts edit/delete (facts are created from chat flows).
- * Project page has separate «Посилання» (http) and «Файли» (paths, file://) mined from messages.
+ * Project page has separate Links (http) and Files (paths, file://) mined from messages.
  *
  * HTTP-form style (POST + 302 redirect) for mutations so vanilla HTML forms
  * work. JSON variants (PATCH) for inline edits on the project page.
@@ -10,7 +10,7 @@
 
 import { Router } from 'express';
 import { listProjectLinkGroups } from '../services/projectLinks';
-import { chats, projects, projectFacts, enrichFactsWithSourceChatTitles, enrichFactWithSourceChatTitle } from '../services/store';
+import { chats, projects, projectFacts, projectSecrets, enrichFactsWithSourceChatTitles, enrichFactWithSourceChatTitle } from '../services/store';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
 
@@ -77,6 +77,7 @@ projectsRouter.get('/:id', (req, res) => {
     project,
     projectChats: chats.listByProject(id),
     facts: enrichFactsWithSourceChatTitles(projectFacts.listByProject(id)),
+    projectSecrets: projectSecrets.listMetaByProject(id),
     projectWebLinks: linkGroups.web,
     projectFileLinks: linkGroups.files,
     allProjects: projects.list(),
@@ -126,6 +127,48 @@ projectsRouter.patch('/:id', (req, res) => {
   const updated = projects.get(id)!;
   wsHub.broadcastAll({ type: 'project-updated', project: updated });
   res.json(updated);
+});
+
+/** Composer attach menu — metadata only, no secret values. */
+projectsRouter.get('/:id/secrets/picker', (req, res) => {
+  const projectId = Number(req.params.id);
+  if (!projects.get(projectId)) {
+    res.status(404).json({ error: 'project not found' });
+    return;
+  }
+  res.json(projectSecrets.listForComposerPicker(projectId));
+});
+
+/** Map a secret (any project) to a row usable in this project's chat transcript. */
+projectsRouter.post('/:id/secrets/:secretId/use-in-chat', (req, res) => {
+  const projectId = Number(req.params.id);
+  const secretId = Number(req.params.secretId);
+  if (!projects.get(projectId)) {
+    res.status(404).json({ error: 'project not found' });
+    return;
+  }
+  try {
+    const row = projectSecrets.resolveForChat(projectId, secretId);
+    res.json({
+      id: row.id,
+      label: row.label,
+      value_length: row.value.length,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'secret' });
+  }
+});
+
+/** Reveal secret value on the project page (same project only). */
+projectsRouter.get('/:id/secrets/:secretId/value', (req, res) => {
+  const projectId = Number(req.params.id);
+  const secretId = Number(req.params.secretId);
+  const sec = projectSecrets.get(secretId);
+  if (!projects.get(projectId) || !sec || sec.project_id !== projectId) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  res.type('application/json').json({ value: sec.value });
 });
 
 projectsRouter.post('/:id/delete', (req, res) => {

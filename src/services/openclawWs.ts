@@ -148,6 +148,58 @@ export const openclawWs = {
     return gatewayWs.request('commands.list', opts as Record<string, unknown>);
   },
 
+  /**
+   * Patch a session's per-turn defaults (reasoning, model, thinking, etc.).
+   * Only the fields you pass are touched; the gateway leaves the rest alone.
+   * No-op when the session key isn't a real `agent:...` one yet.
+   */
+  async patchSession(opts: {
+    sessionKey: string;
+    reasoningLevel?: string | null;
+    model?: string | null;
+    thinkingLevel?: string | null;
+    fastMode?: boolean | null;
+  }): Promise<void> {
+    if (!opts.sessionKey.startsWith('agent:')) return;
+    const params: Record<string, unknown> = { key: opts.sessionKey };
+    if (opts.reasoningLevel !== undefined) params.reasoningLevel = opts.reasoningLevel;
+    if (opts.model !== undefined) params.model = opts.model;
+    if (opts.thinkingLevel !== undefined) params.thinkingLevel = opts.thinkingLevel;
+    if (opts.fastMode !== undefined) params.fastMode = opts.fastMode;
+    await gatewayWs.request('sessions.patch', params);
+  },
+
+  /** Read the gateway's current full config (incl. `hash` needed for config.patch). */
+  async getConfig(): Promise<{ hash: string; config: Record<string, unknown> }> {
+    const res = await gatewayWs.request<{
+      hash: string;
+      config: Record<string, unknown>;
+    }>('config.get', {});
+    return res;
+  },
+
+  /**
+   * Merge-patch the gateway-wide config. `patch` is a JS object that the
+   * gateway merges over the current config tree. `baseHash` is required for
+   * optimistic-concurrency — the gateway rejects with a clear error if config
+   * was changed between get/patch.
+   *
+   * Note: the gateway may auto-restart to apply the change. Our `gatewayWs`
+   * client reconnects automatically, so callers just see a normal completion.
+   */
+  async patchConfig(opts: {
+    patch: Record<string, unknown>;
+    baseHash: string;
+    note?: string;
+  }): Promise<unknown> {
+    return gatewayWs.request('config.patch', {
+      raw: JSON.stringify(opts.patch),
+      baseHash: opts.baseHash,
+      ...(opts.note ? { note: opts.note } : {}),
+    });
+  },
+
+
   /** Subscribe to the global session index — needed for `sessions.changed`. */
   async subscribeSessions(): Promise<void> {
     await gatewayWs.request('sessions.subscribe', {});

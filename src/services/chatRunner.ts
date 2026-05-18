@@ -7,10 +7,10 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { chats, messages, projects } from './store';
+import { chats, messages, projects, projectSecrets } from './store';
 import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
 import { chatStatus } from './chatStatus';
-import { openclawWs, type TurnEvent } from './openclawWs';
+import { openclawWs, type TurnEvent, type HistoryMessage } from './openclawWs';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
 import { toolActivityLabel } from './toolLabels';
 import { wsHub } from './wsHub';
@@ -20,6 +20,12 @@ import {
   type ProcessedAttachment,
 } from './uploads';
 import type { Message } from '../types';
+import {
+  expandStoredSecretPlaceholdersForGateway,
+  resolveInlineSecretMarkersInContent,
+  stripSecretMarkersForTitle,
+  type InlineSecretWire,
+} from './inlineSecrets';
 
 const DEFAULT_AGENT = 'openclaw/default';
 
@@ -47,8 +53,8 @@ export function isGatewayBridgeFailure(err: unknown): boolean {
 
 export function gatewayBridgeFailureUserMessage(): string {
   return (
-    'Не вдалося з’єднатися зі шлюзом OpenClaw. Перевірте, що шлюз запущений ' +
-    'і токен налаштований, потім спробуйте ще раз.'
+    'Could not connect to the OpenClaw gateway. Check that the gateway is running ' +
+    'and the token is configured, then try again.'
   );
 }
 
@@ -67,34 +73,93 @@ async function ensureSession(chatId: number): Promise<string> {
   return fresh.key;
 }
 
+/** Flat-text extraction from an assistant row's `content` (string or parts). */
+function extractAssistantText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(
+      (p): p is { type?: string; text?: string } => p !== null && typeof p === 'object',
+    )
+    .filter((p) => p.type === 'text' && typeof p.text === 'string')
+    .map((p) => p.text as string)
+    .join('');
+}
+
 /**
- * Walk the canonical transcript backwards and return the most recent
- * assistant *text* row. OpenClaw mirrors `tools.message.send` outputs into
- * the transcript as a separate assistant entry, so this is the right place
- * to find the user-facing reply regardless of whether the agent used
- * freeform output or the message tool.
+ * When the agent routes its reply via `tools.message.send`, OpenClaw returns
+ * the real user-facing answer **inside the toolResult's JSON content** as
+ * `sourceReply.text` — see the `message` tool's protocol in OpenClaw. That
+ * field is available as soon as the tool finishes, no projection race, no
+ * status-note guessing. This extracts it from the row before the assistant's
+ * freeform status note ("Відповідь у чат відправив.") even lands.
+ */
+function extractSourceReplyFromMessageToolResult(row: HistoryMessage): string | null {
+  const isMessageTool =
+    row.role === 'toolResult' && (row as { toolName?: string }).toolName === 'message';
+  if (!isMessageTool) return null;
+  const content = row.content;
+  if (!Array.isArray(content)) return null;
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue;
+    const p = part as { type?: string; content?: unknown; text?: unknown };
+    if (p.type !== 'toolResult') continue;
+    // The tool returns its payload as a JSON string under `content` (and a
+    // duplicated `text`). Parse and pull out `sourceReply.text`.
+    const raw = typeof p.content === 'string' ? p.content : typeof p.text === 'string' ? p.text : '';
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw) as {
+        sourceReply?: { text?: unknown };
+        message?: unknown;
+      };
+      const sourceReplyText = parsed?.sourceReply?.text;
+      if (typeof sourceReplyText === 'string' && sourceReplyText.trim().length > 0) {
+        return sourceReplyText;
+      }
+      // Some configurations put the user-facing text under `message`. Use it
+      // only when no sourceReply was emitted.
+      if (typeof parsed?.message === 'string' && parsed.message.trim().length > 0) {
+        return parsed.message;
+      }
+    } catch {
+      // Not JSON — fall through.
+    }
+  }
+  return null;
+}
+
+/**
+ * Walk the canonical transcript backwards (within the current turn — stop at
+ * the previous user row) and return the user-facing assistant reply.
  *
- * Returns '' when no text row is found in the last `limit` rows.
+ * Strategy, in order of preference:
+ *
+ *   1. If the agent used `tools.message.send` this turn, read the reply text
+ *      straight out of the `message` toolResult's `sourceReply.text`. This is
+ *      the authoritative payload the tool sent to the channel — no race with
+ *      the projection that the gateway separately appends as an assistant
+ *      row, no guessing whether a short freeform string is a status note.
+ *
+ *   2. Otherwise (no message-tool call in this turn), take the most recent
+ *      assistant text row. That's the normal freeform-output path.
+ *
+ * Returns '' when no usable content was found in the last `limit` rows.
  */
 async function canonicalAssistantText(sessionKey: string, limit = 20): Promise<string> {
   const history = await openclawWs.getHistory(sessionKey, limit);
+  let assistantFallback = '';
   for (let i = history.length - 1; i >= 0; i--) {
     const row = history[i];
-    if (row.role !== 'assistant') continue;
-    const c = row.content;
-    if (typeof c === 'string' && c.trim().length > 0) return c;
-    if (Array.isArray(c)) {
-      const parts = c.filter(
-        (p): p is { type?: string; text?: string } => p !== null && typeof p === 'object',
-      );
-      const text = parts
-        .filter((p) => p.type === 'text' && typeof p.text === 'string')
-        .map((p) => p.text as string)
-        .join('');
-      if (text.trim().length > 0) return text;
+    if (row.role === 'user') break;
+    const sourceReply = extractSourceReplyFromMessageToolResult(row);
+    if (sourceReply) return sourceReply;
+    if (row.role === 'assistant') {
+      const text = extractAssistantText(row.content);
+      if (text.trim().length > 0 && !assistantFallback) assistantFallback = text;
     }
   }
-  return '';
+  return assistantFallback;
 }
 
 /**
@@ -231,10 +296,32 @@ async function runTurnLocked(opts: {
   isFirstTurn: boolean;
   replyTo?: unknown;
   incomingAttachments?: IncomingAttachment[];
+  inlineSecrets?: InlineSecretWire[];
 }): Promise<void> {
-  const { chatId, content, isFirstTurn, replyTo, incomingAttachments } = opts;
+  const { chatId, content, isFirstTurn, replyTo, incomingAttachments, inlineSecrets } = opts;
   const chat = chats.get(chatId)!;
   const sessionKey = await ensureSession(chatId);
+  const projectId = chat.project_id ?? null;
+
+  let storedUserContent = content;
+  let newSecretIds: number[] = [];
+  if (/\[\[iclaw:s\d+\]\]/.test(content)) {
+    if (projectId == null) {
+      throw new Error(
+        'To save secrets in a project, attach this chat to a project (or start the chat in a project).',
+      );
+    }
+    const resolved = resolveInlineSecretMarkersInContent({
+      content,
+      inlineSecrets,
+      projectId,
+      sourceChatId: chatId,
+    });
+    storedUserContent = resolved.storedContent;
+    newSecretIds = resolved.newSecretIds;
+  } else if (inlineSecrets && inlineSecrets.length > 0) {
+    throw new Error('inlineSecrets was sent without [[iclaw:sN]] markers in the message text.');
+  }
 
   // Decode + persist attachments BEFORE the user-msg row so the row carries
   // the file URLs in the same broadcast. Validation errors throw and bubble up
@@ -247,9 +334,14 @@ async function runTurnLocked(opts: {
   const gatewayAttachments = processed.map((p) => p.forGateway);
 
   const reply = parseReplyForChat(chatId, replyTo);
-  let gatewayBody = content;
+  let gatewayBody = expandStoredSecretPlaceholdersForGateway(storedUserContent, projectId);
   if (reply) {
-    gatewayBody = formatReplyGatewayBlock(reply.ref, reply.quote) + content;
+    const expandedParent = expandStoredSecretPlaceholdersForGateway(
+      reply.ref.content,
+      projectId,
+    );
+    const refExpanded: Message = { ...reply.ref, content: expandedParent };
+    gatewayBody = formatReplyGatewayBlock(refExpanded, reply.quote) + gatewayBody;
   }
 
   const gatewayMessage =
@@ -257,14 +349,13 @@ async function runTurnLocked(opts: {
       ? buildGatewayUserMessage(gatewayBody, chat.project_id)
       : gatewayBody;
 
-  // Persist user message + broadcast (stored text is the literal user input —
-  // project context is only prepended for the gateway).
+  // Persist user message + broadcast (stored text keeps placeholders only).
   const replyToRole =
     reply && (reply.ref.role === 'user' || reply.ref.role === 'assistant') ? reply.ref.role : null;
   const userMsg = messages.append(
     chatId,
     'user',
-    content,
+    storedUserContent,
     null,
     reply && replyToRole
       ? {
@@ -275,6 +366,22 @@ async function runTurnLocked(opts: {
       : null,
     persistedAttachments.length > 0 ? persistedAttachments : null,
   );
+  for (const sid of newSecretIds) {
+    projectSecrets.setSourceMessage(sid, userMsg.id);
+    const row = projectSecrets.get(sid);
+    if (row) {
+      wsHub.broadcastAll({
+        type: 'project-secret-added',
+        projectId: row.project_id,
+        secret: {
+          id: row.id,
+          label: row.label,
+          created_at: row.created_at,
+          value_length: row.value.length,
+        },
+      });
+    }
+  }
   wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: userMsg });
 
   // `messages.append` bumped `chats.updated_at`. Tell every tab so the sidebar
@@ -290,7 +397,7 @@ async function runTurnLocked(opts: {
 
   // Title sub-request, in background, on first turn only.
   const titleTask: Promise<void> = isFirstTurn
-    ? suggestChatTitleWithTimeout({ model: chat.agent, userMessage: content })
+    ? suggestChatTitleWithTimeout({ model: chat.agent, userMessage: storedUserContent })
         .then((suggested) => {
           if (!suggested) return;
           if (!chats.trySetAutoTitle(chatId, suggested)) return;
@@ -442,7 +549,7 @@ async function runTurnLocked(opts: {
       chatId,
       projectId: chatAfter.project_id,
       sharesToProject: Boolean(chatAfter.shares_to_project),
-      userMessage: content,
+      userMessage: storedUserContent,
       assistantText: finalText,
       assistantMessageId: assistantMsg.id,
     });
@@ -479,6 +586,8 @@ export async function sendMessage(opts: {
   requestId?: string;
   /** Optional reply-to snippet (validated server-side). */
   replyTo?: unknown;
+  /** Optional inline secrets matching `[[iclaw:sN]]` in `content`. */
+  inlineSecrets?: InlineSecretWire[];
   /**
    * Optional socket to subscribe to the chat the moment it's resolved/created.
    * Without this the originating socket would miss events emitted before the
@@ -506,7 +615,7 @@ export async function sendMessage(opts: {
     chatId = chat.id;
     isFirstTurn = true;
     // Seed a placeholder title so the sidebar entry shows up immediately.
-    chats.trySetAutoTitle(chatId, deriveTitle(opts.content));
+    chats.trySetAutoTitle(chatId, deriveTitle(stripSecretMarkersForTitle(opts.content)));
     const created = chats.get(chatId)!;
     // Subscribe the originating socket BEFORE we emit chat-created or start
     // the turn — otherwise it would miss every event in this turn.
@@ -535,6 +644,7 @@ export async function sendMessage(opts: {
         isFirstTurn,
         replyTo: opts.replyTo,
         incomingAttachments: opts.incomingAttachments,
+        inlineSecrets: opts.inlineSecrets,
       }),
     );
   } catch (err) {

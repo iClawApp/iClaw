@@ -89,7 +89,7 @@
 
     <section class="project-body">
       <div class="project-body-inner">
-        <nav class="project-tabs" role="tablist" aria-label="Розділи проєкту">
+        <nav class="project-tabs" role="tablist" aria-label="Project sections">
           <button
             type="button"
             class="project-tab is-active"
@@ -99,9 +99,9 @@
             aria-selected="true"
             tabindex="0"
             data-project-tab="chats"
-            data-tab-base="Чати"
+            data-tab-base="Chats"
             data-tab-count="<%= projectChats.length %>"
-          >Чати (<%= projectChats.length %>)</button>
+          >Chats (<%= projectChats.length %>)</button>
           <button
             type="button"
             class="project-tab"
@@ -111,9 +111,9 @@
             aria-selected="false"
             tabindex="-1"
             data-project-tab="memory"
-            data-tab-base="Памʼять"
+            data-tab-base="Memory"
             data-tab-count="<%= facts.length %>"
-          >Памʼять</button>
+          >Memory</button>
           <button
             type="button"
             class="project-tab"
@@ -123,9 +123,9 @@
             aria-selected="false"
             tabindex="-1"
             data-project-tab="links"
-            data-tab-base="Посилання"
+            data-tab-base="Links"
             data-tab-count="<%= projectWebLinks.length %>"
-          >Посилання</button>
+          >Links</button>
           <button
             type="button"
             class="project-tab"
@@ -135,9 +135,21 @@
             aria-selected="false"
             tabindex="-1"
             data-project-tab="files"
-            data-tab-base="Файли"
+            data-tab-base="Files"
             data-tab-count="<%= projectFileLinks.length %>"
-          >Файли</button>
+          >Files</button>
+          <button
+            type="button"
+            class="project-tab"
+            role="tab"
+            id="project-tab-secrets"
+            aria-controls="project-panel-secrets"
+            aria-selected="false"
+            tabindex="-1"
+            data-project-tab="secrets"
+            data-tab-base="Secrets"
+            data-tab-count="<%= (projectSecrets || []).length %>"
+          >Secrets</button>
         </nav>
 
         <div
@@ -148,7 +160,7 @@
         >
           <div class="project-sheet project-sheet--flush">
             <% if (projectChats.length === 0) { %>
-              <p class="project-empty-chats muted">Ще немає чатів. Почніть чат з головної, коли обрано цей проєкт.</p>
+              <p class="project-empty-chats muted">No chats yet. Start one from the home screen while this project is selected.</p>
             <% } else { %>
               <ul class="project-chats">
                 <% projectChats.forEach(function (c) { %>
@@ -157,7 +169,7 @@
                       <span class="project-chat-title"><%= c.title %></span>
                       <span class="project-chat-tail">
                         <% if (c.shares_to_project === 0) { %>
-                          <span class="project-chat-badge" title="Не пропонує факти в проєкт">Вимк.</span>
+                          <span class="project-chat-badge" title="Facts not suggested for project">Off</span>
                         <% } %>
                       </span>
                     </a>
@@ -181,27 +193,27 @@
                 <li class="fact" data-fact-id="<%= f.id %>">
                   <% if (f.source_chat_id) { %>
                     <div class="project-row-head muted">
-                      <a href="/chats/<%= f.source_chat_id %>" class="project-chat-source"><%= (f.source_chat_title || '').trim() || 'Чат' %></a>
+                      <a href="/chats/<%= f.source_chat_id %>" class="project-chat-source"><%= (f.source_chat_title || '').trim() || 'Chat' %></a>
                     </div>
                   <% } else { %>
                     <div class="project-row-head muted"><span>—</span></div>
                   <% } %>
                   <textarea
                     class="fact-content"
-                    aria-label="Текст факту"
+                    aria-label="Fact text"
                     rows="2"
                   ><%= f.content %></textarea>
                   <div class="fact-meta">
                     <button
                       type="button"
                       class="fact-delete"
-                      aria-label="Видалити факт"
-                    >Прибрати</button>
+                      aria-label="Remove fact"
+                    >Remove</button>
                   </div>
                 </li>
               <% }); %>
               <% if (facts.length === 0) { %>
-                <li class="project-chats-empty muted">Поки немає фактів. Підтвердіть пропозицію в чаті цього проєкту.</li>
+                <li class="project-chats-empty muted">No facts yet. Accept a suggestion in a chat for this project.</li>
               <% } %>
             </ul>
           </div>
@@ -216,7 +228,7 @@
         >
           <div class="project-sheet project-sheet--flush">
             <% if (projectWebLinks.length === 0) { %>
-              <p class="project-empty-chats muted">Поки немає посилань у повідомленнях цього проєкту.</p>
+              <p class="project-empty-chats muted">No links in this project's messages yet.</p>
             <% } else { %>
               <ul class="project-chats">
                 <% projectWebLinks.forEach(function (entry) { %>
@@ -251,14 +263,14 @@
         >
           <div class="project-sheet project-sheet--flush">
             <% if (projectFileLinks.length === 0) { %>
-              <p class="project-empty-chats muted">Поки немає шляхів чи file:// у повідомленнях цього проєкту.</p>
+              <p class="project-empty-chats muted">No paths or file:// URLs in this project's messages yet.</p>
             <% } else { %>
               <ul class="project-chats">
                 <% projectFileLinks.forEach(function (entry) { %>
                   <li>
                     <div
                       class="project-chat-link project-chat-link--stacked project-chat-link--path"
-                      title="<%= entry.kind === 'file' ? 'file:// — браузер зі сторінки http зазвичай не відкриває.' : 'Шлях з чату — для копіювання; браузер не відкриває локальні шляхи напряму.' %>"
+                      title="<%= entry.kind === 'file' ? 'file:// — browsers usually cannot open this from an http page.' : 'Path from chat — for copying; browsers cannot open local paths directly.' %>"
                     >
                       <div class="project-row-head muted">
                         <% entry.sources.forEach(function (s, i) { %>
@@ -272,6 +284,37 @@
                 <% }); %>
               </ul>
             <% } %>
+          </div>
+        </div>
+
+        <div
+          id="project-panel-secrets"
+          class="project-panel"
+          role="tabpanel"
+          aria-labelledby="project-tab-secrets"
+          hidden
+        >
+          <div class="project-sheet project-sheet--flush project-sheet--stacked">
+            <ul id="secrets-list" class="project-chats">
+              <% (projectSecrets || []).forEach(function (s) { %>
+                <% var spoilerCh = Math.max(Number(s.value_length) || 0, String(s.label || '').length, 4); %>
+                <li class="project-secret-row" data-secret-id="<%= s.id %>">
+                  <div class="project-chat-link project-chat-link--stacked project-secret-card">
+                    <span class="project-chat-title project-secret-title"><%= s.label %></span>
+                    <button
+                      type="button"
+                      class="project-secret-reveal iclaw-secret-spoiler-body project-secret-spoiler-preview"
+                      data-secret-len="<%= spoilerCh %>"
+                      style="--secret-len-ch:<%= spoilerCh %>"
+                      aria-label="Show secret value"
+                    ><span class="iclaw-secret-spoiler-grain" aria-hidden="true"></span></button>
+                  </div>
+                </li>
+              <% }); %>
+              <% if (!(projectSecrets || []).length) { %>
+                <li class="project-chats-empty muted">No saved secrets yet</li>
+              <% } %>
+            </ul>
           </div>
         </div>
       </div>
