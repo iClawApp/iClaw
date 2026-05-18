@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { chats, messages, projects } from './store';
 import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
 import { chatStatus } from './chatStatus';
-import { openclawWs, type TurnEvent } from './openclawWs';
+import { openclawWs, type TurnEvent, type HistoryMessage } from './openclawWs';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
 import { toolActivityLabel } from './toolLabels';
 import { wsHub } from './wsHub';
@@ -68,33 +68,93 @@ async function ensureSession(chatId: number): Promise<string> {
 }
 
 /**
- * Walk the canonical transcript backwards and return the most recent
- * assistant *text* row. OpenClaw mirrors `tools.message.send` outputs into
- * the transcript as a separate assistant entry, so this is the right place
- * to find the user-facing reply regardless of whether the agent used
- * freeform output or the message tool.
+ * Detects "status-only" assistant rows that aren't real answers — short notes
+ * the agent emits when its reply was routed via `tools.message.send` instead
+ * of as freeform output (e.g. "Відповідь у чат відправив." / "Sent reply to
+ * chat."). When canonicalAssistantText hits one of these, it keeps walking
+ * back to find the substantive row that lives one step earlier in history.
  *
- * Returns '' when no text row is found in the last `limit` rows.
+ * The match is intentionally narrow: short string + recognised verb + no
+ * content after the trailing period. A real answer that happens to start
+ * with one of these verbs won't match because it'll be too long or have
+ * follow-on prose.
  */
-async function canonicalAssistantText(sessionKey: string, limit = 20): Promise<string> {
-  const history = await openclawWs.getHistory(sessionKey, limit);
+const STATUS_ONLY_RE =
+  /^(?:Надіслав(?:ши)?|Відправ(?:ив|лено)|Відповідь[^\n]*?(?:відправ|надісла)\w*|I sent|I've sent|Sent|Posted|Reply\s+sent|Отправил(?:а)?|Послал(?:а)?)[^.\n]{0,120}\.?\s*$/iu;
+
+function isStatusOnlyText(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0 || trimmed.length > 120) return false;
+  return STATUS_ONLY_RE.test(trimmed);
+}
+
+function extractAssistantText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(
+      (p): p is { type?: string; text?: string } => p !== null && typeof p === 'object',
+    )
+    .filter((p) => p.type === 'text' && typeof p.text === 'string')
+    .map((p) => p.text as string)
+    .join('');
+}
+
+/**
+ * Walk a fetched history backwards (within the current turn — stop at the
+ * previous user row) and pick the most substantive assistant text. Status
+ * notes ("Відповідь у чат відправив.") are recorded as a fallback but
+ * skipped in favour of any real answer found further back in the same turn.
+ *
+ * Returns `null` when the only thing in the turn is a status note (caller
+ * uses this signal to decide whether to retry the history fetch).
+ */
+function pickAssistantText(history: HistoryMessage[]): {
+  text: string;
+  isStatusOnly: boolean;
+} {
+  let statusFallback = '';
   for (let i = history.length - 1; i >= 0; i--) {
     const row = history[i];
+    if (row.role === 'user') break;
     if (row.role !== 'assistant') continue;
-    const c = row.content;
-    if (typeof c === 'string' && c.trim().length > 0) return c;
-    if (Array.isArray(c)) {
-      const parts = c.filter(
-        (p): p is { type?: string; text?: string } => p !== null && typeof p === 'object',
-      );
-      const text = parts
-        .filter((p) => p.type === 'text' && typeof p.text === 'string')
-        .map((p) => p.text as string)
-        .join('');
-      if (text.trim().length > 0) return text;
+    const text = extractAssistantText(row.content);
+    if (text.trim().length === 0) continue;
+    if (isStatusOnlyText(text)) {
+      if (!statusFallback) statusFallback = text;
+      continue;
     }
+    return { text, isStatusOnly: false };
   }
-  return '';
+  return { text: statusFallback, isStatusOnly: statusFallback.length > 0 };
+}
+
+/**
+ * Public entry: fetch canonical assistant text for a session, retrying briefly
+ * if the only thing we see is a status note.
+ *
+ * Why retry: `runTurn` resolves on `chat:state=final`, but agents that route
+ * their reply through `tools.message.send` project the actual answer to the
+ * transcript as a SEPARATE assistant row, and that projection sometimes lands
+ * a few hundred milliseconds AFTER `chat:state=final`. Without retry we'd
+ * persist just the freeform status note ("Відповідь у чат відправив.") and
+ * the real answer would never reach the iClaw chat.
+ *
+ * Retry schedule (cumulative): 150ms, 400ms, 900ms — about 1.5s total wait
+ * in the worst case. We stop as soon as we see substantive content, OR after
+ * the last retry (returning whatever status note we have as a last resort).
+ */
+async function canonicalAssistantText(sessionKey: string, limit = 20): Promise<string> {
+  const delays = [0, 150, 250, 500];
+  let lastFallback = '';
+  for (const wait of delays) {
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    const history = await openclawWs.getHistory(sessionKey, limit);
+    const picked = pickAssistantText(history);
+    if (!picked.isStatusOnly && picked.text) return picked.text;
+    if (picked.text) lastFallback = picked.text;
+  }
+  return lastFallback;
 }
 
 /**
