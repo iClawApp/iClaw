@@ -76,6 +76,16 @@
         <%= isWorking ? '' : 'hidden' %>
       >■ Stop</button>
 
+      <button
+        type="button"
+        class="tools-btn btn btn--ghost btn--sm"
+        id="tools-btn"
+        title="Список тулзів доступних агенту в цьому чаті"
+        aria-label="Show tools available to this agent"
+        aria-expanded="false"
+        aria-controls="tools-panel"
+      >🛠 Tools</button>
+
       <% if (cloudShareBaseUrl) { %>
         <button
           type="button"
@@ -183,6 +193,28 @@
         <% } %>
       </div>
     </section>
+
+    <aside
+      class="tools-panel"
+      id="tools-panel"
+      aria-labelledby="tools-panel-title"
+      role="dialog"
+      aria-modal="false"
+      hidden
+    >
+      <header class="tools-panel-header">
+        <h2 id="tools-panel-title" class="tools-panel-title">Tools</h2>
+        <button
+          type="button"
+          class="tools-panel-close"
+          id="tools-panel-close"
+          aria-label="Закрити панель"
+        >×</button>
+      </header>
+      <div class="tools-panel-body" id="tools-panel-body">
+        <p class="muted">Завантажую…</p>
+      </div>
+    </aside>
 
     <section class="queue" id="queue" aria-live="polite"></section>
 

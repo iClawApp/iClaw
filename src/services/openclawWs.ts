@@ -148,6 +148,37 @@ export const openclawWs = {
     return gatewayWs.request('commands.list', opts as Record<string, unknown>);
   },
 
+  /**
+   * Patch a session's per-turn defaults (reasoning, model, thinking, etc.).
+   * Only the fields you pass are touched; the gateway leaves the rest alone.
+   * No-op when the session key isn't a real `agent:...` one yet.
+   */
+  async patchSession(opts: {
+    sessionKey: string;
+    reasoningLevel?: string | null;
+    model?: string | null;
+    thinkingLevel?: string | null;
+    fastMode?: boolean | null;
+  }): Promise<void> {
+    if (!opts.sessionKey.startsWith('agent:')) return;
+    const params: Record<string, unknown> = { key: opts.sessionKey };
+    if (opts.reasoningLevel !== undefined) params.reasoningLevel = opts.reasoningLevel;
+    if (opts.model !== undefined) params.model = opts.model;
+    if (opts.thinkingLevel !== undefined) params.thinkingLevel = opts.thinkingLevel;
+    if (opts.fastMode !== undefined) params.fastMode = opts.fastMode;
+    await gatewayWs.request('sessions.patch', params);
+  },
+
+  /** Tools effectively available to a session right now (includes plugin tools). */
+  async toolsEffective(opts: {
+    sessionKey: string;
+    agentId?: string;
+  }): Promise<unknown> {
+    const params: Record<string, unknown> = { sessionKey: opts.sessionKey };
+    if (opts.agentId) params.agentId = opts.agentId;
+    return gatewayWs.request('tools.effective', params);
+  },
+
   /** Subscribe to the global session index — needed for `sessions.changed`. */
   async subscribeSessions(): Promise<void> {
     await gatewayWs.request('sessions.subscribe', {});

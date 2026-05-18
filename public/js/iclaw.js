@@ -2923,30 +2923,107 @@
     reasoningToggle.addEventListener('change', async () => {
       const mode = reasoningToggle.checked ? 'on' : 'off';
       try {
-        // Persist the iClaw mirror first so a slow gateway doesn't desync the UI.
-        await fetch('/chats/' + encodeURIComponent(activeChatId) + '/reasoning', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ mode }),
-        });
+        // Server route does two things atomically: persists the iClaw mirror
+        // and calls `sessions.patch({ reasoningLevel })` on the OpenClaw
+        // gateway. No more /reasoning slash kludge.
+        const res = await fetch(
+          '/chats/' + encodeURIComponent(activeChatId) + '/reasoning',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ mode }),
+          },
+        );
+        if (!res.ok) throw new Error('HTTP ' + res.status);
       } catch {
         // revert if the server didn't accept
         reasoningToggle.checked = !reasoningToggle.checked;
-        return;
       }
-      // The OpenClaw gateway only actually emits reasoning when the session
-      // has been told to via /reasoning. Without this the toggle was a UI
-      // placebo — checked but no analysis events ever arrived. Now we push
-      // the slash command through the normal queue so OpenClaw flips state
-      // server-side too. The /reasoning turn is small and bookkeeping-only.
-      waitingItems.push({
-        content: '/reasoning ' + mode,
-        id: 'q-' + nextQueueItemId++,
-      });
-      renderQueue();
-      flushNextQueued();
     });
   }
+
+  // -------------------------------------------------------------------------
+  // Tools panel — minimal list of tools.effective for this chat's session.
+  // One row per tool: monospace name + group hint. Hover for the description.
+  // -------------------------------------------------------------------------
+  const toolsBtn = document.getElementById('tools-btn');
+  const toolsPanel = document.getElementById('tools-panel');
+  const toolsPanelBody = document.getElementById('tools-panel-body');
+  const toolsPanelClose = document.getElementById('tools-panel-close');
+
+  function closeToolsPanel() {
+    if (!toolsPanel) return;
+    toolsPanel.hidden = true;
+    if (toolsBtn) toolsBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  function renderTools(tools) {
+    if (!toolsPanelBody) return;
+    if (!Array.isArray(tools) || tools.length === 0) {
+      toolsPanelBody.innerHTML =
+        '<p class="muted">Жодного тулзу не доступно цьому агенту.</p>';
+      return;
+    }
+    // Flat list. Description lives in the `title` attribute (native tooltip).
+    // Group only used as a small grey suffix when not the default "Built-in tools".
+    const items = tools
+      .map((t) => {
+        const name = escapeHtml(String(t.name || ''));
+        const title = t.description ? escapeHtml(String(t.description)) : '';
+        const group =
+          t.group && t.group !== 'Built-in tools'
+            ? '<span class="tools-row-group">' + escapeHtml(String(t.group)) + '</span>'
+            : '';
+        return (
+          '<li class="tools-row"' +
+          (title ? ' title="' + title + '"' : '') +
+          '><span class="tools-row-name">' +
+          name +
+          '</span>' +
+          group +
+          '</li>'
+        );
+      })
+      .join('');
+    toolsPanelBody.innerHTML = '<ul class="tools-list">' + items + '</ul>';
+  }
+
+  async function openToolsPanel() {
+    if (!toolsPanel || activeChatId == null) return;
+    toolsPanel.hidden = false;
+    if (toolsBtn) toolsBtn.setAttribute('aria-expanded', 'true');
+    if (toolsPanelBody) {
+      toolsPanelBody.innerHTML = '<p class="muted">Завантажую…</p>';
+    }
+    try {
+      const res = await fetch(
+        '/api/gateway/tools/' + encodeURIComponent(activeChatId),
+        { headers: { Accept: 'application/json' } },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'HTTP ' + res.status);
+      renderTools(data?.tools || []);
+    } catch (err) {
+      if (toolsPanelBody) {
+        toolsPanelBody.innerHTML =
+          '<p class="muted">Не вдалось завантажити: ' +
+          escapeHtml(String(err && err.message ? err.message : err)) +
+          '</p>';
+      }
+    }
+  }
+
+  if (toolsBtn) {
+    toolsBtn.addEventListener('click', () => {
+      if (!toolsPanel) return;
+      if (toolsPanel.hidden) openToolsPanel();
+      else closeToolsPanel();
+    });
+  }
+  if (toolsPanelClose) toolsPanelClose.addEventListener('click', closeToolsPanel);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && toolsPanel && !toolsPanel.hidden) closeToolsPanel();
+  });
 
   // -------------------------------------------------------------------------
   // Usage cost chip — polls /api/gateway/usage/today every 30s

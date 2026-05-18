@@ -3357,6 +3357,95 @@ code {
 }
 .share-pw-reminder[hidden] { display: none !important; }
 
+/* ---------- Tools panel (slide-in from the right) ---------- */
+
+.tools-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(280px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: -2px 0 16px rgba(0, 0, 0, 0.18);
+  z-index: 60;
+  transform: translateX(100%);
+  transition: transform 0.18s ease;
+}
+.tools-panel:not([hidden]) {
+  transform: translateX(0);
+}
+.tools-panel[hidden] {
+  display: flex !important; /* keep transitions; just push off-screen */
+  pointer-events: none;
+}
+
+.tools-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+.tools-panel-title {
+  margin: 0;
+  font-size: 1.05em;
+  font-weight: 600;
+}
+.tools-panel-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tools-panel-close:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
+.tools-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 14px 18px;
+}
+
+.tools-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tools-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 6px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  cursor: default;
+}
+.tools-row:last-child {
+  border-bottom: none;
+}
+.tools-row-name {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.88em;
+  color: var(--text);
+}
+.tools-row-group {
+  font-size: 0.74em;
+  color: var(--muted);
+  margin-left: 8px;
+}
+
 /* ---------- Composer attachments ---------- */
 
 .composer-attach {
