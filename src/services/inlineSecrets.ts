@@ -1,14 +1,15 @@
 /**
  * User messages may contain `[[iclaw:sN]]` markers (client) replaced server-side
- * with `[[iclaw:secret:id|urlEncodedLabel]]` rows in `project_secrets`. The
+ * with `[[iclaw:secret:id|urlEncodedLabel|valueLength]]` rows in `project_secrets`. The
  * gateway receives expanded plaintext; the DB transcript and share payloads keep
  * placeholders only.
  */
 
 import { projectSecrets } from './store';
 
-/** Persisted in message rows — second group is encodeURIComponent(label). */
-export const STORED_SECRET_PLACEHOLDER_RE = /\[\[iclaw:secret:(\d+)\|([^\]]+)\]\]/g;
+/** Persisted in message rows — label is encodeURIComponent(label); length is optional (legacy). */
+export const STORED_SECRET_PLACEHOLDER_RE =
+  /\[\[iclaw:secret:(\d+)\|([^|\]]+)(?:\|(\d+))?\]\]/g;
 
 export type InlineSecretWire = { slot: number; label: string; plain: string };
 
@@ -80,7 +81,7 @@ export function resolveInlineSecretMarkersInContent(opts: {
     newSecretIds.push(row.id);
     const encLabel = encodeURIComponent(label);
     const marker = `[[iclaw:s${slot}]]`;
-    const replacement = `[[iclaw:secret:${row.id}|${encLabel}]]`;
+    const replacement = `[[iclaw:secret:${row.id}|${encLabel}|${plain.length}]]`;
     stored = stored.split(marker).join(replacement);
   }
   return { storedContent: stored, newSecretIds };

@@ -78,7 +78,7 @@
     errorEl.hidden = !msg;
   }
 
-  const SHARE_SECRET_PH = /\[\[iclaw:secret:(\d+)\|([^\]]+)\]\]/g;
+  const SHARE_SECRET_PH = /\[\[iclaw:secret:(\d+)\|([^|\]]+)(?:\|(\d+))?\]\]/g;
 
   function redactSecretPlaceholdersInText(text) {
     if (text == null || typeof text !== 'string') return text;

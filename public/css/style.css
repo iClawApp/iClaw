@@ -1967,27 +1967,163 @@ code {
   margin-top: 0.85rem;
   padding-top: 0;
 }
+/* Inline secret spoiler in chat: title centered over token-sized grain block. */
 .iclaw-secret-chip {
+  --iclaw-spoiler-bg: color-mix(in srgb, var(--text) 32%, var(--surface));
+  --iclaw-spoiler-bg-hover: color-mix(in srgb, var(--text) 38%, var(--surface));
+  --iclaw-spoiler-dot: color-mix(in srgb, var(--text) 88%, transparent);
+  --iclaw-spoiler-dot-alt: color-mix(in srgb, var(--text) 52%, transparent);
+  display: inline;
+  vertical-align: baseline;
+  line-height: inherit;
+}
+.iclaw-secret-reveal {
+  display: inline-block;
+  position: relative;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  cursor: pointer;
+  vertical-align: baseline;
+  appearance: none;
+  -webkit-appearance: none;
+  max-width: 100%;
+}
+.iclaw-secret-reveal:focus {
+  outline: none;
+}
+.iclaw-secret-reveal:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--md-link) 45%, transparent);
+  outline-offset: 2px;
+}
+.iclaw-secret-spoiler-body {
   display: inline-flex;
   align-items: center;
-  vertical-align: middle;
-  margin: 0 0.12rem;
+  justify-content: center;
+  position: relative;
+  box-sizing: border-box;
+  width: max-content;
+  /* Ширина = max(назва, токен) у ch; без штучного мінімуму в em і з мінімальним padding. */
+  min-width: max(
+    calc(var(--secret-label-ch, 1) * 1ch),
+    calc(var(--secret-len-ch, 0) * 1ch)
+  );
+  max-width: 100%;
+  min-height: 1.2em;
+  padding: 0.12em 0.2em;
+  border-radius: 2px;
+  overflow: hidden;
 }
-.iclaw-secret-reveal.iclaw-secret-reveal--open .iclaw-secret-label {
-  opacity: 0.85;
+.iclaw-secret-caption,
+.iclaw-secret-label {
+  position: relative;
+  z-index: 1;
+  max-width: 100%;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  text-shadow:
+    0 0 6px var(--surface),
+    0 0 3px var(--surface),
+    0 1px 0 color-mix(in srgb, var(--surface) 90%, transparent);
 }
-.iclaw-secret-value {
+.iclaw-secret-spoiler-grain {
   display: block;
-  margin-top: 0.35rem;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--iclaw-spoiler-bg);
+  image-rendering: pixelated;
+}
+/* Різке «зерно»: дрібна сітка + другий шар у зсуві (як dither, не розмиті плями). */
+.iclaw-secret-spoiler-body .iclaw-secret-spoiler-grain::before,
+.iclaw-secret-spoiler-body .iclaw-secret-spoiler-grain::after {
+  content: '';
+  position: absolute;
+  width: 250%;
+  height: 250%;
+  top: -75%;
+  left: -75%;
+  background-image: radial-gradient(
+    circle,
+    var(--iclaw-spoiler-dot) 0.45px,
+    transparent 0.45px
+  );
+  background-size: 3px 3px;
+  will-change: transform;
+}
+.iclaw-secret-spoiler-body .iclaw-secret-spoiler-grain::before {
+  animation: iclaw-secret-spoiler-drift 0.5s steps(6) infinite;
+}
+.iclaw-secret-spoiler-body .iclaw-secret-spoiler-grain::after {
+  background-image: radial-gradient(
+    circle,
+    var(--iclaw-spoiler-dot-alt) 0.45px,
+    transparent 0.45px
+  );
+  background-size: 3px 3px;
+  background-position: 1px 1px;
+  animation: iclaw-secret-spoiler-drift-alt 0.65s steps(8) infinite;
+}
+.iclaw-secret-reveal:hover .iclaw-secret-spoiler-grain {
+  background: var(--iclaw-spoiler-bg-hover);
+}
+@keyframes iclaw-secret-spoiler-drift {
+  0% {
+    transform: translate(0, 0);
+  }
+  100% {
+    transform: translate(-9px, -9px);
+  }
+}
+@keyframes iclaw-secret-spoiler-drift-alt {
+  0% {
+    transform: translate(0, 0);
+  }
+  100% {
+    transform: translate(9px, -6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .iclaw-secret-spoiler-body .iclaw-secret-spoiler-grain::before,
+  .iclaw-secret-spoiler-body .iclaw-secret-spoiler-grain::after {
+    animation: none;
+    transform: none;
+  }
+}
+/* Відкрито: звичайний текст у потоці повідомлення */
+.iclaw-secret-chip--revealed .iclaw-secret-reveal {
+  display: none !important;
+}
+.iclaw-secret-revealed {
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  cursor: pointer;
+  word-break: break-word;
+}
+.iclaw-secret-value[hidden] {
+  display: none !important;
 }
 .iclaw-secret-code {
-  display: inline-block;
-  max-width: 100%;
-  overflow-x: auto;
-  padding: 0.35rem 0.5rem;
-  border-radius: 6px;
-  font-size: 0.8125rem;
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  display: none;
 }
 
 /* ---------- Scheduled messages ---------- */

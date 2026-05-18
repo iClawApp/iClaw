@@ -244,7 +244,7 @@
     try { return window.marked.parse(src); } catch { return escapeHtml(src); }
   }
 
-  const MSG_SECRET_PH_RE = /\[\[iclaw:secret:(\d+)\|([^\]]+)\]\]/g;
+  const MSG_SECRET_PH_RE = /\[\[iclaw:secret:(\d+)\|([^|\]]+)(?:\|(\d+))?\]\]/g;
 
   function decodePlaceholderLabel(enc) {
     try {
@@ -258,20 +258,45 @@
   function renderMessageHtml(text) {
     const html = renderMarkdown(text);
     if (!html) return html;
-    return html.replace(MSG_SECRET_PH_RE, (_, id, encLabel) => {
+    return html.replace(MSG_SECRET_PH_RE, (_, id, encLabel, lenStr) => {
       const label = decodePlaceholderLabel(encLabel);
       const safeL = escapeHtml(label);
+      const safeAttr = String(label)
+        .replaceAll('&', '&amp;')
+        .replaceAll('"', '&quot;')
+        .replaceAll('<', '&lt;');
+      const len = lenStr != null && lenStr !== '' ? Number(lenStr) : NaN;
+      const tokenLen =
+        Number.isFinite(len) && len > 0 ? Math.min(Math.floor(len), 512) : 0;
+      const labelLen = Math.min(Math.max(label.length, 1), 512);
+      const bodySizing =
+        ' data-secret-len="' +
+        tokenLen +
+        '" data-secret-label-ch="' +
+        labelLen +
+        '" style="--secret-len-ch:' +
+        tokenLen +
+        ';--secret-label-ch:' +
+        labelLen +
+        '"';
       return (
         '<span class="iclaw-secret-chip" data-secret-id="' +
         escapeHtml(String(id)) +
+        '" data-secret-label="' +
+        safeAttr +
         '">' +
-        '<button type="button" class="iclaw-secret-reveal btn btn--ghost btn--sm" aria-expanded="false">' +
-        '<span class="iclaw-secret-icon" aria-hidden="true">🔑</span> ' +
-        '<span class="iclaw-secret-label">' +
+        '<button type="button" class="iclaw-secret-reveal" aria-expanded="false" aria-label="Секрет: ' +
+        safeAttr +
+        '">' +
+        '<span class="iclaw-secret-spoiler-body"' +
+        bodySizing +
+        '>' +
+        '<span class="iclaw-secret-spoiler-grain" aria-hidden="true"></span>' +
+        '<span class="iclaw-secret-caption">' +
         safeL +
-        '</span>' +
+        '</span></span>' +
         '</button>' +
-        '<span class="iclaw-secret-value" hidden><code class="iclaw-secret-code"></code></span>' +
+        '<span class="iclaw-secret-value" hidden><span class="iclaw-secret-code"></span></span>' +
         '</span>'
       );
     });
@@ -2893,29 +2918,57 @@
     scheduleTokenDetect();
   }
 
+  function collapseSecretChip(chip) {
+    chip.classList.remove('iclaw-secret-chip--revealed');
+    chip.querySelector('.iclaw-secret-revealed')?.remove();
+    const btn = chip.querySelector('.iclaw-secret-reveal');
+    if (btn) btn.hidden = false;
+    const wrap = chip.querySelector('.iclaw-secret-value');
+    const code = wrap?.querySelector('.iclaw-secret-code');
+    if (wrap) wrap.hidden = true;
+    if (code) code.textContent = '';
+  }
+
+  function revealSecretChip(chip, valueText) {
+    const value = valueText != null ? String(valueText) : '';
+    const btn = chip.querySelector('.iclaw-secret-reveal');
+    if (btn) btn.hidden = true;
+    chip.querySelector('.iclaw-secret-revealed')?.remove();
+    const plain = document.createElement('span');
+    plain.className = 'iclaw-secret-revealed';
+    plain.setAttribute('role', 'button');
+    plain.setAttribute('tabindex', '0');
+    plain.setAttribute('title', 'Натисніть, щоб приховати');
+    plain.textContent = value;
+    chip.appendChild(plain);
+    chip.classList.add('iclaw-secret-chip--revealed');
+    const wrap = chip.querySelector('.iclaw-secret-value');
+    const code = wrap?.querySelector('.iclaw-secret-code');
+    if (code) code.textContent = value;
+    if (wrap) wrap.hidden = true;
+  }
+
   if (messagesEl) {
     messagesEl.addEventListener('click', (ev) => {
+      const revealed = ev.target.closest('.iclaw-secret-revealed');
+      if (revealed && messagesEl.contains(revealed)) {
+        ev.preventDefault();
+        const chip = revealed.closest('.iclaw-secret-chip');
+        if (chip) collapseSecretChip(chip);
+        return;
+      }
       const btn = ev.target.closest('.iclaw-secret-reveal');
       if (!btn || !messagesEl.contains(btn)) return;
       ev.preventDefault();
       const chip = btn.closest('.iclaw-secret-chip');
-      if (!chip) return;
+      if (!chip || chip.classList.contains('iclaw-secret-chip--revealed')) return;
       const sid = chip.getAttribute('data-secret-id');
       if (!sid || activeChatId == null) return;
       const wrap = chip.querySelector('.iclaw-secret-value');
       const code = wrap?.querySelector('.iclaw-secret-code');
       if (!wrap || !code) return;
-      const open = btn.getAttribute('aria-expanded') === 'true';
-      if (open) {
-        btn.setAttribute('aria-expanded', 'false');
-        wrap.hidden = true;
-        btn.classList.remove('iclaw-secret-reveal--open');
-        return;
-      }
       if (code.textContent) {
-        btn.setAttribute('aria-expanded', 'true');
-        wrap.hidden = false;
-        btn.classList.add('iclaw-secret-reveal--open');
+        revealSecretChip(chip, code.textContent);
         return;
       }
       void fetch('/chats/' + encodeURIComponent(activeChatId) + '/secrets/' + encodeURIComponent(sid) + '/value', {
@@ -2926,14 +2979,10 @@
           return res.json();
         })
         .then((data) => {
-          code.textContent = data && data.value != null ? String(data.value) : '';
-          btn.setAttribute('aria-expanded', 'true');
-          wrap.hidden = false;
-          btn.classList.add('iclaw-secret-reveal--open');
+          revealSecretChip(chip, data && data.value != null ? String(data.value) : '');
         })
         .catch(() => {
-          code.textContent = '(не вдалося завантажити)';
-          wrap.hidden = false;
+          revealSecretChip(chip, '(не вдалося завантажити)');
         });
     });
   }
