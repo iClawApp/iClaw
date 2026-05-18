@@ -2420,6 +2420,27 @@
     });
   }
 
+  /**
+   * Parse `data:[meta],payload` in O(n) time. Avoids `/…,(.*)$/.exec()` on
+   * multi‑MB screenshots — that pattern can blow the regex stack / RangeError
+   * in browsers when the payload is huge.
+   */
+  function splitDataUrlParts(dataUrl) {
+    const s = String(dataUrl || '');
+    if (!s.startsWith('data:')) {
+      return { mime: '', base64: s };
+    }
+    const comma = s.indexOf(',', 5);
+    if (comma === -1) {
+      return { mime: '', base64: '' };
+    }
+    const meta = s.slice(5, comma);
+    const base64 = s.slice(comma + 1);
+    const semi = meta.indexOf(';');
+    const mime = (semi === -1 ? meta : meta.slice(0, semi)).trim();
+    return { mime, base64 };
+  }
+
   async function addFilesToPending(files) {
     if (!files || files.length === 0) return;
     const accepted = [];
@@ -2434,9 +2455,9 @@
     for (const file of toRead) {
       try {
         const dataUrl = await readFileAsDataUrl(file);
-        const m = /^data:([^;,]+)?(?:;[^,]*)?,(.*)$/.exec(dataUrl);
-        const base64 = m ? m[2] : '';
-        const sniffedMime = m && m[1] ? m[1].trim() : '';
+        const parts = splitDataUrlParts(dataUrl);
+        const base64 = parts.base64;
+        const sniffedMime = parts.mime || '';
         pendingAttachments.push({
           id: 'att-' + ++attachmentSeq,
           file,
