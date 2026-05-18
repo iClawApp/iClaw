@@ -67,27 +67,7 @@ async function ensureSession(chatId: number): Promise<string> {
   return fresh.key;
 }
 
-/**
- * Detects "status-only" assistant rows that aren't real answers — short notes
- * the agent emits when its reply was routed via `tools.message.send` instead
- * of as freeform output (e.g. "Відповідь у чат відправив." / "Sent reply to
- * chat."). When canonicalAssistantText hits one of these, it keeps walking
- * back to find the substantive row that lives one step earlier in history.
- *
- * The match is intentionally narrow: short string + recognised verb + no
- * content after the trailing period. A real answer that happens to start
- * with one of these verbs won't match because it'll be too long or have
- * follow-on prose.
- */
-const STATUS_ONLY_RE =
-  /^(?:Надіслав(?:ши)?|Відправ(?:ив|лено)|Відповідь[^\n]*?(?:відправ|надісла)\w*|I sent|I've sent|Sent|Posted|Reply\s+sent|Отправил(?:а)?|Послал(?:а)?)[^.\n]{0,120}\.?\s*$/iu;
-
-function isStatusOnlyText(text: string): boolean {
-  const trimmed = text.trim();
-  if (trimmed.length === 0 || trimmed.length > 120) return false;
-  return STATUS_ONLY_RE.test(trimmed);
-}
-
+/** Flat-text extraction from an assistant row's `content` (string or parts). */
 function extractAssistantText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
@@ -101,60 +81,79 @@ function extractAssistantText(content: unknown): string {
 }
 
 /**
- * Walk a fetched history backwards (within the current turn — stop at the
- * previous user row) and pick the most substantive assistant text. Status
- * notes ("Відповідь у чат відправив.") are recorded as a fallback but
- * skipped in favour of any real answer found further back in the same turn.
- *
- * Returns `null` when the only thing in the turn is a status note (caller
- * uses this signal to decide whether to retry the history fetch).
+ * When the agent routes its reply via `tools.message.send`, OpenClaw returns
+ * the real user-facing answer **inside the toolResult's JSON content** as
+ * `sourceReply.text` — see the `message` tool's protocol in OpenClaw. That
+ * field is available as soon as the tool finishes, no projection race, no
+ * status-note guessing. This extracts it from the row before the assistant's
+ * freeform status note ("Відповідь у чат відправив.") even lands.
  */
-function pickAssistantText(history: HistoryMessage[]): {
-  text: string;
-  isStatusOnly: boolean;
-} {
-  let statusFallback = '';
-  for (let i = history.length - 1; i >= 0; i--) {
-    const row = history[i];
-    if (row.role === 'user') break;
-    if (row.role !== 'assistant') continue;
-    const text = extractAssistantText(row.content);
-    if (text.trim().length === 0) continue;
-    if (isStatusOnlyText(text)) {
-      if (!statusFallback) statusFallback = text;
-      continue;
+function extractSourceReplyFromMessageToolResult(row: HistoryMessage): string | null {
+  const isMessageTool =
+    row.role === 'toolResult' && (row as { toolName?: string }).toolName === 'message';
+  if (!isMessageTool) return null;
+  const content = row.content;
+  if (!Array.isArray(content)) return null;
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue;
+    const p = part as { type?: string; content?: unknown; text?: unknown };
+    if (p.type !== 'toolResult') continue;
+    // The tool returns its payload as a JSON string under `content` (and a
+    // duplicated `text`). Parse and pull out `sourceReply.text`.
+    const raw = typeof p.content === 'string' ? p.content : typeof p.text === 'string' ? p.text : '';
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw) as {
+        sourceReply?: { text?: unknown };
+        message?: unknown;
+      };
+      const sourceReplyText = parsed?.sourceReply?.text;
+      if (typeof sourceReplyText === 'string' && sourceReplyText.trim().length > 0) {
+        return sourceReplyText;
+      }
+      // Some configurations put the user-facing text under `message`. Use it
+      // only when no sourceReply was emitted.
+      if (typeof parsed?.message === 'string' && parsed.message.trim().length > 0) {
+        return parsed.message;
+      }
+    } catch {
+      // Not JSON — fall through.
     }
-    return { text, isStatusOnly: false };
   }
-  return { text: statusFallback, isStatusOnly: statusFallback.length > 0 };
+  return null;
 }
 
 /**
- * Public entry: fetch canonical assistant text for a session, retrying briefly
- * if the only thing we see is a status note.
+ * Walk the canonical transcript backwards (within the current turn — stop at
+ * the previous user row) and return the user-facing assistant reply.
  *
- * Why retry: `runTurn` resolves on `chat:state=final`, but agents that route
- * their reply through `tools.message.send` project the actual answer to the
- * transcript as a SEPARATE assistant row, and that projection sometimes lands
- * a few hundred milliseconds AFTER `chat:state=final`. Without retry we'd
- * persist just the freeform status note ("Відповідь у чат відправив.") and
- * the real answer would never reach the iClaw chat.
+ * Strategy, in order of preference:
  *
- * Retry schedule (cumulative): 150ms, 400ms, 900ms — about 1.5s total wait
- * in the worst case. We stop as soon as we see substantive content, OR after
- * the last retry (returning whatever status note we have as a last resort).
+ *   1. If the agent used `tools.message.send` this turn, read the reply text
+ *      straight out of the `message` toolResult's `sourceReply.text`. This is
+ *      the authoritative payload the tool sent to the channel — no race with
+ *      the projection that the gateway separately appends as an assistant
+ *      row, no guessing whether a short freeform string is a status note.
+ *
+ *   2. Otherwise (no message-tool call in this turn), take the most recent
+ *      assistant text row. That's the normal freeform-output path.
+ *
+ * Returns '' when no usable content was found in the last `limit` rows.
  */
 async function canonicalAssistantText(sessionKey: string, limit = 20): Promise<string> {
-  const delays = [0, 150, 250, 500];
-  let lastFallback = '';
-  for (const wait of delays) {
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    const history = await openclawWs.getHistory(sessionKey, limit);
-    const picked = pickAssistantText(history);
-    if (!picked.isStatusOnly && picked.text) return picked.text;
-    if (picked.text) lastFallback = picked.text;
+  const history = await openclawWs.getHistory(sessionKey, limit);
+  let assistantFallback = '';
+  for (let i = history.length - 1; i >= 0; i--) {
+    const row = history[i];
+    if (row.role === 'user') break;
+    const sourceReply = extractSourceReplyFromMessageToolResult(row);
+    if (sourceReply) return sourceReply;
+    if (row.role === 'assistant') {
+      const text = extractAssistantText(row.content);
+      if (text.trim().length > 0 && !assistantFallback) assistantFallback = text;
+    }
   }
-  return lastFallback;
+  return assistantFallback;
 }
 
 /**
