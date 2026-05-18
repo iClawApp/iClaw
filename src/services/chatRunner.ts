@@ -306,11 +306,6 @@ async function runTurnLocked(opts: {
   let storedUserContent = content;
   let newSecretIds: number[] = [];
   if (/\[\[iclaw:s\d+\]\]/.test(content)) {
-    if (projectId == null) {
-      throw new Error(
-        'To save secrets in a project, attach this chat to a project (or start the chat in a project).',
-      );
-    }
     const resolved = resolveInlineSecretMarkersInContent({
       content,
       inlineSecrets,
@@ -334,11 +329,12 @@ async function runTurnLocked(opts: {
   const gatewayAttachments = processed.map((p) => p.forGateway);
 
   const reply = parseReplyForChat(chatId, replyTo);
-  let gatewayBody = expandStoredSecretPlaceholdersForGateway(storedUserContent, projectId);
+  const chatScope = { id: chatId, project_id: projectId };
+  let gatewayBody = expandStoredSecretPlaceholdersForGateway(storedUserContent, chatScope);
   if (reply) {
     const expandedParent = expandStoredSecretPlaceholdersForGateway(
       reply.ref.content,
-      projectId,
+      chatScope,
     );
     const refExpanded: Message = { ...reply.ref, content: expandedParent };
     gatewayBody = formatReplyGatewayBlock(refExpanded, reply.quote) + gatewayBody;

@@ -148,7 +148,7 @@ projectsRouter.post('/:id/secrets/:secretId/use-in-chat', (req, res) => {
     return;
   }
   try {
-    const row = projectSecrets.resolveForChat(projectId, secretId);
+    const row = projectSecrets.resolveForChat({ chatId: null, projectId }, secretId);
     res.json({
       id: row.id,
       label: row.label,

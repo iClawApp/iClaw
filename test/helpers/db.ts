@@ -13,6 +13,7 @@ export function resetTestDb(): void {
   db.exec(`
     DELETE FROM project_fact_suggestions;
     DELETE FROM project_facts;
+    DELETE FROM project_secrets;
     DELETE FROM scheduled_messages;
     DELETE FROM messages;
     DELETE FROM chats;

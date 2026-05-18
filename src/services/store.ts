@@ -445,6 +445,69 @@ export const projectFactSuggestions = {
 
 // ---------- project secrets (tokens / API keys; placeholders in messages) ----------
 
+export type SecretPickerRow = Omit<ProjectSecret, 'value'> & {
+  value_length: number;
+  project_name: string | null;
+  chat_title: string | null;
+};
+
+type PickerSqlRow = SecretPickerRow & { value: string };
+
+function stripValueFromPickerRow(row: PickerSqlRow): SecretPickerRow {
+  const { value: _v, ...meta } = row;
+  return meta;
+}
+
+export type SecretPickerSection = {
+  label: string;
+  items: SecretPickerRow[];
+};
+
+export type SecretPickerList = {
+  sections: SecretPickerSection[];
+};
+
+const PICKER_SELECT = `
+  ps.id, ps.project_id, ps.label, ps.source_chat_id, ps.source_message_id,
+  ps.created_at, LENGTH(ps.value) AS value_length, ps.value AS value,
+  p.name AS project_name, c.title AS chat_title`;
+
+const PICKER_JOINS = `
+  FROM project_secrets ps
+  LEFT JOIN projects p ON p.id = ps.project_id
+  LEFT JOIN chats c ON c.id = ps.source_chat_id`;
+
+function pickerSections(
+  ...parts: { label: string; rows: PickerSqlRow[] }[]
+): SecretPickerList {
+  const seen = new Set<string>();
+  const sections: SecretPickerSection[] = [];
+  for (const { label, rows } of parts) {
+    const items: SecretPickerRow[] = [];
+    for (const row of rows) {
+      if (seen.has(row.value)) continue;
+      seen.add(row.value);
+      items.push(stripValueFromPickerRow(row));
+    }
+    if (items.length > 0) sections.push({ label, items });
+  }
+  return { sections };
+}
+
+/** Whether a stored secret may be revealed / expanded for this chat. */
+export function secretUsableInChat(
+  secret: ProjectSecret,
+  chat: { id: number; project_id: number | null },
+): boolean {
+  if (chat.project_id != null) return secret.project_id === chat.project_id;
+  return secret.project_id == null && secret.source_chat_id === chat.id;
+}
+
+export type SecretChatScope = {
+  chatId: number | null;
+  projectId: number | null;
+};
+
 export const projectSecrets = {
   listMetaByProject(
     projectId: number,
@@ -463,7 +526,7 @@ export const projectSecrets = {
       | undefined;
   },
   insert(opts: {
-    projectId: number;
+    projectId: number | null;
     label: string;
     value: string;
     sourceChatId: number | null;
@@ -488,7 +551,7 @@ export const projectSecrets = {
         opts.sourceChatId ?? null,
         opts.sourceMessageId ?? null,
       );
-    projects.touch(opts.projectId);
+    if (opts.projectId != null) projects.touch(opts.projectId);
     return this.get(Number(info.lastInsertRowid))!;
   },
   setSourceMessage(secretId: number, messageId: number): void {
@@ -496,73 +559,131 @@ export const projectSecrets = {
       'UPDATE project_secrets SET source_message_id = ? WHERE id = ? AND source_message_id IS NULL',
     ).run(messageId, secretId);
   },
-  remove(id: number, projectId: number): boolean {
-    const row = this.get(id);
-    if (!row || row.project_id !== projectId) return false;
-    db.prepare('DELETE FROM project_secrets WHERE id = ?').run(id);
-    projects.touch(projectId);
-    return true;
-  },
   findByValueInProject(projectId: number, value: string): ProjectSecret | undefined {
     return db
       .prepare('SELECT * FROM project_secrets WHERE project_id = ? AND value = ? LIMIT 1')
       .get(projectId, value) as ProjectSecret | undefined;
   },
-  /** Secrets for composer attach menu: current project, then others deduped by value. */
-  listForComposerPicker(projectId: number): {
-    current: (Omit<ProjectSecret, 'value'> & { value_length: number })[];
-    other: (Omit<ProjectSecret, 'value'> & {
-      value_length: number;
-      project_name: string;
-    })[];
-  } {
-    const current = this.listMetaByProject(projectId);
-    const seenValues = new Set<string>();
-    for (const m of current) {
-      const row = this.get(m.id);
-      if (row) seenValues.add(row.value);
-    }
-    const otherRows = db
+  findByValueOrphanInChat(chatId: number, value: string): ProjectSecret | undefined {
+    return db
       .prepare(
-        `SELECT ps.id, ps.project_id, ps.label, ps.source_chat_id, ps.source_message_id,
-                ps.created_at, LENGTH(ps.value) AS value_length, p.name AS project_name
-         FROM project_secrets ps
-         INNER JOIN projects p ON p.id = ps.project_id
-         WHERE ps.project_id != ?
+        'SELECT * FROM project_secrets WHERE project_id IS NULL AND source_chat_id = ? AND value = ? LIMIT 1',
+      )
+      .get(chatId, value) as ProjectSecret | undefined;
+  },
+  listForComposerPicker(projectId: number): SecretPickerList {
+    const projectRows = db
+      .prepare(
+        `SELECT ${PICKER_SELECT}
+         ${PICKER_JOINS}
+         WHERE ps.project_id = ?
          ORDER BY ps.created_at DESC, ps.id DESC`,
       )
-      .all(projectId) as (Omit<ProjectSecret, 'value'> & {
-      value_length: number;
-      project_name: string;
-      value: string;
-    })[];
-    const other: (Omit<ProjectSecret, 'value'> & {
-      value_length: number;
-      project_name: string;
-    })[] = [];
-    for (const row of otherRows) {
-      if (seenValues.has(row.value)) continue;
-      seenValues.add(row.value);
-      const { value: _v, ...meta } = row;
-      other.push(meta);
-    }
-    return { current, other };
+      .all(projectId) as PickerSqlRow[];
+    const otherRows = db
+      .prepare(
+        `SELECT ${PICKER_SELECT}
+         ${PICKER_JOINS}
+         WHERE ps.project_id IS NOT NULL AND ps.project_id != ?
+         ORDER BY ps.created_at DESC, ps.id DESC`,
+      )
+      .all(projectId) as PickerSqlRow[];
+    return pickerSections(
+      { label: 'This project', rows: projectRows },
+      { label: 'Other', rows: otherRows },
+    );
   },
-  /**
-   * Use an existing secret in the current project's chat: same row if already
-   * in project, otherwise reuse by value or copy from another project.
-   */
-  resolveForChat(projectId: number, secretId: number): ProjectSecret {
+  listForComposerPickerInProjectChat(
+    chatId: number,
+    projectId: number,
+  ): SecretPickerList {
+    const thisChatRows = db
+      .prepare(
+        `SELECT ${PICKER_SELECT}
+         ${PICKER_JOINS}
+         WHERE ps.source_chat_id = ? AND ps.project_id = ?
+         ORDER BY ps.created_at DESC, ps.id DESC`,
+      )
+      .all(chatId, projectId) as PickerSqlRow[];
+    const thisProjectRows = db
+      .prepare(
+        `SELECT ${PICKER_SELECT}
+         ${PICKER_JOINS}
+         WHERE ps.project_id = ?
+           AND (ps.source_chat_id IS NULL OR ps.source_chat_id != ?)
+         ORDER BY ps.created_at DESC, ps.id DESC`,
+      )
+      .all(projectId, chatId) as PickerSqlRow[];
+    const otherRows = db
+      .prepare(
+        `SELECT ${PICKER_SELECT}
+         ${PICKER_JOINS}
+         WHERE (ps.project_id IS NOT NULL AND ps.project_id != ?)
+            OR (ps.project_id IS NULL
+                AND (ps.source_chat_id IS NULL OR ps.source_chat_id != ?))
+         ORDER BY ps.created_at DESC, ps.id DESC`,
+      )
+      .all(projectId, chatId) as PickerSqlRow[];
+    return pickerSections(
+      { label: 'This chat', rows: thisChatRows },
+      { label: 'This project', rows: thisProjectRows },
+      { label: 'Other', rows: otherRows },
+    );
+  },
+  listForComposerPickerChat(chatId: number): SecretPickerList {
+    const thisChatRows = db
+      .prepare(
+        `SELECT ${PICKER_SELECT}
+         ${PICKER_JOINS}
+         WHERE ps.project_id IS NULL AND ps.source_chat_id = ?
+         ORDER BY ps.created_at DESC, ps.id DESC`,
+      )
+      .all(chatId) as PickerSqlRow[];
+    const otherRows = db
+      .prepare(
+        `SELECT ${PICKER_SELECT}
+         ${PICKER_JOINS}
+         WHERE (ps.project_id IS NULL AND (ps.source_chat_id IS NULL OR ps.source_chat_id != ?))
+            OR ps.project_id IS NOT NULL
+         ORDER BY ps.created_at DESC, ps.id DESC`,
+      )
+      .all(chatId) as PickerSqlRow[];
+    return pickerSections(
+      { label: 'This chat', rows: thisChatRows },
+      { label: '', rows: otherRows },
+    );
+  },
+  listForComposerPickerForChat(chat: { id: number; project_id: number | null }): SecretPickerList {
+    if (chat.project_id != null) {
+      return this.listForComposerPickerInProjectChat(chat.id, chat.project_id);
+    }
+    return this.listForComposerPickerChat(chat.id);
+  },
+  resolveForChat(scope: SecretChatScope, secretId: number): ProjectSecret {
     const src = this.get(secretId);
     if (!src) throw new Error('secret not found');
-    if (src.project_id === projectId) return src;
-    const sameValue = this.findByValueInProject(projectId, src.value);
+    if (scope.projectId != null) {
+      if (src.project_id === scope.projectId) return src;
+      const sameValue = this.findByValueInProject(scope.projectId, src.value);
+      if (sameValue) return sameValue;
+      return this.insert({
+        projectId: scope.projectId,
+        label: src.label,
+        value: src.value,
+        sourceChatId: scope.chatId,
+        sourceMessageId: null,
+      });
+    }
+    if (scope.chatId == null) throw new Error('chat required');
+    const chat = { id: scope.chatId, project_id: null as number | null };
+    if (secretUsableInChat(src, chat)) return src;
+    const sameValue = this.findByValueOrphanInChat(scope.chatId, src.value);
     if (sameValue) return sameValue;
     return this.insert({
-      projectId,
+      projectId: null,
       label: src.label,
       value: src.value,
-      sourceChatId: null,
+      sourceChatId: scope.chatId,
       sourceMessageId: null,
     });
   },
