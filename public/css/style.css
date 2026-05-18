@@ -3674,6 +3674,7 @@ code {
   margin: 0 0 var(--space-8);
   font-size: var(--text-sm);
   line-height: 1.5;
+  color: var(--muted);
 }
 .share-modal-help code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -3683,12 +3684,35 @@ code {
   border-radius: var(--radius-xs);
 }
 
-.share-form { display: flex; flex-direction: column; gap: var(--space-6); }
-.share-field { display: flex; align-items: center; gap: var(--space-4); }
+.share-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text);
+}
+.share-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: inherit;
+  color: inherit;
+}
 .share-field-label {
   flex: 0 0 100px;
-  font-size: var(--text-sm);
   color: var(--muted);
+}
+.share-field input[type='checkbox'] {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: color-mix(in srgb, var(--text) 55%, var(--border));
+  cursor: pointer;
 }
 .share-field select,
 .share-pw-wrap input {
@@ -3699,6 +3723,31 @@ code {
   background: var(--bg);
   color: var(--text);
   font: inherit;
+  outline: none;
+}
+.share-field select {
+  cursor: pointer;
+}
+/* Native select paints a blue focus/selection ring — keep it visually idle. */
+.share-field select:hover,
+.share-field select:focus,
+.share-field select:focus-visible,
+.share-field select:active {
+  outline: none;
+  box-shadow: none;
+  border-color: var(--border);
+}
+.share-field select::-webkit-focus-ring {
+  outline: none;
+}
+.share-field select option:checked {
+  background: var(--bg);
+  color: var(--text);
+}
+.share-pw-wrap input:focus,
+.share-pw-wrap input:focus-visible {
+  border-color: color-mix(in srgb, var(--text) 18%, var(--border));
+  box-shadow: var(--focus-ring);
 }
 .share-pw-wrap { padding-left: 100px; }
 .share-pw-wrap[hidden] { display: none !important; }
@@ -3706,8 +3755,15 @@ code {
 .share-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: var(--space-4);
   margin-top: var(--space-7);
+}
+.share-actions--split {
+  justify-content: space-between;
+}
+.share-actions [hidden] {
+  display: none !important;
 }
 
 .share-error {
@@ -3749,15 +3805,109 @@ code {
 }
 .share-pw-reminder[hidden] { display: none !important; }
 
+/* ---------- Share wizard (step 1 options → step 2 secrets) ---------- */
+
+.share-step-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.share-step-panel[hidden] { display: none !important; }
+
+/* Same tone as .share-modal-help on step 1 */
+.share-secrets-hint {
+  margin: 0;
+  font-size: inherit;
+  line-height: inherit;
+  color: var(--muted);
+}
+
+.share-secrets-list {
+  list-style: none;
+  margin: var(--space-4) 0 var(--space-5);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.share-secret-row { display: block; }
+.share-secret-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  cursor: pointer;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+.share-secret-check {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: color-mix(in srgb, var(--text) 55%, var(--border));
+  cursor: pointer;
+}
+.share-secret-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Example preview — mini user bubbles like the live chat thread. */
+.share-secrets-example {
+  margin: var(--space-5) 0 0;
+  padding: var(--space-5) var(--space-6);
+  background: color-mix(in srgb, var(--text) 3%, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.share-secrets-example-label {
+  font-size: inherit;
+  color: var(--muted);
+}
+.share-secrets-example-thread {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+.share-secrets-example-msg.msg.user {
+  align-self: flex-end;
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 10px 14px 12px;
+  font-size: inherit;
+  line-height: inherit;
+}
+.share-secrets-example-msg .msg-body {
+  display: inline;
+}
+
+.share-secrets-warning {
+  margin-top: var(--space-3);
+  color: var(--warn);
+  font-size: inherit;
+  line-height: inherit;
+}
+.share-secrets-warning[hidden] { display: none !important; }
+
 /* ---------- Reset-policy banner (daily auto-reset warning) ---------- */
 
 .reset-policy-banner {
-  position: relative;
   max-width: var(--thread-max-width);
   width: 100%;
   margin: var(--space-6) auto 0;
   padding: var(--space-6) var(--space-7);
-  padding-right: var(--space-9); /* leave room for × in the corner */
   background: var(--warn-soft-bg);
   border: 1px solid var(--warn-soft-border);
   border-radius: var(--radius-lg);
@@ -3804,32 +3954,6 @@ code {
   gap: var(--space-4);
   flex: 0 0 auto;
 }
-.reset-policy-banner-close {
-  position: absolute;
-  top: var(--space-3);
-  right: var(--space-4);
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  color: var(--muted);
-  border: none;
-  border-radius: var(--radius-circle);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.12s ease, background-color 0.12s ease;
-}
-.reset-policy-banner-close:hover {
-  opacity: 1;
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-  color: var(--text);
-}
-
 /* Manual-instruction view shown when admin scope is missing. */
 .reset-policy-manual {
   width: 100%;

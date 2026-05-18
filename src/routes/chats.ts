@@ -331,6 +331,64 @@ chatsRouter.get('/:id/secrets/:secretId/value', (req, res) => {
   res.type('application/json').json({ value: sec.value });
 });
 
+/**
+ * List secrets actually referenced from this chat's transcript. Used by the
+ * cloud-share modal so the user can pick which to include in plaintext.
+ * Each row carries metadata only — no values. Sorted by occurrence desc.
+ */
+chatsRouter.get('/:id/secrets/in-chat', (req, res) => {
+  const chatId = Number(req.params.id);
+  const chat = chats.get(chatId);
+  if (!chat) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  // Walk the transcript once, tally placeholders by secret id.
+  const occurrences = new Map<number, number>();
+  const PH = /\[\[iclaw:secret:(\d+)\|/g;
+  const rows = messages.listByChat(chatId);
+  for (const m of rows) {
+    if (typeof m.content !== 'string') continue;
+    PH.lastIndex = 0;
+    let match;
+    while ((match = PH.exec(m.content)) !== null) {
+      const id = Number(match[1]);
+      if (!Number.isFinite(id)) continue;
+      occurrences.set(id, (occurrences.get(id) ?? 0) + 1);
+    }
+    if (typeof m.reply_quote === 'string') {
+      PH.lastIndex = 0;
+      while ((match = PH.exec(m.reply_quote)) !== null) {
+        const id = Number(match[1]);
+        if (!Number.isFinite(id)) continue;
+        occurrences.set(id, (occurrences.get(id) ?? 0) + 1);
+      }
+    }
+  }
+  // Hydrate label + length for each referenced id. Cross-project references
+  // (a placeholder that points at a secret from a different project — should
+  // not happen but guard anyway) are excluded.
+  const result: Array<{
+    id: number;
+    label: string;
+    length: number;
+    occurrences: number;
+  }> = [];
+  for (const [id, count] of occurrences) {
+    const sec = projectSecrets.get(id);
+    if (!sec) continue;
+    if (chat.project_id == null || sec.project_id !== chat.project_id) continue;
+    result.push({
+      id: sec.id,
+      label: sec.label,
+      length: sec.value.length,
+      occurrences: count,
+    });
+  }
+  result.sort((a, b) => b.occurrences - a.occurrences || a.label.localeCompare(b.label));
+  res.json({ secrets: result });
+});
+
 // ---------- scheduled messages (Telegram-style "send later") ----------
 
 /** List everything still pending for this chat. Used to hydrate the banner. */
