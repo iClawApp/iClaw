@@ -8,6 +8,7 @@ import type {
   Project,
   ProjectFact,
   ProjectFactSuggestion,
+  ProjectSecret,
   ScheduledMessage,
 } from '../types';
 import { clampLogoColor, clampLogoEmoji } from '../constants/projectLogos';
@@ -439,6 +440,62 @@ export const projectFactSuggestions = {
   },
   remove(id: number): void {
     db.prepare('DELETE FROM project_fact_suggestions WHERE id = ?').run(id);
+  },
+};
+
+// ---------- project secrets (tokens / API keys; placeholders in messages) ----------
+
+export const projectSecrets = {
+  listMetaByProject(projectId: number): Omit<ProjectSecret, 'value'>[] {
+    return db
+      .prepare(
+        'SELECT id, project_id, label, source_chat_id, source_message_id, created_at FROM project_secrets WHERE project_id = ? ORDER BY created_at DESC, id DESC',
+      )
+      .all(projectId) as Omit<ProjectSecret, 'value'>[];
+  },
+  get(id: number): ProjectSecret | undefined {
+    return db.prepare('SELECT * FROM project_secrets WHERE id = ?').get(id) as
+      | ProjectSecret
+      | undefined;
+  },
+  insert(opts: {
+    projectId: number;
+    label: string;
+    value: string;
+    sourceChatId: number | null;
+    sourceMessageId: number | null;
+  }): ProjectSecret {
+    const label = opts.label.trim();
+    if (!label) throw new Error('secret label required');
+    const value = String(opts.value ?? '');
+    if (!value) throw new Error('secret value required');
+    if (value.length > 32768) throw new Error('secret too long');
+    const info = db
+      .prepare(
+        `INSERT INTO project_secrets (project_id, label, value, source_chat_id, source_message_id)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        opts.projectId,
+        label,
+        value,
+        opts.sourceChatId ?? null,
+        opts.sourceMessageId ?? null,
+      );
+    projects.touch(opts.projectId);
+    return this.get(Number(info.lastInsertRowid))!;
+  },
+  setSourceMessage(secretId: number, messageId: number): void {
+    db.prepare(
+      'UPDATE project_secrets SET source_message_id = ? WHERE id = ? AND source_message_id IS NULL',
+    ).run(messageId, secretId);
+  },
+  remove(id: number, projectId: number): boolean {
+    const row = this.get(id);
+    if (!row || row.project_id !== projectId) return false;
+    db.prepare('DELETE FROM project_secrets WHERE id = ?').run(id);
+    projects.touch(projectId);
+    return true;
   },
 };
 

@@ -138,6 +138,18 @@
             data-tab-base="Файли"
             data-tab-count="<%= projectFileLinks.length %>"
           >Файли</button>
+          <button
+            type="button"
+            class="project-tab"
+            role="tab"
+            id="project-tab-secrets"
+            aria-controls="project-panel-secrets"
+            aria-selected="false"
+            tabindex="-1"
+            data-project-tab="secrets"
+            data-tab-base="Секрети"
+            data-tab-count="<%= (projectSecrets || []).length %>"
+          >Секрети</button>
         </nav>
 
         <div
@@ -272,6 +284,36 @@
                 <% }); %>
               </ul>
             <% } %>
+          </div>
+        </div>
+
+        <div
+          id="project-panel-secrets"
+          class="project-panel"
+          role="tabpanel"
+          aria-labelledby="project-tab-secrets"
+          hidden
+        >
+          <div class="project-sheet project-sheet--flush project-sheet--stacked">
+            <ul id="secrets-list" class="project-chats">
+              <% (projectSecrets || []).forEach(function (s) { %>
+                <li class="project-secret-row" data-secret-id="<%= s.id %>">
+                  <div class="project-chat-link project-chat-link--stacked">
+                    <span class="project-chat-title"><%= s.label %></span>
+                    <div class="project-secret-actions">
+                      <button
+                        type="button"
+                        class="project-secret-delete btn btn--ghost btn--sm"
+                        aria-label="Видалити секрет"
+                      >Видалити</button>
+                    </div>
+                  </div>
+                </li>
+              <% }); %>
+              <% if (!(projectSecrets || []).length) { %>
+                <li class="project-chats-empty muted">Поки немає збережених секретів. У чаті проєкту: «Секрет з виділення» або підказка про токен.</li>
+              <% } %>
+            </ul>
           </div>
         </div>
       </div>

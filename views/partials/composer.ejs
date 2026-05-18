@@ -74,12 +74,26 @@
         <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l8.57-8.57A4 4 0 1117.95 8.83l-8.59 8.57a2 2 0 01-2.83-2.83l8.49-8.49"/>
       </svg>
     </button>
-    <textarea
-      id="composer-input"
-      name="content"
-      placeholder="Message…"
-      rows="1"
-    ></textarea>
+    <div class="composer-input-stack">
+      <textarea
+        id="composer-input"
+        name="content"
+        placeholder="Message…"
+        rows="1"
+      ></textarea>
+      <div class="composer-secret-ui" id="composer-secret-ui" hidden>
+        <div class="composer-secret-rows">
+          <div class="composer-secret-row" id="composer-token-hint" hidden>
+            <span class="composer-secret-caption" id="composer-token-hint-text"></span>
+            <button type="button" class="composer-secret-link" id="composer-token-save-btn">Зберегти</button>
+          </div>
+          <div class="composer-secret-row" id="composer-selection-hint" hidden>
+            <span class="composer-secret-caption">Виділення в повідомленні</span>
+            <button type="button" class="composer-secret-link" id="composer-mark-secret-btn">Зберегти</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <button
       type="submit"
       class="composer-send"
@@ -111,6 +125,36 @@
         <input type="datetime-local" id="schedule-custom-input" class="schedule-custom-input" />
         <button type="button" class="schedule-custom-confirm" id="schedule-custom-confirm">OK</button>
       </label>
+    </div>
+  </div>
+  <div class="composer-secret-modal" id="composer-secret-modal" hidden>
+    <div class="composer-secret-modal__backdrop" id="composer-secret-modal-backdrop"></div>
+    <div class="composer-secret-modal__panel" role="dialog" aria-modal="true" aria-labelledby="composer-secret-modal-title">
+      <header class="composer-secret-modal__head">
+        <h3 class="composer-secret-modal__title" id="composer-secret-modal-title">Назва секрету</h3>
+        <p class="composer-secret-modal__hint muted">Буде у списку «Секрети» на сторінці проєкту.</p>
+      </header>
+      <label class="composer-secret-modal__field composer-secret-modal__field--name">
+        <span class="composer-secret-modal__caption">Назва</span>
+        <input
+          type="text"
+          id="composer-secret-label-input"
+          autocomplete="off"
+          maxlength="160"
+          placeholder="Наприклад, ключ OpenAI"
+        />
+      </label>
+      <div
+        class="composer-secret-modal__field composer-secret-modal__field--token"
+        role="group"
+        aria-labelledby="composer-secret-token-label"
+      >
+        <span class="composer-secret-modal__caption" id="composer-secret-token-label">Токен</span>
+        <code class="composer-secret-modal__token-mask" id="composer-secret-value-preview"></code>
+      </div>
+      <div class="composer-secret-modal__actions">
+        <button type="button" class="btn btn--primary btn--sm" id="composer-secret-ok">Готово</button>
+      </div>
     </div>
   </div>
 </form>

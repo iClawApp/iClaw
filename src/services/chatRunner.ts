@@ -7,7 +7,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { chats, messages, projects } from './store';
+import { chats, messages, projects, projectSecrets } from './store';
 import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
 import { chatStatus } from './chatStatus';
 import { openclawWs, type TurnEvent, type HistoryMessage } from './openclawWs';
@@ -20,6 +20,12 @@ import {
   type ProcessedAttachment,
 } from './uploads';
 import type { Message } from '../types';
+import {
+  expandStoredSecretPlaceholdersForGateway,
+  resolveInlineSecretMarkersInContent,
+  stripSecretMarkersForTitle,
+  type InlineSecretWire,
+} from './inlineSecrets';
 
 const DEFAULT_AGENT = 'openclaw/default';
 
@@ -290,10 +296,32 @@ async function runTurnLocked(opts: {
   isFirstTurn: boolean;
   replyTo?: unknown;
   incomingAttachments?: IncomingAttachment[];
+  inlineSecrets?: InlineSecretWire[];
 }): Promise<void> {
-  const { chatId, content, isFirstTurn, replyTo, incomingAttachments } = opts;
+  const { chatId, content, isFirstTurn, replyTo, incomingAttachments, inlineSecrets } = opts;
   const chat = chats.get(chatId)!;
   const sessionKey = await ensureSession(chatId);
+  const projectId = chat.project_id ?? null;
+
+  let storedUserContent = content;
+  let newSecretIds: number[] = [];
+  if (/\[\[iclaw:s\d+\]\]/.test(content)) {
+    if (projectId == null) {
+      throw new Error(
+        'Щоб зберігати секрети в проєкті, прив’яжіть чат до проєкту (або створіть чат уже в проєкті).',
+      );
+    }
+    const resolved = resolveInlineSecretMarkersInContent({
+      content,
+      inlineSecrets,
+      projectId,
+      sourceChatId: chatId,
+    });
+    storedUserContent = resolved.storedContent;
+    newSecretIds = resolved.newSecretIds;
+  } else if (inlineSecrets && inlineSecrets.length > 0) {
+    throw new Error('Поле inlineSecrets передано без маркерів [[iclaw:sN]] у тексті.');
+  }
 
   // Decode + persist attachments BEFORE the user-msg row so the row carries
   // the file URLs in the same broadcast. Validation errors throw and bubble up
@@ -306,9 +334,14 @@ async function runTurnLocked(opts: {
   const gatewayAttachments = processed.map((p) => p.forGateway);
 
   const reply = parseReplyForChat(chatId, replyTo);
-  let gatewayBody = content;
+  let gatewayBody = expandStoredSecretPlaceholdersForGateway(storedUserContent, projectId);
   if (reply) {
-    gatewayBody = formatReplyGatewayBlock(reply.ref, reply.quote) + content;
+    const expandedParent = expandStoredSecretPlaceholdersForGateway(
+      reply.ref.content,
+      projectId,
+    );
+    const refExpanded: Message = { ...reply.ref, content: expandedParent };
+    gatewayBody = formatReplyGatewayBlock(refExpanded, reply.quote) + gatewayBody;
   }
 
   const gatewayMessage =
@@ -316,14 +349,13 @@ async function runTurnLocked(opts: {
       ? buildGatewayUserMessage(gatewayBody, chat.project_id)
       : gatewayBody;
 
-  // Persist user message + broadcast (stored text is the literal user input —
-  // project context is only prepended for the gateway).
+  // Persist user message + broadcast (stored text keeps placeholders only).
   const replyToRole =
     reply && (reply.ref.role === 'user' || reply.ref.role === 'assistant') ? reply.ref.role : null;
   const userMsg = messages.append(
     chatId,
     'user',
-    content,
+    storedUserContent,
     null,
     reply && replyToRole
       ? {
@@ -334,6 +366,17 @@ async function runTurnLocked(opts: {
       : null,
     persistedAttachments.length > 0 ? persistedAttachments : null,
   );
+  for (const sid of newSecretIds) {
+    projectSecrets.setSourceMessage(sid, userMsg.id);
+    const row = projectSecrets.get(sid);
+    if (row) {
+      wsHub.broadcastAll({
+        type: 'project-secret-added',
+        projectId: row.project_id,
+        secret: { id: row.id, label: row.label, created_at: row.created_at },
+      });
+    }
+  }
   wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: userMsg });
 
   // `messages.append` bumped `chats.updated_at`. Tell every tab so the sidebar
@@ -349,7 +392,7 @@ async function runTurnLocked(opts: {
 
   // Title sub-request, in background, on first turn only.
   const titleTask: Promise<void> = isFirstTurn
-    ? suggestChatTitleWithTimeout({ model: chat.agent, userMessage: content })
+    ? suggestChatTitleWithTimeout({ model: chat.agent, userMessage: storedUserContent })
         .then((suggested) => {
           if (!suggested) return;
           if (!chats.trySetAutoTitle(chatId, suggested)) return;
@@ -501,7 +544,7 @@ async function runTurnLocked(opts: {
       chatId,
       projectId: chatAfter.project_id,
       sharesToProject: Boolean(chatAfter.shares_to_project),
-      userMessage: content,
+      userMessage: storedUserContent,
       assistantText: finalText,
       assistantMessageId: assistantMsg.id,
     });
@@ -538,6 +581,8 @@ export async function sendMessage(opts: {
   requestId?: string;
   /** Optional reply-to snippet (validated server-side). */
   replyTo?: unknown;
+  /** Optional inline secrets matching `[[iclaw:sN]]` in `content`. */
+  inlineSecrets?: InlineSecretWire[];
   /**
    * Optional socket to subscribe to the chat the moment it's resolved/created.
    * Without this the originating socket would miss events emitted before the
@@ -565,7 +610,7 @@ export async function sendMessage(opts: {
     chatId = chat.id;
     isFirstTurn = true;
     // Seed a placeholder title so the sidebar entry shows up immediately.
-    chats.trySetAutoTitle(chatId, deriveTitle(opts.content));
+    chats.trySetAutoTitle(chatId, deriveTitle(stripSecretMarkersForTitle(opts.content)));
     const created = chats.get(chatId)!;
     // Subscribe the originating socket BEFORE we emit chat-created or start
     // the turn — otherwise it would miss every event in this turn.
@@ -594,6 +639,7 @@ export async function sendMessage(opts: {
         isFirstTurn,
         replyTo: opts.replyTo,
         incomingAttachments: opts.incomingAttachments,
+        inlineSecrets: opts.inlineSecrets,
       }),
     );
   } catch (err) {

@@ -10,7 +10,7 @@
 
 import { Router } from 'express';
 import { listProjectLinkGroups } from '../services/projectLinks';
-import { chats, projects, projectFacts, enrichFactsWithSourceChatTitles, enrichFactWithSourceChatTitle } from '../services/store';
+import { chats, projects, projectFacts, projectSecrets, enrichFactsWithSourceChatTitles, enrichFactWithSourceChatTitle } from '../services/store';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
 
@@ -77,6 +77,7 @@ projectsRouter.get('/:id', (req, res) => {
     project,
     projectChats: chats.listByProject(id),
     facts: enrichFactsWithSourceChatTitles(projectFacts.listByProject(id)),
+    projectSecrets: projectSecrets.listMetaByProject(id),
     projectWebLinks: linkGroups.web,
     projectFileLinks: linkGroups.files,
     allProjects: projects.list(),
@@ -126,6 +127,22 @@ projectsRouter.patch('/:id', (req, res) => {
   const updated = projects.get(id)!;
   wsHub.broadcastAll({ type: 'project-updated', project: updated });
   res.json(updated);
+});
+
+projectsRouter.post('/:id/secrets/:secretId/delete', (req, res) => {
+  const projectId = Number(req.params.id);
+  const secretId = Number(req.params.secretId);
+  if (!projects.get(projectId)) {
+    res.status(404).json({ error: 'project not found' });
+    return;
+  }
+  if (!projectSecrets.remove(secretId, projectId)) {
+    res.status(404).json({ error: 'secret not found' });
+    return;
+  }
+  wsHub.broadcastAll({ type: 'project-secret-deleted', projectId, secretId });
+  if (wantsJson(req)) res.json({ id: secretId, deleted: true });
+  else res.redirect(`/projects/${projectId}`);
 });
 
 projectsRouter.post('/:id/delete', (req, res) => {

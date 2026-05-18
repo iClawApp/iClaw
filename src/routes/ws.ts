@@ -11,6 +11,7 @@ import { wsHub } from '../services/wsHub';
 import { sendMessage, abortChatRun } from '../services/chatRunner';
 import { openclawWs } from '../services/openclawWs';
 import type { ClientMsg, ServerMsg } from '../types/protocol';
+import type { InlineSecretWire } from '../services/inlineSecrets';
 
 const PATH = '/ws';
 
@@ -60,6 +61,23 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
         return;
       }
       try {
+        let inlineSecrets: InlineSecretWire[] | undefined;
+        if (Array.isArray((msg as { inlineSecrets?: unknown }).inlineSecrets)) {
+          const raw = (msg as { inlineSecrets: unknown[] }).inlineSecrets;
+          inlineSecrets = raw
+            .map((x): InlineSecretWire | null => {
+              if (!x || typeof x !== 'object') return null;
+              const o = x as Record<string, unknown>;
+              const slot = Number(o.slot);
+              if (!Number.isFinite(slot)) return null;
+              return {
+                slot,
+                label: String(o.label ?? ''),
+                plain: String(o.plain ?? ''),
+              };
+            })
+            .filter((x): x is InlineSecretWire => x != null);
+        }
         // chatRunner subscribes `socket` to the chat synchronously before
         // emitting any events, so we receive the entire turn here.
         await sendMessage({
@@ -71,6 +89,7 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
           subscriber: socket,
           replyTo: msg.replyTo,
           incomingAttachments: msg.attachments,
+          inlineSecrets,
         });
       } catch (err) {
         // Errors are already broadcast via chatRunner; nothing more to do.

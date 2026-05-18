@@ -1744,7 +1744,15 @@ code {
     0 0 0 3px color-mix(in srgb, var(--text) 8%, transparent);
 }
 
-.composer textarea {
+.composer-field .composer-input-stack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.composer-field .composer-input-stack textarea {
   flex: 1;
   min-width: 0;
   margin: 0;
@@ -1760,10 +1768,10 @@ code {
   max-height: 200px;
   field-sizing: content;
 }
-.composer textarea:focus {
+.composer-field .composer-input-stack textarea:focus {
   outline: none;
 }
-.composer textarea::placeholder {
+.composer-field .composer-input-stack textarea::placeholder {
   color: var(--muted);
   opacity: 0.5;
 }
@@ -1790,6 +1798,196 @@ code {
   opacity: 0.35;
   cursor: progress;
   transform: none;
+}
+
+.composer-secret-ui {
+  margin: 0;
+  padding: 6px 0 2px;
+  border-top: 0.5px solid color-mix(in srgb, var(--text) 10%, var(--border));
+}
+.composer-secret-ui[hidden] {
+  display: none !important;
+}
+.composer-secret-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.composer-secret-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 22px;
+}
+.composer-secret-row[hidden] {
+  display: none !important;
+}
+.composer-secret-caption {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.28;
+  letter-spacing: -0.01em;
+  color: color-mix(in srgb, var(--text) 52%, var(--muted));
+  flex: 1;
+  min-width: 0;
+}
+.composer-secret-link {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  margin: 0;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--md-link);
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.composer-secret-link:hover {
+  color: var(--md-link-hover);
+}
+.composer-secret-link:focus {
+  outline: none;
+}
+.composer-secret-link:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-link) 35%, transparent);
+}
+.composer-secret-link:active {
+  opacity: 0.72;
+}
+.composer-secret-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.composer-secret-modal[hidden] {
+  display: none !important;
+}
+.composer-secret-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+}
+.composer-secret-modal__panel {
+  position: relative;
+  width: min(380px, 100%);
+  padding: 1.5rem 1.375rem 1.2rem;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.14);
+}
+.composer-secret-modal__head {
+  margin-bottom: 0;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.composer-secret-modal__title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--fg);
+}
+.composer-secret-modal__hint {
+  margin: 0.45rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  max-width: 32rem;
+}
+.composer-secret-modal__caption {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+.composer-secret-modal__token-mask {
+  display: block;
+  margin: 0;
+  padding: 0.2rem 0 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  font-style: inherit;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  word-break: break-all;
+  line-height: 1.4;
+}
+.composer-secret-modal__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+.composer-secret-modal__field--name {
+  padding-top: 1rem;
+  padding-bottom: 0;
+}
+.composer-secret-modal__field--token {
+  padding-top: 1rem;
+  margin-bottom: 0.35rem;
+}
+.composer-secret-modal__field--name input {
+  padding: 0.15rem 0 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1.35;
+  color: inherit;
+}
+.composer-secret-modal__field--name input:focus,
+.composer-secret-modal__field--name input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.composer-secret-modal__field--name input::placeholder {
+  color: var(--muted);
+  opacity: 0.82;
+}
+.composer-secret-modal__actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.85rem;
+  padding-top: 0;
+}
+.iclaw-secret-chip {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin: 0 0.12rem;
+}
+.iclaw-secret-reveal.iclaw-secret-reveal--open .iclaw-secret-label {
+  opacity: 0.85;
+}
+.iclaw-secret-value {
+  display: block;
+  margin-top: 0.35rem;
+}
+.iclaw-secret-code {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
 /* ---------- Scheduled messages ---------- */

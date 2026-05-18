@@ -45,6 +45,13 @@ export type ClientMsg =
         fileName: string;
         content: string;
       }>;
+      /**
+       * Inline secrets: message `content` contains `[[iclaw:sN]]` markers; this array
+       * carries plaintext per slot. Server persists rows in `project_secrets` and
+       * replaces markers with `[[iclaw:secret:id|encodedLabel]]`. Only for chats
+       * that belong to a project.
+       */
+      inlineSecrets?: Array<{ slot: number; label: string; plain: string }>;
     }
   /** Abort a running turn for this chat. */
   | { type: 'abort'; chatId: number }
@@ -137,6 +144,12 @@ export type ServerMsg =
   | { type: 'project-fact-added'; projectId: number; fact: ProjectFact }
   | { type: 'project-fact-updated'; projectId: number; fact: ProjectFact }
   | { type: 'project-fact-deleted'; projectId: number; factId: number }
+  | {
+      type: 'project-secret-added';
+      projectId: number;
+      secret: { id: number; label: string; created_at: string };
+    }
+  | { type: 'project-secret-deleted'; projectId: number; secretId: number }
   /** Full list replacement after compaction — clients should replace the facts UI wholesale. */
   | { type: 'project-facts-synced'; projectId: number; facts: ProjectFact[] }
   /**

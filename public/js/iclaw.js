@@ -60,6 +60,60 @@
   let draftChosenProjectId = null;
   let draftProjectLocked = false;
 
+  let composerSecretNextSlot = 0;
+  /** @type {Map<number, { label: string; plain: string }>} */
+  const composerSecretBySlot = new Map();
+  let composerTokenDetectTimer = null;
+  /** @type {{ start: number; end: number } | null} */
+  let composerTokenDetectRange = null;
+
+  function currentComposerProjectId() {
+    if (activeChatId != null && messagesEl?.dataset.projectId) {
+      const n = Number(messagesEl.dataset.projectId);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    if (
+      draftChosenProjectId != null &&
+      Number.isFinite(draftChosenProjectId) &&
+      draftChosenProjectId > 0
+    ) {
+      return draftChosenProjectId;
+    }
+    return null;
+  }
+
+  function selectionInsideIclawPlaceholder(text, start, end) {
+    const lastOpen = text.lastIndexOf('[[iclaw:', end);
+    if (lastOpen === -1 || lastOpen > start) return false;
+    const close = text.indexOf(']]', lastOpen);
+    if (close === -1) return false;
+    return close >= end - 1;
+  }
+
+  function findLikelyTokenRange(text) {
+    const patterns = [
+      /\bsk-[a-zA-Z0-9_-]{16,}\b/g,
+      /\bghp_[a-zA-Z0-9]{36}\b/g,
+      /\bgithub_pat_[a-zA-Z0-9_]{22,}\b/g,
+    ];
+    let best = null;
+    let bestLen = 0;
+    for (const re of patterns) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        const s = m.index;
+        const e = s + m[0].length;
+        if (selectionInsideIclawPlaceholder(text, s, e)) continue;
+        if (m[0].length > bestLen) {
+          best = { start: s, end: e };
+          bestLen = m[0].length;
+        }
+      }
+    }
+    return best;
+  }
+
   function commitDraftFromCard(card) {
     if (!card || draftProjectLocked) return;
     const rawId = card.getAttribute('data-project-id');
@@ -75,6 +129,7 @@
     if (draftEmptyHint) draftEmptyHint.hidden = false;
     if (composerWrap) composerWrap.hidden = false;
     input?.focus();
+    syncComposerSecretUi();
   }
 
   function initDraftProjectPick() {
@@ -188,6 +243,39 @@
     if (!window.marked || typeof window.marked.parse !== 'function') return escapeHtml(src);
     try { return window.marked.parse(src); } catch { return escapeHtml(src); }
   }
+
+  const MSG_SECRET_PH_RE = /\[\[iclaw:secret:(\d+)\|([^\]]+)\]\]/g;
+
+  function decodePlaceholderLabel(enc) {
+    try {
+      return decodeURIComponent(String(enc ?? '').replace(/\+/g, ' '));
+    } catch {
+      return String(enc ?? '');
+    }
+  }
+
+  /** Markdown + inline secret chips (values loaded on reveal). */
+  function renderMessageHtml(text) {
+    const html = renderMarkdown(text);
+    if (!html) return html;
+    return html.replace(MSG_SECRET_PH_RE, (_, id, encLabel) => {
+      const label = decodePlaceholderLabel(encLabel);
+      const safeL = escapeHtml(label);
+      return (
+        '<span class="iclaw-secret-chip" data-secret-id="' +
+        escapeHtml(String(id)) +
+        '">' +
+        '<button type="button" class="iclaw-secret-reveal btn btn--ghost btn--sm" aria-expanded="false">' +
+        '<span class="iclaw-secret-icon" aria-hidden="true">🔑</span> ' +
+        '<span class="iclaw-secret-label">' +
+        safeL +
+        '</span>' +
+        '</button>' +
+        '<span class="iclaw-secret-value" hidden><code class="iclaw-secret-code"></code></span>' +
+        '</span>'
+      );
+    });
+  }
   function escapeHtml(s) {
     return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
   }
@@ -289,6 +377,16 @@
     const ul = document.getElementById('facts-list');
     if (!btn || !ul) return;
     btn.setAttribute('data-tab-count', String(ul.querySelectorAll('li.fact').length));
+    const active = root.querySelector('.project-tab.is-active')?.getAttribute('data-project-tab');
+    refreshProjectTabLabels(active || 'chats');
+  }
+
+  function syncProjectSecretsTabCountFromDom() {
+    const root = document.querySelector('main.project-page[data-project-id]');
+    const btn = root?.querySelector('[data-project-tab="secrets"]');
+    const ul = document.getElementById('secrets-list');
+    if (!btn || !ul) return;
+    btn.setAttribute('data-tab-count', String(ul.querySelectorAll('li.project-secret-row').length));
     const active = root.querySelector('.project-tab.is-active')?.getAttribute('data-project-tab');
     refreshProjectTabLabels(active || 'chats');
   }
@@ -612,7 +710,7 @@
     div.innerHTML =
       '<div class="role">' + escapeHtml(msg.role || 'system') + '</div>' +
       (replyHtml ? replyHtml : '') +
-      '<div class="msg-body">' + renderMarkdown(msg.content || '') + '</div>' +
+      '<div class="msg-body">' + renderMessageHtml(msg.content || '') + '</div>' +
       attachmentsHtml(msg.attachments);
     decorateMessageBody(div);
     messagesAppendRoot().appendChild(div);
@@ -665,7 +763,7 @@
     messagesEl.querySelectorAll('.msg .msg-body').forEach((body) => {
       const raw = body.textContent ?? '';
       if (!raw) return;
-      body.innerHTML = renderMarkdown(raw);
+      body.innerHTML = renderMessageHtml(raw);
       decorateMessageBody(body);
     });
   }
@@ -1766,6 +1864,11 @@
           if (messagesEl) {
             messagesEl.dataset.chatId = String(msg.chatId);
             delete messagesEl.dataset.draft;
+            if (msg.projectId != null && Number.isFinite(Number(msg.projectId))) {
+              messagesEl.dataset.projectId = String(msg.projectId);
+            } else {
+              messagesEl.dataset.projectId = '';
+            }
           }
           history.replaceState(null, '', '/chats/' + msg.chatId);
           applyTitleForActive(msg.title || 'New chat');
@@ -1803,7 +1906,15 @@
         if (msg.chatId === activeChatId && msg.reasoningMode !== undefined && reasoningToggle) {
           reasoningToggle.checked = msg.reasoningMode !== 'off';
         }
+        if (msg.chatId === activeChatId && msg.projectId !== undefined && messagesEl) {
+          messagesEl.dataset.projectId =
+            msg.projectId != null && Number.isFinite(Number(msg.projectId))
+              ? String(msg.projectId)
+              : '';
+          syncComposerSecretUi();
+        }
         if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
+        syncComposerSecretUi();
         return;
 
       case 'chat-deleted':
@@ -1830,6 +1941,11 @@
           if (pending) {
             pending.classList.remove('pending-id');
             pending.dataset.msgId = String(msg.message.id);
+            const pBody = pending.querySelector('.msg-body');
+            if (pBody) {
+              pBody.innerHTML = renderMessageHtml(msg.message.content || '');
+              decorateMessageBody(pBody);
+            }
             syncPendingUserReplyPreview(pending, msg.message);
           } else if (!messagesEl?.querySelector('.msg[data-msg-id="' + msg.message.id + '"]')) {
             appendMessage(msg.message);
@@ -2126,6 +2242,46 @@
         return;
       }
 
+      case 'project-secret-added': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        const ul = document.getElementById('secrets-list');
+        if (!ul) return;
+        ul.querySelector('.project-chats-empty')?.remove();
+        const li = document.createElement('li');
+        li.className = 'project-secret-row';
+        li.dataset.secretId = String(msg.secret.id);
+        li.innerHTML =
+          '<div class="project-chat-link project-chat-link--stacked">' +
+          '<span class="project-chat-title">' +
+          escapeHtml(msg.secret.label) +
+          '</span>' +
+          '<div class="project-secret-actions">' +
+          '<button type="button" class="project-secret-delete btn btn--ghost btn--sm" aria-label="Видалити секрет">Видалити</button>' +
+          '</div></div>';
+        ul.insertBefore(li, ul.firstChild);
+        syncProjectSecretsTabCountFromDom();
+        return;
+      }
+
+      case 'project-secret-deleted': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        document
+          .querySelector(
+            '#secrets-list li.project-secret-row[data-secret-id="' + msg.secretId + '"]',
+          )
+          ?.remove();
+        const sul = document.getElementById('secrets-list');
+        if (sul && !sul.querySelector('li.project-secret-row')) {
+          const empty = document.createElement('li');
+          empty.className = 'project-chats-empty muted';
+          empty.textContent =
+            'Поки немає збережених секретів. У чаті проєкту: «Секрет з виділення» або підказка про токен.';
+          sul.appendChild(empty);
+        }
+        syncProjectSecretsTabCountFromDom();
+        return;
+      }
+
       case 'project-facts-synced': {
         if (currentProjectPageId() !== msg.projectId) return;
         const ul = document.getElementById('facts-list');
@@ -2273,6 +2429,9 @@
         fileName: a.fileName,
         content: a.base64,
       }));
+    }
+    if (item.inlineSecrets && item.inlineSecrets.length > 0) {
+      payload.inlineSecrets = item.inlineSecrets;
     }
     if (activeChatId != null) payload.chatId = activeChatId;
     else {
@@ -2556,6 +2715,291 @@
     });
   }
 
+  const composerSecretUi = document.getElementById('composer-secret-ui');
+  const composerTokenHint = document.getElementById('composer-token-hint');
+  const composerTokenHintText = document.getElementById('composer-token-hint-text');
+  const composerSelectionHint = document.getElementById('composer-selection-hint');
+  const composerTokenSaveBtn = document.getElementById('composer-token-save-btn');
+  const composerMarkSecretBtn = document.getElementById('composer-mark-secret-btn');
+  const composerSecretModal = document.getElementById('composer-secret-modal');
+  const composerSecretBackdrop = document.getElementById('composer-secret-modal-backdrop');
+  const composerSecretLabelInput = document.getElementById('composer-secret-label-input');
+  const composerSecretValuePreview = document.getElementById('composer-secret-value-preview');
+  const composerSecretOk = document.getElementById('composer-secret-ok');
+
+  /** @type {((label: string) => void) | null} */
+  let composerSecretCommit = null;
+  /** @type {{ start: number; end: number; plain: string } | null} */
+  let composerSecretInsert = null;
+
+  function syncComposerSecretUi() {
+    applyComposerSecretStripLayout();
+  }
+
+  /** Non-empty, non-whitespace selection in the composer (for "mark as secret"). */
+  function composerHasNonEmptySelection() {
+    if (!input) return false;
+    const s = input.selectionStart;
+    const e = input.selectionEnd;
+    if (s === e) return false;
+    return input.value.slice(s, e).trim().length > 0;
+  }
+
+  /**
+   * Accessory inside the composer: token row and/or selection row (Apple-style
+   * minimal strip). Token row is synced here via `updateComposerTokenRow` so
+   * selection-only changes are correct without waiting for debounce.
+   */
+  function applyComposerSecretStripLayout() {
+    if (!composerSecretUi) return;
+    if (composerSecretModal && !composerSecretModal.hidden) {
+      if (currentComposerProjectId() != null) composerSecretUi.hidden = false;
+      return;
+    }
+    const pid = currentComposerProjectId();
+    if (pid == null) {
+      composerSecretUi.hidden = true;
+      composerTokenDetectRange = null;
+      if (composerTokenHint) composerTokenHint.hidden = true;
+      if (composerSelectionHint) composerSelectionHint.hidden = true;
+      return;
+    }
+    updateComposerTokenRow();
+    const hasTokenHint = composerTokenHint && !composerTokenHint.hidden;
+    const hasSel = composerHasNonEmptySelection();
+    if (composerSelectionHint) composerSelectionHint.hidden = !hasSel;
+    composerSecretUi.hidden = !hasTokenHint && !hasSel;
+  }
+
+  /** Sync the token-detected row from the current composer value (no debounce). */
+  function updateComposerTokenRow() {
+    if (!input || !composerTokenHint || !composerTokenHintText) return;
+    if (currentComposerProjectId() == null) {
+      composerTokenDetectRange = null;
+      composerTokenHint.hidden = true;
+      composerTokenHint.removeAttribute('title');
+      return;
+    }
+    const t = input.value;
+    const r = findLikelyTokenRange(t);
+    if (!r) {
+      composerTokenDetectRange = null;
+      composerTokenHint.hidden = true;
+      composerTokenHint.removeAttribute('title');
+      return;
+    }
+    composerTokenDetectRange = r;
+    composerTokenHintText.textContent = 'Ймовірно містить чутливі дані';
+    composerTokenHint.title = t.slice(r.start, r.end);
+    composerTokenHint.hidden = false;
+  }
+
+  function pruneComposerSecretSlots(text) {
+    for (const slot of [...composerSecretBySlot.keys()]) {
+      if (!text.includes('[[iclaw:s' + slot + ']]')) composerSecretBySlot.delete(slot);
+    }
+  }
+
+  function buildInlineSecretsPayload(text) {
+    const uniq = new Set();
+    const re = /\[\[iclaw:s(\d+)\]\]/g;
+    let m;
+    while ((m = re.exec(text)) !== null) uniq.add(Number(m[1]));
+    if (uniq.size === 0) return undefined;
+    const slots = [...uniq].sort((a, b) => a - b);
+    const out = [];
+    for (const slot of slots) {
+      const p = composerSecretBySlot.get(slot);
+      if (!p) {
+        throw new Error('Для кожного [[iclaw:sN]] у тексті потрібна назва секрету (додайте через кнопку).');
+      }
+      out.push({ slot, label: p.label, plain: p.plain });
+    }
+    return out;
+  }
+
+  function clearComposerSecretDraft() {
+    composerSecretBySlot.clear();
+    composerSecretNextSlot = 0;
+    composerTokenDetectRange = null;
+    if (composerTokenHint) composerTokenHint.hidden = true;
+    applyComposerSecretStripLayout();
+  }
+
+  function scheduleTokenDetect() {
+    if (!input || currentComposerProjectId() == null) return;
+    if (composerTokenDetectTimer) clearTimeout(composerTokenDetectTimer);
+    composerTokenDetectTimer = setTimeout(runTokenDetect, 380);
+  }
+
+  function runTokenDetect() {
+    composerTokenDetectTimer = null;
+    updateComposerTokenRow();
+    applyComposerSecretStripLayout();
+  }
+
+  /** Маска для модалки: напр. sk***EF, без повного значення. */
+  function formatSecretModalPreview(plain) {
+    const s = String(plain ?? '');
+    if (!s) return '—';
+    const n = s.length;
+    if (n <= 2) return '••';
+    if (n <= 3) return s[0] + '**' + s[n - 1];
+    if (n <= 5) return s[0] + '***' + s[n - 1];
+    if (n < 8) return s.slice(0, 2) + '**' + s.slice(-2);
+    return s.slice(0, 2) + '***' + s.slice(-2);
+  }
+
+  function openComposerSecretModal(onCommit) {
+    if (!composerSecretModal || !composerSecretLabelInput) return;
+    composerSecretCommit = onCommit;
+    composerSecretModal.hidden = false;
+    composerSecretLabelInput.value = '';
+    if (composerSecretValuePreview) {
+      composerSecretValuePreview.textContent = formatSecretModalPreview(
+        composerSecretInsert && composerSecretInsert.plain
+      );
+    }
+    applyComposerSecretStripLayout();
+    setTimeout(() => composerSecretLabelInput.focus(), 0);
+  }
+
+  function closeComposerSecretModal() {
+    if (composerSecretModal) composerSecretModal.hidden = true;
+    composerSecretInsert = null;
+    composerSecretCommit = null;
+    if (composerSecretValuePreview) composerSecretValuePreview.textContent = '';
+    applyComposerSecretStripLayout();
+  }
+
+  function applySecretReplace(label) {
+    if (!input || !composerSecretInsert) return;
+    const lab = String(label ?? '').trim();
+    if (!lab) {
+      alert('Введіть назву секрету.');
+      return;
+    }
+    if (/[\[\]|]/.test(lab)) {
+      alert('Назва не може містити [ ] |');
+      return;
+    }
+    const t = input.value;
+    const ins = composerSecretInsert;
+    const slot = composerSecretNextSlot++;
+    const marker = '[[iclaw:s' + slot + ']]';
+    input.value = t.slice(0, ins.start) + marker + t.slice(ins.end);
+    composerSecretBySlot.set(slot, { label: lab, plain: ins.plain });
+    closeComposerSecretModal();
+    scheduleTokenDetect();
+  }
+
+  if (messagesEl) {
+    messagesEl.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.iclaw-secret-reveal');
+      if (!btn || !messagesEl.contains(btn)) return;
+      ev.preventDefault();
+      const chip = btn.closest('.iclaw-secret-chip');
+      if (!chip) return;
+      const sid = chip.getAttribute('data-secret-id');
+      if (!sid || activeChatId == null) return;
+      const wrap = chip.querySelector('.iclaw-secret-value');
+      const code = wrap?.querySelector('.iclaw-secret-code');
+      if (!wrap || !code) return;
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      if (open) {
+        btn.setAttribute('aria-expanded', 'false');
+        wrap.hidden = true;
+        btn.classList.remove('iclaw-secret-reveal--open');
+        return;
+      }
+      if (code.textContent) {
+        btn.setAttribute('aria-expanded', 'true');
+        wrap.hidden = false;
+        btn.classList.add('iclaw-secret-reveal--open');
+        return;
+      }
+      void fetch('/chats/' + encodeURIComponent(activeChatId) + '/secrets/' + encodeURIComponent(sid) + '/value', {
+        headers: { Accept: 'application/json' },
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
+        .then((data) => {
+          code.textContent = data && data.value != null ? String(data.value) : '';
+          btn.setAttribute('aria-expanded', 'true');
+          wrap.hidden = false;
+          btn.classList.add('iclaw-secret-reveal--open');
+        })
+        .catch(() => {
+          code.textContent = '(не вдалося завантажити)';
+          wrap.hidden = false;
+        });
+    });
+  }
+
+  if (input) {
+    input.addEventListener('select', () => {
+      applyComposerSecretStripLayout();
+    });
+    input.addEventListener('keyup', () => {
+      applyComposerSecretStripLayout();
+    });
+    input.addEventListener('input', () => {
+      pruneComposerSecretSlots(input.value);
+      scheduleTokenDetect();
+      applyComposerSecretStripLayout();
+    });
+  }
+
+  if (composerMarkSecretBtn && input) {
+    composerMarkSecretBtn.addEventListener('click', () => {
+      if (currentComposerProjectId() == null) {
+        alert('Оберіть проєкт для чату — секрети зберігаються в межах проєкту.');
+        return;
+      }
+      const s = input.selectionStart;
+      const e = input.selectionEnd;
+      if (s === e) return;
+      const plain = input.value.slice(s, e);
+      if (!plain.trim()) return;
+      composerSecretInsert = { start: s, end: e, plain };
+      openComposerSecretModal((label) => applySecretReplace(label));
+    });
+  }
+
+  if (composerTokenSaveBtn && input) {
+    composerTokenSaveBtn.addEventListener('click', () => {
+      if (!composerTokenDetectRange) return;
+      if (currentComposerProjectId() == null) return;
+      const { start, end } = composerTokenDetectRange;
+      const plain = input.value.slice(start, end);
+      composerSecretInsert = { start, end, plain };
+      openComposerSecretModal((label) => applySecretReplace(label));
+    });
+  }
+
+  if (composerSecretOk && composerSecretLabelInput) {
+    composerSecretOk.addEventListener('click', () => {
+      const fn = composerSecretCommit;
+      if (!fn) return;
+      fn(composerSecretLabelInput.value);
+    });
+  }
+  if (composerSecretBackdrop) {
+    composerSecretBackdrop.addEventListener('click', () => closeComposerSecretModal());
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (composerSecretModal && !composerSecretModal.hidden) {
+      e.preventDefault();
+      closeComposerSecretModal();
+    }
+  });
+
+  syncComposerSecretUi();
+
   if (form && input) {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -2568,6 +3012,13 @@
       }
       const content = input.value.trim();
       if (!content && pendingAttachments.length === 0) return;
+      let inlineSecrets;
+      try {
+        inlineSecrets = buildInlineSecretsPayload(content);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+        return;
+      }
       const replySnap = pendingComposerReply;
       pendingComposerReply = null;
       updateComposerReplyBar();
@@ -2587,8 +3038,10 @@
         id: 'q-' + nextQueueItemId++,
         replyTo: replySnap || undefined,
         attachments: attachmentsSnap.length > 0 ? attachmentsSnap : undefined,
+        inlineSecrets,
       });
       input.value = '';
+      clearComposerSecretDraft();
       renderQueue();
       flushNextQueued();
     });
@@ -2756,17 +3209,29 @@
       alert('Час уже минув — оберіть час у майбутньому.');
       return;
     }
+    let inlineSecrets;
+    try {
+      inlineSecrets = buildInlineSecretsPayload(content);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+      return;
+    }
     try {
       const res = await fetch(
         '/chats/' + encodeURIComponent(activeChatId) + '/scheduled',
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ content, scheduledAt: when.toISOString() }),
+          body: JSON.stringify({
+            content,
+            scheduledAt: when.toISOString(),
+            ...(inlineSecrets && inlineSecrets.length > 0 ? { inlineSecrets } : {}),
+          }),
         },
       );
       if (!res.ok) throw new Error(await res.text());
       input.value = '';
+      clearComposerSecretDraft();
       closeScheduleMenu();
       // Live `scheduled-added` broadcast will render the row.
     } catch (err) {
@@ -3474,6 +3939,33 @@
     );
   }
 
+  const secretsListEl = document.getElementById('secrets-list');
+  if (secretsListEl && projectPageId != null) {
+    secretsListEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.project-secret-delete');
+      if (!btn) return;
+      const li = btn.closest('li.project-secret-row');
+      const sid = li?.dataset.secretId;
+      if (!sid) return;
+      e.preventDefault();
+      if (
+        !confirm(
+          'Видалити секрет з проєкту? Маркери в історії чатів залишаться; розкриття значення працюватиме лише для нових записів.',
+        )
+      ) {
+        return;
+      }
+      fetch(
+        '/projects/' +
+          encodeURIComponent(projectPageId) +
+          '/secrets/' +
+          encodeURIComponent(sid) +
+          '/delete',
+        { method: 'POST', headers: { Accept: 'application/json' } },
+      ).catch(() => {});
+    });
+  }
+
   const projectLogoTrigger = document.getElementById('project-logo-trigger');
   const projectLogoPopover = document.getElementById('project-logo-popover');
   function closeProjectLogoPopover() {
@@ -3541,8 +4033,10 @@
       memory: document.getElementById('project-panel-memory'),
       links: document.getElementById('project-panel-links'),
       files: document.getElementById('project-panel-files'),
+      secrets: document.getElementById('project-panel-secrets'),
     };
-    if (!tabs.length || !panels.chats || !panels.memory || !panels.links || !panels.files) return;
+    if (!tabs.length || !panels.chats || !panels.memory || !panels.links || !panels.files || !panels.secrets)
+      return;
 
     function activate(name) {
       tabs.forEach((btn) => {

@@ -78,6 +78,36 @@
     errorEl.hidden = !msg;
   }
 
+  const SHARE_SECRET_PH = /\[\[iclaw:secret:(\d+)\|([^\]]+)\]\]/g;
+
+  function redactSecretPlaceholdersInText(text) {
+    if (text == null || typeof text !== 'string') return text;
+    return text.replace(SHARE_SECRET_PH, (_, _id, encLabel) => {
+      let label = encLabel;
+      try {
+        label = decodeURIComponent(String(encLabel).replace(/\+/g, ' '));
+      } catch {
+        /* keep raw */
+      }
+      return '[секрет: ' + label + ' — приховано]';
+    });
+  }
+
+  function redactTranscriptForShare(messages) {
+    if (!Array.isArray(messages)) return messages;
+    return messages.map((m) => {
+      if (!m || typeof m !== 'object') return m;
+      const copy = { ...m };
+      if (typeof copy.content === 'string') {
+        copy.content = redactSecretPlaceholdersInText(copy.content);
+      }
+      if (copy.replyQuote != null && typeof copy.replyQuote === 'string') {
+        copy.replyQuote = redactSecretPlaceholdersInText(copy.replyQuote);
+      }
+      return copy;
+    });
+  }
+
   shareBtn.addEventListener('click', () => {
     shareChatIdOverride = null;
     shareTitleOverride = null;
@@ -206,7 +236,7 @@
 
       // 1) gather data
       const agentSel = document.getElementById('chat-agent-select');
-      const messages = await fetchTranscript(chatId);
+      const messages = redactTranscriptForShare(await fetchTranscript(chatId));
       const activeId = getActiveChatId();
       const titleResolved = resolveShareTitle() || 'Shared chat';
 
