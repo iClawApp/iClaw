@@ -2943,6 +2943,180 @@
   }
 
   // -------------------------------------------------------------------------
+  // Daily-reset policy banner — surfaces when OpenClaw's default "reset every
+  // morning at 04:00" policy is active for `direct` (dashboard) sessions.
+  // One-click fix via /api/gateway/session-reset-fix; if the gateway token
+  // lacks admin scope we degrade to a copy-pasteable snippet for openclaw.json.
+  //
+  // Snooze model: instead of a permanent dismiss, "Нагадати за 3 дні" stores
+  // a timestamp in localStorage and the banner stays hidden until that point.
+  // The × in the corner sets a far-future snooze (effectively never).
+  // -------------------------------------------------------------------------
+  const RESET_REMIND_KEY = 'iclaw:resetPolicyRemindAfter';
+  const SNOOZE_DAYS = 3;
+  const NEVER_REMIND_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+  const RESET_POLICY_MANUAL_PATCH = JSON.stringify(
+    {
+      session: {
+        resetByType: {
+          direct: { mode: 'idle', idleMinutes: 52560000 },
+          group: { mode: 'idle', idleMinutes: 52560000 },
+          thread: { mode: 'idle', idleMinutes: 52560000 },
+        },
+      },
+    },
+    null,
+    2,
+  );
+
+  const resetBanner = document.getElementById('reset-policy-banner');
+  const resetBannerActions = document.getElementById('reset-policy-banner-actions');
+  const resetBannerBody = document.getElementById('reset-policy-banner-body');
+  const resetFixBtn = document.getElementById('reset-policy-fix');
+  const resetSnoozeBtn = document.getElementById('reset-policy-snooze');
+  const resetBannerCloseBtn = document.getElementById('reset-policy-banner-close');
+
+  function snoozeResetBanner(ms) {
+    try {
+      const until = Date.now() + ms;
+      localStorage.setItem(RESET_REMIND_KEY, String(until));
+    } catch {}
+  }
+
+  function isResetBannerSnoozed() {
+    try {
+      const raw = localStorage.getItem(RESET_REMIND_KEY);
+      if (!raw) return false;
+      const until = Number(raw);
+      if (!Number.isFinite(until)) return false;
+      return Date.now() < until;
+    } catch {
+      return false;
+    }
+  }
+
+  function hideResetBanner() {
+    if (resetBanner) resetBanner.hidden = true;
+  }
+
+  function showResetBannerFixed() {
+    if (!resetBannerBody || !resetBannerActions) return;
+    resetBannerBody.innerHTML =
+      '<strong>Готово ✓</strong>' +
+      '<span class="muted">OpenClaw більше не скидатиме чати щодня.</span>';
+    resetBannerActions.innerHTML = '';
+    // Banner already explains the success — auto-close after a beat.
+    setTimeout(hideResetBanner, 2400);
+  }
+
+  function showResetBannerManualFallback() {
+    if (!resetBannerBody || !resetBannerActions) return;
+    resetBannerBody.innerHTML =
+      '<strong>Автоматично не вдалось — потрібен admin scope в gateway-токені.</strong>' +
+      '<span class="muted">' +
+      'Додай цей блок у <code>~/.openclaw/openclaw.json</code> під ключем <code>session</code> ' +
+      '(або злий з існуючим), збережи і перезапусти gateway.' +
+      '</span>' +
+      '<div class="reset-policy-manual">' +
+      '<pre id="reset-policy-snippet">' +
+      escapeHtml(RESET_POLICY_MANUAL_PATCH) +
+      '</pre>' +
+      '<div class="reset-policy-manual-row">' +
+      '<button type="button" class="btn btn--ghost btn--sm" id="reset-policy-copy">Копіювати</button>' +
+      '<span class="muted" id="reset-policy-copy-status"></span>' +
+      '</div>' +
+      '</div>';
+    resetBannerActions.innerHTML = '';
+    document.getElementById('reset-policy-copy')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(RESET_POLICY_MANUAL_PATCH);
+        const s = document.getElementById('reset-policy-copy-status');
+        if (s) {
+          s.textContent = '✓ скопійовано';
+          setTimeout(() => { s.textContent = ''; }, 2000);
+        }
+      } catch {
+        const snippet = document.getElementById('reset-policy-snippet');
+        if (snippet) {
+          const range = document.createRange();
+          range.selectNodeContents(snippet);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+        }
+      }
+    });
+  }
+
+  async function probeResetPolicyAndMaybeShowBanner() {
+    if (!resetBanner) return;
+    if (isResetBannerSnoozed()) return;
+    try {
+      const res = await fetch('/api/gateway/session-reset-status', {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.defaultPolicyActive === true) {
+        resetBanner.hidden = false;
+      }
+    } catch {
+      // Network/gateway hiccup — silently skip. Banner shows on next page load.
+    }
+  }
+
+  if (resetFixBtn) {
+    resetFixBtn.addEventListener('click', async () => {
+      const original = resetFixBtn.textContent;
+      resetFixBtn.disabled = true;
+      resetFixBtn.textContent = '⏳ Налаштовую…';
+      try {
+        const res = await fetch('/api/gateway/session-reset-fix', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          // Permanent — no need to remind again.
+          snoozeResetBanner(NEVER_REMIND_MS);
+          showResetBannerFixed();
+          return;
+        }
+        if (data?.reason === 'no-admin-scope') {
+          showResetBannerManualFallback();
+          return;
+        }
+        throw new Error(data?.error || 'HTTP ' + res.status);
+      } catch (err) {
+        if (resetBannerBody) {
+          resetBannerBody.innerHTML =
+            '<strong>Не вдалось налаштувати.</strong>' +
+            '<span class="muted">' +
+            escapeHtml(String(err && err.message ? err.message : err)) +
+            '</span>';
+        }
+        resetFixBtn.disabled = false;
+        resetFixBtn.textContent = original;
+      }
+    });
+  }
+  if (resetSnoozeBtn) {
+    resetSnoozeBtn.addEventListener('click', () => {
+      snoozeResetBanner(SNOOZE_DAYS * 24 * 60 * 60 * 1000);
+      hideResetBanner();
+    });
+  }
+  if (resetBannerCloseBtn) {
+    resetBannerCloseBtn.addEventListener('click', () => {
+      snoozeResetBanner(NEVER_REMIND_MS);
+      hideResetBanner();
+    });
+  }
+  // Fire probe once on load. Don't block anything else.
+  probeResetPolicyAndMaybeShowBanner();
+
+  // -------------------------------------------------------------------------
   // Usage cost chip — polls /api/gateway/usage/today every 30s
   // -------------------------------------------------------------------------
   const costChip = document.getElementById('cost-chip');

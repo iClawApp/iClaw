@@ -1,8 +1,10 @@
 /**
  * Thin HTTP proxies for OpenClaw RPCs that the browser UI needs:
  *
- *   GET  /api/gateway/commands         — slash-command catalog for `/` autocomplete
- *   GET  /api/gateway/usage/today      — gateway-side spend (cached 30s)
+ *   GET  /api/gateway/commands               — slash-command catalog for `/` autocomplete
+ *   GET  /api/gateway/usage/today            — gateway-side spend (cached 30s)
+ *   GET  /api/gateway/session-reset-status   — does the user need to disable daily auto-reset?
+ *   POST /api/gateway/session-reset-fix      — apply the "never reset" policy via config.patch
  */
 
 import { Router } from 'express';
@@ -77,6 +79,92 @@ gatewayRouter.get('/usage/today', async (_req, res) => {
     res
       .status(502)
       .json({ error: err instanceof Error ? err.message : 'gateway error', totalUsd: null });
+  }
+});
+
+/* ------------------------- session reset policy ------------------------- */
+
+/**
+ * "Never reset" config our fix endpoint installs. 52 560 000 minutes ≈ 100
+ * years — effectively turns the daily-reset behaviour off without inventing
+ * a new mode that OpenClaw doesn't know.
+ */
+const NEVER_RESET = { mode: 'idle', idleMinutes: 52_560_000 } as const;
+/** Resolve a possibly-deep value safely; returns undefined if any link is missing. */
+function dig(obj: unknown, ...path: string[]): unknown {
+  let cur: unknown = obj;
+  for (const key of path) {
+    if (!cur || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return cur;
+}
+
+/**
+ * The user-relevant reset-type for iClaw chats is `direct` (dashboard /
+ * webchat). A session-wide `session.reset` covers it too. So "default policy
+ * still in effect" means BOTH of these are missing — fresh OpenClaw install.
+ */
+function isDirectResetExplicitlySet(sessionCfg: unknown): boolean {
+  const topLevel = dig(sessionCfg, 'reset', 'mode');
+  if (typeof topLevel === 'string') return true;
+  const perType = dig(sessionCfg, 'resetByType', 'direct', 'mode');
+  if (typeof perType === 'string') return true;
+  // Legacy alias the gateway honours.
+  const dmAlias = dig(sessionCfg, 'resetByType', 'dm', 'mode');
+  if (typeof dmAlias === 'string') return true;
+  return false;
+}
+
+gatewayRouter.get('/session-reset-status', async (_req, res) => {
+  try {
+    const { config } = await openclawWs.getConfig();
+    const sessionCfg = (config as { session?: unknown }).session;
+    const explicit = isDirectResetExplicitlySet(sessionCfg);
+    res.json({
+      defaultPolicyActive: !explicit,
+      currentSession: sessionCfg ?? null,
+    });
+  } catch (err) {
+    res
+      .status(502)
+      .json({ error: err instanceof Error ? err.message : 'gateway error' });
+  }
+});
+
+gatewayRouter.post('/session-reset-fix', async (_req, res) => {
+  try {
+    // Re-read the config (and its hash) right before patching — using a stale
+    // hash from /session-reset-status would race with concurrent edits.
+    const { hash, config } = await openclawWs.getConfig();
+    const sessionCfg = (config as { session?: Record<string, unknown> }).session ?? {};
+    // Merge our patch with whatever the user already had under resetByType,
+    // so we don't clobber existing `thread` / `group` settings.
+    const existingByType =
+      (sessionCfg as { resetByType?: Record<string, unknown> }).resetByType ?? {};
+    const patch = {
+      session: {
+        resetByType: {
+          ...existingByType,
+          direct: NEVER_RESET,
+          group: existingByType.group ?? NEVER_RESET,
+          thread: existingByType.thread ?? NEVER_RESET,
+        },
+      },
+    };
+    await openclawWs.patchConfig({
+      patch,
+      baseHash: hash,
+      note: 'iClaw: disable daily session auto-reset (user-confirmed)',
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const isScopeError = /missing scope|forbidden|unauthor/i.test(msg);
+    res.status(isScopeError ? 403 : 502).json({
+      error: msg,
+      ...(isScopeError ? { reason: 'no-admin-scope' } : {}),
+    });
   }
 });
 

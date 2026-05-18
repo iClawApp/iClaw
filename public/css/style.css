@@ -3357,6 +3357,112 @@ code {
 }
 .share-pw-reminder[hidden] { display: none !important; }
 
+/* ---------- Reset-policy banner (daily auto-reset warning) ---------- */
+
+.reset-policy-banner {
+  position: relative;
+  max-width: var(--thread-max-width);
+  width: 100%;
+  margin: var(--space-6) auto 0;
+  padding: var(--space-6) var(--space-7);
+  padding-right: var(--space-9); /* leave room for × in the corner */
+  background: var(--warn-soft-bg);
+  border: 1px solid var(--warn-soft-border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-7);
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text);
+}
+.reset-policy-banner[hidden] {
+  display: none !important;
+}
+.reset-policy-banner-main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-5);
+  flex: 1;
+  min-width: 240px;
+}
+.reset-policy-banner-icon {
+  flex: 0 0 auto;
+  font-size: 1.1em;
+  line-height: 1.2;
+  color: var(--warn);
+}
+.reset-policy-banner-body {
+  flex: 1;
+  min-width: 0;
+}
+.reset-policy-banner-body strong {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-weight: 600;
+}
+.reset-policy-banner-body .muted {
+  font-size: var(--text-xs);
+}
+.reset-policy-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: 0 0 auto;
+}
+.reset-policy-banner-close {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-4);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: var(--radius-circle);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.12s ease, background-color 0.12s ease;
+}
+.reset-policy-banner-close:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
+/* Manual-instruction view shown when admin scope is missing. */
+.reset-policy-manual {
+  width: 100%;
+  margin-top: var(--space-4);
+}
+.reset-policy-manual pre {
+  margin: 0;
+  padding: var(--space-5) var(--space-6);
+  background: color-mix(in srgb, var(--text) 4%, var(--surface));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-xs);
+  overflow-x: auto;
+  white-space: pre;
+}
+.reset-policy-manual-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+}
+
 /* ---------- Composer attachments ---------- */
 
 .composer-attach {

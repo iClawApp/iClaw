@@ -95,6 +95,45 @@
       </form>
     </header>
 
+    <aside
+      class="reset-policy-banner"
+      id="reset-policy-banner"
+      role="status"
+      aria-live="polite"
+      hidden
+    >
+      <button
+        type="button"
+        class="reset-policy-banner-close"
+        id="reset-policy-banner-close"
+        title="Більше не нагадувати на цьому пристрої"
+        aria-label="Більше не нагадувати"
+      >×</button>
+      <div class="reset-policy-banner-main">
+        <span class="reset-policy-banner-icon" aria-hidden="true">⏰</span>
+        <div class="reset-policy-banner-body" id="reset-policy-banner-body">
+          <strong>Контекст чатів скидатиметься щодня о 04:00.</strong>
+          <span class="muted">
+            Це дефолт OpenClaw — після 4 ранку наступного дня агент забуває старі чати.
+            Налаштувати, щоб такого не було?
+          </span>
+        </div>
+      </div>
+      <div class="reset-policy-banner-actions" id="reset-policy-banner-actions">
+        <button
+          type="button"
+          class="btn btn--primary btn--sm"
+          id="reset-policy-fix"
+        >Так, налаштувати</button>
+        <button
+          type="button"
+          class="btn btn--ghost btn--sm"
+          id="reset-policy-snooze"
+          title="Не показувати наступні 3 дні"
+        >Нагадати за 3 дні</button>
+      </div>
+    </aside>
+
     <section
       class="messages"
       id="messages"

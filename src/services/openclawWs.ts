@@ -169,6 +169,36 @@ export const openclawWs = {
     await gatewayWs.request('sessions.patch', params);
   },
 
+  /** Read the gateway's current full config (incl. `hash` needed for config.patch). */
+  async getConfig(): Promise<{ hash: string; config: Record<string, unknown> }> {
+    const res = await gatewayWs.request<{
+      hash: string;
+      config: Record<string, unknown>;
+    }>('config.get', {});
+    return res;
+  },
+
+  /**
+   * Merge-patch the gateway-wide config. `patch` is a JS object that the
+   * gateway merges over the current config tree. `baseHash` is required for
+   * optimistic-concurrency — the gateway rejects with a clear error if config
+   * was changed between get/patch.
+   *
+   * Note: the gateway may auto-restart to apply the change. Our `gatewayWs`
+   * client reconnects automatically, so callers just see a normal completion.
+   */
+  async patchConfig(opts: {
+    patch: Record<string, unknown>;
+    baseHash: string;
+    note?: string;
+  }): Promise<unknown> {
+    return gatewayWs.request('config.patch', {
+      raw: JSON.stringify(opts.patch),
+      baseHash: opts.baseHash,
+      ...(opts.note ? { note: opts.note } : {}),
+    });
+  },
+
 
   /** Subscribe to the global session index — needed for `sessions.changed`. */
   async subscribeSessions(): Promise<void> {
