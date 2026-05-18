@@ -297,16 +297,17 @@
           <div class="project-sheet project-sheet--flush project-sheet--stacked">
             <ul id="secrets-list" class="project-chats">
               <% (projectSecrets || []).forEach(function (s) { %>
+                <% var spoilerCh = Math.max(Number(s.value_length) || 0, String(s.label || '').length, 4); %>
                 <li class="project-secret-row" data-secret-id="<%= s.id %>">
-                  <div class="project-chat-link project-chat-link--stacked">
-                    <span class="project-chat-title"><%= s.label %></span>
-                    <div class="project-secret-actions">
-                      <button
-                        type="button"
-                        class="project-secret-delete btn btn--ghost btn--sm"
-                        aria-label="Видалити секрет"
-                      >Видалити</button>
-                    </div>
+                  <div class="project-chat-link project-chat-link--stacked project-secret-card">
+                    <span class="project-chat-title project-secret-title"><%= s.label %></span>
+                    <button
+                      type="button"
+                      class="project-secret-reveal iclaw-secret-spoiler-body project-secret-spoiler-preview"
+                      data-secret-len="<%= spoilerCh %>"
+                      style="--secret-len-ch:<%= spoilerCh %>"
+                      aria-label="Показати значення секрету"
+                    ><span class="iclaw-secret-spoiler-grain" aria-hidden="true"></span></button>
                   </div>
                 </li>
               <% }); %>

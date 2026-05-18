@@ -147,9 +147,8 @@ export type ServerMsg =
   | {
       type: 'project-secret-added';
       projectId: number;
-      secret: { id: number; label: string; created_at: string };
+      secret: { id: number; label: string; created_at: string; value_length: number };
     }
-  | { type: 'project-secret-deleted'; projectId: number; secretId: number }
   /** Full list replacement after compaction — clients should replace the facts UI wholesale. */
   | { type: 'project-facts-synced'; projectId: number; facts: ProjectFact[] }
   /**

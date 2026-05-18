@@ -2126,6 +2126,64 @@ code {
   display: none;
 }
 
+/* Project page: title + grain-only spoiler (no reveal). */
+.project-secret-card {
+  --iclaw-spoiler-bg: color-mix(in srgb, var(--text) 32%, var(--surface));
+  --iclaw-spoiler-bg-hover: color-mix(in srgb, var(--text) 38%, var(--surface));
+  --iclaw-spoiler-dot: color-mix(in srgb, var(--text) 88%, transparent);
+  --iclaw-spoiler-dot-alt: color-mix(in srgb, var(--text) 52%, transparent);
+  cursor: default;
+}
+.project-secret-card:hover {
+  background: color-mix(in srgb, var(--hover) 45%, transparent);
+}
+.project-secret-title {
+  font-weight: 500;
+  white-space: normal;
+}
+.project-secret-reveal.project-secret-spoiler-preview {
+  display: inline-block;
+  position: relative;
+  box-sizing: border-box;
+  min-width: max(4ch, calc(var(--secret-len-ch, 8) * 1ch));
+  min-height: 1.35em;
+  max-width: 100%;
+  padding: 0.12em 0.2em;
+  border: none;
+  border-radius: 2px;
+  overflow: hidden;
+  cursor: pointer;
+  width: max-content;
+  font: inherit;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.project-secret-reveal.project-secret-spoiler-preview:focus {
+  outline: none;
+}
+.project-secret-reveal.project-secret-spoiler-preview:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--md-link) 45%, transparent);
+  outline-offset: 2px;
+}
+.project-secret-row--revealed .project-secret-reveal {
+  display: none !important;
+}
+.project-secret-revealed {
+  display: inline;
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  cursor: pointer;
+  word-break: break-all;
+}
+.project-secret-spoiler-preview.iclaw-secret-spoiler-body {
+  min-width: max(4ch, calc(var(--secret-len-ch, 8) * 1ch));
+}
+.project-secret-spoiler-preview .iclaw-secret-caption {
+  display: none;
+}
 /* ---------- Scheduled messages ---------- */
 
 .scheduled-list {

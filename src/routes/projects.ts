@@ -129,20 +129,16 @@ projectsRouter.patch('/:id', (req, res) => {
   res.json(updated);
 });
 
-projectsRouter.post('/:id/secrets/:secretId/delete', (req, res) => {
+/** Reveal secret value on the project page (same project only). */
+projectsRouter.get('/:id/secrets/:secretId/value', (req, res) => {
   const projectId = Number(req.params.id);
   const secretId = Number(req.params.secretId);
-  if (!projects.get(projectId)) {
-    res.status(404).json({ error: 'project not found' });
+  const sec = projectSecrets.get(secretId);
+  if (!projects.get(projectId) || !sec || sec.project_id !== projectId) {
+    res.status(404).json({ error: 'not found' });
     return;
   }
-  if (!projectSecrets.remove(secretId, projectId)) {
-    res.status(404).json({ error: 'secret not found' });
-    return;
-  }
-  wsHub.broadcastAll({ type: 'project-secret-deleted', projectId, secretId });
-  if (wantsJson(req)) res.json({ id: secretId, deleted: true });
-  else res.redirect(`/projects/${projectId}`);
+  res.type('application/json').json({ value: sec.value });
 });
 
 projectsRouter.post('/:id/delete', (req, res) => {

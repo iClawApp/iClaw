@@ -446,12 +446,16 @@ export const projectFactSuggestions = {
 // ---------- project secrets (tokens / API keys; placeholders in messages) ----------
 
 export const projectSecrets = {
-  listMetaByProject(projectId: number): Omit<ProjectSecret, 'value'>[] {
+  listMetaByProject(
+    projectId: number,
+  ): (Omit<ProjectSecret, 'value'> & { value_length: number })[] {
     return db
       .prepare(
-        'SELECT id, project_id, label, source_chat_id, source_message_id, created_at FROM project_secrets WHERE project_id = ? ORDER BY created_at DESC, id DESC',
+        `SELECT id, project_id, label, source_chat_id, source_message_id, created_at,
+                LENGTH(value) AS value_length
+         FROM project_secrets WHERE project_id = ? ORDER BY created_at DESC, id DESC`,
       )
-      .all(projectId) as Omit<ProjectSecret, 'value'>[];
+      .all(projectId) as (Omit<ProjectSecret, 'value'> & { value_length: number })[];
   },
   get(id: number): ProjectSecret | undefined {
     return db.prepare('SELECT * FROM project_secrets WHERE id = ?').get(id) as

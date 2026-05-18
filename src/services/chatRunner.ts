@@ -373,7 +373,12 @@ async function runTurnLocked(opts: {
       wsHub.broadcastAll({
         type: 'project-secret-added',
         projectId: row.project_id,
-        secret: { id: row.id, label: row.label, created_at: row.created_at },
+        secret: {
+          id: row.id,
+          label: row.label,
+          created_at: row.created_at,
+          value_length: row.value.length,
+        },
       });
     }
   }

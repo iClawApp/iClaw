@@ -416,6 +416,32 @@
     refreshProjectTabLabels(active || 'chats');
   }
 
+  /** Build a secrets row matching `views/project.ejs` (WS-driven updates on project page). */
+  function buildProjectSecretRowLi(secret) {
+    const label = String(secret?.label ?? '');
+    const tokenLen = Math.min(
+      Math.max(Number(secret?.value_length) || label.length || 1, 1),
+      512,
+    );
+    const lenCh = String(tokenLen);
+    const li = document.createElement('li');
+    li.className = 'project-secret-row';
+    li.dataset.secretId = String(secret.id);
+    li.innerHTML =
+      '<div class="project-chat-link project-chat-link--stacked project-secret-card">' +
+      '<span class="project-chat-title project-secret-title">' +
+      escapeHtml(label) +
+      '</span>' +
+      '<button type="button" class="project-secret-reveal iclaw-secret-spoiler-body project-secret-spoiler-preview" data-secret-len="' +
+      lenCh +
+      '" style="--secret-len-ch:' +
+      lenCh +
+      '" aria-label="Показати значення секрету">' +
+      '<span class="iclaw-secret-spoiler-grain" aria-hidden="true"></span></button>' +
+      '</div>';
+    return li;
+  }
+
   /** Build a fact row matching `views/project.ejs` (WS-driven updates on project page). */
   function buildFactLi(f) {
     const li = document.createElement('li');
@@ -2272,37 +2298,7 @@
         const ul = document.getElementById('secrets-list');
         if (!ul) return;
         ul.querySelector('.project-chats-empty')?.remove();
-        const li = document.createElement('li');
-        li.className = 'project-secret-row';
-        li.dataset.secretId = String(msg.secret.id);
-        li.innerHTML =
-          '<div class="project-chat-link project-chat-link--stacked">' +
-          '<span class="project-chat-title">' +
-          escapeHtml(msg.secret.label) +
-          '</span>' +
-          '<div class="project-secret-actions">' +
-          '<button type="button" class="project-secret-delete btn btn--ghost btn--sm" aria-label="Видалити секрет">Видалити</button>' +
-          '</div></div>';
-        ul.insertBefore(li, ul.firstChild);
-        syncProjectSecretsTabCountFromDom();
-        return;
-      }
-
-      case 'project-secret-deleted': {
-        if (currentProjectPageId() !== msg.projectId) return;
-        document
-          .querySelector(
-            '#secrets-list li.project-secret-row[data-secret-id="' + msg.secretId + '"]',
-          )
-          ?.remove();
-        const sul = document.getElementById('secrets-list');
-        if (sul && !sul.querySelector('li.project-secret-row')) {
-          const empty = document.createElement('li');
-          empty.className = 'project-chats-empty muted';
-          empty.textContent =
-            'Поки немає збережених секретів. У чаті проєкту: «Секрет з виділення» або підказка про токен.';
-          sul.appendChild(empty);
-        }
+        ul.insertBefore(buildProjectSecretRowLi(msg.secret), ul.firstChild);
         syncProjectSecretsTabCountFromDom();
         return;
       }
@@ -3988,30 +3984,77 @@
     );
   }
 
+  function collapseProjectSecretRow(li) {
+    li.classList.remove('project-secret-row--revealed');
+    const preview = li.querySelector('.project-secret-reveal');
+    if (preview) preview.hidden = false;
+    const plain = li.querySelector('.project-secret-revealed');
+    if (plain) {
+      plain.hidden = true;
+      plain.textContent = '';
+    }
+  }
+
+  function revealProjectSecretRow(li, valueText) {
+    const preview = li.querySelector('.project-secret-reveal');
+    if (preview) preview.hidden = true;
+    let plain = li.querySelector('.project-secret-revealed');
+    if (!plain) {
+      plain = document.createElement('span');
+      plain.className = 'project-secret-revealed iclaw-secret-revealed';
+      plain.setAttribute('role', 'button');
+      plain.setAttribute('tabindex', '0');
+      plain.setAttribute('title', 'Натисніть, щоб приховати');
+      preview?.insertAdjacentElement('afterend', plain);
+    }
+    plain.textContent = valueText != null ? String(valueText) : '';
+    plain.hidden = false;
+    li.classList.add('project-secret-row--revealed');
+  }
+
   const secretsListEl = document.getElementById('secrets-list');
   if (secretsListEl && projectPageId != null) {
     secretsListEl.addEventListener('click', (e) => {
-      const btn = e.target.closest('.project-secret-delete');
-      if (!btn) return;
-      const li = btn.closest('li.project-secret-row');
-      const sid = li?.dataset.secretId;
-      if (!sid) return;
-      e.preventDefault();
-      if (
-        !confirm(
-          'Видалити секрет з проєкту? Маркери в історії чатів залишаться; розкриття значення працюватиме лише для нових записів.',
-        )
-      ) {
+      const revealed = e.target.closest('.project-secret-revealed');
+      if (revealed && secretsListEl.contains(revealed)) {
+        e.preventDefault();
+        const li = revealed.closest('li.project-secret-row');
+        if (li) collapseProjectSecretRow(li);
         return;
       }
-      fetch(
-        '/projects/' +
-          encodeURIComponent(projectPageId) +
-          '/secrets/' +
-          encodeURIComponent(sid) +
-          '/delete',
-        { method: 'POST', headers: { Accept: 'application/json' } },
-      ).catch(() => {});
+      const revealBtn = e.target.closest('.project-secret-reveal');
+      if (revealBtn && secretsListEl.contains(revealBtn)) {
+        e.preventDefault();
+        const li = revealBtn.closest('li.project-secret-row');
+        const sid = li?.dataset.secretId;
+        if (!li || !sid || li.classList.contains('project-secret-row--revealed')) return;
+        const cached = li.dataset.secretValue;
+        if (cached) {
+          revealProjectSecretRow(li, cached);
+          return;
+        }
+        void fetch(
+          '/projects/' +
+            encodeURIComponent(projectPageId) +
+            '/secrets/' +
+            encodeURIComponent(sid) +
+            '/value',
+          { headers: { Accept: 'application/json' } },
+        )
+          .then((res) => {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+          })
+          .then((data) => {
+            const val = data && data.value != null ? String(data.value) : '';
+            li.dataset.secretValue = val;
+            revealProjectSecretRow(li, val);
+          })
+          .catch(() => {
+            revealProjectSecretRow(li, '(не вдалося завантажити)');
+          });
+        return;
+      }
     });
   }
 
