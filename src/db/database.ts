@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS chats (
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
   title_manual        INTEGER NOT NULL DEFAULT 0,
-  unread              INTEGER NOT NULL DEFAULT 0
+  unread              INTEGER NOT NULL DEFAULT 0,
+  /** 'normal' | 'task_execution' — execution threads are hidden from sidebar lists. */
+  chat_kind           TEXT NOT NULL DEFAULT 'normal'
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -116,6 +118,59 @@ CREATE TABLE IF NOT EXISTS queued_messages (
 
 CREATE INDEX IF NOT EXISTS idx_queued_chat ON queued_messages(chat_id, position, id);
 
+CREATE TABLE IF NOT EXISTS task_context_snapshots (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id      INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  source_chat_id  INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  content_json    TEXT NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id           INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  source_chat_id       INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  title                TEXT NOT NULL,
+  goal                 TEXT NOT NULL,
+  status               TEXT NOT NULL DEFAULT 'inbox',
+  agent                TEXT,
+  context_snapshot_id  INTEGER NOT NULL REFERENCES task_context_snapshots(id),
+  execution_chat_id    INTEGER REFERENCES chats(id) ON DELETE SET NULL,
+  result_summary       TEXT,
+  created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_source_chat ON tasks(source_chat_id);
+
+CREATE TABLE IF NOT EXISTS task_steps (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id      INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  position     INTEGER NOT NULL,
+  actor        TEXT NOT NULL,
+  title        TEXT NOT NULL,
+  description  TEXT,
+  status       TEXT NOT NULL DEFAULT 'todo',
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id, position);
+
+CREATE TABLE IF NOT EXISTS task_runs (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id             INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  execution_chat_id   INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  status              TEXT NOT NULL,
+  started_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at         TEXT,
+  log_summary         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_runs_task ON task_runs(task_id, id DESC);
+
 -- Robustness: any new message bumps the parent chat's updated_at so sidebar
 -- sorting is always correct even if a caller forgets the manual chats.touch().
 CREATE TRIGGER IF NOT EXISTS trg_chats_touch_on_message
@@ -141,6 +196,7 @@ function ensureColumn(table: string, column: string, ddl: string): void {
   }
 }
 ensureColumn('messages', 'attachments', 'TEXT');
+ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
 
 /** Older DBs created project_secrets.project_id as NOT NULL; orphan chat secrets need NULL. */
 function migrateProjectSecretsNullableProjectId(): void {

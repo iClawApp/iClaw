@@ -131,9 +131,11 @@
       id="schedule-menu"
       class="schedule-menu"
       role="menu"
-      aria-label="Schedule"
+      aria-label="Send actions"
       hidden
     >
+      <button type="button" class="schedule-menu-item" data-action="create-task" role="menuitem">Create task</button>
+      <div class="schedule-menu-divider" role="separator" aria-hidden="true"></div>
       <button type="button" class="schedule-menu-item" data-offset="5m" role="menuitem">5 хв</button>
       <button type="button" class="schedule-menu-item" data-offset="30m" role="menuitem">30 хв</button>
       <button type="button" class="schedule-menu-item" data-offset="1h" role="menuitem">1 година</button>
@@ -240,3 +242,36 @@
     </div>
   </div>
 </form>
+
+<div class="create-task-modal" id="create-task-modal" hidden>
+    <div class="create-task-modal__backdrop" id="create-task-modal-backdrop"></div>
+    <div class="create-task-modal__panel" role="dialog" aria-modal="true" aria-labelledby="create-task-modal-title">
+      <header class="create-task-modal__head">
+        <h3 class="create-task-modal__title" id="create-task-modal-title">Create agent task</h3>
+        <p class="create-task-modal__hint muted">
+          Turn this chat into background work: context is frozen, the agent runs on a plan, and the thread stays quiet.
+          Hold <strong>Send</strong> anytime to open this again.
+        </p>
+      </header>
+      <label class="create-task-modal__field">
+        <span class="create-task-modal__caption">Title</span>
+        <input type="text" id="create-task-title" autocomplete="off" maxlength="200" />
+      </label>
+      <label class="create-task-modal__field">
+        <span class="create-task-modal__caption">Goal</span>
+        <textarea id="create-task-goal" rows="3"></textarea>
+      </label>
+      <label class="create-task-modal__field">
+        <span class="create-task-modal__caption">Agent</span>
+        <select id="create-task-agent"></select>
+      </label>
+      <label class="create-task-modal__check">
+        <input type="checkbox" id="create-task-generate-plan" checked />
+        <span>Generate plan before running</span>
+      </label>
+      <div class="create-task-modal__actions">
+        <button type="button" class="btn btn--ghost btn--sm" id="create-task-cancel">Cancel</button>
+        <button type="button" class="btn btn--primary btn--sm" id="create-task-submit">Create task</button>
+      </div>
+    </div>
+  </div>

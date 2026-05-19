@@ -1,0 +1,194 @@
+<%
+  const statusLabels = {
+    inbox: 'Draft',
+    ready: 'Ready to run',
+    running: 'Running',
+    needs_human: 'Your turn',
+    needs_review: 'Review result',
+    done: 'Done',
+    failed: 'Failed',
+  };
+  const statusLabel = statusLabels[task.status] || task.status;
+  const nextByStatus = {
+    inbox: {
+      title: 'Step 1: approve the plan',
+      body: 'Run agent unlocks only after approval. Review the steps below, then tap Approve & run — or Approve plan if you want to run later.',
+    },
+    ready: {
+      title: 'Run the agent',
+      body: 'The plan is approved. The agent works in the background; your chat only gets short status notes.',
+    },
+    running: {
+      title: 'Agent is working',
+      body: 'Watch Agent output below. You can leave this page — the source chat stays quiet.',
+    },
+    needs_human: {
+      title: 'Waiting for you',
+      body: 'Reply in the section below, then tap Continue.',
+    },
+    needs_review: {
+      title: 'Check the result',
+      body: 'Review the output, then mark Done or Failed.',
+    },
+    done: {
+      title: 'All done',
+      body: 'This task is complete.',
+    },
+    failed: {
+      title: 'Task failed',
+      body: 'You can mark Done to close it, or leave it as Failed.',
+    },
+  };
+  const next = nextByStatus[task.status] || nextByStatus.inbox;
+  const actorLabels = { agent: 'Agent', human: 'You' };
+  const canRun = task.status === 'ready';
+  const showApprove = task.status === 'inbox';
+%>
+<%- include('partials/head', { title: task.title + ' — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main task-page" data-task-id="<%= task.id %>">
+    <div class="task-shell">
+      <a href="<%= task.project_id ? '/projects/' + task.project_id : '/tasks' %>" class="task-back">
+        <span class="task-back-chevron" aria-hidden="true">‹</span> Tasks
+      </a>
+
+      <header class="task-large-header">
+        <p class="task-eyebrow">Agent task</p>
+        <h1 class="task-large-title"><%= task.title %></h1>
+      </header>
+
+      <div class="task-lede-card">
+        <p class="task-lede-title">Not the same as chat</p>
+        <p class="task-lede-body">
+          A <strong>task</strong> freezes your chat context, runs the agent on a plan, and keeps a
+          separate log here. Your message thread does not fill with tool output.
+        </p>
+        <% if (sourceChat) { %>
+          <a href="/chats/<%= sourceChat.id %>" class="task-lede-link">Source chat: <%= sourceChat.title %></a>
+        <% } %>
+      </div>
+
+      <div class="task-next-card task-next-card--<%= task.status %>">
+        <% if (showApprove || canRun) { %>
+          <ol class="task-flow-steps" aria-label="Task progress">
+            <li class="task-flow-step<%= showApprove ? ' is-current' : ' is-done' %>">
+              <span class="task-flow-step-num">1</span> Approve plan
+            </li>
+            <li class="task-flow-step<%= canRun ? ' is-current' : '' %><%= task.status === 'running' || task.status === 'needs_human' || task.status === 'needs_review' || task.status === 'done' || task.status === 'failed' ? ' is-done' : '' %>">
+              <span class="task-flow-step-num">2</span> Run agent
+            </li>
+          </ol>
+        <% } %>
+        <span class="task-pill task-pill--<%= task.status %>"><%= statusLabel %></span>
+        <h2 class="task-next-title"><%= next.title %></h2>
+        <p class="task-next-body"><%= next.body %></p>
+        <p class="task-goal-label">Goal</p>
+        <p class="task-goal-text" id="task-goal-text"><%= task.goal %></p>
+      </div>
+
+      <ul class="task-inset-list task-inset-list--actions task-inset-list--primary">
+        <% if (showApprove) { %>
+          <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-approve-and-run">Approve &amp; run</button></li>
+          <li><button type="button" class="task-row-btn" id="task-approve-plan">Approve plan only</button></li>
+        <% } %>
+        <% if (canRun) { %>
+          <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-run-btn">Run agent</button></li>
+        <% } %>
+        <% if (task.status === 'needs_human') { %>
+          <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-resume-btn">Continue</button></li>
+        <% } %>
+        <% if (!showApprove && !canRun && task.status !== 'needs_human') { %>
+          <li class="task-inset-empty task-inset-empty--inline">Use the actions below when you are ready.</li>
+        <% } %>
+      </ul>
+
+      <% if (task.status === 'needs_human') { %>
+        <section class="task-group" id="task-human-block">
+          <h2 class="task-section-title">Your reply</h2>
+          <p class="task-section-footnote">The agent asked for this before continuing</p>
+          <div class="task-inset-list task-inset-list--single">
+            <div class="task-inset-pad">
+              <% if (task.result_summary) { %>
+                <p class="task-human-ask"><%= task.result_summary %></p>
+              <% } %>
+              <textarea id="task-human-input" class="task-field-textarea" rows="3" placeholder="Type your answer…"></textarea>
+            </div>
+          </div>
+        </section>
+      <% } %>
+
+      <section class="task-group">
+        <h2 class="task-section-title">Plan</h2>
+        <p class="task-section-footnote">What happens, step by step</p>
+        <ul class="task-inset-list" id="task-steps-list">
+          <% if (task.steps.length === 0) { %>
+            <li class="task-inset-empty">No steps — tap Add step below.</li>
+          <% } %>
+          <% task.steps.forEach(function (s) { %>
+            <li class="task-step-row" data-step-id="<%= s.id %>">
+              <span class="task-step-badge task-step-badge--<%= s.actor %>" aria-hidden="true"><%= s.actor === 'human' ? '👤' : '✦' %></span>
+              <div class="task-step-main">
+                <span class="task-step-actor-label"><%= actorLabels[s.actor] || s.actor %></span>
+                <input type="text" class="task-step-input" value="<%= s.title %>" data-actor="<%= s.actor %>" aria-label="Step" />
+              </div>
+            </li>
+          <% }); %>
+        </ul>
+        <button type="button" class="task-row-action" id="task-add-step">Add step</button>
+      </section>
+
+      <section class="task-group">
+        <h2 class="task-section-title">Finish</h2>
+        <p class="task-section-footnote">Close the task early if you no longer need the agent</p>
+        <ul class="task-inset-list task-inset-list--actions">
+          <li><button type="button" class="task-row-btn" id="task-done-btn">Mark as done</button></li>
+          <li><button type="button" class="task-row-btn task-row-btn--destructive" id="task-fail-btn">Mark as failed</button></li>
+        </ul>
+      </section>
+
+      <details class="task-disclosure">
+        <summary>
+          <span class="task-disclosure-title">Frozen context</span>
+          <span class="task-disclosure-sub">Chat at the moment you created this task</span>
+        </summary>
+        <div class="task-disclosure-body">
+          <% if (snapshotPreview) { %>
+            <p><%= snapshotPreview.messageCount %> messages · <%= snapshotPreview.projectFactsCount %> project facts</p>
+            <% if (snapshotPreview.secretRefs.length) { %>
+              <p>Secrets (refs only): <%= snapshotPreview.secretRefs.map(function (r) { return r.label; }).join(', ') %></p>
+            <% } %>
+          <% } %>
+        </div>
+      </details>
+
+      <section class="task-group task-group--log">
+        <h2 class="task-section-title">Agent output</h2>
+        <p class="task-section-footnote">Execution log — not saved to the chat</p>
+        <div class="task-log" id="task-execution-log">
+          <% if (executionLog.length === 0) { %>
+            <p class="task-log-empty">Empty until you run the agent.</p>
+          <% } %>
+          <% executionLog.forEach(function (m) { %>
+            <article class="task-log-entry task-log-entry--<%= m.role %>">
+              <header class="task-log-entry-head"><%= m.role === 'assistant' ? 'Agent' : m.role %></header>
+              <div class="task-log-entry-body"><%= m.content.slice(0, 8000) %></div>
+            </article>
+          <% }); %>
+        </div>
+        <% if (task.execution_chat_id) { %>
+          <a href="/chats/<%= task.execution_chat_id %>" class="task-lede-link task-log-link">Open technical thread</a>
+        <% } %>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script>
+  window.__ICLAW_TASK__ = <%- JSON.stringify({ id: task.id, status: task.status, executionChatId: task.execution_chat_id }) %>;
+</script>
+<script src="/js/iclaw.js"></script>
+
+<%- include('partials/foot') %>

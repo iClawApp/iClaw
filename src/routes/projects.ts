@@ -13,8 +13,10 @@ import { listProjectLinkGroups } from '../services/projectLinks';
 import { chats, projects, projectFacts, projectSecrets, enrichFactsWithSourceChatTitles, enrichFactWithSourceChatTitle } from '../services/store';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
+import { mountProjectTasksRoutes } from './tasks';
 
 export const projectsRouter: Router = Router();
+mountProjectTasksRoutes(projectsRouter);
 
 function wantsJson(req: import('express').Request): boolean {
   return (

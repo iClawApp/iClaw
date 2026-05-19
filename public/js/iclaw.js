@@ -2737,6 +2737,40 @@
         console.debug('[iclaw] gateway-session-changed', msg.kind, msg.sessionKey);
         return;
 
+      case 'task-run-delta': {
+        const taskRoot = document.querySelector('.task-page[data-task-id]');
+        if (!taskRoot || Number(taskRoot.dataset.taskId) !== msg.taskId) return;
+        const logEl = document.getElementById('task-execution-log');
+        if (!logEl) return;
+        const emptyEl = logEl.querySelector('.task-log-empty');
+        if (emptyEl) emptyEl.remove();
+        const last = logEl.querySelector('.task-log-entry--assistant:last-child .task-log-entry-body');
+        if (last) last.textContent += msg.text;
+        else {
+          const article = document.createElement('article');
+          article.className = 'task-log-entry task-log-entry--assistant';
+          article.innerHTML =
+            '<header class="task-log-entry-head">assistant</header>' +
+            '<div class="task-log-entry-body"></div>';
+          const body = article.querySelector('.task-log-entry-body');
+          if (body) body.textContent = msg.text;
+          logEl.appendChild(article);
+        }
+        logEl.scrollTop = logEl.scrollHeight;
+        return;
+      }
+
+      case 'task-run-ended': {
+        const taskRoot = document.querySelector('.task-page[data-task-id]');
+        if (!taskRoot || Number(taskRoot.dataset.taskId) !== msg.taskId) return;
+        window.location.reload();
+        return;
+      }
+
+      case 'task-updated':
+      case 'task-created':
+        return;
+
       case 'gateway-status':
         applyGatewayStatus(msg.status, msg.detail);
         return;
@@ -4074,7 +4108,6 @@
 
   function openScheduleMenu() {
     if (!scheduleMenu) return;
-    if (!input.value.trim()) return;
     closeComposerAttachMenus();
     document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
     scheduleMenu.hidden = false;
@@ -4296,7 +4329,6 @@
   if (sendBtn) {
     sendBtn.addEventListener('pointerdown', () => {
       if (startedOnDraft || activeChatId == null) return;
-      if (!input.value.trim()) return;
       if (schedulePressTimer) clearTimeout(schedulePressTimer);
       schedulePressTimer = setTimeout(() => {
         schedulePressTimer = null;
@@ -4375,10 +4407,129 @@
     });
   }
 
+  const createTaskModal = document.getElementById('create-task-modal');
+  const createTaskBackdrop = document.getElementById('create-task-modal-backdrop');
+  const createTaskTitle = document.getElementById('create-task-title');
+  const createTaskGoal = document.getElementById('create-task-goal');
+  const createTaskAgent = document.getElementById('create-task-agent');
+  const createTaskGeneratePlan = document.getElementById('create-task-generate-plan');
+  const createTaskCancel = document.getElementById('create-task-cancel');
+  const createTaskSubmit = document.getElementById('create-task-submit');
+
+  function ensureCreateTaskModalPortal() {
+    if (!createTaskModal || createTaskModal.parentElement === document.body) return;
+    document.body.appendChild(createTaskModal);
+  }
+
+  function populateCreateTaskAgentSelect() {
+    if (!createTaskAgent) return;
+    const src =
+      document.getElementById('chat-agent-select') || document.getElementById('draft-agent');
+    createTaskAgent.innerHTML = '';
+    if (src && src.options.length) {
+      for (const opt of src.options) {
+        const o = document.createElement('option');
+        o.value = opt.value;
+        o.textContent = opt.textContent;
+        if (opt.selected) o.selected = true;
+        createTaskAgent.appendChild(o);
+      }
+      return;
+    }
+    const o = document.createElement('option');
+    o.value = 'openclaw/default';
+    o.textContent = 'openclaw/default';
+    createTaskAgent.appendChild(o);
+  }
+
+  function openCreateTaskModal() {
+    if (!createTaskModal) return;
+    if (activeChatId == null || startedOnDraft) {
+      alert('Open or start a saved chat first — tasks need a chat context.');
+      return;
+    }
+    ensureCreateTaskModalPortal();
+    closeScheduleMenu();
+    const composerText = (input && input.value.trim()) || '';
+    if (createTaskGoal) createTaskGoal.value = composerText;
+    if (createTaskTitle) {
+      createTaskTitle.value =
+        composerText.slice(0, 80) || 'New task';
+    }
+    populateCreateTaskAgentSelect();
+    createTaskModal.hidden = false;
+    requestAnimationFrame(() => {
+      (createTaskGoal || createTaskTitle)?.focus();
+    });
+  }
+
+  function closeCreateTaskModal() {
+    if (createTaskModal) createTaskModal.hidden = true;
+  }
+
+  async function submitCreateTask() {
+    if (activeChatId == null || !createTaskGoal) return;
+    const goal = createTaskGoal.value.trim();
+    if (!goal) {
+      alert('Enter a goal for the task.');
+      createTaskGoal.focus();
+      return;
+    }
+    const title = (createTaskTitle && createTaskTitle.value.trim()) || goal.slice(0, 80);
+    const agent = createTaskAgent ? createTaskAgent.value : undefined;
+    const generatePlan = createTaskGeneratePlan ? createTaskGeneratePlan.checked : false;
+    if (createTaskSubmit) createTaskSubmit.disabled = true;
+    try {
+      const res = await fetch('/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          sourceChatId: activeChatId,
+          title,
+          goal,
+          agent,
+          generatePlan,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      closeCreateTaskModal();
+      if (data.task && data.task.id) {
+        window.location.href = '/tasks/' + encodeURIComponent(data.task.id);
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (createTaskSubmit) createTaskSubmit.disabled = false;
+    }
+  }
+
+  if (createTaskBackdrop) {
+    createTaskBackdrop.addEventListener('click', closeCreateTaskModal);
+  }
+  if (createTaskCancel) {
+    createTaskCancel.addEventListener('click', closeCreateTaskModal);
+  }
+  if (createTaskSubmit) {
+    createTaskSubmit.addEventListener('click', () => submitCreateTask());
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && createTaskModal && !createTaskModal.hidden) {
+      closeCreateTaskModal();
+    }
+  });
+
   if (scheduleMenu) {
     scheduleMenu.addEventListener('click', (e) => {
       const btn = e.target.closest('.schedule-menu-item');
       if (!btn) return;
+      if (btn.dataset.action === 'create-task') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeScheduleMenu();
+        openCreateTaskModal();
+        return;
+      }
       const offset = btn.dataset.offset;
       if (offset === 'custom') {
         openSchedulePicker(new Date(Date.now() + 60 * 60_000), (when) => submitScheduled(when));
@@ -5235,8 +5386,16 @@
       links: document.getElementById('project-panel-links'),
       files: document.getElementById('project-panel-files'),
       secrets: document.getElementById('project-panel-secrets'),
+      tasks: document.getElementById('project-panel-tasks'),
     };
-    if (!tabs.length || !panels.chats || !panels.memory || !panels.links || !panels.files || !panels.secrets)
+    if (
+      !tabs.length ||
+      !panels.chats ||
+      !panels.memory ||
+      !panels.links ||
+      !panels.files ||
+      !panels.secrets
+    )
       return;
 
     function activate(name) {
@@ -5261,10 +5420,228 @@
         const name = btn.getAttribute('data-project-tab');
         if (!name || !panels[name]) return;
         activate(name);
+        if (name === 'tasks') loadProjectTaskBoard(root);
       });
     });
   }
+
+  const TASK_BOARD_COLS = [
+    { key: 'inbox', label: 'Draft' },
+    { key: 'ready', label: 'Ready' },
+    { key: 'running', label: 'Running' },
+    { key: 'needs_human', label: 'Your turn' },
+    { key: 'review', label: 'Review' },
+    { key: 'done', label: 'Done' },
+  ];
+
+  function renderTaskBoardHtml(board) {
+    return TASK_BOARD_COLS.map((col) => {
+      const items = (board && board[col.key]) || [];
+      const cards =
+        items.length === 0
+          ? '<li class="task-board-empty" aria-hidden="true">—</li>'
+          : items
+              .map((t) => {
+                const failed = t.status === 'failed' ? ' task-board-card--failed' : '';
+                const step = t.current_step_title
+                  ? '<span class="task-board-card-sub">' +
+                    escapeHtml(t.current_step_title) +
+                    '</span>'
+                  : '';
+                return (
+                  '<li><a href="/tasks/' +
+                  encodeURIComponent(t.id) +
+                  '" class="task-board-card' +
+                  failed +
+                  '"><span class="task-board-card-title">' +
+                  escapeHtml(t.title) +
+                  '</span>' +
+                  step +
+                  '</a></li>'
+                );
+              })
+              .join('');
+      return (
+        '<section class="task-board-col" data-col="' +
+        col.key +
+        '"><header class="task-board-col-head"><h2 class="task-board-col-label">' +
+        escapeHtml(col.label) +
+        '</h2><span class="task-board-col-count">' +
+        items.length +
+        '</span></header><ul class="task-board-cards">' +
+        cards +
+        '</ul></section>'
+      );
+    }).join('');
+  }
+
+  async function loadProjectTaskBoard(root) {
+    const boardEl = root.querySelector('#project-task-board');
+    if (!boardEl) return;
+    const projectId = boardEl.dataset.projectId;
+    if (!projectId) return;
+    try {
+      const res = await fetch('/projects/' + encodeURIComponent(projectId) + '/tasks', {
+        headers: { Accept: 'application/json' },
+      });
+      const data = await res.json();
+      boardEl.innerHTML = renderTaskBoardHtml(data.board || {});
+      const tab = root.querySelector('[data-project-tab="tasks"]');
+      if (tab) {
+        const n = (data.tasks || []).length;
+        tab.dataset.tabCount = String(n);
+        if (tab.classList.contains('is-active')) refreshProjectTabLabels('tasks');
+      }
+    } catch {
+      boardEl.innerHTML = '<p class="project-tasks-loading">Could not load tasks.</p>';
+    }
+  }
+
+  function initTaskDetailPage() {
+    const root = document.querySelector('.task-page[data-task-id]');
+    if (!root) return;
+    const taskId = Number(root.dataset.taskId);
+    if (!Number.isFinite(taskId)) return;
+
+    const runBtn = document.getElementById('task-run-btn');
+    const approveBtn = document.getElementById('task-approve-plan');
+    const approveAndRunBtn = document.getElementById('task-approve-and-run');
+    const resumeBtn = document.getElementById('task-resume-btn');
+    const doneBtn = document.getElementById('task-done-btn');
+    const failBtn = document.getElementById('task-fail-btn');
+    const addStepBtn = document.getElementById('task-add-step');
+    const stepsList = document.getElementById('task-steps-list');
+    const logEl = document.getElementById('task-execution-log');
+
+    function collectSteps() {
+      if (!stepsList) return [];
+      return [...stepsList.querySelectorAll('.task-step-row')].map((row) => {
+        const input = row.querySelector('.task-step-input');
+        const actor = input?.dataset.actor === 'human' ? 'human' : 'agent';
+        return { actor, title: (input?.value || '').trim(), description: null };
+      }).filter((s) => s.title);
+    }
+
+    if (addStepBtn && stepsList) {
+      addStepBtn.addEventListener('click', () => {
+        const li = document.createElement('li');
+        li.className = 'task-step-row';
+        const empty = stepsList.querySelector('.task-inset-empty');
+        if (empty) empty.remove();
+        li.innerHTML =
+          '<span class="task-step-badge task-step-badge--agent" aria-hidden="true">✦</span>' +
+          '<div class="task-step-main">' +
+          '<span class="task-step-actor-label">Agent</span>' +
+          '<input type="text" class="task-step-input" value="" data-actor="agent" aria-label="Step" />' +
+          '</div>';
+        stepsList.appendChild(li);
+        li.querySelector('.task-step-input')?.focus();
+      });
+    }
+
+    function wireClick(id, handler) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', handler);
+    }
+
+    async function postAction(path, body) {
+      const res = await fetch('/tasks/' + encodeURIComponent(taskId) + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    function requireSteps() {
+      const steps = collectSteps();
+      if (!steps.length) {
+        alert('Add at least one step to the plan before continuing.');
+        return null;
+      }
+      return steps;
+    }
+
+    async function onApprove() {
+      const steps = requireSteps();
+      if (!steps) return;
+      try {
+        await postAction('/approve-plan', { steps });
+        window.location.reload();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    async function onApproveAndRun(btn) {
+      const steps = requireSteps();
+      if (!steps) return;
+      if (btn) btn.disabled = true;
+      try {
+        await postAction('/approve-plan', { steps });
+        await postAction('/run');
+        window.location.reload();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+        if (btn) btn.disabled = false;
+      }
+    }
+    async function onRun(btn) {
+      if (btn) btn.disabled = true;
+      try {
+        await postAction('/run');
+        window.location.reload();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    if (approveBtn) approveBtn.addEventListener('click', onApprove);
+    if (approveAndRunBtn) {
+      approveAndRunBtn.addEventListener('click', () => onApproveAndRun(approveAndRunBtn));
+    }
+    if (runBtn) runBtn.addEventListener('click', () => onRun(runBtn));
+    if (resumeBtn) {
+      resumeBtn.addEventListener('click', async () => {
+        const humanInput = document.getElementById('task-human-input')?.value?.trim();
+        if (!humanInput) return;
+        try {
+          await postAction('/resume', { humanInput });
+          window.location.reload();
+        } catch (err) {
+          alert(err instanceof Error ? err.message : String(err));
+        }
+      });
+    }
+    if (doneBtn) {
+      doneBtn.addEventListener('click', async () => {
+        try {
+          await postAction('/complete', { status: 'done' });
+          window.location.reload();
+        } catch (err) {
+          alert(err instanceof Error ? err.message : String(err));
+        }
+      });
+    }
+    if (failBtn) {
+      failBtn.addEventListener('click', async () => {
+        try {
+          await postAction('/complete', { status: 'failed' });
+          window.location.reload();
+        } catch (err) {
+          alert(err instanceof Error ? err.message : String(err));
+        }
+      });
+    }
+
+  }
+
   initProjectPageTabs();
+  initTaskDetailPage();
   hydrateServerRenderedMessages();
   (function seedMidTurnStreamStatusDots() {
     const st = document.querySelector('#reload-placeholder .stream-status');

@@ -3,6 +3,7 @@ import { db } from '../db/database';
 import { deriveTitle } from './chatTitle';
 import type {
   Chat,
+  ChatKind,
   Message,
   MessageAttachment,
   Project,
@@ -11,16 +12,29 @@ import type {
   ProjectSecret,
   QueuedMessage,
   ScheduledMessage,
+  Task,
+  TaskContextSnapshot,
+  TaskContextSnapshotPayload,
+  TaskRun,
+  TaskStatus,
+  TaskStep,
+  TaskStepActor,
+  TaskStepStatus,
+  TaskWithSteps,
 } from '../types';
 import type { InlineSecretWire } from './inlineSecrets';
 import { clampLogoColor, clampLogoEmoji } from '../constants/projectLogos';
 
 // ---------- chats ----------
 
+const CHAT_KIND_NORMAL = "COALESCE(chat_kind, 'normal') = 'normal'";
+
 export const chats = {
   list(): Chat[] {
     return db
-      .prepare('SELECT * FROM chats ORDER BY updated_at DESC, id DESC')
+      .prepare(
+        `SELECT * FROM chats WHERE ${CHAT_KIND_NORMAL} ORDER BY updated_at DESC, id DESC`,
+      )
       .all() as Chat[];
   },
   get(id: number): Chat | undefined {
@@ -37,24 +51,30 @@ export const chats = {
   listOrphans(): Chat[] {
     return db
       .prepare(
-        'SELECT * FROM chats WHERE project_id IS NULL ORDER BY updated_at DESC, id DESC',
+        `SELECT * FROM chats WHERE project_id IS NULL AND ${CHAT_KIND_NORMAL} ORDER BY updated_at DESC, id DESC`,
       )
       .all() as Chat[];
   },
   listByProject(projectId: number): Chat[] {
     return db
       .prepare(
-        'SELECT * FROM chats WHERE project_id = ? ORDER BY updated_at DESC, id DESC',
+        `SELECT * FROM chats WHERE project_id = ? AND ${CHAT_KIND_NORMAL} ORDER BY updated_at DESC, id DESC`,
       )
       .all(projectId) as Chat[];
   },
-  create(agent: string, projectId: number | null = null): Chat {
+  create(
+    agent: string,
+    projectId: number | null = null,
+    opts?: { chatKind?: ChatKind; title?: string },
+  ): Chat {
     const sessionKey = randomUUID();
+    const kind = opts?.chatKind ?? 'normal';
+    const title = opts?.title?.trim() || 'New chat';
     const info = db
       .prepare(
-        'INSERT INTO chats (agent, openclaw_session_id, project_id) VALUES (?, ?, ?)',
+        'INSERT INTO chats (agent, openclaw_session_id, project_id, chat_kind, title) VALUES (?, ?, ?, ?, ?)',
       )
-      .run(agent, sessionKey, projectId);
+      .run(agent, sessionKey, projectId, kind, title);
     return this.get(Number(info.lastInsertRowid))!;
   },
   /** Rename only — does not touch `updated_at` so sidebar order stays put. */
@@ -900,6 +920,198 @@ export const scheduledMessages = {
   },
 };
 
+// ---------- tasks ----------
+
+export const taskContextSnapshots = {
+  create(opts: {
+    projectId: number | null;
+    sourceChatId: number;
+    payload: TaskContextSnapshotPayload;
+  }): TaskContextSnapshot {
+    const info = db
+      .prepare(
+        'INSERT INTO task_context_snapshots (project_id, source_chat_id, content_json) VALUES (?, ?, ?)',
+      )
+      .run(opts.projectId, opts.sourceChatId, JSON.stringify(opts.payload));
+    return db
+      .prepare('SELECT * FROM task_context_snapshots WHERE id = ?')
+      .get(Number(info.lastInsertRowid)) as TaskContextSnapshot;
+  },
+  get(id: number): TaskContextSnapshot | undefined {
+    return db.prepare('SELECT * FROM task_context_snapshots WHERE id = ?').get(id) as
+      | TaskContextSnapshot
+      | undefined;
+  },
+  parsePayload(row: TaskContextSnapshot): TaskContextSnapshotPayload {
+    return JSON.parse(row.content_json) as TaskContextSnapshotPayload;
+  },
+};
+
+function touchTask(id: number): void {
+  db.prepare("UPDATE tasks SET updated_at = datetime('now') WHERE id = ?").run(id);
+}
+
+export const tasks = {
+  get(id: number): Task | undefined {
+    return db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Task | undefined;
+  },
+  list(opts?: { projectId?: number | null; orphanOnly?: boolean }): Task[] {
+    if (opts?.orphanOnly) {
+      return db
+        .prepare('SELECT * FROM tasks WHERE project_id IS NULL ORDER BY updated_at DESC, id DESC')
+        .all() as Task[];
+    }
+    if (opts?.projectId != null) {
+      return db
+        .prepare(
+          'SELECT * FROM tasks WHERE project_id = ? ORDER BY updated_at DESC, id DESC',
+        )
+        .all(opts.projectId) as Task[];
+    }
+    return db
+      .prepare('SELECT * FROM tasks ORDER BY updated_at DESC, id DESC')
+      .all() as Task[];
+  },
+  create(opts: {
+    projectId: number | null;
+    sourceChatId: number;
+    title: string;
+    goal: string;
+    agent: string | null;
+    contextSnapshotId: number;
+    status?: TaskStatus;
+  }): Task {
+    const info = db
+      .prepare(
+        `INSERT INTO tasks (
+          project_id, source_chat_id, title, goal, status, agent, context_snapshot_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        opts.projectId,
+        opts.sourceChatId,
+        opts.title.trim() || 'Task',
+        opts.goal.trim(),
+        opts.status ?? 'inbox',
+        opts.agent,
+        opts.contextSnapshotId,
+      );
+    return this.get(Number(info.lastInsertRowid))!;
+  },
+  updateStatus(id: number, status: TaskStatus): void {
+    db.prepare("UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?").run(
+      status,
+      id,
+    );
+  },
+  patch(
+    id: number,
+    patch: {
+      title?: string;
+      goal?: string;
+      agent?: string | null;
+      status?: TaskStatus;
+      executionChatId?: number | null;
+      resultSummary?: string | null;
+    },
+  ): Task | undefined {
+    const row = this.get(id);
+    if (!row) return undefined;
+    const title = patch.title !== undefined ? patch.title.trim() || row.title : row.title;
+    const goal = patch.goal !== undefined ? patch.goal.trim() : row.goal;
+    const agent = patch.agent !== undefined ? patch.agent : row.agent;
+    const status = patch.status ?? row.status;
+    const execution_chat_id =
+      patch.executionChatId !== undefined ? patch.executionChatId : row.execution_chat_id;
+    const result_summary =
+      patch.resultSummary !== undefined ? patch.resultSummary : row.result_summary;
+    db.prepare(
+      `UPDATE tasks SET title = ?, goal = ?, agent = ?, status = ?,
+        execution_chat_id = ?, result_summary = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+    ).run(title, goal, agent, status, execution_chat_id, result_summary, id);
+    return this.get(id);
+  },
+};
+
+export const taskSteps = {
+  listByTask(taskId: number): TaskStep[] {
+    return db
+      .prepare('SELECT * FROM task_steps WHERE task_id = ? ORDER BY position ASC, id ASC')
+      .all(taskId) as TaskStep[];
+  },
+  replaceAll(
+    taskId: number,
+    steps: { actor: TaskStepActor; title: string; description?: string | null }[],
+  ): TaskStep[] {
+    const del = db.prepare('DELETE FROM task_steps WHERE task_id = ?');
+    const ins = db.prepare(
+      `INSERT INTO task_steps (task_id, position, actor, title, description, status)
+       VALUES (?, ?, ?, ?, ?, 'todo')`,
+    );
+    const run = db.transaction(() => {
+      del.run(taskId);
+      steps.forEach((s, i) => {
+        ins.run(taskId, i, s.actor, s.title.trim(), s.description?.trim() || null);
+      });
+    });
+    run();
+    touchTask(taskId);
+    return this.listByTask(taskId);
+  },
+  updateStatus(stepId: number, status: TaskStepStatus): void {
+    db.prepare(
+      "UPDATE task_steps SET status = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(status, stepId);
+  },
+  getCurrentTodo(taskId: number): TaskStep | undefined {
+    return db
+      .prepare(
+        `SELECT * FROM task_steps WHERE task_id = ? AND status IN ('todo', 'running', 'needs_human')
+         ORDER BY position ASC LIMIT 1`,
+      )
+      .get(taskId) as TaskStep | undefined;
+  },
+};
+
+export const taskRuns = {
+  create(opts: { taskId: number; executionChatId: number; status: string }): TaskRun {
+    const info = db
+      .prepare(
+        'INSERT INTO task_runs (task_id, execution_chat_id, status) VALUES (?, ?, ?)',
+      )
+      .run(opts.taskId, opts.executionChatId, opts.status);
+    return db.prepare('SELECT * FROM task_runs WHERE id = ?').get(Number(info.lastInsertRowid)) as TaskRun;
+  },
+  finish(id: number, status: string, logSummary: string | null): void {
+    db.prepare(
+      `UPDATE task_runs SET status = ?, finished_at = datetime('now'), log_summary = ? WHERE id = ?`,
+    ).run(status, logSummary, id);
+  },
+  listByTask(taskId: number): TaskRun[] {
+    return db
+      .prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY id DESC')
+      .all(taskId) as TaskRun[];
+  },
+  getLatest(taskId: number): TaskRun | undefined {
+    return db
+      .prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY id DESC LIMIT 1')
+      .get(taskId) as TaskRun | undefined;
+  },
+};
+
+export function enrichTaskWithSteps(task: Task): TaskWithSteps {
+  const steps = taskSteps.listByTask(task.id);
+  const src = chats.get(task.source_chat_id);
+  const current = steps.find((s) => s.status === 'running' || s.status === 'needs_human') ?? steps.find((s) => s.status === 'todo');
+  return {
+    ...task,
+    steps,
+    source_chat_title: (src?.title ?? '').trim() || 'Chat',
+    current_step_title: current?.title,
+  };
+}
+
 // ---------- search ----------
 
 const SEARCH_MAX_LEN = 200;
@@ -914,8 +1126,9 @@ export const chatSearch = {
         `SELECT DISTINCT c.id AS id
          FROM chats c
          LEFT JOIN messages m ON m.chat_id = c.id
-         WHERE instr(unicode_lower(c.title), ?) > 0
-            OR instr(unicode_lower(COALESCE(m.content, '')), ?) > 0
+         WHERE ${CHAT_KIND_NORMAL}
+           AND (instr(unicode_lower(c.title), ?) > 0
+            OR instr(unicode_lower(COALESCE(m.content, '')), ?) > 0)
          ORDER BY c.updated_at DESC, c.id DESC
          LIMIT 500`,
       )

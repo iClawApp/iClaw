@@ -66,11 +66,97 @@ export interface ProjectSecret {
   created_at: string;
 }
 
+export type ChatKind = 'normal' | 'task_execution';
+
+export type TaskStatus =
+  | 'inbox'
+  | 'ready'
+  | 'running'
+  | 'needs_human'
+  | 'needs_review'
+  | 'done'
+  | 'failed';
+
+export type TaskStepActor = 'agent' | 'human';
+export type TaskStepStatus = 'todo' | 'running' | 'needs_human' | 'done' | 'failed';
+
+export interface TaskContextSnapshotMessage {
+  id: number;
+  role: string;
+  content: string;
+  attachments?: MessageAttachment[] | null;
+  createdAt: string;
+}
+
+export interface TaskContextSnapshotPayload {
+  capturedAt: string;
+  sourceChatId: number;
+  projectId: number | null;
+  messages: TaskContextSnapshotMessage[];
+  projectFacts: string[];
+  attachedFiles: MessageAttachment[];
+  secretRefs: { id: number; label: string }[];
+}
+
+export interface TaskContextSnapshot {
+  id: number;
+  project_id: number | null;
+  source_chat_id: number;
+  content_json: string;
+  created_at: string;
+}
+
+export interface Task {
+  id: number;
+  project_id: number | null;
+  source_chat_id: number;
+  title: string;
+  goal: string;
+  status: TaskStatus;
+  agent: string | null;
+  context_snapshot_id: number;
+  execution_chat_id: number | null;
+  result_summary: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskStep {
+  id: number;
+  task_id: number;
+  position: number;
+  actor: TaskStepActor;
+  title: string;
+  description: string | null;
+  status: TaskStepStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskRun {
+  id: number;
+  task_id: number;
+  execution_chat_id: number;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  log_summary: string | null;
+}
+
+/** Task with steps and optional UI enrichments (not DB columns). */
+export interface TaskWithSteps extends Task {
+  steps: TaskStep[];
+  source_chat_title?: string;
+  current_step_title?: string;
+}
+
 export interface Chat {
   id: number;
   title: string;
   agent: string;
   openclaw_session_id: string;
+  /** 'normal' chats appear in sidebar; 'task_execution' are hidden. */
+  chat_kind?: ChatKind;
   /** null = chat is "personal" / not under any project */
   project_id: number | null;
   /** 0/1 — when 1, after each reply the app proposes facts; you confirm each with Add / Skip. */
