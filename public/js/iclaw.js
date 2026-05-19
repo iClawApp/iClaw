@@ -3991,6 +3991,8 @@
   // scheduled messages (Telegram-style hold-to-send-later)
   // -------------------------------------------------------------------------
   const scheduleMenu = document.getElementById('schedule-menu');
+  const scheduleMenuMain = document.getElementById('schedule-menu-main');
+  const scheduleMenuSchedule = document.getElementById('schedule-menu-schedule');
   const sendBtn = document.getElementById('composer-send-btn');
   const scheduledListEl = document.getElementById('scheduled-list');
   const schedulePicker = document.getElementById('schedule-picker');
@@ -4083,6 +4085,10 @@
     });
   }
 
+  function composerHasMessageText() {
+    return Boolean(input && String(input.value).trim());
+  }
+
   function isScheduleMenuOpen() {
     return scheduleMenu != null && !scheduleMenu.hidden;
   }
@@ -4095,8 +4101,18 @@
     closeScheduleMenu();
   }
 
+  function showScheduleMenuPanel(panel) {
+    const main = scheduleMenuMain || scheduleMenu?.querySelector('[data-panel="main"]');
+    const times = scheduleMenuSchedule || scheduleMenu?.querySelector('[data-panel="schedule"]');
+    if (!main || !times) return;
+    const showTimes = panel === 'schedule';
+    main.hidden = showTimes;
+    times.hidden = !showTimes;
+  }
+
   function closeScheduleMenu() {
     if (!scheduleMenu) return;
+    showScheduleMenuPanel('main');
     scheduleMenu.hidden = true;
     scheduleMenuJustOpened = false;
     if (scheduleMenuAutoCloseTimer != null) {
@@ -4107,9 +4123,10 @@
   }
 
   function openScheduleMenu() {
-    if (!scheduleMenu) return;
+    if (!scheduleMenu || !composerHasMessageText()) return;
     closeComposerAttachMenus();
     document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
+    showScheduleMenuPanel('main');
     scheduleMenu.hidden = false;
     if (scheduleMenuAutoCloseTimer != null) clearTimeout(scheduleMenuAutoCloseTimer);
     scheduleMenuAutoCloseTimer = setTimeout(() => {
@@ -4329,6 +4346,7 @@
   if (sendBtn) {
     sendBtn.addEventListener('pointerdown', () => {
       if (startedOnDraft || activeChatId == null) return;
+      if (!composerHasMessageText()) return;
       if (schedulePressTimer) clearTimeout(schedulePressTimer);
       schedulePressTimer = setTimeout(() => {
         schedulePressTimer = null;
@@ -4523,7 +4541,18 @@
     scheduleMenu.addEventListener('click', (e) => {
       const btn = e.target.closest('.schedule-menu-item');
       if (!btn) return;
-      if (btn.dataset.action === 'create-task') {
+      const action = btn.dataset.action;
+      if (action === 'open-schedule') {
+        e.preventDefault();
+        showScheduleMenuPanel('schedule');
+        return;
+      }
+      if (action === 'schedule-back') {
+        e.preventDefault();
+        showScheduleMenuPanel('main');
+        return;
+      }
+      if (action === 'create-task') {
         e.preventDefault();
         e.stopPropagation();
         closeScheduleMenu();

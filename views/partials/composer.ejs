@@ -131,16 +131,28 @@
       id="schedule-menu"
       class="schedule-menu"
       role="menu"
-      aria-label="Send actions"
+      aria-label="Дії надсилання"
       hidden
     >
-      <button type="button" class="schedule-menu-item" data-action="create-task" role="menuitem">Create task</button>
-      <div class="schedule-menu-divider" role="separator" aria-hidden="true"></div>
-      <button type="button" class="schedule-menu-item" data-offset="5m" role="menuitem">5 хв</button>
-      <button type="button" class="schedule-menu-item" data-offset="30m" role="menuitem">30 хв</button>
-      <button type="button" class="schedule-menu-item" data-offset="1h" role="menuitem">1 година</button>
-      <button type="button" class="schedule-menu-item" data-offset="tomorrow9" role="menuitem">Завтра о 9:00</button>
-      <button type="button" class="schedule-menu-item" data-offset="custom" role="menuitem">Обрати час</button>
+      <div class="schedule-menu-panel" id="schedule-menu-main" data-panel="main">
+        <button type="button" class="schedule-menu-item" data-action="open-schedule" role="menuitem">
+          Заплановане повідомлення
+        </button>
+        <button type="button" class="schedule-menu-item" data-action="create-task" role="menuitem">
+          Створити задачу
+        </button>
+      </div>
+      <div class="schedule-menu-panel" id="schedule-menu-schedule" data-panel="schedule" hidden>
+        <button type="button" class="schedule-menu-item schedule-menu-item--back" data-action="schedule-back" role="menuitem">
+          ‹ Назад
+        </button>
+        <div class="schedule-menu-divider" role="separator" aria-hidden="true"></div>
+        <button type="button" class="schedule-menu-item" data-offset="5m" role="menuitem">5 хв</button>
+        <button type="button" class="schedule-menu-item" data-offset="30m" role="menuitem">30 хв</button>
+        <button type="button" class="schedule-menu-item" data-offset="1h" role="menuitem">1 година</button>
+        <button type="button" class="schedule-menu-item" data-offset="tomorrow9" role="menuitem">Завтра о 9:00</button>
+        <button type="button" class="schedule-menu-item" data-offset="custom" role="menuitem">Обрати час</button>
+      </div>
     </div>
 
     <div

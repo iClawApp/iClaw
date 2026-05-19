@@ -2276,6 +2276,21 @@ code {
 .schedule-menu-item:hover {
   background: color-mix(in srgb, var(--text) 7%, transparent);
 }
+.schedule-menu-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.schedule-menu-panel[hidden] {
+  display: none;
+}
+.schedule-menu-item--back {
+  font-weight: 500;
+  color: var(--muted);
+}
+.schedule-menu-item--back:hover {
+  color: var(--text);
+}
 .schedule-custom-row {
   display: flex;
   align-items: center;
