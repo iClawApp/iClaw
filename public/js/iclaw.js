@@ -4023,12 +4023,20 @@
     null,
     2,
   );
+  const RESET_POLICY_CLI_COMMAND =
+    "openclaw config patch --stdin <<'EOF'\n" +
+    RESET_POLICY_MANUAL_PATCH +
+    "\nEOF\nopenclaw gateway restart";
 
   const resetBanner = document.getElementById('reset-policy-banner');
   const resetBannerActions = document.getElementById('reset-policy-banner-actions');
   const resetBannerBody = document.getElementById('reset-policy-banner-body');
   const resetFixBtn = document.getElementById('reset-policy-fix');
   const resetSnoozeBtn = document.getElementById('reset-policy-snooze');
+  const resetConfirm = document.getElementById('reset-policy-confirm');
+  const resetConfirmBackdrop = document.getElementById('reset-policy-confirm-backdrop');
+  const resetConfirmCancel = document.getElementById('reset-policy-confirm-cancel');
+  const resetConfirmOk = document.getElementById('reset-policy-confirm-ok');
 
   function snoozeResetBanner(ms) {
     try {
@@ -4063,43 +4071,67 @@
     setTimeout(hideResetBanner, 2400);
   }
 
-  function showResetBannerManualFallback() {
-    if (!resetBannerBody || !resetBannerActions) return;
-    resetBannerBody.innerHTML =
-      '<p class="reset-policy-banner-lead">Automatic setup failed — the gateway token needs admin scope.</p>' +
-      '<p class="reset-policy-banner-detail">' +
-      'Add this block to <code>~/.openclaw/openclaw.json</code> under the <code>session</code> key ' +
-      '(or merge with an existing block), save and restart the gateway.' +
-      '</p>' +
-      '<div class="reset-policy-manual">' +
-      '<pre id="reset-policy-snippet">' +
-      escapeHtml(RESET_POLICY_MANUAL_PATCH) +
-      '</pre>' +
-      '<div class="reset-policy-manual-row">' +
-      '<button type="button" class="btn btn--ghost btn--sm" id="reset-policy-copy">Copy</button>' +
-      '<span class="muted" id="reset-policy-copy-status"></span>' +
-      '</div>' +
-      '</div>';
-    resetBannerActions.innerHTML = '';
-    document.getElementById('reset-policy-copy')?.addEventListener('click', async () => {
+  function bindResetPolicyCopyButton(btnId, statusId, text, preId) {
+    document.getElementById(btnId)?.addEventListener('click', async () => {
       try {
-        await navigator.clipboard.writeText(RESET_POLICY_MANUAL_PATCH);
-        const s = document.getElementById('reset-policy-copy-status');
+        await navigator.clipboard.writeText(text);
+        const s = document.getElementById(statusId);
         if (s) {
           s.textContent = '✓ copied';
           setTimeout(() => { s.textContent = ''; }, 2000);
         }
       } catch {
-        const snippet = document.getElementById('reset-policy-snippet');
-        if (snippet) {
+        const pre = document.getElementById(preId);
+        if (pre) {
           const range = document.createRange();
-          range.selectNodeContents(snippet);
+          range.selectNodeContents(pre);
           const sel = window.getSelection();
           sel?.removeAllRanges();
           sel?.addRange(range);
         }
       }
     });
+  }
+
+  function showResetBannerManualFallback() {
+    if (!resetBannerBody || !resetBannerActions) return;
+    resetBannerBody.innerHTML =
+      '<p class="reset-policy-banner-lead">Automatic setup failed — the gateway token needs admin scope.</p>' +
+      '<p class="reset-policy-banner-detail">' +
+      'Run this in your terminal (same machine as OpenClaw), or paste the JSON into ' +
+      '<code>~/.openclaw/openclaw.json</code> under <code>session</code> and restart the gateway.' +
+      '</p>' +
+      '<div class="reset-policy-manual">' +
+      '<p class="reset-policy-manual-label muted">Terminal</p>' +
+      '<pre id="reset-policy-cli">' +
+      escapeHtml(RESET_POLICY_CLI_COMMAND) +
+      '</pre>' +
+      '<div class="reset-policy-manual-row">' +
+      '<button type="button" class="btn btn--ghost btn--sm" id="reset-policy-copy-cli">Copy command</button>' +
+      '<span class="muted" id="reset-policy-copy-cli-status"></span>' +
+      '</div>' +
+      '<p class="reset-policy-manual-label muted">Or edit openclaw.json</p>' +
+      '<pre id="reset-policy-snippet">' +
+      escapeHtml(RESET_POLICY_MANUAL_PATCH) +
+      '</pre>' +
+      '<div class="reset-policy-manual-row">' +
+      '<button type="button" class="btn btn--ghost btn--sm" id="reset-policy-copy">Copy JSON</button>' +
+      '<span class="muted" id="reset-policy-copy-status"></span>' +
+      '</div>' +
+      '</div>';
+    resetBannerActions.innerHTML = '';
+    bindResetPolicyCopyButton(
+      'reset-policy-copy-cli',
+      'reset-policy-copy-cli-status',
+      RESET_POLICY_CLI_COMMAND,
+      'reset-policy-cli',
+    );
+    bindResetPolicyCopyButton(
+      'reset-policy-copy',
+      'reset-policy-copy-status',
+      RESET_POLICY_MANUAL_PATCH,
+      'reset-policy-snippet',
+    );
   }
 
   async function probeResetPolicyAndMaybeShowBanner() {
@@ -4143,24 +4175,60 @@
         }
         throw new Error(data?.error || 'HTTP ' + res.status);
       } catch (err) {
-        if (resetBannerBody) {
+        const msg = String(err && err.message ? err.message : err);
+        if (/missing scope|forbidden|unauthor|admin/i.test(msg)) {
+          showResetBannerManualFallback();
+        } else if (resetBannerBody) {
           resetBannerBody.innerHTML =
             '<strong>Could not apply settings.</strong>' +
-            '<span class="muted">' +
-            escapeHtml(String(err && err.message ? err.message : err)) +
-            '</span>';
+            '<span class="muted">' + escapeHtml(msg) + '</span>';
         }
         resetFixBtn.disabled = false;
         resetFixBtn.textContent = original;
       }
     });
   }
+  function openResetPolicyConfirm() {
+    if (!resetConfirm) return;
+    resetConfirm.hidden = false;
+    resetConfirmOk?.focus();
+  }
+
+  function closeResetPolicyConfirm() {
+    if (resetConfirm) resetConfirm.hidden = true;
+  }
+
+  function confirmResetPolicySnooze() {
+    snoozeResetBanner(SNOOZE_DAYS * 24 * 60 * 60 * 1000);
+    closeResetPolicyConfirm();
+    hideResetBanner();
+  }
+
   if (resetSnoozeBtn) {
     resetSnoozeBtn.addEventListener('click', () => {
-      snoozeResetBanner(SNOOZE_DAYS * 24 * 60 * 60 * 1000);
-      hideResetBanner();
+      openResetPolicyConfirm();
     });
   }
+  if (resetConfirmOk) {
+    resetConfirmOk.addEventListener('click', () => {
+      confirmResetPolicySnooze();
+    });
+  }
+  if (resetConfirmCancel) {
+    resetConfirmCancel.addEventListener('click', () => {
+      closeResetPolicyConfirm();
+    });
+  }
+  if (resetConfirmBackdrop) {
+    resetConfirmBackdrop.addEventListener('click', () => {
+      closeResetPolicyConfirm();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !resetConfirm || resetConfirm.hidden) return;
+    e.preventDefault();
+    closeResetPolicyConfirm();
+  });
   // Fire probe once on load. Don't block anything else.
   probeResetPolicyAndMaybeShowBanner();
 
