@@ -168,7 +168,6 @@ chatsRouter.patch('/:id', (req, res) => {
     type: 'chat-updated',
     chatId: id,
     title,
-    updatedAt: chats.get(id)!.updated_at,
   });
   res.json({ id, title });
 });
@@ -181,7 +180,6 @@ chatsRouter.post('/:id/rename', (req, res) => {
     type: 'chat-updated',
     chatId: id,
     title: next,
-    updatedAt: chats.get(id)!.updated_at,
   });
   res.redirect(`/chats/${id}`);
 });

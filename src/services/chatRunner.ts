@@ -405,7 +405,6 @@ async function runTurnLocked(opts: {
               type: 'chat-updated',
               chatId,
               title: suggested,
-              updatedAt: row.updated_at,
             });
           }
         })

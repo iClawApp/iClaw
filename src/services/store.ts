@@ -55,25 +55,19 @@ export const chats = {
       .run(agent, sessionKey, projectId);
     return this.get(Number(info.lastInsertRowid))!;
   },
+  /** Rename only — does not touch `updated_at` so sidebar order stays put. */
   rename(id: number, title: string, opts?: { manual?: boolean }): void {
     const next = title.trim() || 'New chat';
     if (opts?.manual) {
-      db.prepare(
-        "UPDATE chats SET title = ?, title_manual = 1, updated_at = datetime('now') WHERE id = ?",
-      ).run(next, id);
+      db.prepare('UPDATE chats SET title = ?, title_manual = 1 WHERE id = ?').run(next, id);
     } else {
-      db.prepare("UPDATE chats SET title = ?, updated_at = datetime('now') WHERE id = ?").run(
-        next,
-        id,
-      );
+      db.prepare('UPDATE chats SET title = ? WHERE id = ?').run(next, id);
     }
   },
   trySetAutoTitle(id: number, title: string): boolean {
     const next = title.trim() || 'New chat';
     const info = db
-      .prepare(
-        "UPDATE chats SET title = ?, updated_at = datetime('now') WHERE id = ? AND title_manual = 0",
-      )
+      .prepare('UPDATE chats SET title = ? WHERE id = ? AND title_manual = 0')
       .run(next, id);
     return info.changes > 0;
   },
