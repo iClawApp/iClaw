@@ -1,6 +1,6 @@
 {
   "name": "@iclawapp/iclaw",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local web UI for OpenClaw Gateway",
   "license": "MIT",
   "homepage": "https://github.com/iClawApp/iClaw",
