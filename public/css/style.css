@@ -1649,84 +1649,21 @@ code {
 /* When the assistant body is the streaming target, keep our markdown rules */
 .msg.assistant .stream-body { white-space: normal; }
 
-/* ---------- Queue panel (above composer) ---------- */
-
-.queue {
-  max-width: var(--thread-max-width);
-  width: 100%;
-  margin: 0 auto;
-  padding: 0 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.queue:empty { display: none; }
-
-.queue-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: var(--msg-radius);
-  border: 1px solid var(--msg-user-stroke);
-  background: var(--msg-user-fill);
-  font-size: 0.85em;
-  min-width: 0;
-}
-
-.queue-status {
-  flex: 0 0 auto;
-  font-size: 0.75em;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 2px 8px;
-  border-radius: 999px;
-}
-.queue-item.queued .queue-status {
-  background: var(--code-inline-bg);
-  color: var(--muted);
-}
-
-/* Queue row controls — both ride the `.btn .btn--icon .btn--ghost` primitive
-   from the design system. We only add a compact 22 × 22 footprint here. */
-.queue-interrupt,
-.queue-remove {
-  width: 22px;
-  height: 22px;
-  margin-left: var(--space-3);
-  color: var(--muted);
-  font-size: var(--text-base);
-}
-.queue-interrupt:hover:not(:disabled) {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--text) 30%, transparent);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-}
-.queue-remove:hover:not(:disabled) {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
-}
-
-.queue-text {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-}
-
 /* ---------- Composer ---------- */
 
 .composer {
+  position: relative;
   padding: 12px 20px 24px;
   max-width: var(--thread-max-width);
   width: 100%;
   margin: 0 auto;
+  --composer-secret-row-h: 22px;
+  --composer-secret-strip-gap: var(--space-1);
 }
 
 .composer-field {
+  margin-top: -8px;
+  margin-bottom: var(--space-4);
   display: flex;
   align-items: flex-end;
   gap: 6px;
@@ -1801,8 +1738,14 @@ code {
   transform: none;
 }
 
+/* Hint strip: absolute in the composer’s bottom padding — no layout shift,
+   and no negative margin that would clip under overflow:hidden on .col-main. */
 .composer-secret-ui {
-  margin: var(--space-3) 0 0;
+  position: absolute;
+  left: calc(20px + var(--space-2));
+  right: calc(20px + var(--space-2));
+  bottom: var(--space-4);
+  margin: 0;
   padding: 0 var(--space-2);
 }
 .composer-secret-ui[hidden] {
@@ -2258,9 +2201,15 @@ code {
 .scheduled-list.is-empty {
   display: none;
 }
+.scheduled-list--queue {
+  padding-bottom: 0;
+}
+.scheduled-list--queue:not(.is-empty) + .scheduled-list:not(.is-empty) {
+  padding-top: 6px;
+}
 .scheduled-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   padding: 8px 12px;
   background: color-mix(in srgb, var(--accent, var(--text)) 6%, var(--surface));
@@ -2290,21 +2239,6 @@ code {
   color: var(--text);
   line-height: 1.35;
 }
-/* Cancel × on a scheduled message — `.btn .btn--icon .btn--ghost` from the
-   primitive, plus a danger hover override and a tight 22px size for the
-   compact pending-list row. */
-.scheduled-item-cancel {
-  width: 22px;
-  height: 22px;
-  font-size: var(--text-md);
-  color: var(--muted);
-}
-.scheduled-item-cancel:hover:not(:disabled) {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
-}
-
 /* Schedule menu — popover anchored to send button */
 .composer-field {
   position: relative;
@@ -2380,6 +2314,149 @@ code {
 }
 .schedule-custom-confirm:hover {
   background: var(--btn-bg-hover);
+}
+
+/* Schedule time sheet — native datetime-local (OS picker on iOS/macOS) */
+.schedule-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.schedule-picker[hidden] {
+  display: none !important;
+}
+.schedule-picker__backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, #000 45%, transparent);
+}
+.schedule-picker__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 420px);
+  max-height: min(50vh, 240px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  box-shadow: var(--shadow-xl);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.schedule-picker__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.schedule-picker__title {
+  grid-column: 2;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  color: var(--text);
+  text-align: center;
+  white-space: nowrap;
+}
+.schedule-picker__cancel,
+.schedule-picker__confirm {
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.2;
+  cursor: pointer;
+  padding: 8px 4px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.schedule-picker__cancel {
+  grid-column: 1;
+  justify-self: start;
+  color: var(--muted);
+}
+.schedule-picker__confirm {
+  grid-column: 3;
+  justify-self: end;
+  font-weight: 600;
+  color: var(--accent, var(--text));
+}
+.schedule-picker__cancel:hover,
+.schedule-picker__confirm:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.schedule-picker__body {
+  padding: 4px 16px 20px;
+}
+.schedule-picker__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+.schedule-picker__field-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+/* Native OS picker (iOS/macOS wheels, desktop calendar popup) — no custom scroll CSS */
+.schedule-picker__native {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 4%, var(--surface));
+  color: var(--text);
+  font: inherit;
+  font-size: 1.0625rem;
+  line-height: 1.25;
+  color-scheme: light dark;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.schedule-picker__native:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent, var(--text)) 40%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--text)) 12%, transparent);
+}
+
+.scheduled-item-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-self: center;
+  align-items: center;
+  gap: 2px;
+}
+.scheduled-item-send-now,
+.scheduled-item-edit,
+.scheduled-item-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+}
+.scheduled-item-send-now:hover:not(:disabled) {
+  color: var(--accent, var(--text));
+  border-color: color-mix(in srgb, var(--accent, var(--text)) 28%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--text)) 8%, transparent);
+}
+.scheduled-item-edit:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.scheduled-item-cancel:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 /* Reply preview — minimal strip (composer + transcript) */
@@ -3218,15 +3295,6 @@ code {
 .project-pick-card--none .project-pick-card-inner {
   align-items: center;
 }
-.project-pick-card--none .project-logo--none {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  font-size: 1rem;
-  opacity: 0.8;
-}
 .project-pick-card-inner {
   display: flex;
   flex-direction: column;
@@ -4048,6 +4116,13 @@ code {
   width: 100%;
   margin-top: var(--space-4);
 }
+.reset-policy-manual-label {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--text-xs);
+}
+.reset-policy-manual-label:first-child {
+  margin-top: 0;
+}
 .reset-policy-manual pre {
   margin: 0;
   padding: var(--space-5) var(--space-6);
@@ -4066,6 +4141,50 @@ code {
   gap: var(--space-4);
   margin-top: var(--space-3);
   font-size: var(--text-xs);
+}
+
+.reset-policy-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 1250;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.reset-policy-confirm[hidden] {
+  display: none !important;
+}
+.reset-policy-confirm__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+}
+.reset-policy-confirm__panel {
+  position: relative;
+  width: min(400px, 100%);
+  padding: var(--space-7) var(--space-8);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.14);
+}
+.reset-policy-confirm__title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+}
+.reset-policy-confirm__detail {
+  margin: 0 0 var(--space-7);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.reset-policy-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
 }
 
 /* ---------- Composer attachments ---------- */

@@ -126,6 +126,25 @@
       </div>
     </aside>
 
+    <div id="reset-policy-confirm" class="reset-policy-confirm" hidden>
+      <div class="reset-policy-confirm__backdrop" id="reset-policy-confirm-backdrop"></div>
+      <div
+        class="reset-policy-confirm__panel card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="reset-policy-confirm-title"
+      >
+        <h3 class="reset-policy-confirm__title" id="reset-policy-confirm-title">Are you sure?</h3>
+        <p class="reset-policy-confirm__detail muted">
+          After 4&nbsp;AM tomorrow, iClaw will forget this chat&rsquo;s context unless you change the setting.
+        </p>
+        <div class="reset-policy-confirm__actions">
+          <button type="button" class="btn btn--ghost btn--sm" id="reset-policy-confirm-cancel">Cancel</button>
+          <button type="button" class="btn btn--primary btn--sm" id="reset-policy-confirm-ok">Remind me in 3 days</button>
+        </div>
+      </div>
+    </div>
+
     <section
       class="messages"
       id="messages"
@@ -217,8 +236,6 @@
       </div>
     </section>
 
-    <section class="queue" id="queue" aria-live="polite"></section>
-
     <%- include('partials/composer') %>
 
     <% if (cloudShareBaseUrl) { %>
@@ -227,6 +244,9 @@
 
     <script src="/js/vendor/marked.min.js"></script>
     <script src="/js/vendor/highlight.min.js"></script>
+    <script>
+      window.__ICLAW_QUEUE__ = <%- JSON.stringify(typeof queueList !== 'undefined' ? queueList : []) %>;
+    </script>
     <script src="/js/iclaw.js"></script>
     <% if (cloudShareBaseUrl) { %>
       <script src="/js/share.js" defer></script>

@@ -20,7 +20,7 @@
   function messagesAppendRoot() {
     return getMessagesThreadEl() ?? messagesEl;
   }
-  const queueEl = document.getElementById('queue');
+  const queueListEl = document.getElementById('queue-list');
   const form = document.getElementById('send-form');
   const input = document.getElementById('composer-input');
   const button = form?.querySelector('.composer-send');
@@ -275,6 +275,34 @@
   initDraftProjectPick();
   // serializes turns per chat too, so this is just for the visible label
   const waitingItems = [];
+  /** Local-only ids for draft chats (no chatId yet). */
+  let nextLocalQueueItemId = 1;
+  /** Queue row ids created in this tab via POST — ignore matching `queue-added` echoes. */
+  const ownQueueIds = new Set();
+
+  function dedupeWaitingItems() {
+    const seen = new Set();
+    for (let i = waitingItems.length - 1; i >= 0; i--) {
+      const it = waitingItems[i];
+      const key = it.serverId != null ? 's:' + it.serverId : 'l:' + it.id;
+      if (seen.has(key)) waitingItems.splice(i, 1);
+      else seen.add(key);
+    }
+  }
+
+  /** Insert a queue row once (guards WS echo arriving before POST `await` finishes). */
+  function addWaitingItem(item, opts) {
+    const atFront = opts && opts.at === 'front';
+    if (item.serverId != null) {
+      if (waitingItems.some((it) => it.serverId === item.serverId)) return false;
+      ownQueueIds.add(item.serverId);
+    } else if (waitingItems.some((it) => it.id === item.id)) {
+      return false;
+    }
+    if (atFront) waitingItems.unshift(item);
+    else waitingItems.push(item);
+    return true;
+  }
   const REPLY_QUOTE_MAX = 240;
   /** @type {{ messageId: number; quote: string; role: string } | null} */
   let pendingComposerReply = null;
@@ -1162,29 +1190,158 @@
   // queue widget — shows only WAITING items (not the in-flight one)
   // -------------------------------------------------------------------------
 
-  let nextQueueItemId = 1;
+  function serverQueueItemFromApi(row) {
+    const item = {
+      serverId: row.id,
+      id: String(row.id),
+      content: row.content,
+    };
+    if (row.reply_to_message_id != null && row.reply_quote) {
+      item.replyTo = {
+        messageId: row.reply_to_message_id,
+        quote: row.reply_quote,
+        role: row.reply_to_role || undefined,
+      };
+    }
+    if (row.attachments && row.attachments.length > 0) {
+      item.attachments = row.attachments.map((a) => ({
+        mimeType: a.mimeType,
+        fileName: a.fileName,
+        sizeBytes: a.sizeBytes,
+        dataUrl: a.url,
+        url: a.url,
+      }));
+    }
+    return item;
+  }
+
+  function replaceWaitingItemsFromServer(rows) {
+    waitingItems.length = 0;
+    ownQueueIds.clear();
+    for (const row of rows) addWaitingItem(serverQueueItemFromApi(row));
+    renderQueue();
+  }
+
+  async function enqueueQueueOnServer(chatId, draft) {
+    const body = { content: draft.content };
+    if (draft.replyTo) body.replyTo = draft.replyTo;
+    if (draft.inlineSecrets && draft.inlineSecrets.length > 0) {
+      body.inlineSecrets = draft.inlineSecrets;
+    }
+    if (draft.attachments && draft.attachments.length > 0) {
+      body.attachments = draft.attachments.map((a) => ({
+        mimeType: a.mimeType,
+        fileName: a.fileName,
+        content: a.base64,
+      }));
+    }
+    const res = await fetch('/chats/' + encodeURIComponent(chatId) + '/queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || res.statusText || 'failed to enqueue');
+    }
+    return serverQueueItemFromApi(data.item);
+  }
+
+  async function deleteQueueOnServer(chatId, queueId) {
+    await fetch(
+      '/chats/' + encodeURIComponent(chatId) + '/queue/' + encodeURIComponent(queueId) + '/delete',
+      { method: 'POST', headers: { Accept: 'application/json' } },
+    );
+  }
+
+  async function promoteQueueOnServer(chatId, queueId) {
+    const res = await fetch(
+      '/chats/' + encodeURIComponent(chatId) + '/queue/' + encodeURIComponent(queueId) + '/promote',
+      { method: 'POST', headers: { Accept: 'application/json' } },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || res.statusText || 'failed to promote');
+    }
+    return data.queue;
+  }
+
+  const COMPOSER_PENDING_SEND_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+  const COMPOSER_PENDING_EDIT_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+
+  function composerPendingRowInnerHtml(opts) {
+    const kind = opts.kind;
+    const whenEl =
+      kind === 'scheduled' && opts.whenData
+        ? '<span class="scheduled-item-when" data-when="' +
+          escapeHtml(opts.whenData) +
+          '">' +
+          escapeHtml(opts.metaText) +
+          '</span>'
+        : '<span class="scheduled-item-when">' + escapeHtml(opts.metaText) + '</span>';
+    return (
+      '<div class="scheduled-item-main">' +
+      '<div class="scheduled-item-meta">' +
+      '<span class="scheduled-item-clock" aria-hidden="true">' +
+      opts.metaIcon +
+      '</span>' +
+      whenEl +
+      '</div>' +
+      '<div class="scheduled-item-text">' +
+      escapeHtml(opts.content) +
+      '</div>' +
+      '</div>' +
+      opts.actionsHtml
+    );
+  }
+
+  function queueItemActionsHtml(id) {
+    const esc = escapeHtml(String(id));
+    return (
+      '<div class="scheduled-item-actions">' +
+      '<button type="button" class="queue-item-promote scheduled-item-send-now btn btn--icon btn--ghost" data-queue-id="' +
+      esc +
+      '" aria-label="Перервати й надіслати це" title="Перервати поточну відповідь і надіслати це повідомлення">' +
+      COMPOSER_PENDING_SEND_SVG +
+      '</button>' +
+      '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-queue-id="' +
+      esc +
+      '" aria-label="Прибрати з черги" title="Прибрати з черги">×</button>' +
+      '</div>'
+    );
+  }
 
   function renderQueue() {
-    if (!queueEl) return;
-    queueEl.replaceChildren();
+    if (!queueListEl) return;
+    dedupeWaitingItems();
+    queueListEl.replaceChildren();
     waitingItems.forEach((item, idx) => {
-      const el = document.createElement('div');
-      el.className = 'queue-item queued';
-      el.dataset.itemId = item.id;
-      const preview = item.content.length > 80 ? item.content.slice(0, 79) + '…' : item.content;
-      // ⏵ Interrupt = "send THIS one now": move it to the front of the queue,
-      // then abort the current turn. The existing turn-error handler will
-      // auto-flush, which picks up our new-head item next.
-      el.innerHTML =
-        '<span class="queue-status">Queued #' + (idx + 1) + '</span>' +
-        '<span class="queue-text">' + escapeHtml(preview) + '</span>' +
-        '<button type="button" class="queue-interrupt btn btn--icon btn--ghost" ' +
-        'aria-label="Interrupt current and send this one now" ' +
-        'title="Interrupt the current turn and send this message next">⏵</button>' +
-        '<button type="button" class="queue-remove btn btn--icon btn--ghost" ' +
-        'aria-label="Remove from queue" title="Remove from queue">×</button>';
-      queueEl.appendChild(el);
+      const row = document.createElement('div');
+      const rowId = item.serverId != null ? item.serverId : item.id;
+      row.className = 'scheduled-item scheduled-item--queue';
+      row.dataset.queueId = String(rowId);
+      row.innerHTML = composerPendingRowInnerHtml({
+        kind: 'queue',
+        metaIcon: '⏳',
+        metaText: 'У черзі #' + (idx + 1),
+        content: item.content,
+        actionsHtml: queueItemActionsHtml(rowId),
+      });
+      queueListEl.appendChild(row);
     });
+    queueListEl.classList.toggle('is-empty', waitingItems.length === 0);
+  }
+
+  const initialQueue = Array.isArray(window.__ICLAW_QUEUE__) ? window.__ICLAW_QUEUE__ : [];
+  for (const row of initialQueue) addWaitingItem(serverQueueItemFromApi(row));
+  if (initialQueue.length > 0) {
+    renderQueue();
+    // Turn already finished while we were on another page — drain persisted queue.
+    if (!document.getElementById('reload-placeholder')) flushNextQueued();
   }
 
   // Click on a tool's stream-status with .has-detail toggles between the
@@ -1275,39 +1432,57 @@
   }
 
   // Delete from queue + interrupt-and-promote via event delegation.
-  if (queueEl) {
-    queueEl.addEventListener('click', (e) => {
-      const removeBtn = e.target.closest('.queue-remove');
-      const interruptBtn = e.target.closest('.queue-interrupt');
-      const btn = removeBtn || interruptBtn;
-      if (!btn) return;
-      const itemEl = btn.closest('.queue-item');
-      const id = itemEl?.dataset.itemId;
+  if (queueListEl) {
+    queueListEl.addEventListener('click', (e) => {
+      const row = e.target.closest('.scheduled-item--queue');
+      if (!row) return;
+      const id = row.dataset.queueId;
       if (!id) return;
-      const idx = waitingItems.findIndex((it) => it.id === id);
+      const idx = waitingItems.findIndex((it) => String(it.serverId ?? it.id) === id);
       if (idx < 0) return;
 
-      if (removeBtn) {
-        waitingItems.splice(idx, 1);
+      const cancelBtn = e.target.closest('.scheduled-item-cancel[data-queue-id]');
+      const promoteBtn = e.target.closest('.queue-item-promote');
+
+      if (cancelBtn) {
+        const removed = waitingItems.splice(idx, 1)[0];
+        if (removed?.serverId != null) ownQueueIds.delete(removed.serverId);
         renderQueue();
+        if (removed?.serverId != null && activeChatId != null) {
+          deleteQueueOnServer(activeChatId, removed.serverId).catch(() => {});
+        }
         return;
       }
+      if (!promoteBtn) return;
 
       // Interrupt: move this item to the front and abort the running turn.
       // The turn-error handler clears inFlight and calls flushNextQueued(),
       // which now picks up our promoted item.
       if (activeChatId == null) return;
-      const [picked] = waitingItems.splice(idx, 1);
-      waitingItems.unshift(picked);
-      renderQueue();
+      const picked = waitingItems[idx];
+      if (!picked) return;
+      const doPromoteLocal = () => {
+        waitingItems.splice(idx, 1);
+        waitingItems.unshift(picked);
+        renderQueue();
+      };
+      if (picked.serverId != null) {
+        promoteQueueOnServer(activeChatId, picked.serverId)
+          .then((queue) => replaceWaitingItemsFromServer(queue))
+          .catch(() => doPromoteLocal());
+      } else {
+        doPromoteLocal();
+      }
       // If nothing is actually running, just flush now — no need to abort.
       if (!inFlight) {
         flushNextQueued();
         return;
       }
       // Optimistically disable buttons to prevent rapid double-clicks.
-      btn.disabled = true;
-      setTimeout(() => { btn.disabled = false; }, 3000);
+      if (promoteBtn) {
+        promoteBtn.disabled = true;
+        setTimeout(() => { promoteBtn.disabled = false; }, 3000);
+      }
       wsSend({ type: 'abort', chatId: activeChatId });
     });
   }
@@ -2497,9 +2672,37 @@
         return;
       }
 
+      case 'scheduled-updated': {
+        if (msg.chatId !== activeChatId) return;
+        updateScheduledItem(msg.scheduled);
+        return;
+      }
+
       case 'scheduled-deleted': {
         if (msg.chatId !== activeChatId) return;
         removeScheduledItem(msg.scheduledId);
+        return;
+      }
+
+      case 'queue-added': {
+        if (msg.chatId !== activeChatId) return;
+        if (addWaitingItem(serverQueueItemFromApi(msg.item))) renderQueue();
+        return;
+      }
+
+      case 'queue-deleted': {
+        if (msg.chatId !== activeChatId) return;
+        const qIdx = waitingItems.findIndex((it) => it.serverId === msg.queueId);
+        if (qIdx >= 0) {
+          waitingItems.splice(qIdx, 1);
+          renderQueue();
+        }
+        return;
+      }
+
+      case 'queue-reordered': {
+        if (msg.chatId !== activeChatId) return;
+        replaceWaitingItemsFromServer(msg.queue);
         return;
       }
 
@@ -2576,6 +2779,7 @@
     // the in-flight message. The queue widget only renders waiting items.
     const item = waitingItems.shift();
     if (!item) return;
+    if (item.serverId != null) ownQueueIds.delete(item.serverId);
     renderQueue();
     inFlight = true;
     // Optimistically append user msg. Mark it as pending-id so the
@@ -2623,6 +2827,43 @@
     if (item.inlineSecrets && item.inlineSecrets.length > 0) {
       payload.inlineSecrets = item.inlineSecrets;
     }
+    if (item.serverId != null && activeChatId != null) {
+      const requestId = payload.requestId;
+      fetch(
+        '/chats/' +
+          encodeURIComponent(activeChatId) +
+          '/queue/' +
+          encodeURIComponent(item.serverId) +
+          '/flush',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ requestId }),
+        },
+      )
+        .then((res) => {
+          if (!res.ok) {
+            return res.json().then((data) => {
+              throw new Error(data.error || res.statusText);
+            });
+          }
+        })
+        .catch(async () => {
+          inFlight = false;
+          if (activeChatId != null) {
+            try {
+              addWaitingItem(await enqueueQueueOnServer(activeChatId, item), { at: 'front' });
+            } catch {
+              addWaitingItem(item, { at: 'front' });
+            }
+          } else {
+            addWaitingItem(item, { at: 'front' });
+          }
+          renderQueue();
+        });
+      return;
+    }
+
     if (activeChatId != null) payload.chatId = activeChatId;
     else {
       payload.agent = draftAgentSelect?.value || 'openclaw/default';
@@ -2634,7 +2875,7 @@
       // No connection — put the item back at the head so it isn't lost,
       // and let the open handler retry.
       inFlight = false;
-      waitingItems.unshift(item);
+      addWaitingItem(item, { at: 'front' });
       renderQueue();
     }
   }
@@ -3100,6 +3341,10 @@
   const composerSecretTokenToggle = document.getElementById('composer-secret-token-toggle');
   const composerSecretOk = document.getElementById('composer-secret-ok');
   let composerSecretTokenEditing = false;
+  let composerSelectionHintTimer = null;
+  /** After a 300ms delay, the selection hint row may be shown. */
+  let composerSelectionHintRevealed = false;
+  const COMPOSER_SELECTION_HINT_DELAY_MS = 300;
 
   /** @type {((label: string) => void) | null} */
   let composerSecretCommit = null;
@@ -3121,6 +3366,39 @@
     return input.value.slice(s, e).trim().length > 0;
   }
 
+  function syncComposerSecretAccessoryClass(hasTokenHint, hasSel) {
+    if (!form) return;
+    form.classList.toggle('has-secret-accessory', !!(hasTokenHint || hasSel));
+  }
+
+  function cancelComposerSelectionHintReveal() {
+    if (composerSelectionHintTimer) {
+      clearTimeout(composerSelectionHintTimer);
+      composerSelectionHintTimer = null;
+    }
+    composerSelectionHintRevealed = false;
+  }
+
+  /** Show the selection hint row 300ms after a non-empty composer selection. */
+  function scheduleComposerSelectionHintReveal() {
+    cancelComposerSelectionHintReveal();
+    if (!input || !composerSecretsEnabled()) {
+      applyComposerSecretStripLayout();
+      return;
+    }
+    if (!composerHasNonEmptySelection()) {
+      applyComposerSecretStripLayout();
+      return;
+    }
+    applyComposerSecretStripLayout();
+    composerSelectionHintTimer = setTimeout(() => {
+      composerSelectionHintTimer = null;
+      if (!composerHasNonEmptySelection()) return;
+      composerSelectionHintRevealed = true;
+      applyComposerSecretStripLayout();
+    }, COMPOSER_SELECTION_HINT_DELAY_MS);
+  }
+
   /**
    * Accessory inside the composer: token row and/or selection row (Apple-style
    * minimal strip). Token row is synced here via `updateComposerTokenRow` so
@@ -3129,21 +3407,28 @@
   function applyComposerSecretStripLayout() {
     if (!composerSecretUi) return;
     if (composerSecretModal && !composerSecretModal.hidden) {
+      cancelComposerSelectionHintReveal();
       if (composerSecretsEnabled()) composerSecretUi.hidden = false;
+      syncComposerSecretAccessoryClass(false, false);
       return;
     }
     if (!composerSecretsEnabled()) {
+      cancelComposerSelectionHintReveal();
       composerSecretUi.hidden = true;
       composerTokenDetectRange = null;
       if (composerTokenHint) composerTokenHint.hidden = true;
       if (composerSelectionHint) composerSelectionHint.hidden = true;
+      syncComposerSecretAccessoryClass(false, false);
       return;
     }
     updateComposerTokenRow();
     const hasTokenHint = composerTokenHint && !composerTokenHint.hidden;
-    const hasSel = composerHasNonEmptySelection();
+    const hasSel =
+      composerSelectionHintRevealed && composerHasNonEmptySelection();
     if (composerSelectionHint) composerSelectionHint.hidden = !hasSel;
-    composerSecretUi.hidden = !hasTokenHint && !hasSel;
+    const showStrip = hasTokenHint || hasSel;
+    composerSecretUi.hidden = !showStrip;
+    syncComposerSecretAccessoryClass(hasTokenHint, hasSel);
   }
 
   /** Sync the token-detected row from the current composer value (no debounce). */
@@ -3222,6 +3507,7 @@
   }
 
   function clearComposerSecretDraft() {
+    cancelComposerSelectionHintReveal();
     composerSecretBySlot.clear();
     composerSecretNextSlot = 0;
     composerTokenDetectRange = null;
@@ -3512,15 +3798,18 @@
 
   if (input) {
     input.addEventListener('select', () => {
-      applyComposerSecretStripLayout();
+      scheduleComposerSelectionHintReveal();
+    });
+    input.addEventListener('mouseup', () => {
+      scheduleComposerSelectionHintReveal();
     });
     input.addEventListener('keyup', () => {
-      applyComposerSecretStripLayout();
+      scheduleComposerSelectionHintReveal();
     });
     input.addEventListener('input', () => {
       pruneComposerSecretSlots(input.value);
       scheduleTokenDetect();
-      applyComposerSecretStripLayout();
+      scheduleComposerSelectionHintReveal();
     });
   }
 
@@ -3590,7 +3879,7 @@
   syncComposerSecretUi();
 
   if (form && input) {
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (startedOnDraft && !draftProjectLocked) return;
       // If the schedule menu was just opened by a long-press, the bubbling
@@ -3622,13 +3911,29 @@
         base64: a.base64,
       }));
       clearPendingAttachments();
-      waitingItems.push({
+      const draft = {
         content,
-        id: 'q-' + nextQueueItemId++,
         replyTo: replySnap || undefined,
         attachments: attachmentsSnap.length > 0 ? attachmentsSnap : undefined,
         inlineSecrets,
-      });
+      };
+      let queued;
+      const persistOnServer =
+        activeChatId != null && (inFlight || waitingItems.length > 0);
+      if (persistOnServer) {
+        try {
+          queued = await enqueueQueueOnServer(activeChatId, draft);
+        } catch (err) {
+          alert(err instanceof Error ? err.message : String(err));
+          return;
+        }
+      } else {
+        queued = {
+          ...draft,
+          id: 'local-' + nextLocalQueueItemId++,
+        };
+      }
+      addWaitingItem(queued);
       input.value = '';
       clearComposerSecretDraft();
       renderQueue();
@@ -3654,13 +3959,95 @@
   const scheduleMenu = document.getElementById('schedule-menu');
   const sendBtn = document.getElementById('composer-send-btn');
   const scheduledListEl = document.getElementById('scheduled-list');
-  const scheduleCustomRow = scheduleMenu?.querySelector('.schedule-custom-row');
-  const scheduleCustomInput = document.getElementById('schedule-custom-input');
-  const scheduleCustomConfirm = document.getElementById('schedule-custom-confirm');
+  const schedulePicker = document.getElementById('schedule-picker');
+  const schedulePickerBackdrop = document.getElementById('schedule-picker-backdrop');
+  const schedulePickerCancel = document.getElementById('schedule-picker-cancel');
+  const schedulePickerConfirm = document.getElementById('schedule-picker-confirm');
+  const scheduleDatetimeInput = document.getElementById('schedule-datetime-input');
+  const SCHEDULE_MIN_LEAD_MS = 3 * 60_000;
   const LONG_PRESS_MS = 450;
   let schedulePressTimer = null;
   let scheduleMenuJustOpened = false;
   let scheduleMenuAutoCloseTimer = null;
+  let editingScheduledId = null;
+  let schedulePickerOnConfirm = null;
+
+  function toDatetimeLocalValue(d) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return (
+      d.getFullYear() +
+      '-' +
+      pad(d.getMonth() + 1) +
+      '-' +
+      pad(d.getDate()) +
+      'T' +
+      pad(d.getHours()) +
+      ':' +
+      pad(d.getMinutes())
+    );
+  }
+
+  function getScheduleMinWhen() {
+    return new Date(Date.now() + SCHEDULE_MIN_LEAD_MS);
+  }
+
+  function clampScheduleWhen(when) {
+    const min = getScheduleMinWhen();
+    return when.getTime() < min.getTime() ? min : when;
+  }
+
+  function refreshScheduleDatetimeMin() {
+    if (!scheduleDatetimeInput) return;
+    scheduleDatetimeInput.min = toDatetimeLocalValue(getScheduleMinWhen());
+  }
+
+  function isScheduleWhenAllowed(when) {
+    return when.getTime() >= getScheduleMinWhen().getTime();
+  }
+
+  function readSchedulePickerValue() {
+    const v = scheduleDatetimeInput?.value;
+    if (!v) return null;
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  function ensureSchedulePickerPortal() {
+    if (!schedulePicker || schedulePicker.parentElement === document.body) return;
+    document.body.appendChild(schedulePicker);
+  }
+
+  function closeSchedulePicker() {
+    if (!schedulePicker) return;
+    schedulePicker.hidden = true;
+    schedulePickerOnConfirm = null;
+  }
+
+  function openSchedulePicker(initialWhen, onConfirm) {
+    if (!schedulePicker) return;
+    ensureSchedulePickerPortal();
+    closeScheduleMenu();
+    schedulePickerOnConfirm = onConfirm;
+    refreshScheduleDatetimeMin();
+    const when = clampScheduleWhen(initialWhen || new Date(Date.now() + 60 * 60_000));
+    if (scheduleDatetimeInput) {
+      scheduleDatetimeInput.value = toDatetimeLocalValue(when);
+    }
+    schedulePicker.hidden = false;
+    requestAnimationFrame(() => {
+      const el = scheduleDatetimeInput;
+      if (!el) return;
+      if (typeof el.showPicker === 'function') {
+        try {
+          el.showPicker();
+          return;
+        } catch {
+          /* fall through */
+        }
+      }
+      el.focus();
+    });
+  }
 
   function isScheduleMenuOpen() {
     return scheduleMenu != null && !scheduleMenu.hidden;
@@ -3677,7 +4064,6 @@
   function closeScheduleMenu() {
     if (!scheduleMenu) return;
     scheduleMenu.hidden = true;
-    if (scheduleCustomRow) scheduleCustomRow.hidden = true;
     scheduleMenuJustOpened = false;
     if (scheduleMenuAutoCloseTimer != null) {
       clearTimeout(scheduleMenuAutoCloseTimer);
@@ -3692,7 +4078,6 @@
     closeComposerAttachMenus();
     document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
     scheduleMenu.hidden = false;
-    if (scheduleCustomRow) scheduleCustomRow.hidden = true;
     if (scheduleMenuAutoCloseTimer != null) clearTimeout(scheduleMenuAutoCloseTimer);
     scheduleMenuAutoCloseTimer = setTimeout(() => {
       scheduleMenuAutoCloseTimer = null;
@@ -3703,29 +4088,26 @@
     }, 0);
   }
 
-  /** Parse the SQLite UTC stamp ("YYYY-MM-DD HH:MM:SS") as a real UTC instant. */
   function parseScheduledStamp(stamp) {
     if (!stamp) return null;
     const s = String(stamp).trim();
-    // ISO with timezone — trust as-is
     if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) {
       const d = new Date(s);
       return Number.isNaN(d.getTime()) ? null : d;
     }
-    // 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DDTHH:MM:SS' — server emits UTC
     const norm = s.replace(' ', 'T') + 'Z';
     const d = new Date(norm);
     return Number.isNaN(d.getTime()) ? null : d;
   }
 
-  /** Render the "when" cell as a friendly local string. */
   function formatScheduledWhen(stamp) {
     const d = parseScheduledStamp(stamp);
     if (!d) return String(stamp);
     const now = new Date();
     const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     const sameDay = d.toDateString() === now.toDateString();
-    const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
     const isTomorrow = d.toDateString() === tomorrow.toDateString();
     if (sameDay) return 'today ' + time;
     if (isTomorrow) return 'tomorrow ' + time;
@@ -3734,9 +4116,9 @@
 
   function computeScheduledAt(offset) {
     const now = new Date();
-    if (offset === '10m') return new Date(now.getTime() + 10 * 60_000);
-    if (offset === '1h')  return new Date(now.getTime() + 60 * 60_000);
-    if (offset === '3h')  return new Date(now.getTime() + 3 * 60 * 60_000);
+    if (offset === '5m') return new Date(now.getTime() + 5 * 60_000);
+    if (offset === '30m') return new Date(now.getTime() + 30 * 60_000);
+    if (offset === '1h') return new Date(now.getTime() + 60 * 60_000);
     if (offset === 'tomorrow9') {
       const d = new Date(now);
       d.setDate(d.getDate() + 1);
@@ -3746,11 +4128,25 @@
     return null;
   }
 
-  /** Pad a Date into 'YYYY-MM-DDTHH:MM' for `<input type="datetime-local">`. */
-  function toDatetimeLocalValue(d) {
-    const pad = (n) => String(n).padStart(2, '0');
-    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
-      + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  function scheduledItemActionsHtml(id) {
+    const esc = escapeHtml(String(id));
+    return (
+      '<div class="scheduled-item-actions">' +
+      '<button type="button" class="scheduled-item-send-now btn btn--icon btn--ghost" data-scheduled-id="' +
+      esc +
+      '" aria-label="Надіслати зараз" title="Надіслати зараз">' +
+      COMPOSER_PENDING_SEND_SVG +
+      '</button>' +
+      '<button type="button" class="scheduled-item-edit btn btn--icon btn--ghost" data-scheduled-id="' +
+      esc +
+      '" aria-label="Редагувати" title="Редагувати">' +
+      COMPOSER_PENDING_EDIT_SVG +
+      '</button>' +
+      '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-scheduled-id="' +
+      esc +
+      '" aria-label="Скасувати" title="Скасувати">×</button>' +
+      '</div>'
+    );
   }
 
   function refreshScheduledTimes() {
@@ -3764,23 +4160,39 @@
     if (!scheduledListEl) return;
     if (scheduledListEl.querySelector('.scheduled-item[data-scheduled-id="' + scheduled.id + '"]')) return;
     const row = document.createElement('div');
-    row.className = 'scheduled-item';
+    row.className = 'scheduled-item scheduled-item--scheduled';
     row.dataset.scheduledId = String(scheduled.id);
     row.dataset.scheduledAt = scheduled.scheduled_at;
-    row.innerHTML =
-      '<div class="scheduled-item-main">' +
-      '<div class="scheduled-item-meta">' +
-      '<span class="scheduled-item-clock" aria-hidden="true">⏰</span>' +
-      '<span class="scheduled-item-when" data-when="' + escapeHtml(scheduled.scheduled_at) + '">' +
-      escapeHtml(formatScheduledWhen(scheduled.scheduled_at)) + '</span>' +
-      '</div>' +
-      '<div class="scheduled-item-text">' + escapeHtml(scheduled.content) + '</div>' +
-      '</div>' +
-      '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-scheduled-id="' +
-      scheduled.id + '" aria-label="Cancel scheduled message" title="Cancel">×</button>';
+    row.innerHTML = composerPendingRowInnerHtml({
+      kind: 'scheduled',
+      metaIcon: '⏰',
+      metaText: formatScheduledWhen(scheduled.scheduled_at),
+      whenData: scheduled.scheduled_at,
+      content: scheduled.content,
+      actionsHtml: scheduledItemActionsHtml(scheduled.id),
+    });
     scheduledListEl.appendChild(row);
     scheduledListEl.classList.remove('is-empty');
   }
+  function updateScheduledItem(scheduled) {
+    if (!scheduledListEl) return;
+    const row = scheduledListEl.querySelector(
+      '.scheduled-item[data-scheduled-id="' + scheduled.id + '"]',
+    );
+    if (!row) {
+      renderScheduledItem(scheduled);
+      return;
+    }
+    row.dataset.scheduledAt = scheduled.scheduled_at;
+    const whenEl = row.querySelector('.scheduled-item-when');
+    if (whenEl) {
+      whenEl.dataset.when = scheduled.scheduled_at;
+      whenEl.textContent = formatScheduledWhen(scheduled.scheduled_at);
+    }
+    const textEl = row.querySelector('.scheduled-item-text');
+    if (textEl) textEl.textContent = scheduled.content;
+  }
+
   function removeScheduledItem(id) {
     if (!scheduledListEl) return;
     const row = scheduledListEl.querySelector('.scheduled-item[data-scheduled-id="' + id + '"]');
@@ -3790,43 +4202,94 @@
     }
   }
 
-  async function submitScheduled(when) {
+  async function submitScheduled(when, opts) {
     if (activeChatId == null) return;
-    const content = input.value.trim();
+    const content = (opts && opts.content) || input.value.trim();
     if (!content) return;
-    if (when.getTime() <= Date.now() - 60_000) {
-      // 60s of tolerance; older than that is almost certainly a mistake.
-      alert('That time has passed — pick a future time.');
+    if (!isScheduleWhenAllowed(when)) {
+      alert('Оберіть час не раніше ніж за 3 хвилини від зараз.');
       return;
     }
-    let inlineSecrets;
-    try {
-      inlineSecrets = buildInlineSecretsPayload(content);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+    const sid = (opts && opts.scheduledId) || editingScheduledId;
+    if (!sid) {
+      let inlineSecrets;
+      try {
+        inlineSecrets = buildInlineSecretsPayload(content);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+        return;
+      }
+      try {
+        const res = await fetch(
+          '/chats/' + encodeURIComponent(activeChatId) + '/scheduled',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              content,
+              scheduledAt: when.toISOString(),
+              ...(inlineSecrets && inlineSecrets.length > 0 ? { inlineSecrets } : {}),
+            }),
+          },
+        );
+        if (!res.ok) throw new Error(await res.text());
+        input.value = '';
+        clearComposerSecretDraft();
+        closeScheduleMenu();
+        closeSchedulePicker();
+      } catch (err) {
+        alert('Не вдалося запланувати: ' + (err instanceof Error ? err.message : err));
+      }
       return;
     }
     try {
       const res = await fetch(
-        '/chats/' + encodeURIComponent(activeChatId) + '/scheduled',
+        '/chats/' + encodeURIComponent(activeChatId) + '/scheduled/' + encodeURIComponent(sid),
         {
-          method: 'POST',
+          method: 'PATCH',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            content,
-            scheduledAt: when.toISOString(),
-            ...(inlineSecrets && inlineSecrets.length > 0 ? { inlineSecrets } : {}),
-          }),
+          body: JSON.stringify({ content, scheduledAt: when.toISOString() }),
         },
       );
       if (!res.ok) throw new Error(await res.text());
+      editingScheduledId = null;
       input.value = '';
       clearComposerSecretDraft();
       closeScheduleMenu();
-      // Live `scheduled-added` broadcast will render the row.
+      closeSchedulePicker();
     } catch (err) {
-      alert('Could not schedule: ' + (err instanceof Error ? err.message : err));
+      alert('Не вдалося оновити: ' + (err instanceof Error ? err.message : err));
     }
+  }
+
+  async function sendScheduledNow(sid) {
+    if (activeChatId == null || !Number.isFinite(sid)) return;
+    removeScheduledItem(sid);
+    try {
+      const res = await fetch(
+        '/chats/' + encodeURIComponent(activeChatId) + '/scheduled/' + encodeURIComponent(sid) + '/send-now',
+        { method: 'POST' },
+      );
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      alert('Не вдалося надіслати: ' + (err instanceof Error ? err.message : err));
+    }
+  }
+
+  function beginEditScheduled(row) {
+    if (!row || activeChatId == null) return;
+    const sid = Number(row.dataset.scheduledId);
+    if (!Number.isFinite(sid)) return;
+    const textEl = row.querySelector('.scheduled-item-text');
+    const content = textEl ? textEl.textContent : '';
+    const stamp = row.dataset.scheduledAt || '';
+    editingScheduledId = sid;
+    input.value = content;
+    input.focus();
+    const when = parseScheduledStamp(stamp) || new Date(Date.now() + 60 * 60_000);
+    openSchedulePicker(when, (picked) => {
+      submitScheduled(picked, { scheduledId: sid, content: input.value.trim() });
+    });
   }
 
   // long-press detection on the send button
@@ -3870,41 +4333,82 @@
     }, true);
   }
 
+  if (schedulePickerCancel) {
+    schedulePickerCancel.addEventListener('click', () => {
+      editingScheduledId = null;
+      closeSchedulePicker();
+    });
+  }
+  if (schedulePickerBackdrop) {
+    schedulePickerBackdrop.addEventListener('click', () => {
+      editingScheduledId = null;
+      closeSchedulePicker();
+    });
+  }
+  if (schedulePickerConfirm) {
+    schedulePickerConfirm.addEventListener('click', () => {
+      const when = readSchedulePickerValue();
+      if (!when) {
+        alert('Оберіть дату й час.');
+        return;
+      }
+      if (!isScheduleWhenAllowed(when)) {
+        alert('Оберіть час не раніше ніж за 3 хвилини від зараз.');
+        return;
+      }
+      if (schedulePickerOnConfirm) {
+        schedulePickerOnConfirm(when);
+        return;
+      }
+      submitScheduled(when);
+    });
+  }
+  if (scheduleDatetimeInput) {
+    scheduleDatetimeInput.addEventListener('change', () => {
+      refreshScheduleDatetimeMin();
+      const d = readSchedulePickerValue();
+      if (!d) return;
+      const clamped = clampScheduleWhen(d);
+      if (d.getTime() !== clamped.getTime()) {
+        scheduleDatetimeInput.value = toDatetimeLocalValue(clamped);
+      }
+    });
+  }
+
   if (scheduleMenu) {
     scheduleMenu.addEventListener('click', (e) => {
       const btn = e.target.closest('.schedule-menu-item');
       if (!btn) return;
       const offset = btn.dataset.offset;
       if (offset === 'custom') {
-        if (scheduleCustomRow) scheduleCustomRow.hidden = false;
-        if (scheduleCustomInput) {
-          scheduleCustomInput.value = toDatetimeLocalValue(new Date(Date.now() + 60 * 60_000));
-          scheduleCustomInput.focus();
-        }
+        openSchedulePicker(new Date(Date.now() + 60 * 60_000), (when) => submitScheduled(when));
         return;
       }
       const when = computeScheduledAt(offset);
       if (when) submitScheduled(when);
     });
-    scheduleCustomConfirm?.addEventListener('click', () => {
-      const v = scheduleCustomInput?.value;
-      if (!v) return;
-      // datetime-local is interpreted as the user's local time
-      const d = new Date(v);
-      if (Number.isNaN(d.getTime())) return;
-      submitScheduled(d);
-    });
   }
 
-  // Cancel buttons on the scheduled-list banner.
   if (scheduledListEl) {
     scheduledListEl.addEventListener('click', async (e) => {
+      const sendNowBtn = e.target.closest('.scheduled-item-send-now');
+      if (sendNowBtn) {
+        const sid = Number(sendNowBtn.dataset.scheduledId);
+        if (!Number.isFinite(sid) || activeChatId == null) return;
+        await sendScheduledNow(sid);
+        return;
+      }
+      const editBtn = e.target.closest('.scheduled-item-edit');
+      if (editBtn) {
+        const row = editBtn.closest('.scheduled-item');
+        beginEditScheduled(row);
+        return;
+      }
       const btn = e.target.closest('.scheduled-item-cancel');
       if (!btn) return;
       const sid = Number(btn.dataset.scheduledId);
       if (!Number.isFinite(sid) || activeChatId == null) return;
-      // Optimistic remove; if it fails, `scheduled-added` won't fire so we'd
-      // miss the row. Acceptable — refetch on next page load anyway.
+      if (editingScheduledId === sid) editingScheduledId = null;
       removeScheduledItem(sid);
       try {
         await fetch(
@@ -3913,10 +4417,9 @@
           { method: 'POST' },
         );
       } catch {
-        /* silent — broadcast will reconcile */
+        /* silent */
       }
     });
-    // Hydrate the EJS-rendered "when" cells with local-friendly strings.
     refreshScheduledTimes();
   }
 
@@ -4023,12 +4526,20 @@
     null,
     2,
   );
+  const RESET_POLICY_CLI_COMMAND =
+    "openclaw config patch --stdin <<'EOF'\n" +
+    RESET_POLICY_MANUAL_PATCH +
+    "\nEOF\nopenclaw gateway restart";
 
   const resetBanner = document.getElementById('reset-policy-banner');
   const resetBannerActions = document.getElementById('reset-policy-banner-actions');
   const resetBannerBody = document.getElementById('reset-policy-banner-body');
   const resetFixBtn = document.getElementById('reset-policy-fix');
   const resetSnoozeBtn = document.getElementById('reset-policy-snooze');
+  const resetConfirm = document.getElementById('reset-policy-confirm');
+  const resetConfirmBackdrop = document.getElementById('reset-policy-confirm-backdrop');
+  const resetConfirmCancel = document.getElementById('reset-policy-confirm-cancel');
+  const resetConfirmOk = document.getElementById('reset-policy-confirm-ok');
 
   function snoozeResetBanner(ms) {
     try {
@@ -4063,43 +4574,67 @@
     setTimeout(hideResetBanner, 2400);
   }
 
-  function showResetBannerManualFallback() {
-    if (!resetBannerBody || !resetBannerActions) return;
-    resetBannerBody.innerHTML =
-      '<p class="reset-policy-banner-lead">Automatic setup failed — the gateway token needs admin scope.</p>' +
-      '<p class="reset-policy-banner-detail">' +
-      'Add this block to <code>~/.openclaw/openclaw.json</code> under the <code>session</code> key ' +
-      '(or merge with an existing block), save and restart the gateway.' +
-      '</p>' +
-      '<div class="reset-policy-manual">' +
-      '<pre id="reset-policy-snippet">' +
-      escapeHtml(RESET_POLICY_MANUAL_PATCH) +
-      '</pre>' +
-      '<div class="reset-policy-manual-row">' +
-      '<button type="button" class="btn btn--ghost btn--sm" id="reset-policy-copy">Copy</button>' +
-      '<span class="muted" id="reset-policy-copy-status"></span>' +
-      '</div>' +
-      '</div>';
-    resetBannerActions.innerHTML = '';
-    document.getElementById('reset-policy-copy')?.addEventListener('click', async () => {
+  function bindResetPolicyCopyButton(btnId, statusId, text, preId) {
+    document.getElementById(btnId)?.addEventListener('click', async () => {
       try {
-        await navigator.clipboard.writeText(RESET_POLICY_MANUAL_PATCH);
-        const s = document.getElementById('reset-policy-copy-status');
+        await navigator.clipboard.writeText(text);
+        const s = document.getElementById(statusId);
         if (s) {
           s.textContent = '✓ copied';
           setTimeout(() => { s.textContent = ''; }, 2000);
         }
       } catch {
-        const snippet = document.getElementById('reset-policy-snippet');
-        if (snippet) {
+        const pre = document.getElementById(preId);
+        if (pre) {
           const range = document.createRange();
-          range.selectNodeContents(snippet);
+          range.selectNodeContents(pre);
           const sel = window.getSelection();
           sel?.removeAllRanges();
           sel?.addRange(range);
         }
       }
     });
+  }
+
+  function showResetBannerManualFallback() {
+    if (!resetBannerBody || !resetBannerActions) return;
+    resetBannerBody.innerHTML =
+      '<p class="reset-policy-banner-lead">Automatic setup failed — the gateway token needs admin scope.</p>' +
+      '<p class="reset-policy-banner-detail">' +
+      'Run this in your terminal (same machine as OpenClaw), or paste the JSON into ' +
+      '<code>~/.openclaw/openclaw.json</code> under <code>session</code> and restart the gateway.' +
+      '</p>' +
+      '<div class="reset-policy-manual">' +
+      '<p class="reset-policy-manual-label muted">Terminal</p>' +
+      '<pre id="reset-policy-cli">' +
+      escapeHtml(RESET_POLICY_CLI_COMMAND) +
+      '</pre>' +
+      '<div class="reset-policy-manual-row">' +
+      '<button type="button" class="btn btn--ghost btn--sm" id="reset-policy-copy-cli">Copy command</button>' +
+      '<span class="muted" id="reset-policy-copy-cli-status"></span>' +
+      '</div>' +
+      '<p class="reset-policy-manual-label muted">Or edit openclaw.json</p>' +
+      '<pre id="reset-policy-snippet">' +
+      escapeHtml(RESET_POLICY_MANUAL_PATCH) +
+      '</pre>' +
+      '<div class="reset-policy-manual-row">' +
+      '<button type="button" class="btn btn--ghost btn--sm" id="reset-policy-copy">Copy JSON</button>' +
+      '<span class="muted" id="reset-policy-copy-status"></span>' +
+      '</div>' +
+      '</div>';
+    resetBannerActions.innerHTML = '';
+    bindResetPolicyCopyButton(
+      'reset-policy-copy-cli',
+      'reset-policy-copy-cli-status',
+      RESET_POLICY_CLI_COMMAND,
+      'reset-policy-cli',
+    );
+    bindResetPolicyCopyButton(
+      'reset-policy-copy',
+      'reset-policy-copy-status',
+      RESET_POLICY_MANUAL_PATCH,
+      'reset-policy-snippet',
+    );
   }
 
   async function probeResetPolicyAndMaybeShowBanner() {
@@ -4143,24 +4678,60 @@
         }
         throw new Error(data?.error || 'HTTP ' + res.status);
       } catch (err) {
-        if (resetBannerBody) {
+        const msg = String(err && err.message ? err.message : err);
+        if (/missing scope|forbidden|unauthor|admin/i.test(msg)) {
+          showResetBannerManualFallback();
+        } else if (resetBannerBody) {
           resetBannerBody.innerHTML =
             '<strong>Could not apply settings.</strong>' +
-            '<span class="muted">' +
-            escapeHtml(String(err && err.message ? err.message : err)) +
-            '</span>';
+            '<span class="muted">' + escapeHtml(msg) + '</span>';
         }
         resetFixBtn.disabled = false;
         resetFixBtn.textContent = original;
       }
     });
   }
+  function openResetPolicyConfirm() {
+    if (!resetConfirm) return;
+    resetConfirm.hidden = false;
+    resetConfirmOk?.focus();
+  }
+
+  function closeResetPolicyConfirm() {
+    if (resetConfirm) resetConfirm.hidden = true;
+  }
+
+  function confirmResetPolicySnooze() {
+    snoozeResetBanner(SNOOZE_DAYS * 24 * 60 * 60 * 1000);
+    closeResetPolicyConfirm();
+    hideResetBanner();
+  }
+
   if (resetSnoozeBtn) {
     resetSnoozeBtn.addEventListener('click', () => {
-      snoozeResetBanner(SNOOZE_DAYS * 24 * 60 * 60 * 1000);
-      hideResetBanner();
+      openResetPolicyConfirm();
     });
   }
+  if (resetConfirmOk) {
+    resetConfirmOk.addEventListener('click', () => {
+      confirmResetPolicySnooze();
+    });
+  }
+  if (resetConfirmCancel) {
+    resetConfirmCancel.addEventListener('click', () => {
+      closeResetPolicyConfirm();
+    });
+  }
+  if (resetConfirmBackdrop) {
+    resetConfirmBackdrop.addEventListener('click', () => {
+      closeResetPolicyConfirm();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !resetConfirm || resetConfirm.hidden) return;
+    e.preventDefault();
+    closeResetPolicyConfirm();
+  });
   // Fire probe once on load. Don't block anything else.
   probeResetPolicyAndMaybeShowBanner();
 

@@ -6,28 +6,35 @@
     typeof scheduledList !== 'undefined' && Array.isArray(scheduledList)
       ? scheduledList
       : [];
+  const _queue =
+    typeof queueList !== 'undefined' && Array.isArray(queueList) ? queueList : [];
 %>
+<div
+  id="queue-list"
+  class="scheduled-list scheduled-list--queue<%= _queue.length === 0 ? ' is-empty' : '' %>"
+  aria-live="polite"
+><% _queue.forEach(function (q, idx) { %>
+  <%- include('composer-pending-row', {
+    kind: 'queue',
+    rowId: q.id,
+    metaIcon: '⏳',
+    metaText: 'У черзі #' + (idx + 1),
+    content: q.content,
+  }) %>
+<% }); %></div>
 <div
   id="scheduled-list"
   class="scheduled-list<%= _scheduled.length === 0 ? ' is-empty' : '' %>"
   aria-live="polite"
 ><% _scheduled.forEach(function (s) { %>
-  <div class="scheduled-item" data-scheduled-id="<%= s.id %>" data-scheduled-at="<%= s.scheduled_at %>">
-    <div class="scheduled-item-main">
-      <div class="scheduled-item-meta">
-        <span class="scheduled-item-clock" aria-hidden="true">⏰</span>
-        <span class="scheduled-item-when" data-when="<%= s.scheduled_at %>"><%= s.scheduled_at %></span>
-      </div>
-      <div class="scheduled-item-text"><%= s.content %></div>
-    </div>
-    <button
-      type="button"
-      class="scheduled-item-cancel"
-      data-scheduled-id="<%= s.id %>"
-      aria-label="Cancel scheduled message"
-      title="Cancel"
-    >×</button>
-  </div>
+  <%- include('composer-pending-row', {
+    kind: 'scheduled',
+    rowId: s.id,
+    metaIcon: '⏰',
+    metaText: s.scheduled_at,
+    content: s.content,
+    scheduledAt: s.scheduled_at,
+  }) %>
 <% }); %></div>
 
 <form id="send-form" class="composer">
@@ -127,16 +134,39 @@
       aria-label="Schedule"
       hidden
     >
-      <button type="button" class="schedule-menu-item" data-offset="10m" role="menuitem">In 10 min</button>
-      <button type="button" class="schedule-menu-item" data-offset="1h"  role="menuitem">In 1 hour</button>
-      <button type="button" class="schedule-menu-item" data-offset="3h"  role="menuitem">In 3 hours</button>
-      <button type="button" class="schedule-menu-item" data-offset="tomorrow9" role="menuitem">Tomorrow 09:00</button>
-      <button type="button" class="schedule-menu-item" data-offset="custom" role="menuitem">Pick a time…</button>
-      <label class="schedule-custom-row" hidden>
-        <span>Time:</span>
-        <input type="datetime-local" id="schedule-custom-input" class="schedule-custom-input" />
-        <button type="button" class="schedule-custom-confirm" id="schedule-custom-confirm">OK</button>
-      </label>
+      <button type="button" class="schedule-menu-item" data-offset="5m" role="menuitem">5 хв</button>
+      <button type="button" class="schedule-menu-item" data-offset="30m" role="menuitem">30 хв</button>
+      <button type="button" class="schedule-menu-item" data-offset="1h" role="menuitem">1 година</button>
+      <button type="button" class="schedule-menu-item" data-offset="tomorrow9" role="menuitem">Завтра о 9:00</button>
+      <button type="button" class="schedule-menu-item" data-offset="custom" role="menuitem">Обрати час</button>
+    </div>
+
+    <div
+      id="schedule-picker"
+      class="schedule-picker"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Обрати час"
+      hidden
+    >
+      <div class="schedule-picker__backdrop" id="schedule-picker-backdrop"></div>
+      <div class="schedule-picker__panel">
+        <header class="schedule-picker__head">
+          <button type="button" class="schedule-picker__cancel" id="schedule-picker-cancel">Скасувати</button>
+          <span class="schedule-picker__title">Надіслати о</span>
+          <button type="button" class="schedule-picker__confirm" id="schedule-picker-confirm">Готово</button>
+        </header>
+        <div class="schedule-picker__body">
+          <label class="schedule-picker__field" for="schedule-datetime-input">
+            <span class="schedule-picker__field-label">Дата й час</span>
+            <input
+              type="datetime-local"
+              id="schedule-datetime-input"
+              class="schedule-picker__native"
+            />
+          </label>
+        </div>
+      </div>
     </div>
   </div>
   <div class="composer-secret-ui" id="composer-secret-ui" hidden>

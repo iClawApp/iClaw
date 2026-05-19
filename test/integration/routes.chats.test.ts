@@ -43,6 +43,12 @@ vi.mock('../../src/services/openclaw', () => ({
   openclaw: { baseUrl: 'http://127.0.0.1:18789', hasToken: true, tokenSource: 'test' },
 }));
 
+const sendMessageMock = vi.fn(async () => ({ chatId: 1 }));
+vi.mock('../../src/services/chatRunner', () => ({
+  sendMessage: sendMessageMock,
+  abortChatRun: vi.fn(async () => undefined),
+}));
+
 // Stub project memory background extraction so it doesn't try to call the gateway.
 vi.mock('../../src/services/projectMemory', async () => {
   const actual = await vi.importActual<typeof import('../../src/services/projectMemory')>(
@@ -64,6 +70,7 @@ const {
   projectFactSuggestions,
   projectSecrets,
   scheduledMessages,
+  queuedMessages,
 } = await import('../../src/services/store');
 
 const app = createApp();
@@ -214,6 +221,56 @@ describe('POST /chats/:id/reasoning', () => {
   });
 });
 
+describe('Composer queue routes', () => {
+  it('POST /chats/:id/queue creates + GET lists + DELETE removes', async () => {
+    const c = chats.create('openclaw/default');
+    const create = await request(app)
+      .post(`/chats/${c.id}/queue`)
+      .set('content-type', 'application/json')
+      .send({ content: 'wait' });
+    expect(create.status).toBe(200);
+    const qid = create.body.item.id;
+    expect(qid).toBeGreaterThan(0);
+
+    const list = await request(app).get(`/chats/${c.id}/queue`);
+    expect(list.status).toBe(200);
+    expect(list.body.queue.map((q: { id: number }) => q.id)).toEqual([qid]);
+
+    const del = await request(app).post(`/chats/${c.id}/queue/${qid}/delete`);
+    expect(del.status).toBe(200);
+    expect(queuedMessages.get(qid)).toBeUndefined();
+  });
+
+  it('POST flush dispatches and removes the row', async () => {
+    sendMessageMock.mockClear();
+    const c = chats.create('openclaw/default');
+    const created = queuedMessages.create({ chatId: c.id, content: 'go' });
+    const res = await request(app).post(`/chats/${c.id}/queue/${created.id}/flush`);
+    expect(res.status).toBe(200);
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: c.id, content: 'go' }),
+    );
+    expect(queuedMessages.get(created.id)).toBeUndefined();
+  });
+
+  it('POST promote reorders queue', async () => {
+    const c = chats.create('openclaw/default');
+    queuedMessages.create({ chatId: c.id, content: 'A' });
+    const b = queuedMessages.create({ chatId: c.id, content: 'B' });
+    const res = await request(app).post(`/chats/${c.id}/queue/${b.id}/promote`);
+    expect(res.status).toBe(200);
+    expect(res.body.queue.map((q: { content: string }) => q.content)).toEqual(['B', 'A']);
+  });
+
+  it('404 when queue id belongs to a different chat', async () => {
+    const a = chats.create('openclaw/default');
+    const b = chats.create('openclaw/default');
+    const created = queuedMessages.create({ chatId: a.id, content: 'a only' });
+    const res = await request(app).post(`/chats/${b.id}/queue/${created.id}/delete`);
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('Scheduled messages routes', () => {
   it('POST /chats/:id/scheduled creates + GET lists + DELETE removes', async () => {
     const c = chats.create('openclaw/default');
@@ -249,6 +306,16 @@ describe('Scheduled messages routes', () => {
     expect(r2.status).toBe(400);
   });
 
+  it('rejects scheduledAt sooner than 3 minutes from now', async () => {
+    const c = chats.create('openclaw/default');
+    const res = await request(app)
+      .post(`/chats/${c.id}/scheduled`)
+      .set('content-type', 'application/json')
+      .send({ content: 'too soon', scheduledAt: new Date(Date.now() + 60_000).toISOString() });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/3 minutes/i);
+  });
+
   it('404 when scheduled id belongs to a different chat', async () => {
     const a = chats.create('openclaw/default');
     const b = chats.create('openclaw/default');
@@ -259,6 +326,37 @@ describe('Scheduled messages routes', () => {
     });
     const res = await request(app).post(`/chats/${b.id}/scheduled/${created.id}/delete`);
     expect(res.status).toBe(404);
+  });
+
+  it('PATCH /chats/:id/scheduled/:sid updates content and time', async () => {
+    const c = chats.create('openclaw/default');
+    const created = scheduledMessages.create({
+      chatId: c.id,
+      content: 'old',
+      scheduledAt: new Date(Date.now() + 60 * 60_000),
+    });
+    const when = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
+    const res = await request(app)
+      .patch(`/chats/${c.id}/scheduled/${created.id}`)
+      .set('content-type', 'application/json')
+      .send({ content: 'new', scheduledAt: when });
+    expect(res.status).toBe(200);
+    expect(res.body.scheduled.content).toBe('new');
+    expect(scheduledMessages.get(created.id)?.content).toBe('new');
+  });
+
+  it('POST send-now dispatches and removes the row', async () => {
+    sendMessageMock.mockClear();
+    const c = chats.create('openclaw/default');
+    const created = scheduledMessages.create({
+      chatId: c.id,
+      content: 'fire me',
+      scheduledAt: new Date(Date.now() + 60_000),
+    });
+    const res = await request(app).post(`/chats/${c.id}/scheduled/${created.id}/send-now`);
+    expect(res.status).toBe(200);
+    expect(sendMessageMock).toHaveBeenCalledWith({ chatId: c.id, content: 'fire me' });
+    expect(scheduledMessages.get(created.id)).toBeUndefined();
   });
 });
 

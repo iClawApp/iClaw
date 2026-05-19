@@ -20,12 +20,24 @@ describe('store.chats', () => {
 
   it('list() returns chats newest-updated first', () => {
     const a = chats.create('openclaw/default');
-    // Force a measurable updated_at delta — SQLite datetime() has 1s resolution
-    chats.rename(a.id, 'A', { manual: true });
     const b = chats.create('openclaw/default');
-    chats.rename(b.id, 'B', { manual: true });
+    // Bump order via activity, not rename — rename must not move chats in the list.
+    messages.append(b.id, 'user', 'newer');
     const list = chats.list();
     expect(list.map((c) => c.id)).toEqual([b.id, a.id]);
+  });
+
+  it('rename({manual:true}) does not change updated_at (list order unchanged)', () => {
+    const a = chats.create('openclaw/default');
+    db.prepare("UPDATE chats SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(a.id);
+    const b = chats.create('openclaw/default');
+    messages.append(b.id, 'user', 'keep b on top');
+    const orderBefore = chats.list().map((c) => c.id);
+    const aRowBefore = chats.get(a.id)!;
+    chats.rename(a.id, 'Renamed A', { manual: true });
+    expect(chats.list().map((c) => c.id)).toEqual(orderBefore);
+    expect(chats.get(a.id)!.updated_at).toBe(aRowBefore.updated_at);
+    expect(chats.get(a.id)!.title).toBe('Renamed A');
   });
 
   it('listOrphans vs listByProject splits chats correctly', () => {

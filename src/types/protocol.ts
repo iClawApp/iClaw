@@ -9,7 +9,7 @@
  * creation (WebSocket `send` without `chatId`).
  */
 
-import type { Message, Project, ProjectFact, ScheduledMessage } from './index';
+import type { Message, Project, ProjectFact, QueuedMessage, ScheduledMessage } from './index';
 
 /* ---------------- Client → Server ---------------- */
 
@@ -166,7 +166,13 @@ export type ServerMsg =
 
   /* ---- scheduled messages (Telegram-style send-later) ---- */
   | { type: 'scheduled-added'; chatId: number; scheduled: ScheduledMessage }
+  | { type: 'scheduled-updated'; chatId: number; scheduled: ScheduledMessage }
   | { type: 'scheduled-deleted'; chatId: number; scheduledId: number }
+
+  /* ---- composer queue (waiting while a turn is in flight) ---- */
+  | { type: 'queue-added'; chatId: number; item: QueuedMessage }
+  | { type: 'queue-deleted'; chatId: number; queueId: number }
+  | { type: 'queue-reordered'; chatId: number; queue: QueuedMessage[] }
 
   /* ---- gateway events forwarded to UI ---- */
   /** Gateway session index/metadata changed (possibly from another tab/CLI). */

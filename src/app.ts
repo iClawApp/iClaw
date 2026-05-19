@@ -11,6 +11,7 @@ import { gatewayRouter } from './routes/gateway';
 import { projects } from './services/store';
 
 import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
+import { resolveUploadsRoot } from './paths';
 
 /** Resolves a project-relative directory when `__dirname` or cwd is not the package root (e.g. nested monorepos, odd runners). */
 function resolveProjectDir(
@@ -60,12 +61,7 @@ export function createApp(): express.Express {
   // User-uploaded attachments live under `data/uploads/<chatId>/<file>` and are
   // served straight back to the browser for inline rendering in past messages.
   // No directory listing — express.static returns 404 for paths that don't exist.
-  const uploadsRoot = path.resolve(
-    process.cwd(),
-    process.env.DB_PATH
-      ? path.join(path.dirname(process.env.DB_PATH), 'uploads')
-      : './data/uploads',
-  );
+  const uploadsRoot = path.resolve(resolveUploadsRoot());
   fs.mkdirSync(uploadsRoot, { recursive: true });
   app.use('/uploads', express.static(uploadsRoot));
 

@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
+import { resolveDbPath } from '../paths';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -96,6 +97,25 @@ CREATE TABLE IF NOT EXISTS scheduled_messages (
 CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_messages(scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_scheduled_chat ON scheduled_messages(chat_id, scheduled_at);
 
+/** User messages waiting for the current turn to finish (client queue mirror). */
+CREATE TABLE IF NOT EXISTS queued_messages (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id              INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  content              TEXT NOT NULL,
+  reply_to_message_id  INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+  reply_quote          TEXT,
+  reply_to_role        TEXT,
+  /** JSON array of {url, mimeType, fileName, sizeBytes} — files under data/uploads. */
+  attachments          TEXT,
+  /** JSON array of {slot, label, plain} for [[iclaw:sN]] markers; resolved on flush. */
+  inline_secrets       TEXT,
+  /** Lower sorts first; promote-to-front uses values below the current min. */
+  position             INTEGER NOT NULL DEFAULT 0,
+  created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_queued_chat ON queued_messages(chat_id, position, id);
+
 -- Robustness: any new message bumps the parent chat's updated_at so sidebar
 -- sorting is always correct even if a caller forgets the manual chats.touch().
 CREATE TRIGGER IF NOT EXISTS trg_chats_touch_on_message
@@ -105,7 +125,7 @@ BEGIN
 END;
 `;
 
-const dbPath = resolve(process.cwd(), process.env.DB_PATH ?? './data/iclaw.db');
+const dbPath = resolveDbPath();
 mkdirSync(dirname(dbPath), { recursive: true });
 
 export const db = new Database(dbPath);
