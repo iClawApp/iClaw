@@ -246,6 +246,9 @@
 
     <script src="/js/vendor/marked.min.js"></script>
     <script src="/js/vendor/highlight.min.js"></script>
+    <script>
+      window.__ICLAW_QUEUE__ = <%- JSON.stringify(typeof queueList !== 'undefined' ? queueList : []) %>;
+    </script>
     <script src="/js/iclaw.js"></script>
     <% if (cloudShareBaseUrl) { %>
       <script src="/js/share.js" defer></script>

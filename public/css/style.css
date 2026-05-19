@@ -2367,7 +2367,7 @@ code {
   background: var(--btn-bg-hover);
 }
 
-/* Telegram-style schedule time picker (portaled to document.body in JS) */
+/* Schedule time sheet — native datetime-local (OS picker on iOS/macOS) */
 .schedule-picker {
   position: fixed;
   inset: 0;
@@ -2389,7 +2389,7 @@ code {
   display: flex;
   flex-direction: column;
   width: min(100%, 420px);
-  max-height: min(70vh, 320px);
+  max-height: min(50vh, 240px);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px 16px 0 0;
@@ -2439,105 +2439,42 @@ code {
 .schedule-picker__confirm:hover {
   background: color-mix(in srgb, var(--text) 7%, transparent);
 }
-.schedule-picker__wheels {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1.35fr 0.72fr 0.72fr;
-  flex: 0 0 216px;
-  height: 216px;
-  min-height: 216px;
-  overflow: hidden;
+.schedule-picker__body {
+  padding: 4px 16px 20px;
 }
-.schedule-picker__highlight {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  height: 36px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent, var(--text)) 8%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--accent, var(--text)) 14%, var(--border));
-  pointer-events: none;
-  z-index: 0;
-}
-.schedule-picker__col {
-  position: relative;
-  z-index: 1;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    #000 22%,
-    #000 78%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    #000 22%,
-    #000 78%,
-    transparent 100%
-  );
-}
-.schedule-picker__col + .schedule-picker__col::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 14%;
-  bottom: 14%;
-  width: 1px;
-  background: color-mix(in srgb, var(--border) 70%, transparent);
-  pointer-events: none;
-  z-index: 2;
-}
-.schedule-picker__scroll {
-  height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
-  scroll-snap-type: y mandatory;
-  scroll-padding-block: 90px;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  -webkit-overflow-scrolling: touch;
-}
-.schedule-picker__scroll::-webkit-scrollbar {
-  display: none;
-}
-.schedule-picker__item {
-  box-sizing: border-box;
-  height: 36px;
-  margin: 0;
-  padding: 0 12px;
-  flex-shrink: 0;
+.schedule-picker__field {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  scroll-snap-align: center;
-  scroll-snap-stop: always;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+.schedule-picker__field-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+/* Native OS picker (iOS/macOS wheels, desktop calendar popup) — no custom scroll CSS */
+.schedule-picker__native {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 4%, var(--surface));
+  color: var(--text);
+  font: inherit;
   font-size: 1.0625rem;
-  line-height: 36px;
-  font-weight: 400;
-  color: color-mix(in srgb, var(--text) 72%, var(--muted));
-  user-select: none;
+  line-height: 1.25;
+  color-scheme: light dark;
+  -webkit-appearance: none;
+  appearance: none;
 }
-.schedule-picker__col[data-wheel='date'] .schedule-picker__item {
-  justify-content: center;
-  padding: 0 14px;
-  font-size: 1rem;
-}
-.schedule-picker__col[data-wheel='hour'] .schedule-picker__item,
-.schedule-picker__col[data-wheel='minute'] .schedule-picker__item {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum' 1;
-  letter-spacing: 0.02em;
-}
-.schedule-picker__item--pad {
-  visibility: hidden;
-  pointer-events: none;
+.schedule-picker__native:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent, var(--text)) 40%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--text)) 12%, transparent);
 }
 
 .scheduled-item-actions {

@@ -275,6 +275,8 @@
   initDraftProjectPick();
   // serializes turns per chat too, so this is just for the visible label
   const waitingItems = [];
+  /** Local-only ids for draft chats (no chatId yet). */
+  let nextLocalQueueItemId = 1;
   const REPLY_QUOTE_MAX = 240;
   /** @type {{ messageId: number; quote: string; role: string } | null} */
   let pendingComposerReply = null;
@@ -1162,7 +1164,80 @@
   // queue widget — shows only WAITING items (not the in-flight one)
   // -------------------------------------------------------------------------
 
-  let nextQueueItemId = 1;
+  function serverQueueItemFromApi(row) {
+    const item = {
+      serverId: row.id,
+      id: String(row.id),
+      content: row.content,
+    };
+    if (row.reply_to_message_id != null && row.reply_quote) {
+      item.replyTo = {
+        messageId: row.reply_to_message_id,
+        quote: row.reply_quote,
+        role: row.reply_to_role || undefined,
+      };
+    }
+    if (row.attachments && row.attachments.length > 0) {
+      item.attachments = row.attachments.map((a) => ({
+        mimeType: a.mimeType,
+        fileName: a.fileName,
+        sizeBytes: a.sizeBytes,
+        dataUrl: a.url,
+        url: a.url,
+      }));
+    }
+    return item;
+  }
+
+  function replaceWaitingItemsFromServer(rows) {
+    waitingItems.length = 0;
+    for (const row of rows) waitingItems.push(serverQueueItemFromApi(row));
+    renderQueue();
+  }
+
+  async function enqueueQueueOnServer(chatId, draft) {
+    const body = { content: draft.content };
+    if (draft.replyTo) body.replyTo = draft.replyTo;
+    if (draft.inlineSecrets && draft.inlineSecrets.length > 0) {
+      body.inlineSecrets = draft.inlineSecrets;
+    }
+    if (draft.attachments && draft.attachments.length > 0) {
+      body.attachments = draft.attachments.map((a) => ({
+        mimeType: a.mimeType,
+        fileName: a.fileName,
+        content: a.base64,
+      }));
+    }
+    const res = await fetch('/chats/' + encodeURIComponent(chatId) + '/queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || res.statusText || 'failed to enqueue');
+    }
+    return serverQueueItemFromApi(data.item);
+  }
+
+  async function deleteQueueOnServer(chatId, queueId) {
+    await fetch(
+      '/chats/' + encodeURIComponent(chatId) + '/queue/' + encodeURIComponent(queueId) + '/delete',
+      { method: 'POST', headers: { Accept: 'application/json' } },
+    );
+  }
+
+  async function promoteQueueOnServer(chatId, queueId) {
+    const res = await fetch(
+      '/chats/' + encodeURIComponent(chatId) + '/queue/' + encodeURIComponent(queueId) + '/promote',
+      { method: 'POST', headers: { Accept: 'application/json' } },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || res.statusText || 'failed to promote');
+    }
+    return data.queue;
+  }
 
   function renderQueue() {
     if (!queueEl) return;
@@ -1186,6 +1261,10 @@
       queueEl.appendChild(el);
     });
   }
+
+  const initialQueue = Array.isArray(window.__ICLAW_QUEUE__) ? window.__ICLAW_QUEUE__ : [];
+  for (const row of initialQueue) waitingItems.push(serverQueueItemFromApi(row));
+  if (initialQueue.length > 0) renderQueue();
 
   // Click on a tool's stream-status with .has-detail toggles between the
   // generic label and the detailed line. While expanded, new tool-start
@@ -1288,8 +1367,11 @@
       if (idx < 0) return;
 
       if (removeBtn) {
-        waitingItems.splice(idx, 1);
+        const removed = waitingItems.splice(idx, 1)[0];
         renderQueue();
+        if (removed?.serverId != null && activeChatId != null) {
+          deleteQueueOnServer(activeChatId, removed.serverId).catch(() => {});
+        }
         return;
       }
 
@@ -1297,9 +1379,20 @@
       // The turn-error handler clears inFlight and calls flushNextQueued(),
       // which now picks up our promoted item.
       if (activeChatId == null) return;
-      const [picked] = waitingItems.splice(idx, 1);
-      waitingItems.unshift(picked);
-      renderQueue();
+      const picked = waitingItems[idx];
+      if (!picked) return;
+      const doPromoteLocal = () => {
+        waitingItems.splice(idx, 1);
+        waitingItems.unshift(picked);
+        renderQueue();
+      };
+      if (picked.serverId != null) {
+        promoteQueueOnServer(activeChatId, picked.serverId)
+          .then((queue) => replaceWaitingItemsFromServer(queue))
+          .catch(() => doPromoteLocal());
+      } else {
+        doPromoteLocal();
+      }
       // If nothing is actually running, just flush now — no need to abort.
       if (!inFlight) {
         flushNextQueued();
@@ -2509,6 +2602,30 @@
         return;
       }
 
+      case 'queue-added': {
+        if (msg.chatId !== activeChatId) return;
+        if (waitingItems.some((it) => it.serverId === msg.item.id)) return;
+        waitingItems.push(serverQueueItemFromApi(msg.item));
+        renderQueue();
+        return;
+      }
+
+      case 'queue-deleted': {
+        if (msg.chatId !== activeChatId) return;
+        const qIdx = waitingItems.findIndex((it) => it.serverId === msg.queueId);
+        if (qIdx >= 0) {
+          waitingItems.splice(qIdx, 1);
+          renderQueue();
+        }
+        return;
+      }
+
+      case 'queue-reordered': {
+        if (msg.chatId !== activeChatId) return;
+        replaceWaitingItemsFromServer(msg.queue);
+        return;
+      }
+
       case 'exec-approval-requested': {
         if (msg.chatId !== activeChatId) return;
         renderApprovalCard({
@@ -2629,6 +2746,43 @@
     if (item.inlineSecrets && item.inlineSecrets.length > 0) {
       payload.inlineSecrets = item.inlineSecrets;
     }
+    if (item.serverId != null && activeChatId != null) {
+      const requestId = payload.requestId;
+      fetch(
+        '/chats/' +
+          encodeURIComponent(activeChatId) +
+          '/queue/' +
+          encodeURIComponent(item.serverId) +
+          '/flush',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ requestId }),
+        },
+      )
+        .then((res) => {
+          if (!res.ok) {
+            return res.json().then((data) => {
+              throw new Error(data.error || res.statusText);
+            });
+          }
+        })
+        .catch(async () => {
+          inFlight = false;
+          if (activeChatId != null) {
+            try {
+              waitingItems.unshift(await enqueueQueueOnServer(activeChatId, item));
+            } catch {
+              waitingItems.unshift(item);
+            }
+          } else {
+            waitingItems.unshift(item);
+          }
+          renderQueue();
+        });
+      return;
+    }
+
     if (activeChatId != null) payload.chatId = activeChatId;
     else {
       payload.agent = draftAgentSelect?.value || 'openclaw/default';
@@ -3596,7 +3750,7 @@
   syncComposerSecretUi();
 
   if (form && input) {
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (startedOnDraft && !draftProjectLocked) return;
       // If the schedule menu was just opened by a long-press, the bubbling
@@ -3628,13 +3782,27 @@
         base64: a.base64,
       }));
       clearPendingAttachments();
-      waitingItems.push({
+      const draft = {
         content,
-        id: 'q-' + nextQueueItemId++,
         replyTo: replySnap || undefined,
         attachments: attachmentsSnap.length > 0 ? attachmentsSnap : undefined,
         inlineSecrets,
-      });
+      };
+      let queued;
+      if (activeChatId != null) {
+        try {
+          queued = await enqueueQueueOnServer(activeChatId, draft);
+        } catch (err) {
+          alert(err instanceof Error ? err.message : String(err));
+          return;
+        }
+      } else {
+        queued = {
+          ...draft,
+          id: 'local-' + nextLocalQueueItemId++,
+        };
+      }
+      waitingItems.push(queued);
       input.value = '';
       clearComposerSecretDraft();
       renderQueue();
@@ -3664,30 +3832,91 @@
   const schedulePickerBackdrop = document.getElementById('schedule-picker-backdrop');
   const schedulePickerCancel = document.getElementById('schedule-picker-cancel');
   const schedulePickerConfirm = document.getElementById('schedule-picker-confirm');
-  const schedulePickerDateEl = document.getElementById('schedule-picker-date');
-  const schedulePickerHourEl = document.getElementById('schedule-picker-hour');
-  const schedulePickerMinuteEl = document.getElementById('schedule-picker-minute');
+  const scheduleDatetimeInput = document.getElementById('schedule-datetime-input');
+  const SCHEDULE_MIN_LEAD_MS = 3 * 60_000;
   const LONG_PRESS_MS = 450;
-  const SCHEDULE_WHEEL_VIEW_H = 216;
-  const SCHEDULE_WHEEL_ITEM_H = 36;
-  const SCHEDULE_WHEEL_PAD = Math.max(
-    1,
-    Math.floor((SCHEDULE_WHEEL_VIEW_H - SCHEDULE_WHEEL_ITEM_H) / (2 * SCHEDULE_WHEEL_ITEM_H)),
-  );
-
-  function wheelScrollTopForItemIndex(scrollEl, itemIndex) {
-    const pad = Number(scrollEl.dataset.pad || SCHEDULE_WHEEL_PAD);
-    const childIndex = pad + itemIndex;
-    const viewport = scrollEl.clientHeight || SCHEDULE_WHEEL_VIEW_H;
-    const centerOffset = (viewport - SCHEDULE_WHEEL_ITEM_H) / 2;
-    return Math.max(0, childIndex * SCHEDULE_WHEEL_ITEM_H - centerOffset);
-  }
   let schedulePressTimer = null;
   let scheduleMenuJustOpened = false;
   let scheduleMenuAutoCloseTimer = null;
   let editingScheduledId = null;
   let schedulePickerOnConfirm = null;
-  let schedulePickerWheelsReady = false;
+
+  function toDatetimeLocalValue(d) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return (
+      d.getFullYear() +
+      '-' +
+      pad(d.getMonth() + 1) +
+      '-' +
+      pad(d.getDate()) +
+      'T' +
+      pad(d.getHours()) +
+      ':' +
+      pad(d.getMinutes())
+    );
+  }
+
+  function getScheduleMinWhen() {
+    return new Date(Date.now() + SCHEDULE_MIN_LEAD_MS);
+  }
+
+  function clampScheduleWhen(when) {
+    const min = getScheduleMinWhen();
+    return when.getTime() < min.getTime() ? min : when;
+  }
+
+  function refreshScheduleDatetimeMin() {
+    if (!scheduleDatetimeInput) return;
+    scheduleDatetimeInput.min = toDatetimeLocalValue(getScheduleMinWhen());
+  }
+
+  function isScheduleWhenAllowed(when) {
+    return when.getTime() >= getScheduleMinWhen().getTime();
+  }
+
+  function readSchedulePickerValue() {
+    const v = scheduleDatetimeInput?.value;
+    if (!v) return null;
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  function ensureSchedulePickerPortal() {
+    if (!schedulePicker || schedulePicker.parentElement === document.body) return;
+    document.body.appendChild(schedulePicker);
+  }
+
+  function closeSchedulePicker() {
+    if (!schedulePicker) return;
+    schedulePicker.hidden = true;
+    schedulePickerOnConfirm = null;
+  }
+
+  function openSchedulePicker(initialWhen, onConfirm) {
+    if (!schedulePicker) return;
+    ensureSchedulePickerPortal();
+    closeScheduleMenu();
+    schedulePickerOnConfirm = onConfirm;
+    refreshScheduleDatetimeMin();
+    const when = clampScheduleWhen(initialWhen || new Date(Date.now() + 60 * 60_000));
+    if (scheduleDatetimeInput) {
+      scheduleDatetimeInput.value = toDatetimeLocalValue(when);
+    }
+    schedulePicker.hidden = false;
+    requestAnimationFrame(() => {
+      const el = scheduleDatetimeInput;
+      if (!el) return;
+      if (typeof el.showPicker === 'function') {
+        try {
+          el.showPicker();
+          return;
+        } catch {
+          /* fall through */
+        }
+      }
+      el.focus();
+    });
+  }
 
   function isScheduleMenuOpen() {
     return scheduleMenu != null && !scheduleMenu.hidden;
@@ -3728,29 +3957,26 @@
     }, 0);
   }
 
-  /** Parse the SQLite UTC stamp ("YYYY-MM-DD HH:MM:SS") as a real UTC instant. */
   function parseScheduledStamp(stamp) {
     if (!stamp) return null;
     const s = String(stamp).trim();
-    // ISO with timezone — trust as-is
     if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) {
       const d = new Date(s);
       return Number.isNaN(d.getTime()) ? null : d;
     }
-    // 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DDTHH:MM:SS' — server emits UTC
     const norm = s.replace(' ', 'T') + 'Z';
     const d = new Date(norm);
     return Number.isNaN(d.getTime()) ? null : d;
   }
 
-  /** Render the "when" cell as a friendly local string. */
   function formatScheduledWhen(stamp) {
     const d = parseScheduledStamp(stamp);
     if (!d) return String(stamp);
     const now = new Date();
     const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     const sameDay = d.toDateString() === now.toDateString();
-    const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
     const isTomorrow = d.toDateString() === tomorrow.toDateString();
     if (sameDay) return 'today ' + time;
     if (isTomorrow) return 'tomorrow ' + time;
@@ -3777,149 +4003,6 @@
   const SCHEDULED_EDIT_SVG =
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
-
-  function formatSchedulePickerDate(d) {
-    const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(now.getDate() + 1);
-    if (d.toDateString() === now.toDateString()) return 'Сьогодні';
-    if (d.toDateString() === tomorrow.toDateString()) return 'Завтра';
-    return d.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' });
-  }
-
-  function startOfLocalDay(d) {
-    const x = new Date(d);
-    x.setHours(0, 0, 0, 0);
-    return x;
-  }
-
-  function buildScheduleDateOptions() {
-    const base = startOfLocalDay(new Date());
-    const opts = [];
-    for (let i = 0; i < 366; i++) {
-      const d = new Date(base);
-      d.setDate(base.getDate() + i);
-      opts.push({ date: d, label: formatSchedulePickerDate(d) });
-    }
-    return opts;
-  }
-
-  function fillScheduleWheel(scrollEl, labels, padCount) {
-    if (!scrollEl) return;
-    const padItem =
-      '<div class="schedule-picker__item schedule-picker__item--pad" aria-hidden="true"></div>';
-    const pad = padItem.repeat(padCount);
-    const items = labels
-      .map(
-        (label) =>
-          '<div class="schedule-picker__item" role="presentation">' + escapeHtml(label) + '</div>',
-      )
-      .join('');
-    scrollEl.innerHTML = pad + items + pad;
-    scrollEl.dataset.pad = String(padCount);
-  }
-
-  function initSchedulePickerWheels() {
-    if (schedulePickerWheelsReady) return;
-    schedulePickerWheelsReady = true;
-    const dateOpts = buildScheduleDateOptions();
-    fillScheduleWheel(
-      schedulePickerDateEl,
-      dateOpts.map((o) => o.label),
-      SCHEDULE_WHEEL_PAD,
-    );
-    fillScheduleWheel(
-      schedulePickerHourEl,
-      Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')),
-      SCHEDULE_WHEEL_PAD,
-    );
-    fillScheduleWheel(
-      schedulePickerMinuteEl,
-      Array.from({ length: 60 }, (_, m) => String(m).padStart(2, '0')),
-      SCHEDULE_WHEEL_PAD,
-    );
-    schedulePickerDateEl._dateOpts = dateOpts;
-    for (const el of [schedulePickerDateEl, schedulePickerHourEl, schedulePickerMinuteEl]) {
-      if (!el) continue;
-      let snapTimer = null;
-      el.addEventListener('scroll', () => {
-        if (snapTimer) clearTimeout(snapTimer);
-        snapTimer = setTimeout(() => snapScheduleWheel(el), 80);
-      }, { passive: true });
-    }
-  }
-
-  function snapScheduleWheel(scrollEl) {
-    const itemIdx = readScheduleWheelIndex(scrollEl);
-    scrollEl.scrollTo({
-      top: wheelScrollTopForItemIndex(scrollEl, itemIdx),
-      behavior: 'smooth',
-    });
-  }
-
-  function scrollScheduleWheelTo(scrollEl, index) {
-    scrollEl.scrollTop = wheelScrollTopForItemIndex(scrollEl, index);
-  }
-
-  function readScheduleWheelIndex(scrollEl) {
-    const pad = Number(scrollEl.dataset.pad || SCHEDULE_WHEEL_PAD);
-    const viewport = scrollEl.clientHeight || SCHEDULE_WHEEL_VIEW_H;
-    const centerOffset = (viewport - SCHEDULE_WHEEL_ITEM_H) / 2;
-    const childIndex = Math.round((scrollEl.scrollTop + centerOffset) / SCHEDULE_WHEEL_ITEM_H);
-    const max = scrollEl.querySelectorAll('.schedule-picker__item:not(.schedule-picker__item--pad)').length - 1;
-    return Math.max(0, Math.min(childIndex - pad, max));
-  }
-
-  function setSchedulePickerValue(when) {
-    initSchedulePickerWheels();
-    const d = when instanceof Date ? when : new Date(when);
-    const dateOpts = schedulePickerDateEl?._dateOpts || buildScheduleDateOptions();
-    const dayStart = startOfLocalDay(d).getTime();
-    let dateIdx = dateOpts.findIndex((o) => startOfLocalDay(o.date).getTime() === dayStart);
-    if (dateIdx < 0) dateIdx = 0;
-    scrollScheduleWheelTo(schedulePickerDateEl, dateIdx);
-    scrollScheduleWheelTo(schedulePickerHourEl, d.getHours());
-    scrollScheduleWheelTo(schedulePickerMinuteEl, d.getMinutes());
-  }
-
-  function readSchedulePickerValue() {
-    const dateOpts = schedulePickerDateEl?._dateOpts || buildScheduleDateOptions();
-    const dateIdx = readScheduleWheelIndex(schedulePickerDateEl);
-    const hour = readScheduleWheelIndex(schedulePickerHourEl);
-    const minute = readScheduleWheelIndex(schedulePickerMinuteEl);
-    const base = dateOpts[dateIdx]?.date || startOfLocalDay(new Date());
-    const out = new Date(base);
-    out.setHours(hour, minute, 0, 0);
-    return out;
-  }
-
-  function ensureSchedulePickerPortal() {
-    if (!schedulePicker || schedulePicker.parentElement === document.body) return;
-    document.body.appendChild(schedulePicker);
-  }
-
-  function closeSchedulePicker() {
-    if (!schedulePicker) return;
-    schedulePicker.hidden = true;
-    schedulePickerOnConfirm = null;
-    const wheels = schedulePicker.querySelector('.schedule-picker__wheels');
-    if (wheels) wheels.setAttribute('aria-hidden', 'true');
-  }
-
-  function openSchedulePicker(initialWhen, onConfirm) {
-    if (!schedulePicker) return;
-    ensureSchedulePickerPortal();
-    initSchedulePickerWheels();
-    closeScheduleMenu();
-    schedulePickerOnConfirm = onConfirm;
-    schedulePicker.hidden = false;
-    const wheels = schedulePicker.querySelector('.schedule-picker__wheels');
-    if (wheels) wheels.setAttribute('aria-hidden', 'false');
-    const when = initialWhen || new Date(Date.now() + 60 * 60_000);
-    requestAnimationFrame(() => {
-      setSchedulePickerValue(when);
-    });
-  }
 
   function scheduledItemActionsHtml(id) {
     return (
@@ -4000,8 +4083,8 @@
     if (activeChatId == null) return;
     const content = (opts && opts.content) || input.value.trim();
     if (!content) return;
-    if (when.getTime() <= Date.now() - 60_000) {
-      alert('Цей час уже минув — оберіть час у майбутньому.');
+    if (!isScheduleWhenAllowed(when)) {
+      alert('Оберіть час не раніше ніж за 3 хвилини від зараз.');
       return;
     }
     const sid = (opts && opts.scheduledId) || editingScheduledId;
@@ -4142,11 +4225,30 @@
   if (schedulePickerConfirm) {
     schedulePickerConfirm.addEventListener('click', () => {
       const when = readSchedulePickerValue();
+      if (!when) {
+        alert('Оберіть дату й час.');
+        return;
+      }
+      if (!isScheduleWhenAllowed(when)) {
+        alert('Оберіть час не раніше ніж за 3 хвилини від зараз.');
+        return;
+      }
       if (schedulePickerOnConfirm) {
         schedulePickerOnConfirm(when);
         return;
       }
       submitScheduled(when);
+    });
+  }
+  if (scheduleDatetimeInput) {
+    scheduleDatetimeInput.addEventListener('change', () => {
+      refreshScheduleDatetimeMin();
+      const d = readSchedulePickerValue();
+      if (!d) return;
+      const clamped = clampScheduleWhen(d);
+      if (d.getTime() !== clamped.getTime()) {
+        scheduleDatetimeInput.value = toDatetimeLocalValue(clamped);
+      }
     });
   }
 

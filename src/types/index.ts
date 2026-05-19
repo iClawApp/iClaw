@@ -32,6 +32,18 @@ export interface ScheduledMessage {
   created_at: string;
 }
 
+/** User message waiting for the in-flight turn to finish (composer queue). */
+export interface QueuedMessage {
+  id: number;
+  chat_id: number;
+  content: string;
+  reply_to_message_id: number | null;
+  reply_quote: string | null;
+  reply_to_role: string | null;
+  attachments: MessageAttachment[] | null;
+  created_at: string;
+}
+
 /** LLM-proposed fact awaiting user accept/reject in the chat UI. */
 export interface ProjectFactSuggestion {
   id: number;

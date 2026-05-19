@@ -15,8 +15,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { resolveUploadsRoot as uploadsRootFromPaths } from '../paths';
 import type { MessageAttachment } from '../types';
 
@@ -194,5 +194,47 @@ export function persistIncomingAttachments(
     });
   }
 
+  return out;
+}
+
+/**
+ * Rebuild OpenClaw gateway attachment payloads from rows already on disk
+ * (queued messages persist files at enqueue time).
+ */
+export function gatewayAttachmentsFromPersisted(
+  chatId: number,
+  persisted: MessageAttachment[],
+): ProcessedAttachment['forGateway'][] {
+  if (!persisted.length) return [];
+  const chatDir = join(resolveUploadsRoot(), String(chatId));
+  const out: ProcessedAttachment['forGateway'][] = [];
+  for (const [idx, att] of persisted.entries()) {
+    const url = att.url || '';
+    const prefix = `/uploads/${chatId}/`;
+    if (!url.startsWith(prefix)) {
+      throw new Error(`Attachment ${idx + 1}: unexpected url ${url}`);
+    }
+    const onDiskName = basename(url);
+    const onDiskPath = join(chatDir, onDiskName);
+    let buffer: Buffer;
+    try {
+      buffer = readFileSync(onDiskPath);
+    } catch {
+      throw new Error(`Attachment ${idx + 1}: file missing on disk.`);
+    }
+    if (buffer.byteLength === 0) {
+      throw new Error(`Attachment ${idx + 1}: file is empty.`);
+    }
+    const mimeType = att.mimeType || 'application/octet-stream';
+    const fileName = att.fileName || 'attachment';
+    const base64 = buffer.toString('base64');
+    const isImage = mimeType.startsWith('image/');
+    out.push({
+      type: isImage ? 'image' : 'file',
+      mimeType,
+      fileName,
+      content: base64,
+    });
+  }
   return out;
 }

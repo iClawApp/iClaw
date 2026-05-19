@@ -9,8 +9,10 @@ import {
   projectSecrets,
   secretUsableInChat,
   scheduledMessages,
+  queuedMessages,
   enrichFactWithSourceChatTitle,
 } from '../services/store';
+import { persistIncomingAttachments, type IncomingAttachment } from '../services/uploads';
 import {
   redactSelectionInMessageContent,
   resolveInlineSecretMarkersInContent,
@@ -147,6 +149,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
       isWorking: chatStatus.isWorking(id),
       currentActivity: chatStatus.getActivity(id),
       scheduledList: scheduledMessages.listByChat(id),
+      queueList: queuedMessages.listByChat(id),
     });
   } catch (err) {
     next(err);
@@ -500,7 +503,188 @@ chatsRouter.get('/:id/secrets/in-chat', (req, res) => {
   res.json({ secrets: result });
 });
 
+// ---------- composer queue (persisted waiting messages) ----------
+
+function parseInlineSecretsBody(body: unknown): InlineSecretWire[] | undefined {
+  if (!Array.isArray(body)) return undefined;
+  return (body as unknown[])
+    .map((x): InlineSecretWire | null => {
+      if (!x || typeof x !== 'object') return null;
+      const o = x as Record<string, unknown>;
+      const slot = Number(o.slot);
+      if (!Number.isFinite(slot)) return null;
+      return { slot, label: String(o.label ?? ''), plain: String(o.plain ?? '') };
+    })
+    .filter((x): x is InlineSecretWire => x != null);
+}
+
+function parseReplyToBody(
+  body: unknown,
+): { messageId: number; quote: string; role?: string } | undefined {
+  if (!body || typeof body !== 'object') return undefined;
+  const o = body as Record<string, unknown>;
+  const messageId = Number(o.messageId);
+  const quote = String(o.quote ?? '').trim();
+  if (!Number.isFinite(messageId) || !quote) return undefined;
+  const role = o.role != null ? String(o.role) : undefined;
+  return { messageId, quote, role };
+}
+
+function parseIncomingAttachmentsBody(body: unknown): IncomingAttachment[] | undefined {
+  if (!Array.isArray(body)) return undefined;
+  return body as IncomingAttachment[];
+}
+
+/** List pending queue rows for this chat (also used to hydrate after navigation). */
+chatsRouter.get('/:id/queue', (req, res) => {
+  const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  res.json({ queue: queuedMessages.listByChat(id) });
+});
+
+/**
+ * Enqueue a user message while a turn is still running.
+ * Body mirrors WS `send`: content, replyTo?, attachments?, inlineSecrets?
+ */
+chatsRouter.post('/:id/queue', (req, res) => {
+  const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const content = String(req.body?.content ?? '').trim();
+  const incoming = parseIncomingAttachmentsBody(req.body?.attachments);
+  const hasAttachments = incoming && incoming.length > 0;
+  if (!content && !hasAttachments) {
+    res.status(400).json({ error: 'content or attachments required' });
+    return;
+  }
+  const inlineSecrets = parseInlineSecretsBody(req.body?.inlineSecrets);
+  if (/\[\[iclaw:s\d+\]\]/.test(content)) {
+    if (!inlineSecrets?.length) {
+      res.status(400).json({ error: 'inlineSecrets required for secret markers' });
+      return;
+    }
+  } else if (inlineSecrets && inlineSecrets.length > 0) {
+    res.status(400).json({ error: 'inlineSecrets without [[iclaw:sN]] markers' });
+    return;
+  }
+  let persistedAttachments = null;
+  try {
+    if (hasAttachments) {
+      persistedAttachments = persistIncomingAttachments(id, incoming).map((p) => p.persisted);
+    }
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'attachments' });
+    return;
+  }
+  const replyTo = parseReplyToBody(req.body?.replyTo);
+  try {
+    const row = queuedMessages.create({
+      chatId: id,
+      content,
+      replyTo: replyTo ?? null,
+      attachments: persistedAttachments,
+      inlineSecrets: inlineSecrets ?? null,
+    });
+    wsHub.broadcastAll({ type: 'queue-added', chatId: id, item: row });
+    res.json({ item: row });
+  } catch (err) {
+    res
+      .status(400)
+      .json({ error: err instanceof Error ? err.message : 'failed to enqueue' });
+  }
+});
+
+chatsRouter.post('/:id/queue/:queueId/delete', (req, res) => {
+  const id = Number(req.params.id);
+  const qid = Number(req.params.queueId);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const row = queuedMessages.get(qid);
+  if (!row || row.chat_id !== id) {
+    res.status(404).json({ error: 'queued message not found' });
+    return;
+  }
+  queuedMessages.remove(qid);
+  wsHub.broadcastAll({ type: 'queue-deleted', chatId: id, queueId: qid });
+  res.json({ ok: true });
+});
+
+/** Move a queued row to the front (interrupt current turn, then flush it). */
+chatsRouter.post('/:id/queue/:queueId/promote', (req, res) => {
+  const id = Number(req.params.id);
+  const qid = Number(req.params.queueId);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const updated = queuedMessages.promoteToFront(id, qid);
+  if (!updated) {
+    res.status(404).json({ error: 'queued message not found' });
+    return;
+  }
+  const queue = queuedMessages.listByChat(id);
+  wsHub.broadcastAll({ type: 'queue-reordered', chatId: id, queue });
+  res.json({ queue });
+});
+
+/** Dispatch one queued row through the normal send/turn pipeline. */
+chatsRouter.post('/:id/queue/:queueId/flush', async (req, res) => {
+  const id = Number(req.params.id);
+  const qid = Number(req.params.queueId);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const row = queuedMessages.getForFlush(qid);
+  if (!row || row.chat_id !== id) {
+    res.status(404).json({ error: 'queued message not found' });
+    return;
+  }
+  queuedMessages.remove(qid);
+  wsHub.broadcastAll({ type: 'queue-deleted', chatId: id, queueId: qid });
+  const replyTo =
+    row.reply_to_message_id != null && row.reply_quote
+      ? {
+          messageId: row.reply_to_message_id,
+          quote: row.reply_quote,
+          ...(row.reply_to_role ? { role: row.reply_to_role } : {}),
+        }
+      : undefined;
+  try {
+    await sendMessage({
+      chatId: id,
+      content: row.content,
+      replyTo,
+      inlineSecrets: row.inline_secrets ?? undefined,
+      prePersistedAttachments:
+        row.attachments && row.attachments.length > 0 ? row.attachments : undefined,
+      requestId: String(req.body?.requestId ?? '').trim() || undefined,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: err instanceof Error ? err.message : 'send failed' });
+  }
+});
+
 // ---------- scheduled messages (Telegram-style "send later") ----------
+
+const SCHEDULE_MIN_LEAD_MS = 3 * 60_000;
+
+function scheduleAtValidationError(when: Date): string | null {
+  if (when.getTime() < Date.now() + SCHEDULE_MIN_LEAD_MS) {
+    return 'scheduledAt must be at least 3 minutes in the future';
+  }
+  return null;
+}
 
 /** List everything still pending for this chat. Used to hydrate the banner. */
 chatsRouter.get('/:id/scheduled', (req, res) => {
@@ -542,6 +726,11 @@ chatsRouter.post('/:id/scheduled', (req, res) => {
   const when = new Date(rawAt);
   if (Number.isNaN(when.getTime())) {
     res.status(400).json({ error: 'invalid scheduledAt' });
+    return;
+  }
+  const scheduleAtErr = scheduleAtValidationError(when);
+  if (scheduleAtErr) {
+    res.status(400).json({ error: scheduleAtErr });
     return;
   }
   let inlineSecrets: InlineSecretWire[] | undefined;
@@ -589,8 +778,6 @@ chatsRouter.post('/:id/scheduled', (req, res) => {
     res.status(400).json({ error: 'inlineSecrets without [[iclaw:sN]] markers' });
     return;
   }
-  // Allow scheduling for "now" or even slightly in the past — the next sweep
-  // will fire it. This also covers clock skew between browser and server.
   try {
     const row = scheduledMessages.create({ chatId: id, content: toStore, scheduledAt: when });
     wsHub.broadcastAll({
@@ -686,6 +873,11 @@ chatsRouter.patch('/:id/scheduled/:scheduledId', (req, res) => {
     const when = new Date(rawAt);
     if (Number.isNaN(when.getTime())) {
       res.status(400).json({ error: 'invalid scheduledAt' });
+      return;
+    }
+    const scheduleAtErr = scheduleAtValidationError(when);
+    if (scheduleAtErr) {
+      res.status(400).json({ error: scheduleAtErr });
       return;
     }
     patch.scheduledAt = when;

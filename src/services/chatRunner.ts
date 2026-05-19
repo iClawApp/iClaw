@@ -15,11 +15,12 @@ import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
 import { toolActivityLabel } from './toolLabels';
 import { wsHub } from './wsHub';
 import {
+  gatewayAttachmentsFromPersisted,
   persistIncomingAttachments,
   type IncomingAttachment,
   type ProcessedAttachment,
 } from './uploads';
-import type { Message } from '../types';
+import type { Message, MessageAttachment } from '../types';
 import {
   expandStoredSecretPlaceholdersForGateway,
   resolveInlineSecretMarkersInContent,
@@ -296,9 +297,19 @@ async function runTurnLocked(opts: {
   isFirstTurn: boolean;
   replyTo?: unknown;
   incomingAttachments?: IncomingAttachment[];
+  /** Attachments already saved under data/uploads (queued-message flush). */
+  prePersistedAttachments?: MessageAttachment[];
   inlineSecrets?: InlineSecretWire[];
 }): Promise<void> {
-  const { chatId, content, isFirstTurn, replyTo, incomingAttachments, inlineSecrets } = opts;
+  const {
+    chatId,
+    content,
+    isFirstTurn,
+    replyTo,
+    incomingAttachments,
+    prePersistedAttachments,
+    inlineSecrets,
+  } = opts;
   const chat = chats.get(chatId)!;
   const sessionKey = await ensureSession(chatId);
   const projectId = chat.project_id ?? null;
@@ -321,10 +332,16 @@ async function runTurnLocked(opts: {
   // Decode + persist attachments BEFORE the user-msg row so the row carries
   // the file URLs in the same broadcast. Validation errors throw and bubble up
   // to sendMessage's catch which surfaces them as turn-error.
-  const processed: ProcessedAttachment[] = persistIncomingAttachments(
-    chatId,
-    incomingAttachments,
-  );
+  let processed: ProcessedAttachment[];
+  if (prePersistedAttachments && prePersistedAttachments.length > 0) {
+    const gateway = gatewayAttachmentsFromPersisted(chatId, prePersistedAttachments);
+    processed = prePersistedAttachments.map((persisted, i) => ({
+      persisted,
+      forGateway: gateway[i]!,
+    }));
+  } else {
+    processed = persistIncomingAttachments(chatId, incomingAttachments);
+  }
   const persistedAttachments = processed.map((p) => p.persisted);
   const gatewayAttachments = processed.map((p) => p.forGateway);
 
@@ -591,6 +608,8 @@ export async function sendMessage(opts: {
   subscriber?: WebSocket;
   /** Inline attachments from the browser. Decoded + persisted in runTurnLocked. */
   incomingAttachments?: IncomingAttachment[];
+  /** Files already on disk (queued-message flush). */
+  prePersistedAttachments?: MessageAttachment[];
 }): Promise<{ chatId: number }> {
   let chatId = opts.chatId;
   let isFirstTurn = false;
@@ -639,6 +658,7 @@ export async function sendMessage(opts: {
         isFirstTurn,
         replyTo: opts.replyTo,
         incomingAttachments: opts.incomingAttachments,
+        prePersistedAttachments: opts.prePersistedAttachments,
         inlineSecrets: opts.inlineSecrets,
       }),
     );

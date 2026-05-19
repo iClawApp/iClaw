@@ -174,17 +174,15 @@
           <span class="schedule-picker__title">Надіслати о</span>
           <button type="button" class="schedule-picker__confirm" id="schedule-picker-confirm">Готово</button>
         </header>
-        <div class="schedule-picker__wheels" aria-hidden="true">
-          <div class="schedule-picker__highlight"></div>
-          <div class="schedule-picker__col" data-wheel="date">
-            <div class="schedule-picker__scroll" id="schedule-picker-date"></div>
-          </div>
-          <div class="schedule-picker__col" data-wheel="hour">
-            <div class="schedule-picker__scroll" id="schedule-picker-hour"></div>
-          </div>
-          <div class="schedule-picker__col schedule-picker__col--minute" data-wheel="minute">
-            <div class="schedule-picker__scroll" id="schedule-picker-minute"></div>
-          </div>
+        <div class="schedule-picker__body">
+          <label class="schedule-picker__field" for="schedule-datetime-input">
+            <span class="schedule-picker__field-label">Дата й час</span>
+            <input
+              type="datetime-local"
+              id="schedule-datetime-input"
+              class="schedule-picker__native"
+            />
+          </label>
         </div>
       </div>
     </div>

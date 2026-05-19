@@ -9,8 +9,10 @@ import type {
   ProjectFact,
   ProjectFactSuggestion,
   ProjectSecret,
+  QueuedMessage,
   ScheduledMessage,
 } from '../types';
+import type { InlineSecretWire } from './inlineSecrets';
 import { clampLogoColor, clampLogoEmoji } from '../constants/projectLogos';
 
 // ---------- chats ----------
@@ -707,6 +709,117 @@ export const projectSecrets = {
       sourceMessageId: null,
       allowDuplicateLabel: true,
     });
+  },
+};
+
+// ---------- queued messages (composer queue) ----------
+
+type QueuedRow = Omit<QueuedMessage, 'attachments'> & { attachments: string | null };
+
+function parseQueuedRow(row: QueuedRow): QueuedMessage {
+  let attachments: QueuedMessage['attachments'] = null;
+  if (row.attachments) {
+    try {
+      const parsed = JSON.parse(row.attachments);
+      if (Array.isArray(parsed)) attachments = parsed;
+    } catch {
+      /* corrupt JSON */
+    }
+  }
+  return { ...row, attachments };
+}
+
+export const queuedMessages = {
+  listByChat(chatId: number): QueuedMessage[] {
+    const rows = db
+      .prepare(
+        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, created_at FROM queued_messages WHERE chat_id = ? ORDER BY position ASC, id ASC',
+      )
+      .all(chatId) as QueuedRow[];
+    return rows.map(parseQueuedRow);
+  },
+  get(id: number): QueuedMessage | undefined {
+    const row = db
+      .prepare(
+        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, created_at FROM queued_messages WHERE id = ?',
+      )
+      .get(id) as QueuedRow | undefined;
+    return row ? parseQueuedRow(row) : undefined;
+  },
+  /** Raw row including inline_secrets JSON — only for flush. */
+  getForFlush(id: number):
+    | (QueuedMessage & { inline_secrets: InlineSecretWire[] | null })
+    | undefined {
+    const row = db
+      .prepare(
+        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, inline_secrets, created_at FROM queued_messages WHERE id = ?',
+      )
+      .get(id) as (QueuedRow & { inline_secrets: string | null }) | undefined;
+    if (!row) return undefined;
+    let inline_secrets: InlineSecretWire[] | null = null;
+    if (row.inline_secrets) {
+      try {
+        const parsed = JSON.parse(row.inline_secrets);
+        if (Array.isArray(parsed)) inline_secrets = parsed;
+      } catch {
+        /* ignore */
+      }
+    }
+    const { inline_secrets: _raw, ...rest } = row;
+    return { ...parseQueuedRow(rest), inline_secrets };
+  },
+  create(opts: {
+    chatId: number;
+    content: string;
+    replyTo?: { messageId: number; quote: string; role?: string } | null;
+    attachments?: MessageAttachment[] | null;
+    inlineSecrets?: InlineSecretWire[] | null;
+  }): QueuedMessage {
+    const trimmed = opts.content.trim();
+    const hasAttachments = opts.attachments && opts.attachments.length > 0;
+    if (!trimmed && !hasAttachments) throw new Error('content or attachments required');
+    const maxPos = db
+      .prepare('SELECT COALESCE(MAX(position), 0) AS m FROM queued_messages WHERE chat_id = ?')
+      .get(opts.chatId) as { m: number };
+    const position = maxPos.m + 1;
+    const attachmentsJson =
+      opts.attachments && opts.attachments.length > 0 ? JSON.stringify(opts.attachments) : null;
+    const inlineJson =
+      opts.inlineSecrets && opts.inlineSecrets.length > 0
+        ? JSON.stringify(opts.inlineSecrets)
+        : null;
+    const info = db
+      .prepare(
+        `INSERT INTO queued_messages (
+          chat_id, content, reply_to_message_id, reply_quote, reply_to_role,
+          attachments, inline_secrets, position
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        opts.chatId,
+        trimmed || '',
+        opts.replyTo?.messageId ?? null,
+        opts.replyTo?.quote ?? null,
+        opts.replyTo?.role ?? null,
+        attachmentsJson,
+        inlineJson,
+        position,
+      );
+    return this.get(Number(info.lastInsertRowid))!;
+  },
+  remove(id: number): void {
+    db.prepare('DELETE FROM queued_messages WHERE id = ?').run(id);
+  },
+  /** Move a row to the front of this chat's queue (interrupt-and-send). */
+  promoteToFront(chatId: number, id: number): QueuedMessage | undefined {
+    const row = this.get(id);
+    if (!row || row.chat_id !== chatId) return undefined;
+    const minRow = db
+      .prepare('SELECT MIN(position) AS m FROM queued_messages WHERE chat_id = ?')
+      .get(chatId) as { m: number | null };
+    const nextPos = (minRow.m ?? 1) - 1;
+    db.prepare('UPDATE queued_messages SET position = ? WHERE id = ?').run(nextPos, id);
+    return this.get(id);
   },
 };
 
