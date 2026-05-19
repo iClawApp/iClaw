@@ -5,46 +5,60 @@
 <h1 align="center">iClaw</h1>
 
 <p align="center">
-  <a href="https://iclaw.digital">iclaw.digital</a>
+  Chat UI for <a href="https://openclaw.ai">OpenClaw Gateway</a> — runs on your machine, stores history locally.
 </p>
 
-Site: <https://iclaw.digital>
-
-Chat-style web UI for a **local** [OpenClaw Gateway](https://docs.openclaw.ai): sidebar, streaming replies, tool activity, SQLite history on disk. The browser only connects to iClaw; iClaw connects to the gateway (native WebSocket). **Node.js 20+**; gateway must be running (default `http://127.0.0.1:18789`).
+<p align="center">
+  <a href="https://github.com/iClawApp/iClaw/actions/workflows/ci.yml?branch=main"><img src="https://img.shields.io/github/actions/workflow/status/iClawApp/iClaw/ci.yml?branch=main&style=for-the-badge" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/@iclawapp/iclaw"><img src="https://img.shields.io/npm/v/@iclawapp/iclaw?style=for-the-badge" alt="npm"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT"></a>
+</p>
 
 ![iClaw screenshot](./docs/readme-screenshot.png)
+
+## Install
+
+Requires [Node.js 20+](https://nodejs.org) and a running [OpenClaw Gateway](https://docs.openclaw.ai).
 
 ```bash
 npx @iclawapp/iclaw
 ```
 
-Then open <http://localhost:3000>. Bearer token is read from `~/.openclaw/openclaw.json`. Data is stored in `~/.iclaw/data/iclaw.db`.
+Then open **http://localhost:3000**.
 
-**For development:**
-```bash
-git clone https://github.com/iClawApp/iClaw.git && cd iClaw && npm install && npm run dev
-```
-
-| Where | Default |
-| --- | --- |
-| Web UI | <http://localhost:3000> |
-| Browser ↔ iClaw | `ws://localhost:3000/ws` |
-| Gateway | `http://127.0.0.1:18789` (`OPENCLAW_BASE_URL`) |
-
-Optional env vars: [.env.example](.env.example). Notes for AI agents on this repo: [AGENTS.md](AGENTS.md).
+That's it. Your chat history is saved to `~/.iclaw/data/iclaw.db`.
 
 ## Encrypted chat sharing (optional)
 
-Set `ICLAW_CLOUD_URL` to your [iClaw-cloud](https://github.com/iClawApp/iClaw-cloud) origin, or leave it unset to use the default `https://app.iclaw.digital`. Set to `false`, `0`, `off`, or `disabled` to hide **Share**. The chat is encrypted in your browser (AES-256-GCM + optional PBKDF2 password); the share server stores ciphertext only and the symmetric key lives in the URL fragment. TTL 1/3/7/30 days, optional burn-after-read, optional password.
+Hit **Share** in any chat to get an encrypted link. The chat is encrypted in your browser (AES-256-GCM); the server stores ciphertext only. Supports password protection, burn-after-read, and TTL.
 
-## Contributing
+Powered by [iClaw-cloud](https://github.com/iClawApp/iClaw-cloud) — defaults to `https://app.iclaw.digital`.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), the [roadmap](ROADMAP.md), and the [changelog](CHANGELOG.md). Bug reports and small PRs welcome. For anything bigger, open an issue first to talk scope.
+---
+
+## For developers
+
+```bash
+git clone https://github.com/iClawApp/iClaw.git
+cd iClaw && npm install && npm run dev
+```
+
+| | Default |
+| --- | --- |
+| Web UI | http://localhost:3000 |
+| Gateway | http://127.0.0.1:18789 (`OPENCLAW_BASE_URL`) |
+
+Optional env vars: [.env.example](.env.example).  
+Architecture + coding rules: [AGENTS.md](AGENTS.md).
 
 ## Star history
 
 [![Star History Chart](https://api.star-history.com/svg?repos=iClawApp/iClaw&type=Date)](https://www.star-history.com/#iClawApp/iClaw&Date)
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md). Bug reports and small PRs welcome — for bigger changes open an issue first.
+
 ## License
 
-MIT — see [LICENSE](LICENSE). Same as [OpenClaw](https://github.com/openclaw/openclaw).
+MIT — see [LICENSE](LICENSE).
