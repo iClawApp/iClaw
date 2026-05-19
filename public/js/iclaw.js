@@ -3362,6 +3362,11 @@
     return input.value.slice(s, e).trim().length > 0;
   }
 
+  function syncComposerSecretAccessoryClass(hasTokenHint, hasSel) {
+    if (!form) return;
+    form.classList.toggle('has-secret-accessory', !!(hasTokenHint || hasSel));
+  }
+
   /**
    * Accessory inside the composer: token row and/or selection row (Apple-style
    * minimal strip). Token row is synced here via `updateComposerTokenRow` so
@@ -3371,6 +3376,7 @@
     if (!composerSecretUi) return;
     if (composerSecretModal && !composerSecretModal.hidden) {
       if (composerSecretsEnabled()) composerSecretUi.hidden = false;
+      syncComposerSecretAccessoryClass(false, false);
       return;
     }
     if (!composerSecretsEnabled()) {
@@ -3378,13 +3384,16 @@
       composerTokenDetectRange = null;
       if (composerTokenHint) composerTokenHint.hidden = true;
       if (composerSelectionHint) composerSelectionHint.hidden = true;
+      syncComposerSecretAccessoryClass(false, false);
       return;
     }
     updateComposerTokenRow();
     const hasTokenHint = composerTokenHint && !composerTokenHint.hidden;
     const hasSel = composerHasNonEmptySelection();
     if (composerSelectionHint) composerSelectionHint.hidden = !hasSel;
-    composerSecretUi.hidden = !hasTokenHint && !hasSel;
+    const showStrip = hasTokenHint || hasSel;
+    composerSecretUi.hidden = !showStrip;
+    syncComposerSecretAccessoryClass(hasTokenHint, hasSel);
   }
 
   /** Sync the token-detected row from the current composer value (no debounce). */

@@ -1652,13 +1652,18 @@ code {
 /* ---------- Composer ---------- */
 
 .composer {
+  position: relative;
   padding: 12px 20px 24px;
   max-width: var(--thread-max-width);
   width: 100%;
   margin: 0 auto;
+  --composer-secret-row-h: 22px;
+  --composer-secret-strip-gap: var(--space-1);
 }
 
 .composer-field {
+  margin-top: -8px;
+  margin-bottom: var(--space-4);
   display: flex;
   align-items: flex-end;
   gap: 6px;
@@ -1733,8 +1738,14 @@ code {
   transform: none;
 }
 
+/* Hint strip: absolute in the composer’s bottom padding — no layout shift,
+   and no negative margin that would clip under overflow:hidden on .col-main. */
 .composer-secret-ui {
-  margin: var(--space-3) 0 0;
+  position: absolute;
+  left: calc(20px + var(--space-2));
+  right: calc(20px + var(--space-2));
+  bottom: var(--space-4);
+  margin: 0;
   padding: 0 var(--space-2);
 }
 .composer-secret-ui[hidden] {
