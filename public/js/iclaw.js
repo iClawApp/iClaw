@@ -1810,8 +1810,14 @@
   selectionReplyFab.id = 'msg-selection-reply-fab';
   selectionReplyFab.hidden = true;
   selectionReplyFab.innerHTML =
-    '<button type="button" class="msg-selection-reply-btn">Reply</button>';
+    '<div class="msg-selection-fab-inner">' +
+    '<button type="button" class="msg-selection-reply-btn" data-selection-action="reply">Reply</button>' +
+    '<button type="button" class="msg-selection-reply-btn" data-selection-action="hide-secret" hidden>Hide</button>' +
+    '</div>';
   document.body.appendChild(selectionReplyFab);
+  const selectionHideSecretBtn = selectionReplyFab.querySelector(
+    '[data-selection-action="hide-secret"]',
+  );
 
   function hideSelectionReplyFab() {
     selectionReplyFab.hidden = true;
@@ -1845,6 +1851,12 @@
     }
     const msgBody = anchorRoot && anchorRoot.closest ? anchorRoot.closest('.msg-body') : null;
     if (!msgBody || !el.contains(msgBody)) return null;
+    if (
+      anchorRoot?.closest('.iclaw-secret-chip, .iclaw-secret-revealed') ||
+      focusRoot?.closest('.iclaw-secret-chip, .iclaw-secret-revealed')
+    ) {
+      return null;
+    }
     const roleEl = el.querySelector('.role');
     const role = (roleEl && roleEl.textContent ? roleEl.textContent : '').trim();
     if (role !== 'user' && role !== 'assistant') return null;
@@ -1852,25 +1864,50 @@
     if (!Number.isFinite(messageId)) return null;
     const range = sel.getRangeAt(0);
     const rect = range.getBoundingClientRect();
-    return { messageId, quote, rect, role };
+    const selection = raw.length > 32768 ? raw.slice(0, 32768) : raw;
+    return { messageId, quote, rect, role, selection };
+  }
+
+  function applyMessageContentToEl(msgEl, content) {
+    const body = msgEl.querySelector('.msg-body');
+    if (!body) return;
+    body.innerHTML = renderMessageHtml(content || '');
+    decorateMessageBody(body);
   }
 
   selectionReplyFab.addEventListener('mousedown', (e) => {
     e.preventDefault();
   });
-  selectionReplyFab.querySelector('button')?.addEventListener('click', (e) => {
+  selectionReplyFab.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-selection-action]');
+    if (!btn) return;
     e.preventDefault();
     e.stopPropagation();
+    const action = btn.getAttribute('data-selection-action');
     const mid = Number(selectionReplyFab.dataset.pendingMsgId);
     const quote = selectionReplyFab.dataset.pendingQuote || '';
     const role = selectionReplyFab.dataset.pendingRole || '';
+    const selection = selectionReplyFab.dataset.pendingSelection || '';
     hideSelectionReplyFab();
     const sel = window.getSelection();
     if (sel) sel.removeAllRanges();
-    if (Number.isFinite(mid) && quote) {
-      pendingComposerReply = { messageId: mid, quote, role };
-      updateComposerReplyBar();
-      input?.focus();
+    if (action === 'reply') {
+      if (Number.isFinite(mid) && quote) {
+        pendingComposerReply = { messageId: mid, quote, role };
+        updateComposerReplyBar();
+        input?.focus();
+      }
+      return;
+    }
+    if (action === 'hide-secret') {
+      if (!composerSecretsEnabled()) {
+        alert(composerSecretsBlockedMessage());
+        return;
+      }
+      if (!Number.isFinite(mid) || !selection.trim()) return;
+      composerSecretRedactMessageId = mid;
+      composerSecretInsert = { start: 0, end: 0, plain: selection };
+      openComposerSecretModal((label) => applyMessageSecretRedact(label));
     }
   });
 
@@ -1896,6 +1933,10 @@
       selectionReplyFab.dataset.pendingMsgId = String(ctx.messageId);
       selectionReplyFab.dataset.pendingQuote = ctx.quote;
       selectionReplyFab.dataset.pendingRole = ctx.role || '';
+      selectionReplyFab.dataset.pendingSelection = ctx.selection || '';
+      if (selectionHideSecretBtn) {
+        selectionHideSecretBtn.hidden = !composerSecretsEnabled();
+      }
       selectionReplyFab.hidden = false;
     });
   });
@@ -2100,6 +2141,14 @@
 
       case 'chat-read':
         setUnreadDot(msg.chatId, false);
+        return;
+
+      case 'message-updated':
+        if (msg.chatId !== activeChatId || !messagesEl) return;
+        {
+          const msgEl = messagesEl.querySelector('.msg[data-msg-id="' + msg.message.id + '"]');
+          if (msgEl) applyMessageContentToEl(msgEl, msg.message.content || '');
+        }
         return;
 
       case 'message-appended':
@@ -3056,6 +3105,8 @@
   let composerSecretCommit = null;
   /** @type {{ start: number; end: number; plain: string } | null} */
   let composerSecretInsert = null;
+  /** When set, the secret modal redacts this message instead of the composer draft. */
+  let composerSecretRedactMessageId = null;
 
   function syncComposerSecretUi() {
     applyComposerSecretStripLayout();
@@ -3276,6 +3327,7 @@
   function closeComposerSecretModal() {
     if (composerSecretModal) composerSecretModal.hidden = true;
     composerSecretInsert = null;
+    composerSecretRedactMessageId = null;
     composerSecretCommit = null;
     composerSecretTokenEditing = false;
     if (composerSecretValuePreview) {
@@ -3290,6 +3342,65 @@
       composerSecretTokenToggle.setAttribute('aria-pressed', 'false');
     }
     applyComposerSecretStripLayout();
+  }
+
+  async function applyMessageSecretRedact(label) {
+    const messageId = composerSecretRedactMessageId;
+    if (messageId == null || activeChatId == null || !composerSecretInsert) return;
+    if (composerSecretTokenEditing) syncComposerSecretPlainFromInput();
+    const lab = String(label ?? '').trim();
+    if (!lab) {
+      alert('Enter a secret name.');
+      return;
+    }
+    if (/[\[\]|]/.test(lab)) {
+      alert('Name cannot contain [ ] |');
+      return;
+    }
+    try {
+      if (!(await isComposerSecretLabelAvailable(lab))) {
+        alert('Secret name already exists');
+        return;
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    const plain = String(composerSecretInsert.plain ?? '')
+      .replace(/\r/g, '')
+      .trim();
+    if (!plain) {
+      alert('Empty secret.');
+      return;
+    }
+    try {
+      const res = await fetch(
+        '/chats/' +
+          encodeURIComponent(activeChatId) +
+          '/messages/' +
+          encodeURIComponent(messageId) +
+          '/redact-secret',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ label: lab, selection: plain }),
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error ? String(data.error) : 'HTTP ' + res.status);
+      }
+      const updated = data?.message;
+      closeComposerSecretModal();
+      if (updated && messagesEl) {
+        const msgEl = messagesEl.querySelector('.msg[data-msg-id="' + updated.id + '"]');
+        if (msgEl) applyMessageContentToEl(msgEl, updated.content || '');
+      }
+      const sel = window.getSelection();
+      if (sel) sel.removeAllRanges();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function applySecretReplace(label) {
@@ -3445,7 +3556,12 @@
       const fn = composerSecretCommit;
       if (!fn) return;
       if (composerSecretTokenEditing) syncComposerSecretPlainFromInput();
-      void Promise.resolve(fn(composerSecretLabelInput.value));
+      const label = composerSecretLabelInput.value;
+      if (composerSecretRedactMessageId != null) {
+        void applyMessageSecretRedact(label);
+      } else {
+        void Promise.resolve(fn(label));
+      }
     });
   }
   if (composerSecretTokenToggle) {

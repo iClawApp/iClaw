@@ -214,6 +214,12 @@ export const messages = {
     );
     return out as Message;
   },
+  updateContent(id: number, content: string): Message | undefined {
+    const existing = this.get(id);
+    if (!existing) return undefined;
+    db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, id);
+    return this.get(id);
+  },
 };
 
 // ---------- projects ----------

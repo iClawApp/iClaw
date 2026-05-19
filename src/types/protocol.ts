@@ -111,6 +111,7 @@ export type ServerMsg =
 
   /* ---- messages + turn streaming ---- */
   | { type: 'message-appended'; chatId: number; message: Message }
+  | { type: 'message-updated'; chatId: number; message: Message }
   | {
       type: 'turn-started';
       chatId: number;

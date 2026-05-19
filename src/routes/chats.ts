@@ -11,7 +11,10 @@ import {
   scheduledMessages,
   enrichFactWithSourceChatTitle,
 } from '../services/store';
-import { resolveInlineSecretMarkersInContent } from '../services/inlineSecrets';
+import {
+  redactSelectionInMessageContent,
+  resolveInlineSecretMarkersInContent,
+} from '../services/inlineSecrets';
 import type { InlineSecretWire } from '../services/inlineSecrets';
 import { compactProjectFacts } from '../services/projectMemory';
 import { openclawWs } from '../services/openclawWs';
@@ -317,6 +320,68 @@ chatsRouter.get('/:id/messages', (req, res) => {
     return;
   }
   res.json(messages.listByChat(id));
+});
+
+/**
+ * Redact a substring in an existing message: store a new project secret and
+ * replace the selection with `[[iclaw:secret:…]]` in the transcript.
+ */
+chatsRouter.post('/:id/messages/:messageId/redact-secret', (req, res) => {
+  const chatId = Number(req.params.id);
+  const messageId = Number(req.params.messageId);
+  const chat = chats.get(chatId);
+  const row = messages.get(messageId);
+  if (!chat || !row || row.chat_id !== chatId) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  if (row.role !== 'user' && row.role !== 'assistant') {
+    res.status(400).json({ error: 'only user and assistant messages can be redacted' });
+    return;
+  }
+  const label = String(req.body?.label ?? '');
+  const selection = String(req.body?.selection ?? '');
+  try {
+    const redacted = redactSelectionInMessageContent({
+      content: row.content,
+      selection,
+      label,
+      projectId: chat.project_id,
+      sourceChatId: chatId,
+      sourceMessageId: messageId,
+    });
+    const updated = messages.updateContent(messageId, redacted.content);
+    if (!updated) {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+    const secret = projectSecrets.get(redacted.secretId);
+    if (secret) {
+      wsHub.broadcastAll({
+        type: 'project-secret-added',
+        projectId: secret.project_id,
+        secret: {
+          id: secret.id,
+          label: secret.label,
+          created_at: secret.created_at,
+          value_length: secret.value.length,
+        },
+      });
+    }
+    wsHub.broadcastToChat(chatId, {
+      type: 'message-updated',
+      chatId,
+      message: updated,
+    });
+    res.json({
+      message: updated,
+      secret: secret
+        ? { id: secret.id, label: secret.label, value_length: secret.value.length }
+        : { id: redacted.secretId },
+    });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'redact' });
+  }
 });
 
 /** Composer attach menu — metadata only. */

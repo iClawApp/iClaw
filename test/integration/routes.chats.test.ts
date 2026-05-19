@@ -56,8 +56,15 @@ vi.mock('../../src/services/projectMemory', async () => {
 });
 
 const { createApp } = await import('../../src/app');
-const { chats, projects, projectFacts, projectFactSuggestions, scheduledMessages } =
-  await import('../../src/services/store');
+const {
+  chats,
+  messages,
+  projects,
+  projectFacts,
+  projectFactSuggestions,
+  projectSecrets,
+  scheduledMessages,
+} = await import('../../src/services/store');
 
 const app = createApp();
 
@@ -328,5 +335,32 @@ describe('Fact suggestions routes', () => {
     expect(res.status).toBe(400);
     // Silence unused warning
     void c2;
+  });
+});
+
+describe('POST /chats/:id/messages/:messageId/redact-secret', () => {
+  it('replaces the selection with a secret placeholder', async () => {
+    const p = projects.create('P');
+    const c = chats.create('openclaw/default', p.id);
+    const m = messages.append(c.id, 'user', 'token sk-live-abc123 end');
+    const res = await request(app)
+      .post(`/chats/${c.id}/messages/${m.id}/redact-secret`)
+      .send({ label: 'Stripe key', selection: 'sk-live-abc123' });
+    expect(res.status).toBe(200);
+    expect(res.body.message.content).toContain('[[iclaw:secret:');
+    expect(res.body.message.content).not.toContain('sk-live-abc123');
+    expect(res.body.secret.label).toBe('Stripe key');
+    const updated = messages.get(m.id)!;
+    expect(updated.content).toBe(res.body.message.content);
+    expect(projectSecrets.get(res.body.secret.id)?.value).toBe('sk-live-abc123');
+  });
+
+  it('400 when the selection cannot be found', async () => {
+    const c = chats.create('openclaw/default');
+    const m = messages.append(c.id, 'assistant', 'plain text');
+    const res = await request(app)
+      .post(`/chats/${c.id}/messages/${m.id}/redact-secret`)
+      .send({ label: 'x', selection: 'missing' });
+    expect(res.status).toBe(400);
   });
 });
