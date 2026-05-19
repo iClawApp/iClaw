@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
+import { resolveDbPath } from '../paths';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -105,7 +106,7 @@ BEGIN
 END;
 `;
 
-const dbPath = resolve(process.cwd(), process.env.DB_PATH ?? './data/iclaw.db');
+const dbPath = resolveDbPath();
 mkdirSync(dirname(dbPath), { recursive: true });
 
 export const db = new Database(dbPath);

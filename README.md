@@ -24,9 +24,11 @@ Requires [Node.js 20+](https://nodejs.org) and a running [OpenClaw Gateway](http
 npx @iclawapp/iclaw
 ```
 
-Then open **http://localhost:3000**.
+The terminal shows a short status line and **press `g`** to open the UI in your browser. It picks the next free port if `3000` is busy, and exits without starting a second copy if iClaw is already running.
 
-That's it. Your chat history is saved to `~/.iclaw/data/iclaw.db`.
+Your chat history is saved to `~/.iclaw/data/iclaw.db`.
+
+Optional env vars: `PORT` (preferred port, default `3000`), `ICLAW_OPEN_BROWSER=1` (also open the browser tab on start).
 
 ## Encrypted chat sharing (optional)
 

@@ -7,6 +7,8 @@ All notable changes to iClaw are documented here. The format follows [Keep a Cha
 ### Changed
 
 - Gateway WebSocket handshake now requests `operator.admin` so in-app actions like **Yes, configure** on the daily session-reset banner can call `config.patch` without a manual `openclaw.json` edit.
+- `npx @iclawapp/iclaw` now shows a minimal terminal status line, **press `g`** to open the UI in your browser, picks the next free port when the preferred port is busy, and refuses to start a second server if one is already running.
+- Default database path is now always `~/.iclaw/data/iclaw.db` (dev and CLI use the same location).
 
 ### Added
 

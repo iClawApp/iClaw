@@ -7,6 +7,7 @@ const rootDir = join(__dirname, '..');
 
 const env = {
   ...process.env,
+  ICLAW_CLI: '1',
   DB_PATH: process.env.DB_PATH ?? join(homedir(), '.iclaw', 'data', 'iclaw.db'),
 };
 

@@ -16,7 +16,8 @@
 
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
+import { resolveUploadsRoot as uploadsRootFromPaths } from '../paths';
 import type { MessageAttachment } from '../types';
 
 /** Per-file cap mirrors OpenClaw's default `agents.defaults.mediaMaxMb` = 20. */
@@ -105,10 +106,7 @@ function sanitizeFileName(raw: string | undefined): string {
 }
 
 function resolveUploadsRoot(): string {
-  if (process.env.DB_PATH) {
-    return resolve(process.cwd(), join(dirname(process.env.DB_PATH), 'uploads'));
-  }
-  return resolve(process.cwd(), './data/uploads');
+  return uploadsRootFromPaths();
 }
 
 /**
