@@ -3341,6 +3341,10 @@
   const composerSecretTokenToggle = document.getElementById('composer-secret-token-toggle');
   const composerSecretOk = document.getElementById('composer-secret-ok');
   let composerSecretTokenEditing = false;
+  let composerSelectionHintTimer = null;
+  /** After a 300ms delay, the selection hint row may be shown. */
+  let composerSelectionHintRevealed = false;
+  const COMPOSER_SELECTION_HINT_DELAY_MS = 300;
 
   /** @type {((label: string) => void) | null} */
   let composerSecretCommit = null;
@@ -3367,6 +3371,34 @@
     form.classList.toggle('has-secret-accessory', !!(hasTokenHint || hasSel));
   }
 
+  function cancelComposerSelectionHintReveal() {
+    if (composerSelectionHintTimer) {
+      clearTimeout(composerSelectionHintTimer);
+      composerSelectionHintTimer = null;
+    }
+    composerSelectionHintRevealed = false;
+  }
+
+  /** Show the selection hint row 300ms after a non-empty composer selection. */
+  function scheduleComposerSelectionHintReveal() {
+    cancelComposerSelectionHintReveal();
+    if (!input || !composerSecretsEnabled()) {
+      applyComposerSecretStripLayout();
+      return;
+    }
+    if (!composerHasNonEmptySelection()) {
+      applyComposerSecretStripLayout();
+      return;
+    }
+    applyComposerSecretStripLayout();
+    composerSelectionHintTimer = setTimeout(() => {
+      composerSelectionHintTimer = null;
+      if (!composerHasNonEmptySelection()) return;
+      composerSelectionHintRevealed = true;
+      applyComposerSecretStripLayout();
+    }, COMPOSER_SELECTION_HINT_DELAY_MS);
+  }
+
   /**
    * Accessory inside the composer: token row and/or selection row (Apple-style
    * minimal strip). Token row is synced here via `updateComposerTokenRow` so
@@ -3375,11 +3407,13 @@
   function applyComposerSecretStripLayout() {
     if (!composerSecretUi) return;
     if (composerSecretModal && !composerSecretModal.hidden) {
+      cancelComposerSelectionHintReveal();
       if (composerSecretsEnabled()) composerSecretUi.hidden = false;
       syncComposerSecretAccessoryClass(false, false);
       return;
     }
     if (!composerSecretsEnabled()) {
+      cancelComposerSelectionHintReveal();
       composerSecretUi.hidden = true;
       composerTokenDetectRange = null;
       if (composerTokenHint) composerTokenHint.hidden = true;
@@ -3389,7 +3423,8 @@
     }
     updateComposerTokenRow();
     const hasTokenHint = composerTokenHint && !composerTokenHint.hidden;
-    const hasSel = composerHasNonEmptySelection();
+    const hasSel =
+      composerSelectionHintRevealed && composerHasNonEmptySelection();
     if (composerSelectionHint) composerSelectionHint.hidden = !hasSel;
     const showStrip = hasTokenHint || hasSel;
     composerSecretUi.hidden = !showStrip;
@@ -3472,6 +3507,7 @@
   }
 
   function clearComposerSecretDraft() {
+    cancelComposerSelectionHintReveal();
     composerSecretBySlot.clear();
     composerSecretNextSlot = 0;
     composerTokenDetectRange = null;
@@ -3762,15 +3798,18 @@
 
   if (input) {
     input.addEventListener('select', () => {
-      applyComposerSecretStripLayout();
+      scheduleComposerSelectionHintReveal();
+    });
+    input.addEventListener('mouseup', () => {
+      scheduleComposerSelectionHintReveal();
     });
     input.addEventListener('keyup', () => {
-      applyComposerSecretStripLayout();
+      scheduleComposerSelectionHintReveal();
     });
     input.addEventListener('input', () => {
       pruneComposerSecretSlots(input.value);
       scheduleTokenDetect();
-      applyComposerSecretStripLayout();
+      scheduleComposerSelectionHintReveal();
     });
   }
 
