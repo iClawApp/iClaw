@@ -3409,15 +3409,6 @@ code {
 .project-pick-card--none .project-pick-card-inner {
   align-items: center;
 }
-.project-pick-card--none .project-logo--none {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  font-size: 1rem;
-  opacity: 0.8;
-}
 .project-pick-card-inner {
   display: flex;
   flex-direction: column;
