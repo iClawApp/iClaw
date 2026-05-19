@@ -229,9 +229,14 @@ class GatewayWsBridge {
       minProtocol: 3,
       maxProtocol: 4,
       role: 'operator',
-      // operator.approvals is needed to call exec.approval.resolve when the
-      // gateway broadcasts exec.approval.requested for one of our sessions.
-      scopes: ['operator.read', 'operator.write', 'operator.approvals'],
+      // operator.approvals — exec.approval.resolve on exec.approval.requested.
+      // operator.admin — config.patch (e.g. session-reset-fix banner), control-plane writes.
+      scopes: [
+        'operator.read',
+        'operator.write',
+        'operator.approvals',
+        'operator.admin',
+      ],
       client: {
         id: 'gateway-client',
         version: '0.1.0',

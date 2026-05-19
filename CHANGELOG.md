@@ -4,6 +4,10 @@ All notable changes to iClaw are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Changed
+
+- Gateway WebSocket handshake now requests `operator.admin` so in-app actions like **Yes, configure** on the daily session-reset banner can call `config.patch` without a manual `openclaw.json` edit.
+
 ### Added
 
 #### Projects with shared context (memory layer)
@@ -20,7 +24,7 @@ All notable changes to iClaw are documented here. The format follows [Keep a Cha
 - Background `scheduler` service sweeps `scheduled_messages` every 15 s, dispatches through the normal `sendMessage` path, and runs once on boot so anything that came due during downtime fires immediately. Restart-safe.
 
 #### OpenClaw native WebSocket integration (full surface)
-- **Handshake**: protocol v3/v4, `role: operator`, scopes `operator.read` + `operator.write` + `operator.approvals`, `client.mode: backend` (loopback trusted path).
+- **Handshake**: protocol v3/v4, `role: operator`, scopes `operator.read` + `operator.write` + `operator.approvals` + `operator.admin`, `client.mode: backend` (loopback trusted path).
 - **Per-turn streaming**: text-delta → `chat.state=delta`; tool-start/end → `agent.stream=item phase=start|end`; lifecycle terminal phases (`end`/`error`/`aborted`/`cancelled`/`failed`/`terminated`/`stopped`); attachment items with `kind=file|image|media` rewritten through `/media` proxy.
 - **Reasoning visibility**: analysis-stream items are emitted as `reasoning` events. The chat header toggle pushes `/reasoning <mode>` to the gateway *and* mirrors the state locally so the toggle isn't a placebo.
 - **Per-session model override** via `sessions.patch` from a header `<select>` populated by `models.list`.
