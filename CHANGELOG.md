@@ -10,6 +10,8 @@ All notable changes to iClaw are documented here. The format follows [Keep a Cha
 
 ### Added
 
+- Share modal: shuffle button next to the password field generates a random 20-character password via `crypto.getRandomValues`.
+
 #### Projects with shared context (memory layer)
 - Per-project chats with optional **shared facts** auto-extracted from each turn.
 - After every assistant reply, an LLM sub-request proposes 0–3 short facts; the user accepts or rejects each inline. Accepted facts are injected into the next user message as `[Project context]` block under a ~1500-token budget.

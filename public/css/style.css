@@ -3775,7 +3775,7 @@ code {
   cursor: pointer;
 }
 .share-field select,
-.share-pw-wrap input {
+.share-pw-row input {
   flex: 1;
   padding: var(--space-4) var(--space-6);
   border: 1px solid var(--border);
@@ -3784,6 +3784,22 @@ code {
   color: var(--text);
   font: inherit;
   outline: none;
+}
+.share-pw-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+.share-pw-generate {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  color: var(--muted);
+}
+.share-pw-generate:hover {
+  color: var(--text);
 }
 .share-field select {
   cursor: pointer;
@@ -3804,8 +3820,8 @@ code {
   background: var(--bg);
   color: var(--text);
 }
-.share-pw-wrap input:focus,
-.share-pw-wrap input:focus-visible {
+.share-pw-row input:focus,
+.share-pw-row input:focus-visible {
   border-color: color-mix(in srgb, var(--text) 18%, var(--border));
   box-shadow: var(--focus-ring);
 }

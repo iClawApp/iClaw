@@ -32,6 +32,7 @@
   const pwEnableChk = $('#share-pw-enable');
   const pwWrap = $('#share-pw-wrap');
   const pwInput = $('#share-pw');
+  const pwGenerateBtn = $('#share-pw-generate');
   const submitBtn = $('#share-submit');
   const nextBtn = $('#share-next');
   const backBtn = $('#share-back');
@@ -99,6 +100,23 @@
       secretsWarning.textContent = '';
     }
     showShareStep(1);
+  }
+
+  const SHARE_PW_CHARS =
+    'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*+-=?';
+
+  function generateSharePassword(length = 20) {
+    const bytes = crypto.getRandomValues(new Uint8Array(length));
+    let out = '';
+    for (let i = 0; i < length; i++) {
+      out += SHARE_PW_CHARS[bytes[i] % SHARE_PW_CHARS.length];
+    }
+    return out;
+  }
+
+  function fillGeneratedPassword() {
+    pwInput.value = generateSharePassword();
+    setError('');
   }
 
   function validateStep1Options() {
@@ -340,6 +358,12 @@
     pwWrap.hidden = !pwEnableChk.checked;
     if (pwEnableChk.checked) pwInput.focus();
   });
+  if (pwGenerateBtn) {
+    pwGenerateBtn.addEventListener('click', () => {
+      fillGeneratedPassword();
+      pwInput.focus();
+    });
+  }
 
   /* ----------------------------------------- crypto ------------------ */
 
