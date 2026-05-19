@@ -1,17 +1,28 @@
 {
-  "name": "iclaw",
+  "name": "@iclawapp/iclaw",
   "version": "0.1.0",
   "description": "Local web UI for OpenClaw Gateway",
-  "private": true,
   "license": "MIT",
   "homepage": "https://github.com/iClawApp/iClaw",
   "repository": {
     "type": "git",
-    "url": "https://github.com/iClawApp/iClaw.git"
+    "url": "git+https://github.com/iClawApp/iClaw.git"
   },
   "bugs": {
     "url": "https://github.com/iClawApp/iClaw/issues"
   },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "iclaw": "bin/iclaw.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "public",
+    "views"
+  ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
@@ -19,7 +30,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
