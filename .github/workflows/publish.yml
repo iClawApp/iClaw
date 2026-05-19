@@ -9,19 +9,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
-      - name: Bump patch version
+      - name: Publish if version is new
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          npm version patch -m "chore: release %s [skip ci]"
-          git push
-      - run: npm publish --access public
+          CURRENT=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm show @iclawapp/iclaw version 2>/dev/null || echo "none")
+          if [ "$CURRENT" != "$PUBLISHED" ]; then
+            npm publish --access public
+          else
+            echo "Version $CURRENT already published, skipping."
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
