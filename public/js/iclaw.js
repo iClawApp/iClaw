@@ -2497,6 +2497,12 @@
         return;
       }
 
+      case 'scheduled-updated': {
+        if (msg.chatId !== activeChatId) return;
+        updateScheduledItem(msg.scheduled);
+        return;
+      }
+
       case 'scheduled-deleted': {
         if (msg.chatId !== activeChatId) return;
         removeScheduledItem(msg.scheduledId);
@@ -3654,13 +3660,34 @@
   const scheduleMenu = document.getElementById('schedule-menu');
   const sendBtn = document.getElementById('composer-send-btn');
   const scheduledListEl = document.getElementById('scheduled-list');
-  const scheduleCustomRow = scheduleMenu?.querySelector('.schedule-custom-row');
-  const scheduleCustomInput = document.getElementById('schedule-custom-input');
-  const scheduleCustomConfirm = document.getElementById('schedule-custom-confirm');
+  const schedulePicker = document.getElementById('schedule-picker');
+  const schedulePickerBackdrop = document.getElementById('schedule-picker-backdrop');
+  const schedulePickerCancel = document.getElementById('schedule-picker-cancel');
+  const schedulePickerConfirm = document.getElementById('schedule-picker-confirm');
+  const schedulePickerDateEl = document.getElementById('schedule-picker-date');
+  const schedulePickerHourEl = document.getElementById('schedule-picker-hour');
+  const schedulePickerMinuteEl = document.getElementById('schedule-picker-minute');
   const LONG_PRESS_MS = 450;
+  const SCHEDULE_WHEEL_VIEW_H = 216;
+  const SCHEDULE_WHEEL_ITEM_H = 36;
+  const SCHEDULE_WHEEL_PAD = Math.max(
+    1,
+    Math.floor((SCHEDULE_WHEEL_VIEW_H - SCHEDULE_WHEEL_ITEM_H) / (2 * SCHEDULE_WHEEL_ITEM_H)),
+  );
+
+  function wheelScrollTopForItemIndex(scrollEl, itemIndex) {
+    const pad = Number(scrollEl.dataset.pad || SCHEDULE_WHEEL_PAD);
+    const childIndex = pad + itemIndex;
+    const viewport = scrollEl.clientHeight || SCHEDULE_WHEEL_VIEW_H;
+    const centerOffset = (viewport - SCHEDULE_WHEEL_ITEM_H) / 2;
+    return Math.max(0, childIndex * SCHEDULE_WHEEL_ITEM_H - centerOffset);
+  }
   let schedulePressTimer = null;
   let scheduleMenuJustOpened = false;
   let scheduleMenuAutoCloseTimer = null;
+  let editingScheduledId = null;
+  let schedulePickerOnConfirm = null;
+  let schedulePickerWheelsReady = false;
 
   function isScheduleMenuOpen() {
     return scheduleMenu != null && !scheduleMenu.hidden;
@@ -3677,7 +3704,6 @@
   function closeScheduleMenu() {
     if (!scheduleMenu) return;
     scheduleMenu.hidden = true;
-    if (scheduleCustomRow) scheduleCustomRow.hidden = true;
     scheduleMenuJustOpened = false;
     if (scheduleMenuAutoCloseTimer != null) {
       clearTimeout(scheduleMenuAutoCloseTimer);
@@ -3692,7 +3718,6 @@
     closeComposerAttachMenus();
     document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
     scheduleMenu.hidden = false;
-    if (scheduleCustomRow) scheduleCustomRow.hidden = true;
     if (scheduleMenuAutoCloseTimer != null) clearTimeout(scheduleMenuAutoCloseTimer);
     scheduleMenuAutoCloseTimer = setTimeout(() => {
       scheduleMenuAutoCloseTimer = null;
@@ -3734,9 +3759,9 @@
 
   function computeScheduledAt(offset) {
     const now = new Date();
-    if (offset === '10m') return new Date(now.getTime() + 10 * 60_000);
-    if (offset === '1h')  return new Date(now.getTime() + 60 * 60_000);
-    if (offset === '3h')  return new Date(now.getTime() + 3 * 60 * 60_000);
+    if (offset === '5m') return new Date(now.getTime() + 5 * 60_000);
+    if (offset === '30m') return new Date(now.getTime() + 30 * 60_000);
+    if (offset === '1h') return new Date(now.getTime() + 60 * 60_000);
     if (offset === 'tomorrow9') {
       const d = new Date(now);
       d.setDate(d.getDate() + 1);
@@ -3746,11 +3771,174 @@
     return null;
   }
 
-  /** Pad a Date into 'YYYY-MM-DDTHH:MM' for `<input type="datetime-local">`. */
-  function toDatetimeLocalValue(d) {
-    const pad = (n) => String(n).padStart(2, '0');
-    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
-      + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  const SCHEDULED_SEND_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+  const SCHEDULED_EDIT_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+
+  function formatSchedulePickerDate(d) {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    if (d.toDateString() === now.toDateString()) return 'Сьогодні';
+    if (d.toDateString() === tomorrow.toDateString()) return 'Завтра';
+    return d.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' });
+  }
+
+  function startOfLocalDay(d) {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  }
+
+  function buildScheduleDateOptions() {
+    const base = startOfLocalDay(new Date());
+    const opts = [];
+    for (let i = 0; i < 366; i++) {
+      const d = new Date(base);
+      d.setDate(base.getDate() + i);
+      opts.push({ date: d, label: formatSchedulePickerDate(d) });
+    }
+    return opts;
+  }
+
+  function fillScheduleWheel(scrollEl, labels, padCount) {
+    if (!scrollEl) return;
+    const padItem =
+      '<div class="schedule-picker__item schedule-picker__item--pad" aria-hidden="true"></div>';
+    const pad = padItem.repeat(padCount);
+    const items = labels
+      .map(
+        (label) =>
+          '<div class="schedule-picker__item" role="presentation">' + escapeHtml(label) + '</div>',
+      )
+      .join('');
+    scrollEl.innerHTML = pad + items + pad;
+    scrollEl.dataset.pad = String(padCount);
+  }
+
+  function initSchedulePickerWheels() {
+    if (schedulePickerWheelsReady) return;
+    schedulePickerWheelsReady = true;
+    const dateOpts = buildScheduleDateOptions();
+    fillScheduleWheel(
+      schedulePickerDateEl,
+      dateOpts.map((o) => o.label),
+      SCHEDULE_WHEEL_PAD,
+    );
+    fillScheduleWheel(
+      schedulePickerHourEl,
+      Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')),
+      SCHEDULE_WHEEL_PAD,
+    );
+    fillScheduleWheel(
+      schedulePickerMinuteEl,
+      Array.from({ length: 60 }, (_, m) => String(m).padStart(2, '0')),
+      SCHEDULE_WHEEL_PAD,
+    );
+    schedulePickerDateEl._dateOpts = dateOpts;
+    for (const el of [schedulePickerDateEl, schedulePickerHourEl, schedulePickerMinuteEl]) {
+      if (!el) continue;
+      let snapTimer = null;
+      el.addEventListener('scroll', () => {
+        if (snapTimer) clearTimeout(snapTimer);
+        snapTimer = setTimeout(() => snapScheduleWheel(el), 80);
+      }, { passive: true });
+    }
+  }
+
+  function snapScheduleWheel(scrollEl) {
+    const itemIdx = readScheduleWheelIndex(scrollEl);
+    scrollEl.scrollTo({
+      top: wheelScrollTopForItemIndex(scrollEl, itemIdx),
+      behavior: 'smooth',
+    });
+  }
+
+  function scrollScheduleWheelTo(scrollEl, index) {
+    scrollEl.scrollTop = wheelScrollTopForItemIndex(scrollEl, index);
+  }
+
+  function readScheduleWheelIndex(scrollEl) {
+    const pad = Number(scrollEl.dataset.pad || SCHEDULE_WHEEL_PAD);
+    const viewport = scrollEl.clientHeight || SCHEDULE_WHEEL_VIEW_H;
+    const centerOffset = (viewport - SCHEDULE_WHEEL_ITEM_H) / 2;
+    const childIndex = Math.round((scrollEl.scrollTop + centerOffset) / SCHEDULE_WHEEL_ITEM_H);
+    const max = scrollEl.querySelectorAll('.schedule-picker__item:not(.schedule-picker__item--pad)').length - 1;
+    return Math.max(0, Math.min(childIndex - pad, max));
+  }
+
+  function setSchedulePickerValue(when) {
+    initSchedulePickerWheels();
+    const d = when instanceof Date ? when : new Date(when);
+    const dateOpts = schedulePickerDateEl?._dateOpts || buildScheduleDateOptions();
+    const dayStart = startOfLocalDay(d).getTime();
+    let dateIdx = dateOpts.findIndex((o) => startOfLocalDay(o.date).getTime() === dayStart);
+    if (dateIdx < 0) dateIdx = 0;
+    scrollScheduleWheelTo(schedulePickerDateEl, dateIdx);
+    scrollScheduleWheelTo(schedulePickerHourEl, d.getHours());
+    scrollScheduleWheelTo(schedulePickerMinuteEl, d.getMinutes());
+  }
+
+  function readSchedulePickerValue() {
+    const dateOpts = schedulePickerDateEl?._dateOpts || buildScheduleDateOptions();
+    const dateIdx = readScheduleWheelIndex(schedulePickerDateEl);
+    const hour = readScheduleWheelIndex(schedulePickerHourEl);
+    const minute = readScheduleWheelIndex(schedulePickerMinuteEl);
+    const base = dateOpts[dateIdx]?.date || startOfLocalDay(new Date());
+    const out = new Date(base);
+    out.setHours(hour, minute, 0, 0);
+    return out;
+  }
+
+  function ensureSchedulePickerPortal() {
+    if (!schedulePicker || schedulePicker.parentElement === document.body) return;
+    document.body.appendChild(schedulePicker);
+  }
+
+  function closeSchedulePicker() {
+    if (!schedulePicker) return;
+    schedulePicker.hidden = true;
+    schedulePickerOnConfirm = null;
+    const wheels = schedulePicker.querySelector('.schedule-picker__wheels');
+    if (wheels) wheels.setAttribute('aria-hidden', 'true');
+  }
+
+  function openSchedulePicker(initialWhen, onConfirm) {
+    if (!schedulePicker) return;
+    ensureSchedulePickerPortal();
+    initSchedulePickerWheels();
+    closeScheduleMenu();
+    schedulePickerOnConfirm = onConfirm;
+    schedulePicker.hidden = false;
+    const wheels = schedulePicker.querySelector('.schedule-picker__wheels');
+    if (wheels) wheels.setAttribute('aria-hidden', 'false');
+    const when = initialWhen || new Date(Date.now() + 60 * 60_000);
+    requestAnimationFrame(() => {
+      setSchedulePickerValue(when);
+    });
+  }
+
+  function scheduledItemActionsHtml(id) {
+    return (
+      '<div class="scheduled-item-actions">' +
+      '<button type="button" class="scheduled-item-send-now btn btn--icon btn--ghost" data-scheduled-id="' +
+      id +
+      '" aria-label="Надіслати зараз" title="Надіслати зараз">' +
+      SCHEDULED_SEND_SVG +
+      '</button>' +
+      '<button type="button" class="scheduled-item-edit btn btn--icon btn--ghost" data-scheduled-id="' +
+      id +
+      '" aria-label="Редагувати" title="Редагувати">' +
+      SCHEDULED_EDIT_SVG +
+      '</button>' +
+      '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-scheduled-id="' +
+      id +
+      '" aria-label="Скасувати" title="Скасувати">×</button>' +
+      '</div>'
+    );
   }
 
   function refreshScheduledTimes() {
@@ -3776,11 +3964,29 @@
       '</div>' +
       '<div class="scheduled-item-text">' + escapeHtml(scheduled.content) + '</div>' +
       '</div>' +
-      '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-scheduled-id="' +
-      scheduled.id + '" aria-label="Cancel scheduled message" title="Cancel">×</button>';
+      scheduledItemActionsHtml(scheduled.id);
     scheduledListEl.appendChild(row);
     scheduledListEl.classList.remove('is-empty');
   }
+  function updateScheduledItem(scheduled) {
+    if (!scheduledListEl) return;
+    const row = scheduledListEl.querySelector(
+      '.scheduled-item[data-scheduled-id="' + scheduled.id + '"]',
+    );
+    if (!row) {
+      renderScheduledItem(scheduled);
+      return;
+    }
+    row.dataset.scheduledAt = scheduled.scheduled_at;
+    const whenEl = row.querySelector('.scheduled-item-when');
+    if (whenEl) {
+      whenEl.dataset.when = scheduled.scheduled_at;
+      whenEl.textContent = formatScheduledWhen(scheduled.scheduled_at);
+    }
+    const textEl = row.querySelector('.scheduled-item-text');
+    if (textEl) textEl.textContent = scheduled.content;
+  }
+
   function removeScheduledItem(id) {
     if (!scheduledListEl) return;
     const row = scheduledListEl.querySelector('.scheduled-item[data-scheduled-id="' + id + '"]');
@@ -3790,43 +3996,94 @@
     }
   }
 
-  async function submitScheduled(when) {
+  async function submitScheduled(when, opts) {
     if (activeChatId == null) return;
-    const content = input.value.trim();
+    const content = (opts && opts.content) || input.value.trim();
     if (!content) return;
     if (when.getTime() <= Date.now() - 60_000) {
-      // 60s of tolerance; older than that is almost certainly a mistake.
-      alert('That time has passed — pick a future time.');
+      alert('Цей час уже минув — оберіть час у майбутньому.');
       return;
     }
-    let inlineSecrets;
-    try {
-      inlineSecrets = buildInlineSecretsPayload(content);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+    const sid = (opts && opts.scheduledId) || editingScheduledId;
+    if (!sid) {
+      let inlineSecrets;
+      try {
+        inlineSecrets = buildInlineSecretsPayload(content);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+        return;
+      }
+      try {
+        const res = await fetch(
+          '/chats/' + encodeURIComponent(activeChatId) + '/scheduled',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              content,
+              scheduledAt: when.toISOString(),
+              ...(inlineSecrets && inlineSecrets.length > 0 ? { inlineSecrets } : {}),
+            }),
+          },
+        );
+        if (!res.ok) throw new Error(await res.text());
+        input.value = '';
+        clearComposerSecretDraft();
+        closeScheduleMenu();
+        closeSchedulePicker();
+      } catch (err) {
+        alert('Не вдалося запланувати: ' + (err instanceof Error ? err.message : err));
+      }
       return;
     }
     try {
       const res = await fetch(
-        '/chats/' + encodeURIComponent(activeChatId) + '/scheduled',
+        '/chats/' + encodeURIComponent(activeChatId) + '/scheduled/' + encodeURIComponent(sid),
         {
-          method: 'POST',
+          method: 'PATCH',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            content,
-            scheduledAt: when.toISOString(),
-            ...(inlineSecrets && inlineSecrets.length > 0 ? { inlineSecrets } : {}),
-          }),
+          body: JSON.stringify({ content, scheduledAt: when.toISOString() }),
         },
       );
       if (!res.ok) throw new Error(await res.text());
+      editingScheduledId = null;
       input.value = '';
       clearComposerSecretDraft();
       closeScheduleMenu();
-      // Live `scheduled-added` broadcast will render the row.
+      closeSchedulePicker();
     } catch (err) {
-      alert('Could not schedule: ' + (err instanceof Error ? err.message : err));
+      alert('Не вдалося оновити: ' + (err instanceof Error ? err.message : err));
     }
+  }
+
+  async function sendScheduledNow(sid) {
+    if (activeChatId == null || !Number.isFinite(sid)) return;
+    removeScheduledItem(sid);
+    try {
+      const res = await fetch(
+        '/chats/' + encodeURIComponent(activeChatId) + '/scheduled/' + encodeURIComponent(sid) + '/send-now',
+        { method: 'POST' },
+      );
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      alert('Не вдалося надіслати: ' + (err instanceof Error ? err.message : err));
+    }
+  }
+
+  function beginEditScheduled(row) {
+    if (!row || activeChatId == null) return;
+    const sid = Number(row.dataset.scheduledId);
+    if (!Number.isFinite(sid)) return;
+    const textEl = row.querySelector('.scheduled-item-text');
+    const content = textEl ? textEl.textContent : '';
+    const stamp = row.dataset.scheduledAt || '';
+    editingScheduledId = sid;
+    input.value = content;
+    input.focus();
+    const when = parseScheduledStamp(stamp) || new Date(Date.now() + 60 * 60_000);
+    openSchedulePicker(when, (picked) => {
+      submitScheduled(picked, { scheduledId: sid, content: input.value.trim() });
+    });
   }
 
   // long-press detection on the send button
@@ -3870,41 +4127,63 @@
     }, true);
   }
 
+  if (schedulePickerCancel) {
+    schedulePickerCancel.addEventListener('click', () => {
+      editingScheduledId = null;
+      closeSchedulePicker();
+    });
+  }
+  if (schedulePickerBackdrop) {
+    schedulePickerBackdrop.addEventListener('click', () => {
+      editingScheduledId = null;
+      closeSchedulePicker();
+    });
+  }
+  if (schedulePickerConfirm) {
+    schedulePickerConfirm.addEventListener('click', () => {
+      const when = readSchedulePickerValue();
+      if (schedulePickerOnConfirm) {
+        schedulePickerOnConfirm(when);
+        return;
+      }
+      submitScheduled(when);
+    });
+  }
+
   if (scheduleMenu) {
     scheduleMenu.addEventListener('click', (e) => {
       const btn = e.target.closest('.schedule-menu-item');
       if (!btn) return;
       const offset = btn.dataset.offset;
       if (offset === 'custom') {
-        if (scheduleCustomRow) scheduleCustomRow.hidden = false;
-        if (scheduleCustomInput) {
-          scheduleCustomInput.value = toDatetimeLocalValue(new Date(Date.now() + 60 * 60_000));
-          scheduleCustomInput.focus();
-        }
+        openSchedulePicker(new Date(Date.now() + 60 * 60_000), (when) => submitScheduled(when));
         return;
       }
       const when = computeScheduledAt(offset);
       if (when) submitScheduled(when);
     });
-    scheduleCustomConfirm?.addEventListener('click', () => {
-      const v = scheduleCustomInput?.value;
-      if (!v) return;
-      // datetime-local is interpreted as the user's local time
-      const d = new Date(v);
-      if (Number.isNaN(d.getTime())) return;
-      submitScheduled(d);
-    });
   }
 
-  // Cancel buttons on the scheduled-list banner.
   if (scheduledListEl) {
     scheduledListEl.addEventListener('click', async (e) => {
+      const sendNowBtn = e.target.closest('.scheduled-item-send-now');
+      if (sendNowBtn) {
+        const sid = Number(sendNowBtn.dataset.scheduledId);
+        if (!Number.isFinite(sid) || activeChatId == null) return;
+        await sendScheduledNow(sid);
+        return;
+      }
+      const editBtn = e.target.closest('.scheduled-item-edit');
+      if (editBtn) {
+        const row = editBtn.closest('.scheduled-item');
+        beginEditScheduled(row);
+        return;
+      }
       const btn = e.target.closest('.scheduled-item-cancel');
       if (!btn) return;
       const sid = Number(btn.dataset.scheduledId);
       if (!Number.isFinite(sid) || activeChatId == null) return;
-      // Optimistic remove; if it fails, `scheduled-added` won't fire so we'd
-      // miss the row. Acceptable — refetch on next page load anyway.
+      if (editingScheduledId === sid) editingScheduledId = null;
       removeScheduledItem(sid);
       try {
         await fetch(
@@ -3913,10 +4192,9 @@
           { method: 'POST' },
         );
       } catch {
-        /* silent — broadcast will reconcile */
+        /* silent */
       }
     });
-    // Hydrate the EJS-rendered "when" cells with local-friendly strings.
     refreshScheduledTimes();
   }
 

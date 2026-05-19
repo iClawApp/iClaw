@@ -43,6 +43,12 @@ vi.mock('../../src/services/openclaw', () => ({
   openclaw: { baseUrl: 'http://127.0.0.1:18789', hasToken: true, tokenSource: 'test' },
 }));
 
+const sendMessageMock = vi.fn(async () => ({ chatId: 1 }));
+vi.mock('../../src/services/chatRunner', () => ({
+  sendMessage: sendMessageMock,
+  abortChatRun: vi.fn(async () => undefined),
+}));
+
 // Stub project memory background extraction so it doesn't try to call the gateway.
 vi.mock('../../src/services/projectMemory', async () => {
   const actual = await vi.importActual<typeof import('../../src/services/projectMemory')>(
@@ -259,6 +265,37 @@ describe('Scheduled messages routes', () => {
     });
     const res = await request(app).post(`/chats/${b.id}/scheduled/${created.id}/delete`);
     expect(res.status).toBe(404);
+  });
+
+  it('PATCH /chats/:id/scheduled/:sid updates content and time', async () => {
+    const c = chats.create('openclaw/default');
+    const created = scheduledMessages.create({
+      chatId: c.id,
+      content: 'old',
+      scheduledAt: new Date(Date.now() + 60 * 60_000),
+    });
+    const when = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
+    const res = await request(app)
+      .patch(`/chats/${c.id}/scheduled/${created.id}`)
+      .set('content-type', 'application/json')
+      .send({ content: 'new', scheduledAt: when });
+    expect(res.status).toBe(200);
+    expect(res.body.scheduled.content).toBe('new');
+    expect(scheduledMessages.get(created.id)?.content).toBe('new');
+  });
+
+  it('POST send-now dispatches and removes the row', async () => {
+    sendMessageMock.mockClear();
+    const c = chats.create('openclaw/default');
+    const created = scheduledMessages.create({
+      chatId: c.id,
+      content: 'fire me',
+      scheduledAt: new Date(Date.now() + 60_000),
+    });
+    const res = await request(app).post(`/chats/${c.id}/scheduled/${created.id}/send-now`);
+    expect(res.status).toBe(200);
+    expect(sendMessageMock).toHaveBeenCalledWith({ chatId: c.id, content: 'fire me' });
+    expect(scheduledMessages.get(created.id)).toBeUndefined();
   });
 });
 

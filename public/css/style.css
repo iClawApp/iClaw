@@ -2260,7 +2260,7 @@ code {
 }
 .scheduled-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   padding: 8px 12px;
   background: color-mix(in srgb, var(--accent, var(--text)) 6%, var(--surface));
@@ -2290,21 +2290,6 @@ code {
   color: var(--text);
   line-height: 1.35;
 }
-/* Cancel × on a scheduled message — `.btn .btn--icon .btn--ghost` from the
-   primitive, plus a danger hover override and a tight 22px size for the
-   compact pending-list row. */
-.scheduled-item-cancel {
-  width: 22px;
-  height: 22px;
-  font-size: var(--text-md);
-  color: var(--muted);
-}
-.scheduled-item-cancel:hover:not(:disabled) {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
-}
-
 /* Schedule menu — popover anchored to send button */
 .composer-field {
   position: relative;
@@ -2380,6 +2365,212 @@ code {
 }
 .schedule-custom-confirm:hover {
   background: var(--btn-bg-hover);
+}
+
+/* Telegram-style schedule time picker (portaled to document.body in JS) */
+.schedule-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.schedule-picker[hidden] {
+  display: none !important;
+}
+.schedule-picker__backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, #000 45%, transparent);
+}
+.schedule-picker__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 420px);
+  max-height: min(70vh, 320px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  box-shadow: var(--shadow-xl);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.schedule-picker__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.schedule-picker__title {
+  grid-column: 2;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  color: var(--text);
+  text-align: center;
+  white-space: nowrap;
+}
+.schedule-picker__cancel,
+.schedule-picker__confirm {
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.2;
+  cursor: pointer;
+  padding: 8px 4px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.schedule-picker__cancel {
+  grid-column: 1;
+  justify-self: start;
+  color: var(--muted);
+}
+.schedule-picker__confirm {
+  grid-column: 3;
+  justify-self: end;
+  font-weight: 600;
+  color: var(--accent, var(--text));
+}
+.schedule-picker__cancel:hover,
+.schedule-picker__confirm:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.schedule-picker__wheels {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.35fr 0.72fr 0.72fr;
+  flex: 0 0 216px;
+  height: 216px;
+  min-height: 216px;
+  overflow: hidden;
+}
+.schedule-picker__highlight {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent, var(--text)) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent, var(--text)) 14%, var(--border));
+  pointer-events: none;
+  z-index: 0;
+}
+.schedule-picker__col {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    #000 22%,
+    #000 78%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    #000 22%,
+    #000 78%,
+    transparent 100%
+  );
+}
+.schedule-picker__col + .schedule-picker__col::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 14%;
+  bottom: 14%;
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+.schedule-picker__scroll {
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scroll-padding-block: 90px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+.schedule-picker__scroll::-webkit-scrollbar {
+  display: none;
+}
+.schedule-picker__item {
+  box-sizing: border-box;
+  height: 36px;
+  margin: 0;
+  padding: 0 12px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  font-size: 1.0625rem;
+  line-height: 36px;
+  font-weight: 400;
+  color: color-mix(in srgb, var(--text) 72%, var(--muted));
+  user-select: none;
+}
+.schedule-picker__col[data-wheel='date'] .schedule-picker__item {
+  justify-content: center;
+  padding: 0 14px;
+  font-size: 1rem;
+}
+.schedule-picker__col[data-wheel='hour'] .schedule-picker__item,
+.schedule-picker__col[data-wheel='minute'] .schedule-picker__item {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  letter-spacing: 0.02em;
+}
+.schedule-picker__item--pad {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.scheduled-item-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-self: center;
+  align-items: center;
+  gap: 2px;
+}
+.scheduled-item-send-now,
+.scheduled-item-edit,
+.scheduled-item-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+}
+.scheduled-item-send-now:hover:not(:disabled) {
+  color: var(--accent, var(--text));
+  border-color: color-mix(in srgb, var(--accent, var(--text)) 28%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--text)) 8%, transparent);
+}
+.scheduled-item-edit:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.scheduled-item-cancel:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 /* Reply preview — minimal strip (composer + transcript) */

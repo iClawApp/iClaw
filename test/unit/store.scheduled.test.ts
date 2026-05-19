@@ -80,6 +80,21 @@ describe('store.scheduledMessages', () => {
     expect(due.find((r) => r.content === 'future')).toBeUndefined();
   });
 
+  it('update() changes content and scheduled_at', () => {
+    const c = chats.create('openclaw/default');
+    const r = scheduledMessages.create({
+      chatId: c.id,
+      content: 'before',
+      scheduledAt: '2026-06-01T10:00:00Z',
+    });
+    const updated = scheduledMessages.update(r.id, {
+      content: 'after',
+      scheduledAt: '2026-06-02T12:30:00Z',
+    });
+    expect(updated?.content).toBe('after');
+    expect(updated?.scheduled_at).toBe('2026-06-02 12:30:00');
+  });
+
   it('remove() drops one row by id', () => {
     const c = chats.create('openclaw/default');
     const r = scheduledMessages.create({

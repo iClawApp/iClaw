@@ -166,6 +166,7 @@ export type ServerMsg =
 
   /* ---- scheduled messages (Telegram-style send-later) ---- */
   | { type: 'scheduled-added'; chatId: number; scheduled: ScheduledMessage }
+  | { type: 'scheduled-updated'; chatId: number; scheduled: ScheduledMessage }
   | { type: 'scheduled-deleted'; chatId: number; scheduledId: number }
 
   /* ---- gateway events forwarded to UI ---- */

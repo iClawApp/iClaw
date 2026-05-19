@@ -21,6 +21,7 @@ import { openclawWs } from '../services/openclawWs';
 import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
+import { sendMessage } from '../services/chatRunner';
 
 export const chatsRouter: Router = Router();
 
@@ -624,4 +625,90 @@ chatsRouter.post('/:id/scheduled/:scheduledId/delete', (req, res) => {
     scheduledId: sid,
   });
   res.json({ ok: true });
+});
+
+/** Fire a pending scheduled message immediately (same path as the sweeper). */
+chatsRouter.post('/:id/scheduled/:scheduledId/send-now', async (req, res) => {
+  const id = Number(req.params.id);
+  const sid = Number(req.params.scheduledId);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const row = scheduledMessages.get(sid);
+  if (!row || row.chat_id !== id) {
+    res.status(404).json({ error: 'scheduled message not found' });
+    return;
+  }
+  scheduledMessages.remove(sid);
+  wsHub.broadcastAll({
+    type: 'scheduled-deleted',
+    chatId: id,
+    scheduledId: sid,
+  });
+  try {
+    await sendMessage({ chatId: id, content: row.content });
+    res.json({ ok: true });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: err instanceof Error ? err.message : 'send failed' });
+  }
+});
+
+/**
+ * Update content and/or `scheduledAt` on a pending row.
+ * Body: { content?: string, scheduledAt?: ISO string }
+ */
+chatsRouter.patch('/:id/scheduled/:scheduledId', (req, res) => {
+  const id = Number(req.params.id);
+  const sid = Number(req.params.scheduledId);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const row = scheduledMessages.get(sid);
+  if (!row || row.chat_id !== id) {
+    res.status(404).json({ error: 'scheduled message not found' });
+    return;
+  }
+  const patch: { content?: string; scheduledAt?: string | Date } = {};
+  if (req.body?.content !== undefined) {
+    const content = String(req.body.content).trim();
+    if (!content) {
+      res.status(400).json({ error: 'content required' });
+      return;
+    }
+    patch.content = content;
+  }
+  if (req.body?.scheduledAt !== undefined) {
+    const rawAt = String(req.body.scheduledAt).trim();
+    const when = new Date(rawAt);
+    if (Number.isNaN(when.getTime())) {
+      res.status(400).json({ error: 'invalid scheduledAt' });
+      return;
+    }
+    patch.scheduledAt = when;
+  }
+  if (patch.content === undefined && patch.scheduledAt === undefined) {
+    res.status(400).json({ error: 'nothing to update' });
+    return;
+  }
+  try {
+    const updated = scheduledMessages.update(sid, patch);
+    if (!updated) {
+      res.status(404).json({ error: 'scheduled message not found' });
+      return;
+    }
+    wsHub.broadcastAll({
+      type: 'scheduled-updated',
+      chatId: id,
+      scheduled: updated,
+    });
+    res.json({ scheduled: updated });
+  } catch (err) {
+    res
+      .status(400)
+      .json({ error: err instanceof Error ? err.message : 'failed to update' });
+  }
 });

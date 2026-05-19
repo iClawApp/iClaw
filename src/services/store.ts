@@ -767,6 +767,24 @@ export const scheduledMessages = {
   remove(id: number): void {
     db.prepare('DELETE FROM scheduled_messages WHERE id = ?').run(id);
   },
+  update(
+    id: number,
+    patch: { content?: string; scheduledAt?: string | Date },
+  ): ScheduledMessage | undefined {
+    const row = this.get(id);
+    if (!row) return undefined;
+    const content =
+      patch.content !== undefined ? patch.content.trim() : row.content;
+    if (!content) throw new Error('content required');
+    const scheduled_at =
+      patch.scheduledAt !== undefined
+        ? toSqliteUtc(patch.scheduledAt)
+        : row.scheduled_at;
+    db.prepare(
+      'UPDATE scheduled_messages SET content = ?, scheduled_at = ? WHERE id = ?',
+    ).run(content, scheduled_at, id);
+    return this.get(id);
+  },
 };
 
 // ---------- search ----------
