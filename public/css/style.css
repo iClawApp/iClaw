@@ -1649,74 +1649,6 @@ code {
 /* When the assistant body is the streaming target, keep our markdown rules */
 .msg.assistant .stream-body { white-space: normal; }
 
-/* ---------- Queue panel (above composer) ---------- */
-
-.queue {
-  max-width: var(--thread-max-width);
-  width: 100%;
-  margin: 0 auto;
-  padding: 0 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.queue:empty { display: none; }
-
-.queue-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: var(--msg-radius);
-  border: 1px solid var(--msg-user-stroke);
-  background: var(--msg-user-fill);
-  font-size: 0.85em;
-  min-width: 0;
-}
-
-.queue-status {
-  flex: 0 0 auto;
-  font-size: 0.75em;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 2px 8px;
-  border-radius: 999px;
-}
-.queue-item.queued .queue-status {
-  background: var(--code-inline-bg);
-  color: var(--muted);
-}
-
-/* Queue row controls — both ride the `.btn .btn--icon .btn--ghost` primitive
-   from the design system. We only add a compact 22 × 22 footprint here. */
-.queue-interrupt,
-.queue-remove {
-  width: 22px;
-  height: 22px;
-  margin-left: var(--space-3);
-  color: var(--muted);
-  font-size: var(--text-base);
-}
-.queue-interrupt:hover:not(:disabled) {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--text) 30%, transparent);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-}
-.queue-remove:hover:not(:disabled) {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
-}
-
-.queue-text {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-}
-
 /* ---------- Composer ---------- */
 
 .composer {
@@ -2257,6 +2189,12 @@ code {
 }
 .scheduled-list.is-empty {
   display: none;
+}
+.scheduled-list--queue {
+  padding-bottom: 0;
+}
+.scheduled-list--queue:not(.is-empty) + .scheduled-list:not(.is-empty) {
+  padding-top: 6px;
 }
 .scheduled-item {
   display: flex;

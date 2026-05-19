@@ -13,6 +13,7 @@ import {
   openBrowser,
   printAlreadyRunningBanner,
   printMinimalListenLog,
+  startCliShuttingDownAnimation,
   printStartupBanner,
   registerShutdownHooks,
   shouldAutoOpenBrowser,
@@ -26,6 +27,7 @@ const preferredPort = Number(process.env.PORT ?? 3000);
 const host = '127.0.0.1';
 
 let shuttingDown = false;
+let clearShutdownUi: (() => void) | undefined;
 
 function gracefulShutdown(
   server: Server,
@@ -33,10 +35,24 @@ function gracefulShutdown(
 ): void {
   if (shuttingDown) return;
   shuttingDown = true;
+  if (isCliLaunch()) {
+    clearShutdownUi = startCliShuttingDownAnimation();
+  }
   removeLockFileIfOwned();
   scheduler.stop();
-  server.close(() => process.exit(signal === 'SIGINT' ? 130 : 0));
-  setTimeout(() => process.exit(signal === 'SIGINT' ? 130 : 0), 3000).unref();
+
+  const exitCode = signal === 'SIGINT' ? 130 : 0;
+  let exiting = false;
+  const finish = (): void => {
+    if (exiting) return;
+    exiting = true;
+    clearShutdownUi?.();
+    clearShutdownUi = undefined;
+    process.exit(exitCode);
+  };
+
+  server.close(() => finish());
+  setTimeout(finish, 3000).unref();
 }
 
 function listen(server: Server, port: number): Promise<void> {

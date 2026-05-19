@@ -20,7 +20,7 @@
   function messagesAppendRoot() {
     return getMessagesThreadEl() ?? messagesEl;
   }
-  const queueEl = document.getElementById('queue');
+  const queueListEl = document.getElementById('queue-list');
   const form = document.getElementById('send-form');
   const input = document.getElementById('composer-input');
   const button = form?.querySelector('.composer-send');
@@ -277,6 +277,32 @@
   const waitingItems = [];
   /** Local-only ids for draft chats (no chatId yet). */
   let nextLocalQueueItemId = 1;
+  /** Queue row ids created in this tab via POST — ignore matching `queue-added` echoes. */
+  const ownQueueIds = new Set();
+
+  function dedupeWaitingItems() {
+    const seen = new Set();
+    for (let i = waitingItems.length - 1; i >= 0; i--) {
+      const it = waitingItems[i];
+      const key = it.serverId != null ? 's:' + it.serverId : 'l:' + it.id;
+      if (seen.has(key)) waitingItems.splice(i, 1);
+      else seen.add(key);
+    }
+  }
+
+  /** Insert a queue row once (guards WS echo arriving before POST `await` finishes). */
+  function addWaitingItem(item, opts) {
+    const atFront = opts && opts.at === 'front';
+    if (item.serverId != null) {
+      if (waitingItems.some((it) => it.serverId === item.serverId)) return false;
+      ownQueueIds.add(item.serverId);
+    } else if (waitingItems.some((it) => it.id === item.id)) {
+      return false;
+    }
+    if (atFront) waitingItems.unshift(item);
+    else waitingItems.push(item);
+    return true;
+  }
   const REPLY_QUOTE_MAX = 240;
   /** @type {{ messageId: number; quote: string; role: string } | null} */
   let pendingComposerReply = null;
@@ -1191,7 +1217,8 @@
 
   function replaceWaitingItemsFromServer(rows) {
     waitingItems.length = 0;
-    for (const row of rows) waitingItems.push(serverQueueItemFromApi(row));
+    ownQueueIds.clear();
+    for (const row of rows) addWaitingItem(serverQueueItemFromApi(row));
     renderQueue();
   }
 
@@ -1239,32 +1266,83 @@
     return data.queue;
   }
 
+  const COMPOSER_PENDING_SEND_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+  const COMPOSER_PENDING_EDIT_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+
+  function composerPendingRowInnerHtml(opts) {
+    const kind = opts.kind;
+    const whenEl =
+      kind === 'scheduled' && opts.whenData
+        ? '<span class="scheduled-item-when" data-when="' +
+          escapeHtml(opts.whenData) +
+          '">' +
+          escapeHtml(opts.metaText) +
+          '</span>'
+        : '<span class="scheduled-item-when">' + escapeHtml(opts.metaText) + '</span>';
+    return (
+      '<div class="scheduled-item-main">' +
+      '<div class="scheduled-item-meta">' +
+      '<span class="scheduled-item-clock" aria-hidden="true">' +
+      opts.metaIcon +
+      '</span>' +
+      whenEl +
+      '</div>' +
+      '<div class="scheduled-item-text">' +
+      escapeHtml(opts.content) +
+      '</div>' +
+      '</div>' +
+      opts.actionsHtml
+    );
+  }
+
+  function queueItemActionsHtml(id) {
+    const esc = escapeHtml(String(id));
+    return (
+      '<div class="scheduled-item-actions">' +
+      '<button type="button" class="queue-item-promote scheduled-item-send-now btn btn--icon btn--ghost" data-queue-id="' +
+      esc +
+      '" aria-label="Перервати й надіслати це" title="Перервати поточну відповідь і надіслати це повідомлення">' +
+      COMPOSER_PENDING_SEND_SVG +
+      '</button>' +
+      '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-queue-id="' +
+      esc +
+      '" aria-label="Прибрати з черги" title="Прибрати з черги">×</button>' +
+      '</div>'
+    );
+  }
+
   function renderQueue() {
-    if (!queueEl) return;
-    queueEl.replaceChildren();
+    if (!queueListEl) return;
+    dedupeWaitingItems();
+    queueListEl.replaceChildren();
     waitingItems.forEach((item, idx) => {
-      const el = document.createElement('div');
-      el.className = 'queue-item queued';
-      el.dataset.itemId = item.id;
-      const preview = item.content.length > 80 ? item.content.slice(0, 79) + '…' : item.content;
-      // ⏵ Interrupt = "send THIS one now": move it to the front of the queue,
-      // then abort the current turn. The existing turn-error handler will
-      // auto-flush, which picks up our new-head item next.
-      el.innerHTML =
-        '<span class="queue-status">Queued #' + (idx + 1) + '</span>' +
-        '<span class="queue-text">' + escapeHtml(preview) + '</span>' +
-        '<button type="button" class="queue-interrupt btn btn--icon btn--ghost" ' +
-        'aria-label="Interrupt current and send this one now" ' +
-        'title="Interrupt the current turn and send this message next">⏵</button>' +
-        '<button type="button" class="queue-remove btn btn--icon btn--ghost" ' +
-        'aria-label="Remove from queue" title="Remove from queue">×</button>';
-      queueEl.appendChild(el);
+      const row = document.createElement('div');
+      const rowId = item.serverId != null ? item.serverId : item.id;
+      row.className = 'scheduled-item scheduled-item--queue';
+      row.dataset.queueId = String(rowId);
+      row.innerHTML = composerPendingRowInnerHtml({
+        kind: 'queue',
+        metaIcon: '⏳',
+        metaText: 'У черзі #' + (idx + 1),
+        content: item.content,
+        actionsHtml: queueItemActionsHtml(rowId),
+      });
+      queueListEl.appendChild(row);
     });
+    queueListEl.classList.toggle('is-empty', waitingItems.length === 0);
   }
 
   const initialQueue = Array.isArray(window.__ICLAW_QUEUE__) ? window.__ICLAW_QUEUE__ : [];
-  for (const row of initialQueue) waitingItems.push(serverQueueItemFromApi(row));
-  if (initialQueue.length > 0) renderQueue();
+  for (const row of initialQueue) addWaitingItem(serverQueueItemFromApi(row));
+  if (initialQueue.length > 0) {
+    renderQueue();
+    // Turn already finished while we were on another page — drain persisted queue.
+    if (!document.getElementById('reload-placeholder')) flushNextQueued();
+  }
 
   // Click on a tool's stream-status with .has-detail toggles between the
   // generic label and the detailed line. While expanded, new tool-start
@@ -1354,26 +1432,28 @@
   }
 
   // Delete from queue + interrupt-and-promote via event delegation.
-  if (queueEl) {
-    queueEl.addEventListener('click', (e) => {
-      const removeBtn = e.target.closest('.queue-remove');
-      const interruptBtn = e.target.closest('.queue-interrupt');
-      const btn = removeBtn || interruptBtn;
-      if (!btn) return;
-      const itemEl = btn.closest('.queue-item');
-      const id = itemEl?.dataset.itemId;
+  if (queueListEl) {
+    queueListEl.addEventListener('click', (e) => {
+      const row = e.target.closest('.scheduled-item--queue');
+      if (!row) return;
+      const id = row.dataset.queueId;
       if (!id) return;
-      const idx = waitingItems.findIndex((it) => it.id === id);
+      const idx = waitingItems.findIndex((it) => String(it.serverId ?? it.id) === id);
       if (idx < 0) return;
 
-      if (removeBtn) {
+      const cancelBtn = e.target.closest('.scheduled-item-cancel[data-queue-id]');
+      const promoteBtn = e.target.closest('.queue-item-promote');
+
+      if (cancelBtn) {
         const removed = waitingItems.splice(idx, 1)[0];
+        if (removed?.serverId != null) ownQueueIds.delete(removed.serverId);
         renderQueue();
         if (removed?.serverId != null && activeChatId != null) {
           deleteQueueOnServer(activeChatId, removed.serverId).catch(() => {});
         }
         return;
       }
+      if (!promoteBtn) return;
 
       // Interrupt: move this item to the front and abort the running turn.
       // The turn-error handler clears inFlight and calls flushNextQueued(),
@@ -1399,8 +1479,10 @@
         return;
       }
       // Optimistically disable buttons to prevent rapid double-clicks.
-      btn.disabled = true;
-      setTimeout(() => { btn.disabled = false; }, 3000);
+      if (promoteBtn) {
+        promoteBtn.disabled = true;
+        setTimeout(() => { promoteBtn.disabled = false; }, 3000);
+      }
       wsSend({ type: 'abort', chatId: activeChatId });
     });
   }
@@ -2604,9 +2686,7 @@
 
       case 'queue-added': {
         if (msg.chatId !== activeChatId) return;
-        if (waitingItems.some((it) => it.serverId === msg.item.id)) return;
-        waitingItems.push(serverQueueItemFromApi(msg.item));
-        renderQueue();
+        if (addWaitingItem(serverQueueItemFromApi(msg.item))) renderQueue();
         return;
       }
 
@@ -2699,6 +2779,7 @@
     // the in-flight message. The queue widget only renders waiting items.
     const item = waitingItems.shift();
     if (!item) return;
+    if (item.serverId != null) ownQueueIds.delete(item.serverId);
     renderQueue();
     inFlight = true;
     // Optimistically append user msg. Mark it as pending-id so the
@@ -2771,12 +2852,12 @@
           inFlight = false;
           if (activeChatId != null) {
             try {
-              waitingItems.unshift(await enqueueQueueOnServer(activeChatId, item));
+              addWaitingItem(await enqueueQueueOnServer(activeChatId, item), { at: 'front' });
             } catch {
-              waitingItems.unshift(item);
+              addWaitingItem(item, { at: 'front' });
             }
           } else {
-            waitingItems.unshift(item);
+            addWaitingItem(item, { at: 'front' });
           }
           renderQueue();
         });
@@ -2794,7 +2875,7 @@
       // No connection — put the item back at the head so it isn't lost,
       // and let the open handler retry.
       inFlight = false;
-      waitingItems.unshift(item);
+      addWaitingItem(item, { at: 'front' });
       renderQueue();
     }
   }
@@ -3789,7 +3870,9 @@
         inlineSecrets,
       };
       let queued;
-      if (activeChatId != null) {
+      const persistOnServer =
+        activeChatId != null && (inFlight || waitingItems.length > 0);
+      if (persistOnServer) {
         try {
           queued = await enqueueQueueOnServer(activeChatId, draft);
         } catch (err) {
@@ -3802,7 +3885,7 @@
           id: 'local-' + nextLocalQueueItemId++,
         };
       }
-      waitingItems.push(queued);
+      addWaitingItem(queued);
       input.value = '';
       clearComposerSecretDraft();
       renderQueue();
@@ -3997,28 +4080,22 @@
     return null;
   }
 
-  const SCHEDULED_SEND_SVG =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<path d="M12 19V5M5 12l7-7 7 7"/></svg>';
-  const SCHEDULED_EDIT_SVG =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
-
   function scheduledItemActionsHtml(id) {
+    const esc = escapeHtml(String(id));
     return (
       '<div class="scheduled-item-actions">' +
       '<button type="button" class="scheduled-item-send-now btn btn--icon btn--ghost" data-scheduled-id="' +
-      id +
+      esc +
       '" aria-label="Надіслати зараз" title="Надіслати зараз">' +
-      SCHEDULED_SEND_SVG +
+      COMPOSER_PENDING_SEND_SVG +
       '</button>' +
       '<button type="button" class="scheduled-item-edit btn btn--icon btn--ghost" data-scheduled-id="' +
-      id +
+      esc +
       '" aria-label="Редагувати" title="Редагувати">' +
-      SCHEDULED_EDIT_SVG +
+      COMPOSER_PENDING_EDIT_SVG +
       '</button>' +
       '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-scheduled-id="' +
-      id +
+      esc +
       '" aria-label="Скасувати" title="Скасувати">×</button>' +
       '</div>'
     );
@@ -4035,19 +4112,17 @@
     if (!scheduledListEl) return;
     if (scheduledListEl.querySelector('.scheduled-item[data-scheduled-id="' + scheduled.id + '"]')) return;
     const row = document.createElement('div');
-    row.className = 'scheduled-item';
+    row.className = 'scheduled-item scheduled-item--scheduled';
     row.dataset.scheduledId = String(scheduled.id);
     row.dataset.scheduledAt = scheduled.scheduled_at;
-    row.innerHTML =
-      '<div class="scheduled-item-main">' +
-      '<div class="scheduled-item-meta">' +
-      '<span class="scheduled-item-clock" aria-hidden="true">⏰</span>' +
-      '<span class="scheduled-item-when" data-when="' + escapeHtml(scheduled.scheduled_at) + '">' +
-      escapeHtml(formatScheduledWhen(scheduled.scheduled_at)) + '</span>' +
-      '</div>' +
-      '<div class="scheduled-item-text">' + escapeHtml(scheduled.content) + '</div>' +
-      '</div>' +
-      scheduledItemActionsHtml(scheduled.id);
+    row.innerHTML = composerPendingRowInnerHtml({
+      kind: 'scheduled',
+      metaIcon: '⏰',
+      metaText: formatScheduledWhen(scheduled.scheduled_at),
+      whenData: scheduled.scheduled_at,
+      content: scheduled.content,
+      actionsHtml: scheduledItemActionsHtml(scheduled.id),
+    });
     scheduledListEl.appendChild(row);
     scheduledListEl.classList.remove('is-empty');
   }

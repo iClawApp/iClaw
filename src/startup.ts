@@ -236,11 +236,9 @@ const c = {
   reset: '\x1b[0m',
   dim: '\x1b[2m',
   bold: '\x1b[1m',
-  cyan: '\x1b[36m',
-  green: '\x1b[32m',
+  /** Bright green — reads as lime on most terminals (macOS, Windows Terminal, Linux). */
+  lime: '\x1b[92m',
   yellow: '\x1b[33m',
-  magenta: '\x1b[35m',
-  blue: '\x1b[34m',
 };
 
 function useColor(): boolean {
@@ -251,13 +249,13 @@ function paint(enabled: boolean, code: string, text: string): string {
   return enabled ? `${code}${text}${c.reset}` : text;
 }
 
+/** Figlet "standard" — first CLI wordmark (mixed-case iClaw). */
 const ICLAW_LOGO = [
-  '██╗ ██████╗██╗      █████╗ ██╗    ██╗',
-  '██║██╔═══██╗██║     ██╔══██╗██║    ██║',
-  '██║██║   ██║██║     ███████║██║    ██║',
-  '██║██║   ██║██║     ██╔══██║██║    ██║',
-  '██║╚██████╔╝███████╗██║  ██║██║    ██║',
-  '╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝    ╚═╝',
+  '  _  ____ _                ',
+  ' (_)/ ___| | __ ___      __',
+  ' | | |   | |/ _` \\ \\ /\\ / /',
+  ' | | |___| | (_| |\\ V  V / ',
+  ' |_|\\____|_|\\__,_| \\_/\\_/  ',
 ];
 
 function terminalColumns(): number {
@@ -275,7 +273,18 @@ function centerLine(text: string): string {
 }
 
 function highlightKey(color: boolean, label: string): string {
-  return paint(color, c.bold + c.cyan, label);
+  return paint(color, c.bold + c.lime, label);
+}
+
+const CLI_LIME = c.bold + c.lime;
+
+const SHUTDOWN_LABEL = 'Stopping iClaw';
+/** Fixed width so centered text does not shift between frames. */
+const SHUTDOWN_LINE_WIDTH = SHUTDOWN_LABEL.length + 3;
+
+function shutdownStatusLine(dotCount: number): string {
+  const dots = '.'.repeat(dotCount % 4);
+  return (SHUTDOWN_LABEL + dots).padEnd(SHUTDOWN_LINE_WIDTH, ' ');
 }
 
 const CLI_AIR = 5;
@@ -287,7 +296,7 @@ function air(lines = CLI_AIR): void {
 
 function printCliFooter(url: string, color: boolean): void {
   air();
-  console.log(centerLine(paint(color, c.cyan, url)));
+  console.log(centerLine(paint(color, c.lime, url)));
   air();
   if (process.stdin.isTTY) {
     console.log(
@@ -307,17 +316,57 @@ export interface StartupBannerOpts {
   gatewayUp: boolean;
 }
 
+/**
+ * Animated shutdown line on TTY; returns cleanup that clears it before exit.
+ * No-op animation when stdout is not a TTY.
+ */
+export function startCliShuttingDownAnimation(): () => void {
+  const color = useColor();
+
+  if (!process.stdout.isTTY) {
+    console.log('');
+    console.log(centerLine('Stopping iClaw...'));
+    return () => {};
+  }
+
+  process.stdout.write('\n');
+  let dotCount = 0;
+  let interval: ReturnType<typeof setInterval> | undefined;
+
+  const draw = (): void => {
+    const text = shutdownStatusLine(dotCount);
+    const msg = centerLine(paint(color, c.lime, text));
+    readline.cursorTo(process.stdout, 0);
+    readline.clearLine(process.stdout, 0);
+    process.stdout.write(msg);
+    dotCount++;
+  };
+
+  draw();
+  interval = setInterval(draw, 400);
+
+  return () => {
+    if (interval) clearInterval(interval);
+    readline.cursorTo(process.stdout, 0);
+    readline.clearLine(process.stdout, 0);
+    process.stdout.write('\x1b[K');
+    readline.moveCursor(process.stdout, 0, -1);
+    readline.clearLine(process.stdout, 0);
+    process.stdout.write('\r');
+  };
+}
+
 export function printStartupBanner(opts: StartupBannerOpts): void {
   const color = useColor();
   air();
   for (const line of ICLAW_LOGO) {
-    console.log(centerLine(paint(color, c.bold + c.cyan, line)));
+    console.log(centerLine(paint(color, c.lime, line)));
   }
   if (!opts.gatewayUp) {
     air();
     console.log(
       centerLine(
-        paint(color, c.yellow, 'OpenClaw gateway not reachable'),
+        paint(color, CLI_LIME, 'OpenClaw gateway not reachable'),
       ),
     );
   }
@@ -328,7 +377,7 @@ export function printAlreadyRunningBanner(url: string): void {
   const color = useColor();
   air();
   console.log(
-    centerLine(paint(color, c.yellow, 'iClaw is already running')),
+    centerLine(paint(color, CLI_LIME, 'iClaw is already running')),
   );
   printCliFooter(url, color);
 }

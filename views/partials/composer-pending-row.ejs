@@ -1,0 +1,80 @@
+<%#
+  Shared row for scheduled messages and the composer queue (same card UI).
+  locals:
+    kind       — 'scheduled' | 'queue'
+    rowId      — numeric id
+    metaIcon   — emoji in meta row
+    metaText   — label next to icon
+    content    — message preview (escaped below)
+    scheduledAt — optional, ISO/SQLite stamp (scheduled only)
+%>
+<div
+  class="scheduled-item scheduled-item--<%= kind %>"
+  <% if (kind === 'queue') { %>
+    data-queue-id="<%= rowId %>"
+  <% } else { %>
+    data-scheduled-id="<%= rowId %>"
+    data-scheduled-at="<%= scheduledAt %>"
+  <% } %>
+>
+  <div class="scheduled-item-main">
+    <div class="scheduled-item-meta">
+      <span class="scheduled-item-clock" aria-hidden="true"><%= metaIcon %></span>
+      <span class="scheduled-item-when"<% if (kind === 'scheduled' && scheduledAt) { %> data-when="<%= scheduledAt %>"<% } %>><%= metaText %></span>
+    </div>
+    <div class="scheduled-item-text"><%= content %></div>
+  </div>
+  <div class="scheduled-item-actions">
+    <% if (kind === 'scheduled') { %>
+      <button
+        type="button"
+        class="scheduled-item-send-now btn btn--icon btn--ghost"
+        data-scheduled-id="<%= rowId %>"
+        aria-label="Надіслати зараз"
+        title="Надіслати зараз"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 19V5M5 12l7-7 7 7"/>
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="scheduled-item-edit btn btn--icon btn--ghost"
+        data-scheduled-id="<%= rowId %>"
+        aria-label="Редагувати"
+        title="Редагувати"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 20h9"/>
+          <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="scheduled-item-cancel btn btn--icon btn--ghost"
+        data-scheduled-id="<%= rowId %>"
+        aria-label="Скасувати"
+        title="Скасувати"
+      >×</button>
+    <% } else { %>
+      <button
+        type="button"
+        class="queue-item-promote scheduled-item-send-now btn btn--icon btn--ghost"
+        data-queue-id="<%= rowId %>"
+        aria-label="Перервати й надіслати це"
+        title="Перервати поточну відповідь і надіслати це повідомлення"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 19V5M5 12l7-7 7 7"/>
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="scheduled-item-cancel btn btn--icon btn--ghost"
+        data-queue-id="<%= rowId %>"
+        aria-label="Прибрати з черги"
+        title="Прибрати з черги"
+      >×</button>
+    <% } %>
+  </div>
+</div>
