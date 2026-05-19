@@ -7,6 +7,7 @@ import {
   projectFactSuggestions,
   projectFacts,
   projectSecrets,
+  secretUsableInChat,
   scheduledMessages,
   enrichFactWithSourceChatTitle,
 } from '../services/store';
@@ -318,13 +319,59 @@ chatsRouter.get('/:id/messages', (req, res) => {
   res.json(messages.listByChat(id));
 });
 
-/** Reveal one secret value (same-origin; chat must belong to the secret's project). */
+/** Composer attach menu — metadata only. */
+chatsRouter.get('/:id/secrets/picker', (req, res) => {
+  const chatId = Number(req.params.id);
+  const chat = chats.get(chatId);
+  if (!chat) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  res.json(projectSecrets.listForComposerPickerForChat(chat));
+});
+
+/** Whether a secret name is free app-wide (composer modal validation). */
+chatsRouter.get('/:id/secrets/check-label', (req, res) => {
+  const chatId = Number(req.params.id);
+  if (!chats.get(chatId)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const label = String(req.query.label ?? '');
+  res.json({ available: projectSecrets.isLabelAvailable(label) });
+});
+
+/** Map a secret to a row usable in this chat's transcript. */
+chatsRouter.post('/:id/secrets/:secretId/use-in-chat', (req, res) => {
+  const chatId = Number(req.params.id);
+  const secretId = Number(req.params.secretId);
+  const chat = chats.get(chatId);
+  if (!chat) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  try {
+    const row = projectSecrets.resolveForChat(
+      { chatId: chat.id, projectId: chat.project_id },
+      secretId,
+    );
+    res.json({
+      id: row.id,
+      label: row.label,
+      value_length: row.value.length,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'secret' });
+  }
+});
+
+/** Reveal one secret value (same-origin; must be usable in this chat). */
 chatsRouter.get('/:id/secrets/:secretId/value', (req, res) => {
   const chatId = Number(req.params.id);
   const secretId = Number(req.params.secretId);
   const chat = chats.get(chatId);
   const sec = projectSecrets.get(secretId);
-  if (!chat || !sec || chat.project_id == null || sec.project_id !== chat.project_id) {
+  if (!chat || !sec || !secretUsableInChat(sec, chat)) {
     res.status(404).json({ error: 'not found' });
     return;
   }
@@ -377,7 +424,7 @@ chatsRouter.get('/:id/secrets/in-chat', (req, res) => {
   for (const [id, count] of occurrences) {
     const sec = projectSecrets.get(id);
     if (!sec) continue;
-    if (chat.project_id == null || sec.project_id !== chat.project_id) continue;
+    if (!secretUsableInChat(sec, chat)) continue;
     result.push({
       id: sec.id,
       label: sec.label,
@@ -447,18 +494,11 @@ chatsRouter.post('/:id/scheduled', (req, res) => {
   }
   let toStore = content;
   if (/\[\[iclaw:s\d+\]\]/.test(content)) {
-    const pid = chat.project_id;
-    if (pid == null) {
-      res.status(400).json({
-        error: 'Scheduled messages with secrets are only available for chats in a project.',
-      });
-      return;
-    }
     try {
       const resolved = resolveInlineSecretMarkersInContent({
         content,
         inlineSecrets,
-        projectId: pid,
+        projectId: chat.project_id,
         sourceChatId: id,
       });
       toStore = resolved.storedContent;

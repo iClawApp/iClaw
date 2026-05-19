@@ -82,6 +82,35 @@
     return null;
   }
 
+  /** Picker / use-in-chat need a chat row; inline secrets on draft only need project pick. */
+  function composerSecretContext() {
+    if (activeChatId != null) {
+      return {
+        pickerUrl: '/chats/' + encodeURIComponent(activeChatId) + '/secrets/picker',
+        useInChatUrl: (secretId) =>
+          '/chats/' +
+          encodeURIComponent(activeChatId) +
+          '/secrets/' +
+          encodeURIComponent(secretId) +
+          '/use-in-chat',
+      };
+    }
+    return null;
+  }
+
+  function composerSecretsEnabled() {
+    if (activeChatId != null) return true;
+    // Draft home: chat is created on send; inline [[iclaw:sN]] secrets still work.
+    return Boolean(startedOnDraft && draftProjectLocked);
+  }
+
+  function composerSecretsBlockedMessage() {
+    if (startedOnDraft && !draftProjectLocked) {
+      return 'Choose a project (or No project) on the home screen first.';
+    }
+    return 'Open a chat to save secrets.';
+  }
+
   function selectionInsideIclawPlaceholder(text, start, end) {
     const lastOpen = text.lastIndexOf('[[iclaw:', end);
     if (lastOpen === -1 || lastOpen > start) return false;
@@ -2813,41 +2842,53 @@
     closeComposerAttachMenus();
   }
 
-  function secretPickItemHtml(s, showProject) {
+  function secretPickSubtitleText(s) {
+    const project = String(s.project_name ?? '').trim() || 'No project';
+    const chat = String(s.chat_title ?? '').trim() || 'Chat';
+    return project + ' | ' + chat;
+  }
+
+  function secretPickItemHtml(s) {
     const id = Number(s.id);
     const label = escapeHtml(String(s.label || ''));
-    const hint =
-      showProject && s.project_name
-        ? '<span class="menu-item__hint">' + escapeHtml(String(s.project_name)) + '</span>'
-        : '';
+    const subtitle = secretPickSubtitleText(s);
+    const subtitleAttr = escapeHtml(subtitle);
     return (
       '<button type="button" class="menu-item composer-secret-pick-item" data-secret-id="' +
       id +
       '" role="menuitem">' +
-      '<span class="menu-item__title">' +
+      '<span class="menu-item__title composer-secret-pick-label">' +
       label +
       '</span>' +
-      hint +
+      '<span class="composer-secret-pick-subtitle" title="' +
+      subtitleAttr +
+      '">' +
+      escapeHtml(subtitle) +
+      '</span>' +
       '</button>'
     );
   }
 
   function renderComposerSecretPickMenu(data) {
     if (!composerSecretPickMenu) return;
-    const current = Array.isArray(data?.current) ? data.current : [];
-    const other = Array.isArray(data?.other) ? data.other : [];
+    const sections = Array.isArray(data?.sections) ? data.sections : [];
+    let total = 0;
+    for (const sec of sections) {
+      if (Array.isArray(sec?.items)) total += sec.items.length;
+    }
     let html =
       '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Back</button>';
-    if (current.length === 0 && other.length === 0) {
+    if (total === 0) {
       html += '<div class="composer-secret-pick-empty">No saved secrets.</div>';
     } else {
-      if (current.length > 0) {
-        html += '<div class="menu-section-label">This project</div>';
-        for (const s of current) html += secretPickItemHtml(s, false);
-      }
-      if (other.length > 0) {
-        html += '<div class="menu-section-label">Other projects</div>';
-        for (const s of other) html += secretPickItemHtml(s, true);
+      for (const sec of sections) {
+        const items = Array.isArray(sec?.items) ? sec.items : [];
+        if (items.length === 0) continue;
+        const label = String(sec.label ?? '').trim();
+        if (label) {
+          html += '<div class="menu-section-label">' + escapeHtml(label) + '</div>';
+        }
+        for (const s of items) html += secretPickItemHtml(s);
       }
     }
     composerSecretPickMenu.innerHTML = html;
@@ -2855,9 +2896,9 @@
 
   async function openComposerSecretPickMenu() {
     if (!composerSecretPickMenu) return;
-    const pid = currentComposerProjectId();
-    if (pid == null) {
-      alert('Choose a project for this chat — secrets belong to a project.');
+    const ctx = composerSecretContext();
+    if (!ctx) {
+      alert('Send the first message to open the chat, then use the clip → Secret menu.');
       return;
     }
     if (composerAttachMenu) composerAttachMenu.hidden = true;
@@ -2866,7 +2907,7 @@
       '<button type="button" class="menu-item composer-secret-pick-back" data-secret-pick="back">← Back</button>' +
       '<div class="composer-secret-pick-empty">Loading…</div>';
     try {
-      const res = await fetch('/projects/' + encodeURIComponent(pid) + '/secrets/picker', {
+      const res = await fetch(ctx.pickerUrl, {
         headers: { Accept: 'application/json' },
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -2880,16 +2921,12 @@
   }
 
   async function useComposerSecretInChat(secretId) {
-    const pid = currentComposerProjectId();
-    if (pid == null) return null;
-    const res = await fetch(
-      '/projects/' +
-        encodeURIComponent(pid) +
-        '/secrets/' +
-        encodeURIComponent(secretId) +
-        '/use-in-chat',
-      { method: 'POST', headers: { Accept: 'application/json' } },
-    );
+    const ctx = composerSecretContext();
+    if (!ctx) return null;
+    const res = await fetch(ctx.useInChatUrl(secretId), {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    });
     if (!res.ok) {
       const t = await res.text();
       throw new Error(t || 'HTTP ' + res.status);
@@ -3041,11 +3078,10 @@
   function applyComposerSecretStripLayout() {
     if (!composerSecretUi) return;
     if (composerSecretModal && !composerSecretModal.hidden) {
-      if (currentComposerProjectId() != null) composerSecretUi.hidden = false;
+      if (composerSecretsEnabled()) composerSecretUi.hidden = false;
       return;
     }
-    const pid = currentComposerProjectId();
-    if (pid == null) {
+    if (!composerSecretsEnabled()) {
       composerSecretUi.hidden = true;
       composerTokenDetectRange = null;
       if (composerTokenHint) composerTokenHint.hidden = true;
@@ -3062,7 +3098,7 @@
   /** Sync the token-detected row from the current composer value (no debounce). */
   function updateComposerTokenRow() {
     if (!input || !composerTokenHint || !composerTokenHintText) return;
-    if (currentComposerProjectId() == null) {
+    if (!composerSecretsEnabled()) {
       composerTokenDetectRange = null;
       composerTokenHint.hidden = true;
       composerTokenHint.removeAttribute('title');
@@ -3095,12 +3131,20 @@
     while ((m = re.exec(text)) !== null) uniq.add(Number(m[1]));
     if (uniq.size === 0) return undefined;
     const slots = [...uniq].sort((a, b) => a - b);
+    const labelsSeen = new Set();
     const out = [];
     for (const slot of slots) {
       const p = composerSecretBySlot.get(slot);
       if (!p) {
         throw new Error('Each [[iclaw:sN]] marker in the message needs a secret name (use the button).');
       }
+      const labelKey = String(p.label ?? '')
+        .trim()
+        .toLowerCase();
+      if (labelsSeen.has(labelKey)) {
+        throw new Error('Secret name already exists');
+      }
+      labelsSeen.add(labelKey);
       out.push({
         slot,
         label: p.label,
@@ -3112,6 +3156,20 @@
     return out;
   }
 
+  async function isComposerSecretLabelAvailable(label) {
+    if (!composerSecretsEnabled()) return true;
+    const q = encodeURIComponent(String(label ?? '').trim());
+    if (!q) return false;
+    const url =
+      activeChatId != null
+        ? '/chats/' + encodeURIComponent(activeChatId) + '/secrets/check-label?label=' + q
+        : '/api/secrets/check-label?label=' + q;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error('Could not verify secret name');
+    const data = await res.json();
+    return data && data.available === true;
+  }
+
   function clearComposerSecretDraft() {
     composerSecretBySlot.clear();
     composerSecretNextSlot = 0;
@@ -3121,7 +3179,7 @@
   }
 
   function scheduleTokenDetect() {
-    if (!input || currentComposerProjectId() == null) return;
+    if (!input || !composerSecretsEnabled()) return;
     if (composerTokenDetectTimer) clearTimeout(composerTokenDetectTimer);
     composerTokenDetectTimer = setTimeout(runTokenDetect, 380);
   }
@@ -3234,7 +3292,7 @@
     applyComposerSecretStripLayout();
   }
 
-  function applySecretReplace(label) {
+  async function applySecretReplace(label) {
     if (!input || !composerSecretInsert) return;
     if (composerSecretTokenEditing) syncComposerSecretPlainFromInput();
     const lab = String(label ?? '').trim();
@@ -3244,6 +3302,15 @@
     }
     if (/[\[\]|]/.test(lab)) {
       alert('Name cannot contain [ ] |');
+      return;
+    }
+    try {
+      if (!(await isComposerSecretLabelAvailable(lab))) {
+        alert('Secret name already exists');
+        return;
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
       return;
     }
     const t = input.value;
@@ -3348,8 +3415,8 @@
 
   if (composerMarkSecretBtn && input) {
     composerMarkSecretBtn.addEventListener('click', () => {
-      if (currentComposerProjectId() == null) {
-        alert('Choose a project for this chat — secrets are stored per project.');
+      if (!composerSecretsEnabled()) {
+        alert(composerSecretsBlockedMessage());
         return;
       }
       const s = input.selectionStart;
@@ -3365,7 +3432,7 @@
   if (composerTokenSaveBtn && input) {
     composerTokenSaveBtn.addEventListener('click', () => {
       if (!composerTokenDetectRange) return;
-      if (currentComposerProjectId() == null) return;
+      if (!composerSecretsEnabled()) return;
       const { start, end } = composerTokenDetectRange;
       const plain = input.value.slice(start, end);
       composerSecretInsert = { start, end, plain };
@@ -3378,7 +3445,7 @@
       const fn = composerSecretCommit;
       if (!fn) return;
       if (composerSecretTokenEditing) syncComposerSecretPlainFromInput();
-      fn(composerSecretLabelInput.value);
+      void Promise.resolve(fn(composerSecretLabelInput.value));
     });
   }
   if (composerSecretTokenToggle) {

@@ -1,10 +1,15 @@
 import { Router } from 'express';
-import { chats, projects } from '../services/store';
+import { chats, projectSecrets, projects } from '../services/store';
 import { openclaw } from '../services/openclaw';
 import { openclawWs } from '../services/openclawWs';
 import { chatStatus } from '../services/chatStatus';
 
 export const indexRouter: Router = Router();
+
+/** Draft composer — secret name check before the chat row exists. */
+indexRouter.get('/api/secrets/check-label', (req, res) => {
+  res.json({ available: projectSecrets.isLabelAvailable(String(req.query.label ?? '')) });
+});
 
 indexRouter.get('/', async (req, res) => {
   const list = chats.list();

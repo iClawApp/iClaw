@@ -5,7 +5,7 @@
  * placeholders only.
  */
 
-import { projectSecrets } from './store';
+import { projectSecrets, secretUsableInChat } from './store';
 
 /** Persisted in message rows — label is encodeURIComponent(label); length is optional (legacy). */
 export const STORED_SECRET_PLACEHOLDER_RE =
@@ -27,7 +27,7 @@ export function validateSecretLabel(raw: string): string {
 export function resolveInlineSecretMarkersInContent(opts: {
   content: string;
   inlineSecrets: InlineSecretWire[] | undefined;
-  projectId: number;
+  projectId: number | null;
   sourceChatId: number;
 }): { storedContent: string; newSecretIds: number[] } {
   const bySlot = new Map<number, InlineSecretWire>();
@@ -68,6 +68,9 @@ export function resolveInlineSecretMarkersInContent(opts: {
   for (const slot of orderedSlots) {
     const w = bySlot.get(slot)!;
     const label = validateSecretLabel(w.label);
+    if (!projectSecrets.isLabelAvailable(label)) {
+      throw new Error('Secret name already exists');
+    }
     const plain = String(w.plain ?? '')
       .replace(/\r/g, '')
       .trim();
@@ -89,16 +92,15 @@ export function resolveInlineSecretMarkersInContent(opts: {
   return { storedContent: stored, newSecretIds };
 }
 
-/** Swap placeholders for plaintext before sending to OpenClaw (same project only). */
+/** Swap placeholders for plaintext before sending to OpenClaw. */
 export function expandStoredSecretPlaceholdersForGateway(
   text: string,
-  projectId: number | null,
+  chat: { id: number; project_id: number | null },
 ): string {
-  if (projectId == null) return text;
   return text.replace(STORED_SECRET_PLACEHOLDER_RE, (full, idStr: string) => {
     const id = Number(idStr);
     const row = projectSecrets.get(id);
-    if (!row || row.project_id !== projectId) return full;
+    if (!row || !secretUsableInChat(row, chat)) return full;
     return row.value;
   });
 }

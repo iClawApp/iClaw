@@ -15,10 +15,15 @@ Chat-style web UI for a **local** [OpenClaw Gateway](https://docs.openclaw.ai): 
 ![iClaw screenshot](./docs/readme-screenshot.png)
 
 ```bash
-git clone https://github.com/iClawApp/iClaw.git && cd iClaw && npm install && npm run dev
+npx @iclawapp/iclaw
 ```
 
-Then open <http://localhost:3000>. Bearer token is read from `~/.openclaw/openclaw.json`. Production: `npm run build` then `npm start`.
+Then open <http://localhost:3000>. Bearer token is read from `~/.openclaw/openclaw.json`. Data is stored in `~/.iclaw/data/iclaw.db`.
+
+**For development:**
+```bash
+git clone https://github.com/iClawApp/iClaw.git && cd iClaw && npm install && npm run dev
+```
 
 | Where | Default |
 | --- | --- |

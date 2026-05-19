@@ -4092,9 +4092,24 @@ code {
   letter-spacing: 0.05em;
   color: var(--muted);
 }
-.composer-secret-pick-menu .menu-item__hint {
+.composer-secret-pick-menu .composer-secret-pick-item {
+  width: 100%;
+  max-width: 100%;
+}
+.composer-secret-pick-menu .composer-secret-pick-label {
+  font-weight: 500;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-secret-pick-menu .composer-secret-pick-subtitle {
   font-size: var(--text-xs);
   color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .composer-secret-pick-menu .composer-secret-pick-back {
   color: var(--muted);
