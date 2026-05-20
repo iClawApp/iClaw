@@ -2857,6 +2857,7 @@
       }
 
       case 'task-updated':
+        if (document.getElementById('task-board')) refreshGlobalTasksBoard();
         return;
 
       case 'task-created':
@@ -4181,6 +4182,15 @@
     return Boolean(input && String(input.value).trim());
   }
 
+  /** After task create / send / schedule — empty composer and reset secret UI. */
+  function clearComposerInput() {
+    if (!input) return;
+    input.value = '';
+    clearComposerSecretDraft();
+    closeScheduleMenu();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
   function isScheduleMenuOpen() {
     return scheduleMenu != null && !scheduleMenu.hidden;
   }
@@ -5009,6 +5019,7 @@
       createdAt: Date.now(),
     });
     closeCreateTaskModal();
+    clearComposerInput();
     showTaskCreatingBanner(pendingId, title, { sourceChatId, projectId });
     try {
       const res = await fetch('/tasks', {
@@ -5994,6 +6005,224 @@
     { key: 'done', label: 'Done' },
   ];
 
+  const TASK_APPROVE_RUN_FLASH_KEY = 'iclaw.taskApproveRun.v1';
+  const TASK_RESUME_FLASH_KEY = 'iclaw.taskResumeFlash.v1';
+  let boardFlashBannerEl = null;
+  let boardFlashDismissTimer = null;
+
+  function showBoardFlashBanner(opts) {
+    const lead = opts && opts.lead ? String(opts.lead) : '';
+    const detail = opts && opts.detail ? String(opts.detail) : '';
+    const variant =
+      opts && opts.variant === 'info'
+        ? 'info'
+        : opts && opts.variant === 'error'
+          ? 'error'
+          : 'success';
+    const host = getTaskCreateBannerHost();
+    if (boardFlashDismissTimer != null) {
+      clearTimeout(boardFlashDismissTimer);
+      boardFlashDismissTimer = null;
+    }
+    if (boardFlashBannerEl) boardFlashBannerEl.remove();
+    const el = document.createElement('aside');
+    el.className = 'iclaw-inline-banner iclaw-inline-banner--' + variant + ' card';
+    el.setAttribute('role', 'status');
+    el.innerHTML =
+      '<div class="iclaw-inline-banner__main">' +
+      '<p class="iclaw-inline-banner__lead">' +
+      escapeHtml(lead) +
+      '</p>' +
+      (detail
+        ? '<p class="iclaw-inline-banner__detail' +
+          (variant === 'success' ? ' muted' : '') +
+          '">' +
+          escapeHtml(detail) +
+          '</p>'
+        : '') +
+      '</div>';
+    host.prepend(el);
+    boardFlashBannerEl = el;
+    const dismissMs = opts && opts.dismissMs;
+    if (Number.isFinite(dismissMs) && dismissMs > 0) {
+      boardFlashDismissTimer = setTimeout(() => {
+        boardFlashDismissTimer = null;
+        if (boardFlashBannerEl === el) {
+          el.remove();
+          boardFlashBannerEl = null;
+        }
+      }, dismissMs);
+    }
+  }
+
+  async function refreshGlobalTasksBoard() {
+    const boardEl = document.getElementById('task-board');
+    if (!boardEl) return;
+    try {
+      const res = await fetch('/tasks' + (window.location.search || ''), {
+        headers: { Accept: 'application/json' },
+      });
+      const data = await res.json();
+      boardEl.innerHTML = renderTaskBoardHtml(data.board || {});
+    } catch {
+      /* board stays as server-rendered */
+    }
+  }
+
+  function redirectToTasksAfterApproveRun(taskId, title) {
+    sessionStorage.setItem(
+      TASK_APPROVE_RUN_FLASH_KEY,
+      JSON.stringify({
+        taskId,
+        title: title || 'Task',
+        at: Date.now(),
+      }),
+    );
+    window.location.href = '/tasks';
+  }
+
+  function redirectToTasksAfterResumeSubmit(taskId, title, humanInput) {
+    sessionStorage.setItem(
+      TASK_RESUME_FLASH_KEY,
+      JSON.stringify({
+        taskId,
+        title: title || 'Task',
+        humanInput: String(humanInput || '').trim(),
+        at: Date.now(),
+      }),
+    );
+    window.location.href = '/tasks';
+  }
+
+  async function hydrateTaskApproveRunFlash() {
+    const boardEl = document.getElementById('task-board');
+    if (!boardEl) return;
+    const raw = sessionStorage.getItem(TASK_APPROVE_RUN_FLASH_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(TASK_APPROVE_RUN_FLASH_KEY);
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const taskId = Number(payload.taskId);
+    const title = String(payload.title || 'Task').trim() || 'Task';
+    if (!Number.isFinite(taskId)) return;
+
+    await refreshGlobalTasksBoard();
+    showBoardFlashBanner({
+      lead: 'Задачу «' + title + '» затверджено і запущено',
+      detail: 'Агент працює у фоні. Статус оновлюється на дошці.',
+      variant: 'success',
+      dismissMs: 12000,
+    });
+
+    fetch('/tasks/' + encodeURIComponent(taskId) + '/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        await refreshGlobalTasksBoard();
+        const status = data.task && data.task.status;
+        if (status === 'needs_human') {
+          showBoardFlashBanner({
+            lead: 'Потрібна ваша відповідь',
+            detail: 'Задачу «' + title + '» відкрийте в колонці Your turn.',
+            variant: 'info',
+            dismissMs: 15000,
+          });
+        }
+      })
+      .catch(async (err) => {
+        await refreshGlobalTasksBoard();
+        showBoardFlashBanner({
+          lead: 'Не вдалося запустити агента',
+          detail: err instanceof Error ? err.message : String(err),
+          variant: 'error',
+          dismissMs: 15000,
+        });
+      });
+  }
+
+  async function hydrateTaskResumeFlash() {
+    const boardEl = document.getElementById('task-board');
+    if (!boardEl) return;
+    const raw = sessionStorage.getItem(TASK_RESUME_FLASH_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(TASK_RESUME_FLASH_KEY);
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const taskId = Number(payload.taskId);
+    const title = String(payload.title || 'Task').trim() || 'Task';
+    const humanInput = String(payload.humanInput || '').trim();
+    if (!Number.isFinite(taskId) || !humanInput) return;
+
+    await refreshGlobalTasksBoard();
+    showBoardFlashBanner({
+      lead: 'Відповідь надіслана — агент продовжує «' + title + '»',
+      detail: 'Статус оновлюється на дошці.',
+      variant: 'success',
+      dismissMs: 12000,
+    });
+
+    fetch('/tasks/' + encodeURIComponent(taskId) + '/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ humanInput }),
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        await refreshGlobalTasksBoard();
+        const status = data.task && data.task.status;
+        if (status === 'needs_human') {
+          showBoardFlashBanner({
+            lead: 'Потрібна ваша відповідь',
+            detail: 'Задачу «' + title + '» відкрийте в колонці Your turn.',
+            variant: 'info',
+            dismissMs: 15000,
+          });
+        } else if (status === 'needs_review') {
+          showBoardFlashBanner({
+            lead: 'Задачу «' + title + '» готово до перевірки',
+            detail: 'Відкрийте її в колонці Review.',
+            variant: 'success',
+            dismissMs: 12000,
+          });
+        } else if (status === 'done') {
+          showBoardFlashBanner({
+            lead: 'Задачу «' + title + '» завершено',
+            detail: 'Картка на дошці в колонці Done.',
+            variant: 'success',
+            dismissMs: 12000,
+          });
+        } else if (status === 'failed') {
+          showBoardFlashBanner({
+            lead: 'Задачу «' + title + '» не вдалося продовжити',
+            detail: 'Перевірте задачу на дошці або відкрийте її знову.',
+            variant: 'error',
+            dismissMs: 15000,
+          });
+        }
+      })
+      .catch(async (err) => {
+        await refreshGlobalTasksBoard();
+        showBoardFlashBanner({
+          lead: 'Не вдалося продовжити задачу',
+          detail: err instanceof Error ? err.message : String(err),
+          variant: 'error',
+          dismissMs: 15000,
+        });
+      });
+  }
+
   function renderTaskBoardHtml(board) {
     return TASK_BOARD_COLS.map((col) => {
       const items = (board && board[col.key]) || [];
@@ -6080,6 +6309,20 @@
 
     bindAutoGrowTextarea(document.getElementById('task-human-input'), TASK_HUMAN_INPUT_MAX_PX);
 
+    const taskScrollEl = root;
+    root.querySelectorAll('details').forEach((det) => {
+      det.addEventListener('toggle', () => {
+        const scrollTop = taskScrollEl.scrollTop;
+        requestAnimationFrame(() => {
+          taskScrollEl.scrollTop = scrollTop;
+        });
+        if (!det.open) return;
+        det.querySelectorAll('.task-step-input').forEach((ta) => {
+          bindAutoGrowTextarea(ta, 120);
+        });
+      });
+    });
+
     const runBtn = document.getElementById('task-run-btn');
     const approveBtn = document.getElementById('task-approve-plan');
     const approveAndRunBtn = document.getElementById('task-approve-and-run');
@@ -6158,8 +6401,9 @@
       if (btn) btn.disabled = true;
       try {
         await postAction('/approve-plan', { steps });
-        await postAction('/run');
-        window.location.reload();
+        const title =
+          document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
+        redirectToTasksAfterApproveRun(taskId, title);
       } catch (err) {
         alert(err instanceof Error ? err.message : String(err));
         if (btn) btn.disabled = false;
@@ -6183,15 +6427,12 @@
     }
     if (runBtn) runBtn.addEventListener('click', () => onRun(runBtn));
     if (resumeBtn) {
-      resumeBtn.addEventListener('click', async () => {
+      resumeBtn.addEventListener('click', () => {
         const humanInput = document.getElementById('task-human-input')?.value?.trim();
         if (!humanInput) return;
-        try {
-          await postAction('/resume', { humanInput });
-          window.location.reload();
-        } catch (err) {
-          alert(err instanceof Error ? err.message : String(err));
-        }
+        const title =
+          document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
+        redirectToTasksAfterResumeSubmit(taskId, title, humanInput);
       });
     }
     if (doneBtn) {
@@ -6219,6 +6460,8 @@
 
   initProjectPageTabs();
   initTaskDetailPage();
+  hydrateTaskApproveRunFlash();
+  hydrateTaskResumeFlash();
   hydrateServerRenderedMessages();
   hydrateTaskMarkdownFields();
   (function seedMidTurnStreamStatusDots() {

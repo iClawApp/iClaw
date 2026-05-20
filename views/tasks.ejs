@@ -4,9 +4,8 @@
   <%- include('partials/sidebar') %>
 
   <main class="col col-main task-page task-page--board">
-    <div class="task-shell task-shell--wide">
+    <div class="task-shell">
       <header class="task-board-header">
-        <p class="task-eyebrow">Agent tasks</p>
         <h1 class="task-board-title">Tasks</h1>
         <nav class="task-segmented" aria-label="Filter">
           <a href="/tasks" class="task-segmented__item<%= !orphanOnly ? ' is-active' : '' %>">All</a>
