@@ -6915,21 +6915,29 @@
     }
     if (doneBtn) {
       doneBtn.addEventListener('click', async () => {
+        doneBtn.disabled = true;
+        if (failBtn) failBtn.disabled = true;
         try {
           await postAction('/complete', { status: 'done' });
-          window.location.reload();
+          window.location.href = '/tasks';
         } catch (err) {
           alert(err instanceof Error ? err.message : String(err));
+          doneBtn.disabled = false;
+          if (failBtn) failBtn.disabled = false;
         }
       });
     }
     if (failBtn) {
       failBtn.addEventListener('click', async () => {
+        if (failBtn) failBtn.disabled = true;
+        if (doneBtn) doneBtn.disabled = true;
         try {
           await postAction('/complete', { status: 'failed' });
-          window.location.reload();
+          window.location.href = '/tasks';
         } catch (err) {
           alert(err instanceof Error ? err.message : String(err));
+          failBtn.disabled = false;
+          if (doneBtn) doneBtn.disabled = false;
         }
       });
     }

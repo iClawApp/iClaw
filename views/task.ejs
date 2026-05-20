@@ -28,7 +28,7 @@
     },
     needs_review: {
       title: 'Check the result',
-      body: 'Review the output, then mark Done or Failed.',
+      body: 'Review the output below, then mark the task done or failed.',
     },
     done: {
       title: 'All done',
@@ -53,6 +53,9 @@
   const showAgentOutput = task.status !== 'ready' && task.status !== 'planning';
   const planEditorEnabled = !isPlanning;
   const isNeedsHuman = task.status === 'needs_human';
+  const isNeedsReview = task.status === 'needs_review';
+  const isFailed = task.status === 'failed';
+  const showCompleteActions = isNeedsReview || isFailed;
   const waitingPlanStep = isNeedsHuman
     ? task.steps.find(function (s) { return s.status === 'needs_human'; })
     : null;
@@ -220,6 +223,17 @@
         </section>
       <% } %>
 
+      <% if (showCompleteActions) { %>
+        <ul class="task-inset-list task-inset-list--actions task-inset-list--actions-primary task-inset-list--run-row">
+          <li class="task-run-row">
+            <button type="button" class="task-row-btn task-row-btn--primary" id="task-done-btn">Mark as done</button>
+            <% if (isNeedsReview) { %>
+              <button type="button" class="task-row-btn task-row-btn--compact task-row-btn--destructive" id="task-fail-btn">Mark as failed</button>
+            <% } %>
+          </li>
+        </ul>
+      <% } %>
+
       <details class="task-disclosure task-disclosure--inline">
         <summary>Goal</summary>
         <div class="task-disclosure-body">
@@ -227,6 +241,7 @@
         </div>
       </details>
 
+      <% if (!showCompleteActions && task.status !== 'done') { %>
       <details class="task-disclosure">
         <summary><span class="task-disclosure-title">Finish</span></summary>
         <div class="task-disclosure-body task-disclosure-body--flush">
@@ -236,6 +251,7 @@
         </ul>
         </div>
       </details>
+      <% } %>
 
       <% if (showAgentOutput) { %>
       <details class="task-disclosure">
