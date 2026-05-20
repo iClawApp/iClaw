@@ -2826,6 +2826,15 @@
         console.debug('[iclaw] gateway-session-changed', msg.kind, msg.sessionKey);
         return;
 
+      case 'task-ask-turn-started':
+      case 'task-ask-turn-delta':
+      case 'task-ask-turn-tool':
+      case 'task-ask-turn-lifecycle':
+      case 'task-ask-turn-ended':
+      case 'task-ask-turn-error':
+        handleTaskAskWs(msg);
+        return;
+
       case 'task-run-delta': {
         const taskRoot = document.querySelector('.task-page[data-task-id]');
         if (!taskRoot || Number(taskRoot.dataset.taskId) !== msg.taskId) return;
@@ -6722,6 +6731,181 @@
     grow();
   }
 
+  /** Live Ask modal — receives `task-ask-turn-*` from /ws (filtered by taskId + sessionId). */
+  let taskAskLive = null;
+
+  function taskAskIsActive() {
+    return taskAskLive && !taskAskLive.modal.hidden;
+  }
+
+  function taskAskMatches(msg) {
+    if (!taskAskIsActive()) return false;
+    return (
+      Number(msg.taskId) === taskAskLive.taskId &&
+      Number(msg.sessionId) === taskAskLive.sessionId
+    );
+  }
+
+  function taskAskScroll() {
+    if (!taskAskLive) return;
+    const el = taskAskLive.messagesPane || taskAskLive.thread;
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
+  function taskAskEnsureStream() {
+    if (!taskAskLive) return null;
+    if (taskAskLive.streamEl && taskAskLive.thread.contains(taskAskLive.streamEl)) {
+      return taskAskLive.streamEl;
+    }
+    const div = document.createElement('div');
+    div.className = 'msg assistant streaming stream-waiting';
+    div.innerHTML =
+      '<div class="role">assistant</div>' +
+      '<div class="stream-status"></div>' +
+      '<div class="msg-body stream-body"></div>';
+    taskAskLive.thread.appendChild(div);
+    const st = div.querySelector('.stream-status');
+    if (st) setStreamStatusLabel(st, 'Thinking…');
+    taskAskLive.streamEl = div;
+    taskAskLive.streamFullText = '';
+    taskAskScroll();
+    return div;
+  }
+
+  function taskAskFinalizeReply(text) {
+    if (!taskAskLive || taskAskLive.turnFinalized) return;
+    taskAskLive.turnFinalized = true;
+    const reply = String(text ?? '').trim() || '(no response)';
+    const el = taskAskLive.streamEl;
+    if (el && taskAskLive.thread.contains(el)) {
+      el.classList.remove(
+        'streaming', 'stream-waiting', 'stream-tool', 'stream-generating',
+      );
+      const status = el.querySelector('.stream-status');
+      if (status) {
+        stopStreamStatusDotAnim(status);
+        status.remove();
+      }
+      const body = el.querySelector('.stream-body, .msg-body');
+      if (body) {
+        body.classList.remove('stream-body');
+        body.innerHTML = renderMessageHtml(reply);
+        decorateMessageBody(body);
+      }
+    } else {
+      const div = document.createElement('div');
+      div.className = 'msg assistant';
+      div.innerHTML =
+        '<div class="role">assistant</div>' +
+        '<div class="msg-body">' + renderMessageHtml(reply) + '</div>';
+      decorateMessageBody(div);
+      taskAskLive.thread.appendChild(div);
+    }
+    taskAskLive.streamEl = null;
+    taskAskLive.streamFullText = '';
+    taskAskScroll();
+    if (taskAskLive.sendBtn) taskAskLive.sendBtn.disabled = false;
+    taskAskLive.input?.focus();
+  }
+
+  function handleTaskAskWs(msg) {
+    if (!taskAskMatches(msg)) return;
+
+    switch (msg.type) {
+      case 'task-ask-turn-started': {
+        taskAskLive.turnFinalized = false;
+        const el = taskAskEnsureStream();
+        if (!el) return;
+        el.classList.add('streaming', 'stream-waiting');
+        el.classList.remove('stream-tool', 'stream-generating');
+        const status = el.querySelector('.stream-status');
+        if (status) {
+          status.hidden = false;
+          status.classList.remove('detail-expanded', 'has-detail');
+          status.removeAttribute('title');
+          delete status.dataset.detail;
+          delete status.dataset.label;
+          setStreamStatusLabel(status, msg.activity?.label || 'Thinking…');
+        }
+        return;
+      }
+
+      case 'task-ask-turn-delta': {
+        const el = taskAskEnsureStream();
+        if (!el) return;
+        taskAskLive.streamFullText += msg.text;
+        if (el.classList.contains('stream-waiting') || el.classList.contains('stream-tool')) {
+          el.classList.remove('stream-waiting', 'stream-tool');
+          el.classList.add('stream-generating');
+          const status = el.querySelector('.stream-status');
+          if (status) {
+            stopStreamStatusDotAnim(status);
+            status.hidden = true;
+          }
+        }
+        const body = el.querySelector('.stream-body, .msg-body');
+        if (body) {
+          body.innerHTML = renderMarkdown(taskAskLive.streamFullText);
+          decorateMessageBody(body, { deferSyntaxHighlight: true });
+        }
+        taskAskScroll();
+        return;
+      }
+
+      case 'task-ask-turn-tool': {
+        const el = taskAskEnsureStream();
+        if (!el) return;
+        const status = el.querySelector('.stream-status');
+        if (msg.phase === 'start' && status) {
+          status.hidden = false;
+          const label = msg.label || msg.name;
+          const detail = msg.detail && msg.detail !== label ? msg.detail : '';
+          if (detail) {
+            status.dataset.detail = detail;
+            status.dataset.label = label;
+            status.title = detail;
+            status.classList.add('has-detail');
+            status.classList.remove('detail-expanded');
+            setStreamStatusLabel(status, label);
+          } else {
+            status.removeAttribute('title');
+            delete status.dataset.detail;
+            delete status.dataset.label;
+            status.classList.remove('has-detail', 'detail-expanded');
+            setStreamStatusLabel(status, label);
+          }
+          el.classList.remove('stream-waiting', 'stream-generating');
+          el.classList.add('stream-tool');
+        } else if (msg.phase === 'end' && status) {
+          setStreamStatusLabel(status, msg.label || msg.phase);
+        }
+        return;
+      }
+
+      case 'task-ask-turn-lifecycle': {
+        const el = taskAskEnsureStream();
+        if (!el) return;
+        const status = el.querySelector('.stream-status');
+        if (status) {
+          status.hidden = false;
+          setStreamStatusLabel(status, msg.label || msg.phase);
+        }
+        return;
+      }
+
+      case 'task-ask-turn-ended':
+        taskAskFinalizeReply(msg.reply);
+        return;
+
+      case 'task-ask-turn-error':
+        taskAskFinalizeReply(msg.error || 'Ask failed');
+        return;
+
+      default:
+        return;
+    }
+  }
+
   function initTaskAskModal(taskId, postAction) {
     const modal = document.getElementById('task-ask-modal');
     const openBtn = document.getElementById('task-ask-open-btn');
@@ -6785,6 +6969,7 @@
       closing = true;
       const sid = sessionId;
       sessionId = null;
+      taskAskLive = null;
       modal.hidden = true;
       hideCloseConfirm();
       thread.innerHTML = '';
@@ -6810,6 +6995,18 @@
         const data = await postAction('/ask/open', {});
         sessionId = Number(data.sessionId);
         if (!Number.isFinite(sessionId)) throw new Error('invalid session');
+        taskAskLive = {
+          taskId,
+          sessionId,
+          thread,
+          messagesPane,
+          modal,
+          sendBtn,
+          input,
+          streamEl: null,
+          streamFullText: '',
+          turnFinalized: false,
+        };
         appendAskBubble(
           'assistant',
           'Знімок контексту зроблено. Питай що завгодно про цю задачу — це не впливає на план і виконання.',
@@ -6834,19 +7031,24 @@
 
     async function sendAsk() {
       const message = input?.value?.trim();
-      if (!message || !Number.isFinite(sessionId)) return;
+      if (!message || !Number.isFinite(sessionId) || !taskAskLive) return;
+      if (sendBtn?.disabled) return;
       appendAskBubble('user', message);
       input.value = '';
       input.dispatchEvent(new Event('input', { bubbles: true }));
+      taskAskLive.turnFinalized = false;
+      taskAskLive.streamEl = null;
+      taskAskLive.streamFullText = '';
       sendBtn.disabled = true;
       try {
         const data = await postAction('/ask/turn', { sessionId, message });
-        appendAskBubble('assistant', data.reply || '(no response)');
+        if (!taskAskLive.turnFinalized) {
+          taskAskFinalizeReply(data.reply || '(no response)');
+        }
       } catch (err) {
-        appendAskBubble('assistant', err instanceof Error ? err.message : String(err));
-      } finally {
-        sendBtn.disabled = false;
-        input?.focus();
+        if (!taskAskLive.turnFinalized) {
+          taskAskFinalizeReply(err instanceof Error ? err.message : String(err));
+        }
       }
     }
 

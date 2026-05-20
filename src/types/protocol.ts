@@ -188,6 +188,26 @@ export type ServerMsg =
   | { type: 'task-run-started'; taskId: number; executionChatId: number }
   | { type: 'task-run-delta'; taskId: number; executionChatId: number; text: string }
   | { type: 'task-run-ended'; taskId: number; executionChatId: number }
+  /** Ephemeral Ask modal on a task page (not the execution chat). */
+  | {
+      type: 'task-ask-turn-started';
+      taskId: number;
+      sessionId: number;
+      activity?: { label: string };
+    }
+  | { type: 'task-ask-turn-delta'; taskId: number; sessionId: number; text: string }
+  | {
+      type: 'task-ask-turn-tool';
+      taskId: number;
+      sessionId: number;
+      phase: 'start' | 'end';
+      name: string;
+      label: string;
+      detail?: string;
+    }
+  | { type: 'task-ask-turn-lifecycle'; taskId: number; sessionId: number; phase: string; label: string }
+  | { type: 'task-ask-turn-ended'; taskId: number; sessionId: number; reply: string }
+  | { type: 'task-ask-turn-error'; taskId: number; sessionId: number; error: string }
 
   /* ---- gateway events forwarded to UI ---- */
   /** Gateway session index/metadata changed (possibly from another tab/CLI). */

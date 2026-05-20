@@ -1,20 +1,42 @@
 /**
  * Ephemeral "Ask" on a task page: fresh context snapshot + throwaway OpenClaw session.
  * Does not change task status, plan, execution chat, or the task's frozen snapshot.
+ *
+ * Turn streaming is pushed over the global WebSocket (`task-ask-turn-*`), same pattern
+ * as `task-run-delta` — clients filter by taskId + sessionId.
  */
 
 import { normalizeAgentId } from './chatRunner';
-import { openclawWs } from './openclawWs';
+import { openclawWs, type TurnEvent } from './openclawWs';
 import {
   chats,
   taskAskSessions,
   taskContextSnapshots,
   tasks,
 } from './store';
+import { toolActivityLabel } from './toolLabels';
 import { buildContextSnapshot, truncateSnapshotForPrompt } from './taskRunner';
+import { wsHub } from './wsHub';
+import type { ServerMsg } from '../types/protocol';
 import type { Task, TaskContextSnapshotPayload } from '../types';
 
 const ASK_BUDGET_MS = 120_000;
+
+function broadcastAsk(
+  taskId: number,
+  sessionId: number,
+  msg: Extract<
+    ServerMsg,
+    | { type: 'task-ask-turn-started' }
+    | { type: 'task-ask-turn-delta' }
+    | { type: 'task-ask-turn-tool' }
+    | { type: 'task-ask-turn-lifecycle' }
+    | { type: 'task-ask-turn-ended' }
+    | { type: 'task-ask-turn-error' }
+  >,
+): void {
+  wsHub.broadcastAll({ ...msg, taskId, sessionId });
+}
 
 function buildAskFirstTurnMessage(
   task: Task,
@@ -80,6 +102,42 @@ export async function openTaskAsk(taskId: number): Promise<{ sessionId: number }
   return { sessionId: row.id };
 }
 
+function handleAskTurnEvent(taskId: number, sessionId: number, ev: TurnEvent, acc: { text: string }): void {
+  if (ev.type === 'text-delta') {
+    acc.text += ev.text;
+    broadcastAsk(taskId, sessionId, { type: 'task-ask-turn-delta', taskId, sessionId, text: ev.text });
+  } else if (ev.type === 'text-final') {
+    acc.text = ev.text || acc.text;
+  } else if (ev.type === 'tool-start') {
+    broadcastAsk(taskId, sessionId, {
+      type: 'task-ask-turn-tool',
+      taskId,
+      sessionId,
+      phase: 'start',
+      name: ev.name,
+      label: ev.label,
+      detail: ev.detail,
+    });
+  } else if (ev.type === 'tool-end') {
+    broadcastAsk(taskId, sessionId, {
+      type: 'task-ask-turn-tool',
+      taskId,
+      sessionId,
+      phase: 'end',
+      name: ev.name,
+      label: toolActivityLabel(ev.name),
+    });
+  } else if (ev.type === 'lifecycle') {
+    broadcastAsk(taskId, sessionId, {
+      type: 'task-ask-turn-lifecycle',
+      taskId,
+      sessionId,
+      phase: ev.phase,
+      label: ev.label,
+    });
+  }
+}
+
 export async function taskAskTurn(
   taskId: number,
   sessionId: number,
@@ -103,23 +161,45 @@ export async function taskAskTurn(
     ? buildAskFirstTurnMessage(task, payload, text)
     : text;
 
-  let acc = '';
-  await Promise.race([
-    openclawWs.runTurn({
-      sessionKey: row.openclaw_session_key,
-      message: gatewayMessage,
-      onEvent: (ev) => {
-        if (ev.type === 'text-delta') acc += ev.text;
-        else if (ev.type === 'text-final') acc = ev.text || acc;
-      },
-    }),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('ask turn timed out')), ASK_BUDGET_MS),
-    ),
-  ]);
+  broadcastAsk(taskId, sessionId, {
+    type: 'task-ask-turn-started',
+    taskId,
+    sessionId,
+    activity: { label: 'Thinking…' },
+  });
 
-  taskAskSessions.incrementTurnCount(sessionId);
-  return { reply: acc.trim() || '(no response)' };
+  const acc = { text: '' };
+  try {
+    await Promise.race([
+      openclawWs.runTurn({
+        sessionKey: row.openclaw_session_key,
+        message: gatewayMessage,
+        onEvent: (ev) => handleAskTurnEvent(taskId, sessionId, ev, acc),
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('ask turn timed out')), ASK_BUDGET_MS),
+      ),
+    ]);
+
+    taskAskSessions.incrementTurnCount(sessionId);
+    const reply = acc.text.trim() || '(no response)';
+    broadcastAsk(taskId, sessionId, {
+      type: 'task-ask-turn-ended',
+      taskId,
+      sessionId,
+      reply,
+    });
+    return { reply };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    broadcastAsk(taskId, sessionId, {
+      type: 'task-ask-turn-error',
+      taskId,
+      sessionId,
+      error,
+    });
+    throw err;
+  }
 }
 
 export async function closeTaskAsk(taskId: number, sessionId: number): Promise<void> {
