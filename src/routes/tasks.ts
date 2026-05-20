@@ -271,13 +271,16 @@ tasksRouter.patch('/:id', (req, res) => {
   if (req.body?.goal != null) patch.goal = String(req.body.goal);
   if (req.body?.agent != null) patch.agent = String(req.body.agent);
   if (Array.isArray(req.body?.steps)) {
-    const steps = req.body.steps.map(
-      (s: { actor?: string; title?: string; description?: string }) => ({
-        actor: (s.actor === 'human' ? 'human' : 'agent') as TaskStepActor,
-        title: String(s.title ?? '').trim(),
-        description: s.description ? String(s.description) : null,
-      }),
-    ).filter((s: { title: string }) => s.title);
+    const steps = req.body.steps
+      .map(
+        (s: { id?: number; actor?: string; title?: string; description?: string }) => ({
+          id: s.id != null ? Number(s.id) : undefined,
+          actor: (s.actor === 'human' ? 'human' : 'agent') as TaskStepActor,
+          title: String(s.title ?? '').trim(),
+          description: s.description ? String(s.description) : null,
+        }),
+      )
+      .filter((s: { title: string }) => s.title);
     taskSteps.replaceAll(id, steps);
   }
   const updated = tasks.patch(id, patch) ?? task;
@@ -301,7 +304,8 @@ tasksRouter.post('/:id/approve-plan', (req, res) => {
   try {
     const task = approvePlan(
       id,
-      steps.map((s: { actor: string; title: string; description?: string }) => ({
+      steps.map((s: { id?: number; actor: string; title: string; description?: string }) => ({
+        id: s.id != null ? Number(s.id) : undefined,
         actor: (s.actor === 'human' ? 'human' : 'agent') as TaskStepActor,
         title: String(s.title).trim(),
         description: s.description ?? null,

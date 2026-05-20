@@ -355,6 +355,7 @@ export function pauseTaskForHumanStep(
   const task = tasks.get(taskId);
   if (!task) throw new Error('task not found');
   const text = (summary ?? step.title).trim() || step.title;
+  saveStepRunResult(step.id, text);
   taskSteps.updateStatus(step.id, 'needs_human');
   tasks.patch(taskId, { status: 'needs_human', resultSummary: text });
   postSourceChatNote(task.source_chat_id, `Task needs human: ${task.title} — ${step.title}`);
@@ -460,9 +461,32 @@ async function runExecutionTurn(opts: {
   return finalText;
 }
 
-function markRunningStepDone(taskId: number): void {
+/** Short preview under the step title (full text, not the expandable Agent output). */
+export function makeStepSummary(text: string, maxLen = 500): string {
+  const stripped = stripTaskOutcomeMarkers(text).trim();
+  if (!stripped) return '';
+  const firstParagraph =
+    stripped
+      .split(/\n\s*\n/)
+      .map((p) => p.trim())
+      .find((p) => p.length > 0) ?? stripped;
+  if (maxLen <= 0 || firstParagraph.length <= maxLen) return firstParagraph;
+  return firstParagraph.slice(0, maxLen);
+}
+
+function saveStepRunResult(stepId: number, text: string): void {
+  const body = stripTaskOutcomeMarkers(text).trim();
+  if (!body) return;
+  taskSteps.saveResult(stepId, body, makeStepSummary(body));
+}
+
+function markRunningStepDone(taskId: number, finalText?: string): void {
   const running = taskSteps.listByTask(taskId).find((s) => s.status === 'running');
-  if (running) taskSteps.updateStatus(running.id, 'done');
+  if (!running) return;
+  if (finalText != null && String(finalText).trim()) {
+    saveStepRunResult(running.id, finalText);
+  }
+  taskSteps.updateStatus(running.id, 'done');
 }
 
 function revertRunningStepToTodo(taskId: number): TaskStep | undefined {
@@ -556,6 +580,7 @@ async function runTaskStepLoop(
       taskId,
       executionChatId: opts.executionChatId,
       status: 'running',
+      taskStepId: active.id,
     });
 
     const prompt = buildExecutionPrompt({
@@ -594,7 +619,7 @@ async function runTaskStepLoop(
     }
 
     /* task_done or none (no marker): treat current agent step as finished and continue */
-    markRunningStepDone(taskId);
+    markRunningStepDone(taskId, finalText);
 
     const next = taskSteps.getActiveStep(taskId);
     if (!next) {
@@ -608,6 +633,39 @@ async function runTaskStepLoop(
 
     broadcastTaskUpdated(enrichTaskWithSteps(tasks.get(taskId)!));
   }
+}
+
+async function generatePlanForTask(
+  taskId: number,
+  goal: string,
+  payload: TaskContextSnapshotPayload,
+): Promise<TaskStep[]> {
+  const raw = await Promise.race([
+    runThrowawayTurn(buildTaskPlanPrompt(goal, payload)),
+    new Promise<string>((resolve) => setTimeout(() => resolve(''), PLAN_BUDGET_MS)),
+  ]);
+  const parsed = parsePlanLines(raw);
+  if (parsed.length) return taskSteps.replaceAll(taskId, parsed);
+  return taskSteps.listByTask(taskId);
+}
+
+/** Background: agent plan + flip task to ready. */
+async function finishTaskPlanning(
+  taskId: number,
+  opts: { sourceChatId: number; goal: string },
+): Promise<void> {
+  const task = tasks.get(taskId);
+  if (!task || task.status !== 'planning') return;
+  const snap = taskContextSnapshots.get(task.context_snapshot_id);
+  const payload = snap ? taskContextSnapshots.parsePayload(snap) : buildContextSnapshot(opts.sourceChatId);
+  try {
+    await generatePlanForTask(taskId, opts.goal, payload);
+  } catch (err) {
+    console.error('[taskRunner] plan generation failed for task', taskId, err);
+  }
+  tasks.patch(taskId, { status: 'ready' });
+  postSourceChatNote(opts.sourceChatId, `Task created: ${task.title}`);
+  broadcastTaskUpdated(enrichTaskWithSteps(tasks.get(taskId)!));
 }
 
 export async function createTask(opts: {
@@ -631,6 +689,7 @@ export async function createTask(opts: {
     payload,
   });
   const agent = (opts.agent ?? chat.agent).trim() || chat.agent;
+  const initialStatus: TaskStatus = opts.generatePlan ? 'planning' : 'ready';
   const task = tasks.create({
     projectId: chat.project_id,
     sourceChatId: opts.sourceChatId,
@@ -638,29 +697,33 @@ export async function createTask(opts: {
     goal: opts.goal,
     agent,
     contextSnapshotId: snap.id,
-    status: 'ready',
+    status: initialStatus,
   });
 
-  let steps: TaskStep[] = [];
   if (opts.generatePlan) {
-    const raw = await Promise.race([
-      runThrowawayTurn(buildTaskPlanPrompt(opts.goal, payload)),
-      new Promise<string>((resolve) => setTimeout(() => resolve(''), PLAN_BUDGET_MS)),
-    ]);
-    const parsed = parsePlanLines(raw);
-    if (parsed.length) steps = taskSteps.replaceAll(task.id, parsed);
+    const enriched = enrichTaskWithSteps(task);
+    wsHub.broadcastAll({ type: 'task-created', task: enriched });
+    void finishTaskPlanning(task.id, {
+      sourceChatId: opts.sourceChatId,
+      goal: opts.goal,
+    });
+    return enriched;
   }
 
   postSourceChatNote(opts.sourceChatId, `Task created: ${task.title}`);
   const enriched = enrichTaskWithSteps(task);
-  enriched.steps = steps.length ? steps : taskSteps.listByTask(task.id);
   wsHub.broadcastAll({ type: 'task-created', task: enriched });
   return enriched;
 }
 
 export function approvePlan(
   taskId: number,
-  steps: { actor: TaskStepActor; title: string; description?: string | null }[],
+  steps: {
+    id?: number;
+    actor: TaskStepActor;
+    title: string;
+    description?: string | null;
+  }[],
 ): TaskWithSteps {
   const task = tasks.get(taskId);
   if (!task) throw new Error('task not found');
@@ -746,7 +809,10 @@ export async function resumeTask(taskId: number, humanInput: string): Promise<Ta
 
   const steps = taskSteps.listByTask(taskId);
   const waiting = steps.find((s) => s.status === 'needs_human');
-  if (waiting) taskSteps.updateStatus(waiting.id, 'done');
+  if (waiting) {
+    saveStepRunResult(waiting.id, humanInput);
+    taskSteps.updateStatus(waiting.id, 'done');
+  }
 
   const next = taskSteps.getActiveStep(taskId);
   if (!next) {
@@ -814,7 +880,7 @@ export function completeTask(taskId: number, status: 'done' | 'failed'): TaskWit
 
 /** Board column mapping for Kanban UI. */
 export const TASK_BOARD_COLUMNS: { key: string; statuses: TaskStatus[] }[] = [
-  { key: 'ready', statuses: ['ready'] },
+  { key: 'ready', statuses: ['ready', 'planning'] },
   { key: 'running', statuses: ['running'] },
   { key: 'needs_human', statuses: ['needs_human'] },
   { key: 'review', statuses: ['needs_review'] },

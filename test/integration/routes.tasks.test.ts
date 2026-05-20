@@ -72,6 +72,42 @@ describe('POST /tasks', () => {
     const sys = messages.listByChat(chat.id).filter((m) => m.role === 'system');
     expect(sys.some((m) => m.content.includes('Task created'))).toBe(true);
   });
+
+  it('returns planning immediately when generatePlan is true, then becomes ready', async () => {
+    openclawWsMock.runTurn.mockImplementationOnce(
+      async ({ onEvent }: { onEvent?: (e: { type: string; text?: string }) => void }) => {
+        await new Promise((r) => setTimeout(r, 30));
+        const text = 'agent: Draft plan step\n';
+        onEvent?.({ type: 'text-final', text });
+        return { runId: 'r', text };
+      },
+    );
+    const chat = chats.create('openclaw/default', null);
+    messages.append(chat.id, 'user', 'grant github access', null);
+
+    const res = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'GitHub access',
+        goal: 'grant github access',
+        generatePlan: true,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.task.status).toBe('planning');
+    expect(taskSteps.listByTask(res.body.task.id)).toHaveLength(0);
+
+    const deadline = Date.now() + 5000;
+    let ready = tasks.get(res.body.task.id);
+    while (ready?.status !== 'ready' && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 40));
+      ready = tasks.get(res.body.task.id);
+    }
+    expect(ready?.status).toBe('ready');
+    expect(taskSteps.listByTask(res.body.task.id).length).toBeGreaterThan(0);
+  });
 });
 
 describe('approve and run', () => {

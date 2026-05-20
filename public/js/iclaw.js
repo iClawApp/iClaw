@@ -2858,12 +2858,15 @@
 
       case 'task-updated':
         if (document.getElementById('task-board')) refreshGlobalTasksBoard();
-        if (msg.task) applyTaskDetailRemoteTask(msg.task);
+        if (msg.task) {
+          finishPendingTaskCreateWhenReady(msg.task);
+          applyTaskDetailRemoteTask(msg.task);
+        }
         void refreshTasksNavSignals();
         return;
 
       case 'task-created':
-        finishPendingTaskCreateFromWs(msg.task);
+        if (msg.task?.status === 'ready') finishPendingTaskCreateFromWs(msg.task);
         void refreshTasksNavSignals();
         return;
 
@@ -4994,8 +4997,13 @@
     return true;
   }
 
+  function finishPendingTaskCreateWhenReady(task) {
+    if (!task || task.status !== 'ready') return;
+    finishPendingTaskCreateFromWs(task);
+  }
+
   function resolvePendingTaskCreateByTask(task) {
-    if (!task || task.id == null) return false;
+    if (!task || task.id == null || task.status !== 'ready') return false;
     const store = readPendingTaskCreatesStore();
     for (const rec of Object.values(store)) {
       if (!taskMatchesPendingRecord(task, rec)) continue;
@@ -5046,7 +5054,7 @@
         const created = Date.parse(t.created_at || '');
         return !Number.isNaN(created) && created >= started - 5000;
       });
-      if (match) resolvePendingTaskCreateByTask(match);
+      if (match && match.status === 'ready') resolvePendingTaskCreateByTask(match);
     } catch {
       /* ignore */
     }
@@ -5121,12 +5129,18 @@
         if (storeRec) {
           upsertPendingTaskCreateRecord({
             ...storeRec,
+            taskId: data.task.id,
             projectId: data.task.project_id ?? storeRec.projectId,
           });
         }
         const row = pendingTaskCreateBanners.get(pendingId);
-        if (row) row.projectId = data.task.project_id ?? row.projectId;
-        markTaskCreateBannerReady(pendingId, data.task.id, title);
+        if (row) {
+          row.taskId = data.task.id;
+          row.projectId = data.task.project_id ?? row.projectId;
+        }
+        if (data.task.status === 'ready') {
+          markTaskCreateBannerReady(pendingId, data.task.id, title);
+        }
       }
     } catch (err) {
       const storeRec = readPendingTaskCreatesStore()[pendingId];
@@ -6111,7 +6125,9 @@
     return [
       task.status,
       task.current_step_title || '',
-      steps.map((s) => String(s.id) + ':' + (s.status || '')).join(','),
+      steps
+        .map((s) => String(s.id) + ':' + (s.status || '') + ':' + (s.result_summary || ''))
+        .join(','),
     ].join('|');
   }
 
@@ -6193,13 +6209,7 @@
     }
   }
 
-  function tasksBoardHref(projectId) {
-    const pid = projectId != null ? Number(projectId) : NaN;
-    if (Number.isFinite(pid) && pid > 0) return '/tasks?projectId=' + encodeURIComponent(pid);
-    return '/tasks';
-  }
-
-  function redirectToTasksAfterApproveRun(taskId, title, projectId) {
+  function redirectToTasksAfterApproveRun(taskId, title) {
     sessionStorage.setItem(
       TASK_APPROVE_RUN_FLASH_KEY,
       JSON.stringify({
@@ -6208,7 +6218,7 @@
         at: Date.now(),
       }),
     );
-    window.location.href = tasksBoardHref(projectId);
+    window.location.href = '/tasks';
   }
 
   function redirectToTasksAfterResumeSubmit(taskId, title, humanInput) {
@@ -6449,6 +6459,21 @@
     return actor === 'human' ? '👤' : '✦';
   }
 
+  function isTaskStepRowLocked(row) {
+    return row?.dataset?.stepLocked === '1';
+  }
+
+  function taskStepRowActor(row) {
+    const staticActor = row?.querySelector('.task-step-actor-static');
+    if (staticActor?.classList.contains('task-step-actor-static--human')) return 'human';
+    if (staticActor?.classList.contains('task-step-actor-static--agent')) return 'agent';
+    const toggle = row?.querySelector('.task-step-actor-toggle');
+    if (toggle?.classList.contains('task-step-actor-toggle--human')) return 'human';
+    const input = row?.querySelector('.task-step-input');
+    if (input?.dataset.actor === 'human') return 'human';
+    return 'agent';
+  }
+
   function createTaskStepRow(opts) {
     const actor = opts && opts.actor === 'human' ? 'human' : 'agent';
     const title = opts && opts.title != null ? String(opts.title) : '';
@@ -6505,6 +6530,15 @@
     if (!firstRow) return;
     stepsList.querySelector('.task-step-insert--empty')?.remove();
     const prev = firstRow.previousElementSibling;
+    if (isTaskStepRowLocked(firstRow)) {
+      if (prev?.classList.contains('task-step-insert')) {
+        prev.classList.add('task-step-insert--hidden');
+      }
+      return;
+    }
+    if (prev?.classList.contains('task-step-insert')) {
+      prev.classList.remove('task-step-insert--hidden');
+    }
     if (!prev?.classList.contains('task-step-insert')) {
       const leading = createTaskStepInsert();
       leading.classList.add('task-step-insert--leading');
@@ -6522,17 +6556,30 @@
       stepsList.querySelectorAll('.task-step-insert:not(.task-step-insert--empty)').forEach((el) => el.remove());
     }
     rows.forEach((row) => {
+      const locked = isTaskStepRowLocked(row);
+      if (locked) {
+        row.querySelector('.task-step-delete')?.remove();
+        row.querySelector('.task-step-actor-toggle')?.remove();
+        const next = row.nextElementSibling;
+        if (next?.classList.contains('task-step-insert')) {
+          next.classList.add('task-step-insert--hidden');
+        }
+        return;
+      }
       if (!row.querySelector('.task-step-delete')) {
         row.insertAdjacentHTML('beforeend', taskStepDeleteHtml());
       }
       const next = row.nextElementSibling;
       if (!next?.classList.contains('task-step-insert')) {
         row.after(createTaskStepInsert());
+      } else {
+        next.classList.remove('task-step-insert--hidden');
       }
     });
   }
 
   function addStepBefore(nextStepRow, stepsList) {
+    if (isTaskStepRowLocked(nextStepRow)) return;
     const row = createTaskStepRow({ actor: 'agent', title: '' });
     nextStepRow.before(row);
     if (!row.nextElementSibling?.classList.contains('task-step-insert')) {
@@ -6545,6 +6592,7 @@
   }
 
   function addStepAfter(prevStepRow, stepsList) {
+    if (isTaskStepRowLocked(prevStepRow)) return;
     const row = createTaskStepRow({ actor: 'agent', title: '' });
     const insertLi = prevStepRow.nextElementSibling;
     if (insertLi?.classList.contains('task-step-insert')) {
@@ -6560,6 +6608,7 @@
   }
 
   function removeStepRow(row, stepsList) {
+    if (isTaskStepRowLocked(row)) return;
     const next = row.nextElementSibling;
     row.remove();
     if (next?.classList.contains('task-step-insert')) next.remove();
@@ -6577,25 +6626,34 @@
 
   function initTaskStepsEditor(stepsList, onChange) {
     if (!stepsList) return;
+    const planReadonly = stepsList.dataset.planReadonly === '1';
 
-    normalizeTaskStepsList(stepsList);
+    if (!planReadonly) normalizeTaskStepsList(stepsList);
 
-    if (typeof onChange === 'function') {
+    if (!planReadonly && typeof onChange === 'function') {
       stepsList.addEventListener('input', (ev) => {
         if (ev.target.closest('.task-step-input')) onChange();
       });
     }
 
-    stepsList.querySelectorAll('.task-step-row').forEach((row) => {
-      const ta = row.querySelector('.task-step-input');
-      if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
-    });
+    if (!planReadonly) {
+      stepsList.querySelectorAll('.task-step-row').forEach((row) => {
+        const ta = row.querySelector('.task-step-input');
+        if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+      });
+    }
+
+    if (planReadonly) {
+      updateTaskStepsCount(stepsList);
+      return;
+    }
 
     stepsList.addEventListener('click', (ev) => {
       const actorToggle = ev.target.closest('.task-step-actor-toggle');
       if (actorToggle && stepsList.contains(actorToggle)) {
         ev.preventDefault();
         const row = actorToggle.closest('.task-step-row');
+        if (row && isTaskStepRowLocked(row)) return;
         if (row) {
           const next =
             row.querySelector('.task-step-input')?.dataset.actor === 'human' ? 'agent' : 'human';
@@ -6609,6 +6667,7 @@
       if (insertBtn && stepsList.contains(insertBtn)) {
         ev.preventDefault();
         const insertLi = insertBtn.closest('.task-step-insert');
+        if (insertLi?.classList.contains('task-step-insert--hidden')) return;
         if (insertLi?.classList.contains('task-step-insert--empty')) {
           const row = createTaskStepRow({ actor: 'agent', title: '' });
           const leading = createTaskStepInsert();
@@ -6624,10 +6683,10 @@
         }
         const prevStep = insertLi?.previousElementSibling;
         const nextStep = insertLi?.nextElementSibling;
-        if (prevStep?.classList.contains('task-step-row')) {
+        if (prevStep?.classList.contains('task-step-row') && !isTaskStepRowLocked(prevStep)) {
           addStepAfter(prevStep, stepsList);
           onChange?.();
-        } else if (nextStep?.classList.contains('task-step-row')) {
+        } else if (nextStep?.classList.contains('task-step-row') && !isTaskStepRowLocked(nextStep)) {
           addStepBefore(nextStep, stepsList);
           onChange?.();
         }
@@ -6638,6 +6697,7 @@
       if (deleteBtn && stepsList.contains(deleteBtn)) {
         ev.preventDefault();
         const row = deleteBtn.closest('.task-step-row');
+        if (row && isTaskStepRowLocked(row)) return;
         if (row) {
           removeStepRow(row, stepsList);
           onChange?.();
@@ -6700,9 +6760,25 @@
     function collectSteps() {
       if (!stepsList) return [];
       return [...stepsList.querySelectorAll('.task-step-row:not(.task-step-row--empty)')].map((row) => {
+        const stepId = row.dataset.stepId ? Number(row.dataset.stepId) : undefined;
+        if (isTaskStepRowLocked(row) && Number.isFinite(stepId)) {
+          const readonly = row.querySelector('.task-step-title-readonly');
+          return {
+            id: stepId,
+            actor: taskStepRowActor(row),
+            title: (readonly?.textContent || '').trim(),
+            description: null,
+          };
+        }
         const input = row.querySelector('.task-step-input');
         const actor = input?.dataset.actor === 'human' ? 'human' : 'agent';
-        return { actor, title: (input?.value || '').trim(), description: null };
+        const step = {
+          actor,
+          title: (input?.value || '').trim(),
+          description: null,
+        };
+        if (Number.isFinite(stepId)) step.id = stepId;
+        return step;
       }).filter((s) => s.title);
     }
 
@@ -6793,7 +6869,7 @@
         }
         const title =
           document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
-        redirectToTasksAfterApproveRun(taskId, title, taskMeta && taskMeta.projectId);
+        redirectToTasksAfterApproveRun(taskId, title);
       } catch (err) {
         alert(err instanceof Error ? err.message : String(err));
         if (btn) btn.disabled = false;
@@ -6819,8 +6895,7 @@
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || res.statusText);
-          const pid = data.projectId != null ? Number(data.projectId) : taskMeta?.projectId;
-          window.location.href = tasksBoardHref(pid);
+          window.location.href = '/tasks';
         } catch (err) {
           alert(err instanceof Error ? err.message : String(err));
           deleteBtn.disabled = false;

@@ -1,5 +1,6 @@
 <%
   const statusLabels = {
+    planning: 'Preparing',
     ready: 'Ready',
     running: 'Running',
     needs_human: 'Your turn',
@@ -9,6 +10,10 @@
   };
   const statusLabel = statusLabels[task.status] || task.status;
   const nextByStatus = {
+    planning: {
+      title: 'Preparing task',
+      body: 'OpenClaw is building the plan from your goal and chat context. This usually takes a minute.',
+    },
     ready: {
       title: 'Ready to run',
       body: 'Review the plan, then Run agent. Plan changes save automatically.',
@@ -43,8 +48,10 @@
     done: 'Done',
     failed: 'Failed',
   };
+  const isPlanning = task.status === 'planning';
   const canRun = task.status === 'ready';
-  const showAgentOutput = task.status !== 'ready';
+  const showAgentOutput = task.status !== 'ready' && task.status !== 'planning';
+  const planEditorEnabled = !isPlanning;
   const isNeedsHuman = task.status === 'needs_human';
   const waitingPlanStep = isNeedsHuman
     ? task.steps.find(function (s) { return s.status === 'needs_human'; })
@@ -52,7 +59,9 @@
   const taskSyncFingerprint = [
     task.status,
     task.current_step_title || '',
-    task.steps.map(function (s) { return s.id + ':' + s.status; }).join(','),
+    task.steps.map(function (s) {
+      return s.id + ':' + s.status + ':' + (s.result_summary || '');
+    }).join(','),
   ].join('|');
 %>
 <%- include('partials/head', { title: task.title + ' — iClaw' }) %>
@@ -80,46 +89,87 @@
         <% } %>
       <% } %>
 
-      <details class="task-disclosure task-disclosure--plan"<%= isNeedsHuman ? '' : ' open' %>>
+      <details class="task-disclosure task-disclosure--plan<%= isPlanning ? ' task-disclosure--planning' : '' %>"<%= isNeedsHuman || isPlanning ? '' : ' open' %>>
         <summary>
           <span class="task-disclosure-title">Plan</span>
           <span class="task-disclosure-sub" id="task-steps-count"><%= task.steps.length %> steps</span>
         </summary>
         <div class="task-disclosure-body task-disclosure-body--flush">
-        <ul class="task-inset-list task-steps-list" id="task-steps-list">
+        <ul class="task-inset-list task-steps-list<%= planEditorEnabled ? '' : ' task-steps-list--readonly' %>" id="task-steps-list"<%= planEditorEnabled ? '' : ' data-plan-readonly="1"' %>>
           <% if (task.steps.length === 0) { %>
             <li class="task-step-insert task-step-insert--empty">
               <button type="button" class="task-step-insert-btn" title="Add step" aria-label="Add step">+</button>
             </li>
-          <% } else { %>
-            <li class="task-step-insert task-step-insert--leading">
+          <% } else {
+            const firstStepLocked = task.steps[0] && (task.steps[0].status === 'done' || task.steps[0].status === 'failed');
+          %>
+            <li class="task-step-insert task-step-insert--leading<%= firstStepLocked ? ' task-step-insert--hidden' : '' %>">
               <button type="button" class="task-step-insert-btn" title="Add step before first" aria-label="Add step before first">+</button>
             </li>
           <% } %>
-          <% task.steps.forEach(function (s) { %>
-            <li class="task-step-row" data-step-id="<%= s.id %>">
-              <button
-                type="button"
-                class="task-step-actor-toggle task-step-actor-toggle--<%= s.actor %>"
-                aria-label="<%= (actorLabels[s.actor] || s.actor) %> — switch to <%= s.actor === 'human' ? 'Agent' : 'You' %>"
-              >
-                <span class="task-step-badge task-step-badge--<%= s.actor %>" aria-hidden="true"><%= s.actor === 'human' ? '👤' : '✦' %></span>
-                <span class="task-step-actor-label"><%= actorLabels[s.actor] || s.actor %></span>
-              </button>
-              <div class="task-step-main">
-                <textarea class="task-step-input" rows="1" data-actor="<%= s.actor %>" aria-label="Step"><%= s.title %></textarea>
-              </div>
-              <% const stepStatus = stepStatusLabels[s.status] || ''; %>
-              <% if (stepStatus) { %>
-                <span class="task-step-state task-step-state--<%= s.status %>"><%= stepStatus %></span>
+          <% task.steps.forEach(function (s) {
+            const stepLocked = s.status === 'done' || s.status === 'failed';
+            const stepStatus = stepStatusLabels[s.status] || '';
+            const outputLabel = s.actor === 'human' ? 'Your answer' : 'Agent output';
+          %>
+            <li
+              class="task-step-row<%= stepLocked ? ' task-step-row--locked' : '' %>"
+              data-step-id="<%= s.id %>"
+              data-step-status="<%= s.status %>"
+              data-step-locked="<%= stepLocked ? '1' : '0' %>"
+            >
+              <% if (stepLocked) { %>
+                <div class="task-step-aside">
+                  <div
+                    class="task-step-actor-static task-step-actor-static--<%= s.actor %>"
+                    aria-label="<%= actorLabels[s.actor] || s.actor %>"
+                  >
+                    <span class="task-step-badge task-step-badge--<%= s.actor %>" aria-hidden="true"><%= s.actor === 'human' ? '👤' : '✦' %></span>
+                    <span class="task-step-actor-label"><%= actorLabels[s.actor] || s.actor %></span>
+                  </div>
+                  <% if (stepStatus) { %>
+                    <span class="task-step-state task-step-state--<%= s.status %>"><%= stepStatus %></span>
+                  <% } %>
+                </div>
+                <div class="task-step-locked-shell">
+                  <div class="task-step-head-main">
+                    <div class="task-step-title-readonly"><%= s.title %></div>
+                    <% if (s.result_summary) { %>
+                      <p class="task-step-summary"><%= s.result_summary %></p>
+                    <% } %>
+                  </div>
+                  <% if (s.result_body) { %>
+                    <details class="task-step-output">
+                      <summary><%= outputLabel %></summary>
+                      <div class="task-step-output-body task-md msg-body"><%= s.result_body %></div>
+                    </details>
+                  <% } %>
+                </div>
+              <% } else { %>
+                <div class="task-step-aside">
+                  <button
+                    type="button"
+                    class="task-step-actor-toggle task-step-actor-toggle--<%= s.actor %>"
+                    aria-label="<%= (actorLabels[s.actor] || s.actor) %> — switch to <%= s.actor === 'human' ? 'Agent' : 'You' %>"
+                  >
+                    <span class="task-step-badge task-step-badge--<%= s.actor %>" aria-hidden="true"><%= s.actor === 'human' ? '👤' : '✦' %></span>
+                    <span class="task-step-actor-label"><%= actorLabels[s.actor] || s.actor %></span>
+                  </button>
+                  <% if (stepStatus) { %>
+                    <span class="task-step-state task-step-state--<%= s.status %>"><%= stepStatus %></span>
+                  <% } %>
+                </div>
+                <div class="task-step-main">
+                  <textarea class="task-step-input" rows="1" data-actor="<%= s.actor %>" aria-label="Step"><%= s.title %></textarea>
+                </div>
+                <button type="button" class="task-step-delete" title="Remove step" aria-label="Remove step">
+                  <svg class="task-step-delete-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6"/><path d="M14 11v6"/>
+                  </svg>
+                </button>
               <% } %>
-              <button type="button" class="task-step-delete" title="Remove step" aria-label="Remove step">
-                <svg class="task-step-delete-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6"/><path d="M14 11v6"/>
-                </svg>
-              </button>
             </li>
-            <li class="task-step-insert">
+            <li class="task-step-insert<%= stepLocked ? ' task-step-insert--hidden' : '' %>">
               <button type="button" class="task-step-insert-btn" title="Add step after" aria-label="Add step after">+</button>
             </li>
           <% }); %>

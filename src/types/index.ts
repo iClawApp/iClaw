@@ -69,6 +69,7 @@ export interface ProjectSecret {
 export type ChatKind = 'normal' | 'task_execution';
 
 export type TaskStatus =
+  | 'planning'
   | 'ready'
   | 'running'
   | 'needs_human'
@@ -128,6 +129,10 @@ export interface TaskStep {
   title: string;
   description: string | null;
   status: TaskStepStatus;
+  /** Short line shown under the step title in the plan. */
+  result_summary: string | null;
+  /** Full agent/human output for this step (markdown text). */
+  result_body: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -136,6 +141,8 @@ export interface TaskRun {
   id: number;
   task_id: number;
   execution_chat_id: number;
+  /** Plan step this run belonged to, when known. */
+  task_step_id: number | null;
   status: string;
   started_at: string;
   finished_at: string | null;

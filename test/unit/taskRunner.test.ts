@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import {
   buildContextSnapshot,
   formatAgentHumanAsk,
+  makeStepSummary,
   parsePlanLines,
   parseTaskOutcome,
   stripTaskOutcomeMarkers,
@@ -66,6 +67,15 @@ describe('taskRunner parsers', () => {
   it('stripTaskOutcomeMarkers removes protocol lines', () => {
     expect(stripTaskOutcomeMarkers('Hello\nNEEDS_HUMAN\nWorld')).toBe('Hello\nWorld');
     expect(stripTaskOutcomeMarkers('Hi\nADD_HUMAN_STEP: Fix\nBye')).toBe('Hi\nBye');
+  });
+
+  it('makeStepSummary returns first paragraph without protocol markers', () => {
+    expect(makeStepSummary('Deployed v2.\nTASK_DONE')).toBe('Deployed v2.');
+    expect(makeStepSummary('')).toBe('');
+    expect(makeStepSummary('Line one\nLine two\n\nMore')).toBe('Line one\nLine two');
+    const long = 'x'.repeat(600);
+    expect(makeStepSummary(long).length).toBe(500);
+    expect(makeStepSummary(long).endsWith('…')).toBe(false);
   });
 });
 

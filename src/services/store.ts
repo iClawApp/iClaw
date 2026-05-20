@@ -1075,22 +1075,70 @@ export const taskSteps = {
   },
   replaceAll(
     taskId: number,
-    steps: { actor: TaskStepActor; title: string; description?: string | null }[],
+    steps: {
+      id?: number;
+      actor: TaskStepActor;
+      title: string;
+      description?: string | null;
+    }[],
   ): TaskStep[] {
+    const existing = this.listByTask(taskId);
+    const locked = new Map(
+      existing
+        .filter((s) => s.status === 'done' || s.status === 'failed')
+        .map((s) => [s.id, s]),
+    );
     const del = db.prepare('DELETE FROM task_steps WHERE task_id = ?');
     const ins = db.prepare(
-      `INSERT INTO task_steps (task_id, position, actor, title, description, status)
-       VALUES (?, ?, ?, ?, ?, 'todo')`,
+      `INSERT INTO task_steps (
+         task_id, position, actor, title, description, status, result_summary, result_body
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const run = db.transaction(() => {
       del.run(taskId);
       steps.forEach((s, i) => {
-        ins.run(taskId, i, s.actor, s.title.trim(), s.description?.trim() || null);
+        const stepId = s.id != null ? Number(s.id) : NaN;
+        const preserved = Number.isFinite(stepId) ? locked.get(stepId) : undefined;
+        if (preserved) {
+          ins.run(
+            taskId,
+            i,
+            preserved.actor,
+            preserved.title,
+            preserved.description,
+            preserved.status,
+            preserved.result_summary,
+            preserved.result_body,
+          );
+        } else {
+          ins.run(
+            taskId,
+            i,
+            s.actor,
+            s.title.trim(),
+            s.description?.trim() || null,
+            'todo',
+            null,
+            null,
+          );
+        }
       });
     });
     run();
     touchTask(taskId);
     return this.listByTask(taskId);
+  },
+  saveResult(stepId: number, body: string | null, summary?: string | null): void {
+    const b =
+      body != null && String(body).trim() ? String(body).trim().slice(0, 20_000) : null;
+    const sum =
+      summary != null && String(summary).trim()
+        ? String(summary).trim().slice(0, 500)
+        : null;
+    db.prepare(
+      `UPDATE task_steps SET result_summary = ?, result_body = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+    ).run(sum, b, stepId);
   },
   updateStatus(stepId: number, status: TaskStepStatus): void {
     db.prepare(
@@ -1134,12 +1182,17 @@ export const taskSteps = {
 };
 
 export const taskRuns = {
-  create(opts: { taskId: number; executionChatId: number; status: string }): TaskRun {
+  create(opts: {
+    taskId: number;
+    executionChatId: number;
+    status: string;
+    taskStepId?: number | null;
+  }): TaskRun {
     const info = db
       .prepare(
-        'INSERT INTO task_runs (task_id, execution_chat_id, status) VALUES (?, ?, ?)',
+        'INSERT INTO task_runs (task_id, execution_chat_id, task_step_id, status) VALUES (?, ?, ?, ?)',
       )
-      .run(opts.taskId, opts.executionChatId, opts.status);
+      .run(opts.taskId, opts.executionChatId, opts.taskStepId ?? null, opts.status);
     return db.prepare('SELECT * FROM task_runs WHERE id = ?').get(Number(info.lastInsertRowid)) as TaskRun;
   },
   finish(id: number, status: string, logSummary: string | null): void {

@@ -152,9 +152,11 @@ CREATE TABLE IF NOT EXISTS task_steps (
   actor        TEXT NOT NULL,
   title        TEXT NOT NULL,
   description  TEXT,
-  status       TEXT NOT NULL DEFAULT 'todo',
-  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  status          TEXT NOT NULL DEFAULT 'todo',
+  result_summary  TEXT,
+  result_body     TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id, position);
@@ -163,6 +165,7 @@ CREATE TABLE IF NOT EXISTS task_runs (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id             INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   execution_chat_id   INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  task_step_id        INTEGER REFERENCES task_steps(id) ON DELETE SET NULL,
   status              TEXT NOT NULL,
   started_at          TEXT NOT NULL DEFAULT (datetime('now')),
   finished_at         TEXT,
@@ -241,6 +244,10 @@ function migrateTaskInboxToReady(): void {
   db.exec("UPDATE tasks SET status = 'ready' WHERE status = 'inbox'");
 }
 migrateTaskInboxToReady();
+
+ensureColumn('task_steps', 'result_summary', 'TEXT');
+ensureColumn('task_steps', 'result_body', 'TEXT');
+ensureColumn('task_runs', 'task_step_id', 'INTEGER REFERENCES task_steps(id) ON DELETE SET NULL');
 
 /** SQLite's lower() is ASCII-only; JS toLowerCase() folds Cyrillic and other scripts for search. */
 db.function(
