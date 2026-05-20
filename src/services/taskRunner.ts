@@ -263,8 +263,9 @@ function buildExecutionPrompt(opts: {
       : '- Execute only the current agent step; do not skip ahead past unfinished human steps.',
     '- If a human step is required, stop and return NEEDS_HUMAN with a clear instruction on the last line.',
     '- Do not continue past human approval gates.',
-    '- When finished successfully, end with TASK_DONE on its own line.',
-    '- When human review is needed before closing, end with NEEDS_REVIEW on its own line.',
+    '- When the current agent step is finished, end with TASK_DONE on its own line (the runner advances to the next plan step).',
+    '- Use TASK_DONE only after completing the current step — not while human steps are still pending.',
+    '- When human review is needed before closing the whole task, end with NEEDS_REVIEW on its own line.',
   ].join('\n');
 }
 
@@ -362,14 +363,7 @@ function applyOutcomeToTask(taskId: number, outcome: ParsedTaskOutcome, assistan
     return 'needs_human';
   }
   if (outcome.kind === 'task_done') {
-    tasks.patch(taskId, {
-      status: 'done',
-      resultSummary: assistantText.slice(0, 4000) || null,
-    });
-    const active = taskSteps.getActiveStep(taskId);
-    if (active) taskSteps.updateStatus(active.id, 'done');
-    postSourceChatNote(task.source_chat_id, `Task done: ${task.title}`);
-    return 'done';
+    throw new Error('task_done is handled by runTaskStepLoop');
   }
   if (outcome.kind === 'needs_review') {
     tasks.patch(taskId, { status: 'needs_review', resultSummary: assistantText.slice(0, 4000) });
@@ -441,6 +435,110 @@ async function runExecutionTurn(opts: {
   });
 
   return finalText;
+}
+
+function markRunningStepDone(taskId: number): void {
+  const running = taskSteps.listByTask(taskId).find((s) => s.status === 'running');
+  if (running) taskSteps.updateStatus(running.id, 'done');
+}
+
+function finishTaskComplete(taskId: number, summary: string | null): void {
+  const task = tasks.get(taskId)!;
+  tasks.patch(taskId, {
+    status: 'done',
+    resultSummary: summary,
+  });
+  postSourceChatNote(task.source_chat_id, `Task done: ${task.title}`);
+  broadcastTaskUpdated(enrichTaskWithSteps(tasks.get(taskId)!));
+}
+
+/**
+ * Run agent turns until a human gate, review, failure, or all plan steps are done.
+ * TASK_DONE advances one agent step; the whole task closes only when no steps remain.
+ */
+async function runTaskStepLoop(
+  taskId: number,
+  opts: {
+    executionChatId: number;
+    payload: TaskContextSnapshotPayload;
+    goal: string;
+    resumeNote?: string;
+    initialRunSummary?: string | null;
+  },
+): Promise<void> {
+  const task = tasks.get(taskId);
+  if (!task) throw new Error('task not found');
+  let runSummary = opts.initialRunSummary ?? null;
+  let resumeNote = opts.resumeNote;
+
+  while (true) {
+    const active = taskSteps.getActiveStep(taskId);
+
+    if (!active) {
+      finishTaskComplete(taskId, runSummary);
+      return;
+    }
+
+    if (active.actor === 'human') {
+      pauseTaskForHumanStep(taskId, active, runSummary);
+      return;
+    }
+
+    if (active.status === 'todo') {
+      taskSteps.updateStatus(active.id, 'running');
+    }
+
+    tasks.patch(taskId, { status: 'running', resultSummary: runSummary });
+    broadcastTaskUpdated(tasks.get(taskId)!);
+
+    const run = taskRuns.create({
+      taskId,
+      executionChatId: opts.executionChatId,
+      status: 'running',
+    });
+
+    const prompt = buildExecutionPrompt({
+      goal: opts.goal,
+      payload: opts.payload,
+      steps: taskSteps.listByTask(taskId),
+      resumeNote,
+      runSummary,
+    });
+    resumeNote = undefined;
+
+    const finalText = await runExecutionTurn({
+      taskId,
+      executionChatId: opts.executionChatId,
+      gatewayMessage: prompt,
+      runId: run.id,
+    });
+    runSummary = finalText.slice(0, 4000) || null;
+    const outcome = parseTaskOutcome(finalText);
+
+    if (outcome.kind === 'needs_human') {
+      applyOutcomeToTask(taskId, outcome, finalText);
+      return;
+    }
+    if (outcome.kind === 'needs_review') {
+      applyOutcomeToTask(taskId, outcome, finalText);
+      return;
+    }
+
+    /* task_done or none (no marker): treat current agent step as finished and continue */
+    markRunningStepDone(taskId);
+
+    const next = taskSteps.getActiveStep(taskId);
+    if (!next) {
+      finishTaskComplete(taskId, runSummary);
+      return;
+    }
+    if (next.actor === 'human') {
+      pauseTaskForHumanStep(taskId, next, runSummary);
+      return;
+    }
+
+    broadcastTaskUpdated(enrichTaskWithSteps(tasks.get(taskId)!));
+  }
 }
 
 export async function createTask(opts: {
@@ -538,33 +636,19 @@ export async function runTask(taskId: number): Promise<TaskWithSteps> {
 
   const snap = taskContextSnapshots.get(task.context_snapshot_id)!;
   const payload = taskContextSnapshots.parsePayload(snap);
-  const run = taskRuns.create({
-    taskId,
-    executionChatId,
-    status: 'running',
-  });
-
-  const prompt = buildExecutionPrompt({
-    goal: task.goal,
-    payload,
-    steps,
-  });
 
   try {
     await chatStatus.withLock(executionChatId, async () => {
-      const finalText = await Promise.race([
-        runExecutionTurn({
-          taskId,
+      await Promise.race([
+        runTaskStepLoop(taskId, {
           executionChatId,
-          gatewayMessage: prompt,
-          runId: run.id,
+          payload,
+          goal: task.goal,
         }),
-        new Promise<string>((_, reject) =>
+        new Promise<void>((_, reject) =>
           setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
         ),
       ]);
-      const outcome = parseTaskOutcome(finalText);
-      applyOutcomeToTask(taskId, outcome, finalText);
     });
   } catch (err) {
     const msg = isGatewayBridgeFailure(err)
@@ -573,7 +657,10 @@ export async function runTask(taskId: number): Promise<TaskWithSteps> {
         ? err.message
         : String(err);
     tasks.patch(taskId, { status: 'failed', resultSummary: msg });
-    taskRuns.finish(run.id, 'failed', msg);
+    const latestRun = taskRuns.getLatest(taskId);
+    if (latestRun && latestRun.status === 'running') {
+      taskRuns.finish(latestRun.id, 'failed', msg);
+    }
     postSourceChatNote(task.source_chat_id, `Task failed: ${task.title}`);
     throw err;
   }
@@ -594,10 +681,8 @@ export async function resumeTask(taskId: number, humanInput: string): Promise<Ta
 
   const next = taskSteps.getActiveStep(taskId);
   if (!next) {
-    tasks.patch(taskId, { status: 'done' });
-    const enriched = enrichTaskWithSteps(tasks.get(taskId)!);
-    broadcastTaskUpdated(enriched);
-    return enriched;
+    finishTaskComplete(taskId, humanInput.trim() || task.result_summary);
+    return enrichTaskWithSteps(tasks.get(taskId)!);
   }
   if (next.actor === 'human') {
     return pauseTaskForHumanStep(taskId, next, humanInput);
@@ -614,35 +699,28 @@ export async function resumeTask(taskId: number, humanInput: string): Promise<Ta
   tasks.patch(taskId, { status: 'running' });
   broadcastTaskUpdated(tasks.get(taskId)!);
 
-  const run = taskRuns.create({
-    taskId,
-    executionChatId,
-    status: 'running',
-  });
-
-  const prompt = buildExecutionPrompt({
-    goal: task.goal,
-    payload,
-    steps,
-    resumeNote: humanInput.trim(),
-    runSummary: lastRun?.log_summary ?? task.result_summary,
-  });
-
   try {
     await chatStatus.withLock(executionChatId, async () => {
-      const finalText = await runExecutionTurn({
-        taskId,
-        executionChatId,
-        gatewayMessage: prompt,
-        runId: run.id,
-      });
-      const outcome = parseTaskOutcome(finalText);
-      applyOutcomeToTask(taskId, outcome, finalText);
+      await Promise.race([
+        runTaskStepLoop(taskId, {
+          executionChatId,
+          payload,
+          goal: task.goal,
+          resumeNote: humanInput.trim(),
+          initialRunSummary: lastRun?.log_summary ?? task.result_summary,
+        }),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
+        ),
+      ]);
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     tasks.patch(taskId, { status: 'failed', resultSummary: msg });
-    taskRuns.finish(run.id, 'failed', msg);
+    const latestRun = taskRuns.getLatest(taskId);
+    if (latestRun && latestRun.status === 'running') {
+      taskRuns.finish(latestRun.id, 'failed', msg);
+    }
     throw err;
   }
 

@@ -4731,6 +4731,13 @@ code {
   line-height: 1.45;
   color: color-mix(in srgb, var(--text) 72%, var(--muted));
 }
+.task-hint--below-title {
+  margin-top: calc(-1 * var(--space-3));
+  margin-bottom: var(--space-6);
+}
+.task-hint--below-title + .task-hint--sub {
+  margin-top: calc(-1 * var(--space-5));
+}
 .task-hint--sub {
   margin-top: calc(-1 * var(--space-3));
   font-size: 0.8125rem;
@@ -5101,9 +5108,7 @@ code {
 .task-step-main {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-self: center;
 }
 .task-step-actor-label {
   font-size: 0.68rem;
@@ -5312,82 +5317,161 @@ code {
   font-size: var(--text-sm);
   color: var(--muted);
 }
+.task-steps-list.task-inset-list {
+  overflow: visible;
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
 .task-steps-list .task-step-row {
   position: relative;
-  padding-right: 96px;
-}
-.task-step-row--empty {
   align-items: center;
-  min-height: 44px;
+  padding-right: 14px;
 }
-.task-step-empty-label {
-  flex: 1;
-  font-size: var(--text-sm);
-  color: var(--muted);
+.task-steps-list .task-step-insert {
+  position: relative;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: none;
+  background: transparent;
+  overflow: visible;
 }
-.task-step-actions {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
+.task-step-insert--empty {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 2px 4px;
-  border-radius: 8px;
+  justify-content: center;
+  height: auto;
+  min-height: 52px;
+  padding: var(--space-4) 0;
   background: var(--surface);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease;
 }
-.task-step-row:hover .task-step-actions,
-.task-step-row:focus-within .task-step-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-.task-step-row:has(.task-step-state) {
-  padding-right: 128px;
-}
-@media (hover: none) {
-  .task-step-actions {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
-.task-step-action {
+.task-step-insert-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   margin: 0;
   padding: 0;
   border: none;
-  border-radius: 6px;
-  background: transparent;
+  border-radius: var(--radius-circle);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent);
   color: var(--muted);
   font: inherit;
-  font-size: 1rem;
+  font-size: 1.05rem;
+  font-weight: 500;
   line-height: 1;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 }
-.task-step-action:hover {
-  background: color-mix(in srgb, var(--text) 8%, var(--surface));
+.task-steps-list .task-step-insert:not(.task-step-insert--empty) .task-step-insert-btn {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+}
+.task-steps-list .task-step-insert--leading .task-step-insert-btn {
+  top: auto;
+  bottom: 0;
+  transform: translate(-50%, 50%);
+}
+.task-steps-list .task-step-row:hover + .task-step-insert .task-step-insert-btn,
+.task-steps-list .task-step-insert--leading:has(+ .task-step-row:hover) .task-step-insert-btn,
+.task-steps-list .task-step-insert:hover .task-step-insert-btn,
+.task-steps-list .task-step-insert:focus-within .task-step-insert-btn,
+.task-steps-list:hover .task-step-insert--empty .task-step-insert-btn,
+.task-step-insert--empty:hover .task-step-insert-btn,
+.task-step-insert-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
   color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, var(--surface));
 }
-.task-step-action--delete:hover {
+.task-step-insert-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, var(--surface));
+}
+.task-steps-list .task-step-delete {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.task-step-delete-icon {
+  display: block;
+}
+.task-steps-list .task-step-row:hover .task-step-delete,
+.task-steps-list .task-step-row:focus-within .task-step-delete,
+.task-steps-list .task-step-delete:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.task-steps-list .task-step-delete:hover {
   color: #ff3b30;
   background: color-mix(in srgb, #ff3b30 10%, var(--surface));
 }
-.task-step-action--actor {
-  font-size: 0.9rem;
+.task-step-actor-toggle {
+  flex-shrink: 0;
+  align-self: center;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 3.25rem;
+  min-height: 2.75rem;
+  margin: 0;
+  padding: 4px 2px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.task-step-actor-toggle:hover {
+  background: color-mix(in srgb, var(--text) 6%, var(--surface));
+}
+.task-step-actor-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+}
+.task-step-actor-toggle .task-step-badge {
+  margin: 0;
+  flex-shrink: 0;
+}
+.task-step-actor-toggle .task-step-actor-label {
+  display: block;
+  width: 100%;
+  text-align: center;
+  line-height: 1.1;
 }
 .task-step-badge {
   flex-shrink: 0;
   width: 26px;
   height: 26px;
-  margin-top: 2px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5421,11 +5505,11 @@ code {
   field-sizing: content;
 }
 .task-step-input:focus { outline: none; }
-.task-step-state {
+.task-steps-list .task-step-state {
   flex-shrink: 0;
   align-self: center;
   margin-left: auto;
-  margin-right: 0;
+  margin-right: var(--space-2);
   padding: 3px 8px;
   border-radius: var(--radius-pill);
   font-size: 0.68rem;
@@ -5457,6 +5541,17 @@ code {
   background: transparent;
   box-shadow: none;
   overflow: visible;
+}
+.task-disclosure--plan {
+  margin-bottom: var(--space-5);
+  border-top: none;
+}
+.task-disclosure--plan .task-disclosure-body--flush .task-inset-list {
+  margin-bottom: 0;
+}
+.task-inset-list--actions-primary {
+  margin-top: 0;
+  margin-bottom: var(--space-6);
 }
 .task-disclosure--inline {
   margin-bottom: var(--space-6);

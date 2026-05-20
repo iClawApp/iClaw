@@ -6160,7 +6160,7 @@
 
     await refreshGlobalTasksBoard();
     showBoardFlashBanner({
-      lead: 'Задачу «' + title + '» затверджено і запущено',
+      lead: 'Задачу «' + title + '» запущено',
       detail: 'Агент працює у фоні. Статус оновлюється на дошці.',
       variant: 'success',
       dismissMs: 12000,
@@ -6315,12 +6315,49 @@
   const TASK_HUMAN_INPUT_MAX_PX = 288; /* keep in sync with .task-human-input max-height (18rem) */
   const TASK_STEP_INPUT_MAX_PX = 120;
 
-  const TASK_STEP_ACTIONS_HTML =
-    '<div class="task-step-actions">' +
-    '<button type="button" class="task-step-action task-step-action--actor" title="Switch agent / you" aria-label="Switch executor">⇄</button>' +
-    '<button type="button" class="task-step-action task-step-action--add" title="Add step after" aria-label="Add step after">+</button>' +
-    '<button type="button" class="task-step-action task-step-action--delete" title="Remove step" aria-label="Remove step">×</button>' +
-    '</div>';
+  const TASK_STEP_TRASH_SVG =
+    '<svg class="task-step-delete-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+
+  function taskStepDeleteHtml() {
+    return (
+      '<button type="button" class="task-step-delete" title="Remove step" aria-label="Remove step">' +
+      TASK_STEP_TRASH_SVG +
+      '</button>'
+    );
+  }
+
+  function createTaskStepInsert() {
+    const li = document.createElement('li');
+    li.className = 'task-step-insert';
+    li.innerHTML =
+      '<button type="button" class="task-step-insert-btn" title="Add step after" aria-label="Add step after">+</button>';
+    return li;
+  }
+
+  function taskStepActorToggleHtml(actor) {
+    const a = actor === 'human' ? 'human' : 'agent';
+    const label = taskStepActorLabel(a);
+    const other = a === 'human' ? 'Agent' : 'You';
+    return (
+      '<button type="button" class="task-step-actor-toggle task-step-actor-toggle--' +
+      a +
+      '" aria-label="' +
+      label +
+      ' — switch to ' +
+      other +
+      '">' +
+      '<span class="task-step-badge task-step-badge--' +
+      a +
+      '" aria-hidden="true">' +
+      taskStepBadgeChar(a) +
+      '</span>' +
+      '<span class="task-step-actor-label">' +
+      label +
+      '</span>' +
+      '</button>'
+    );
+  }
 
   function taskStepActorLabel(actor) {
     return actor === 'human' ? 'You' : 'Agent';
@@ -6338,20 +6375,13 @@
     li.className = 'task-step-row';
     if (stepId) li.dataset.stepId = stepId;
     li.innerHTML =
-      '<span class="task-step-badge task-step-badge--' +
-      actor +
-      '" aria-hidden="true">' +
-      taskStepBadgeChar(actor) +
-      '</span>' +
+      taskStepActorToggleHtml(actor) +
       '<div class="task-step-main">' +
-      '<span class="task-step-actor-label">' +
-      taskStepActorLabel(actor) +
-      '</span>' +
       '<textarea class="task-step-input" rows="1" data-actor="' +
       actor +
       '" aria-label="Step"></textarea>' +
       '</div>' +
-      TASK_STEP_ACTIONS_HTML;
+      taskStepDeleteHtml();
     const input = li.querySelector('.task-step-input');
     if (input) input.value = title;
     return li;
@@ -6360,9 +6390,15 @@
   function setTaskStepRowActor(row, actor) {
     const next = actor === 'human' ? 'human' : 'agent';
     const input = row.querySelector('.task-step-input');
+    const toggle = row.querySelector('.task-step-actor-toggle');
     const badge = row.querySelector('.task-step-badge');
     const label = row.querySelector('.task-step-actor-label');
     if (input) input.dataset.actor = next;
+    if (toggle) {
+      toggle.className = 'task-step-actor-toggle task-step-actor-toggle--' + next;
+      const lbl = taskStepActorLabel(next);
+      toggle.setAttribute('aria-label', lbl + ' — switch to ' + (next === 'human' ? 'Agent' : 'You'));
+    }
     if (badge) {
       badge.className = 'task-step-badge task-step-badge--' + next;
       badge.textContent = taskStepBadgeChar(next);
@@ -6372,17 +6408,82 @@
 
   function ensureTaskStepsEmptyPlaceholder(stepsList) {
     if (!stepsList) return;
-    if (stepsList.querySelector('.task-step-row:not(.task-step-row--empty)')) return;
-    if (stepsList.querySelector('.task-step-row--empty')) return;
-    const li = document.createElement('li');
-    li.className = 'task-step-row task-step-row--empty';
-    li.dataset.placeholder = '1';
-    li.innerHTML =
-      '<span class="task-step-empty-label">No steps yet</span>' +
-      '<div class="task-step-actions">' +
-      '<button type="button" class="task-step-action task-step-action--add" title="Add step" aria-label="Add step">+</button>' +
-      '</div>';
+    if (stepsList.querySelector('.task-step-row')) {
+      stepsList.querySelector('.task-step-insert--empty')?.remove();
+      return;
+    }
+    if (stepsList.querySelector('.task-step-insert--empty')) return;
+    const li = createTaskStepInsert();
+    li.classList.add('task-step-insert--empty');
     stepsList.appendChild(li);
+  }
+
+  function ensureLeadingStepInsert(stepsList) {
+    const firstRow = stepsList.querySelector('.task-step-row');
+    if (!firstRow) return;
+    stepsList.querySelector('.task-step-insert--empty')?.remove();
+    const prev = firstRow.previousElementSibling;
+    if (!prev?.classList.contains('task-step-insert')) {
+      const leading = createTaskStepInsert();
+      leading.classList.add('task-step-insert--leading');
+      firstRow.before(leading);
+    } else if (!prev.classList.contains('task-step-insert--leading')) {
+      prev.classList.add('task-step-insert--leading');
+    }
+  }
+
+  function normalizeTaskStepsList(stepsList) {
+    stepsList.querySelectorAll('.task-step-actions').forEach((el) => el.remove());
+    const rows = [...stepsList.querySelectorAll('.task-step-row')];
+    if (rows.length) ensureLeadingStepInsert(stepsList);
+    else {
+      stepsList.querySelectorAll('.task-step-insert:not(.task-step-insert--empty)').forEach((el) => el.remove());
+    }
+    rows.forEach((row) => {
+      if (!row.querySelector('.task-step-delete')) {
+        row.insertAdjacentHTML('beforeend', taskStepDeleteHtml());
+      }
+      const next = row.nextElementSibling;
+      if (!next?.classList.contains('task-step-insert')) {
+        row.after(createTaskStepInsert());
+      }
+    });
+  }
+
+  function addStepBefore(nextStepRow, stepsList) {
+    const row = createTaskStepRow({ actor: 'agent', title: '' });
+    nextStepRow.before(row);
+    if (!row.nextElementSibling?.classList.contains('task-step-insert')) {
+      row.after(createTaskStepInsert());
+    }
+    const ta = row.querySelector('.task-step-input');
+    if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+    ta?.focus();
+    updateTaskStepsCount(stepsList);
+  }
+
+  function addStepAfter(prevStepRow, stepsList) {
+    const row = createTaskStepRow({ actor: 'agent', title: '' });
+    const insertLi = prevStepRow.nextElementSibling;
+    if (insertLi?.classList.contains('task-step-insert')) {
+      insertLi.before(row);
+    } else {
+      prevStepRow.after(row);
+      prevStepRow.after(createTaskStepInsert());
+    }
+    const ta = row.querySelector('.task-step-input');
+    if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+    ta?.focus();
+    updateTaskStepsCount(stepsList);
+  }
+
+  function removeStepRow(row, stepsList) {
+    const next = row.nextElementSibling;
+    row.remove();
+    if (next?.classList.contains('task-step-insert')) next.remove();
+    normalizeTaskStepsList(stepsList);
+    ensureTaskStepsEmptyPlaceholder(stepsList);
+    updateTaskStepsCount(stepsList);
   }
 
   function updateTaskStepsCount(stepsList) {
@@ -6392,53 +6493,77 @@
     el.textContent = n + (n === 1 ? ' step' : ' steps');
   }
 
-  function initTaskStepsEditor(stepsList) {
+  function initTaskStepsEditor(stepsList, onChange) {
     if (!stepsList) return;
 
-    function mountStepRow(row) {
-      const ta = row.querySelector('.task-step-input');
-      if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+    normalizeTaskStepsList(stepsList);
+
+    if (typeof onChange === 'function') {
+      stepsList.addEventListener('input', (ev) => {
+        if (ev.target.closest('.task-step-input')) onChange();
+      });
     }
 
-    stepsList.querySelectorAll('.task-step-row:not(.task-step-row--empty)').forEach(mountStepRow);
+    stepsList.querySelectorAll('.task-step-row').forEach((row) => {
+      const ta = row.querySelector('.task-step-input');
+      if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+    });
 
     stepsList.addEventListener('click', (ev) => {
-      const btn = ev.target.closest('.task-step-action');
-      if (!btn || !stepsList.contains(btn)) return;
-      ev.preventDefault();
-
-      const emptyRow = btn.closest('.task-step-row--empty');
-      if (btn.classList.contains('task-step-action--add')) {
-        const after = emptyRow || btn.closest('.task-step-row');
-        const row = createTaskStepRow({ actor: 'agent', title: '' });
-        if (emptyRow) {
-          emptyRow.replaceWith(row);
-        } else if (after && after.nextSibling) {
-          after.parentNode.insertBefore(row, after.nextSibling);
-        } else if (after) {
-          after.parentNode.appendChild(row);
-        } else {
-          stepsList.appendChild(row);
+      const actorToggle = ev.target.closest('.task-step-actor-toggle');
+      if (actorToggle && stepsList.contains(actorToggle)) {
+        ev.preventDefault();
+        const row = actorToggle.closest('.task-step-row');
+        if (row) {
+          const next =
+            row.querySelector('.task-step-input')?.dataset.actor === 'human' ? 'agent' : 'human';
+          setTaskStepRowActor(row, next);
+          onChange?.();
         }
-        mountStepRow(row);
-        row.querySelector('.task-step-input')?.focus();
-        updateTaskStepsCount(stepsList);
         return;
       }
 
-      const row = btn.closest('.task-step-row');
-      if (!row || row.classList.contains('task-step-row--empty')) return;
+      const insertBtn = ev.target.closest('.task-step-insert-btn');
+      if (insertBtn && stepsList.contains(insertBtn)) {
+        ev.preventDefault();
+        const insertLi = insertBtn.closest('.task-step-insert');
+        if (insertLi?.classList.contains('task-step-insert--empty')) {
+          const row = createTaskStepRow({ actor: 'agent', title: '' });
+          const leading = createTaskStepInsert();
+          leading.classList.add('task-step-insert--leading');
+          const trailing = createTaskStepInsert();
+          insertLi.replaceWith(leading, row, trailing);
+          const ta = row.querySelector('.task-step-input');
+          if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+          ta?.focus();
+          updateTaskStepsCount(stepsList);
+          onChange?.();
+          return;
+        }
+        const prevStep = insertLi?.previousElementSibling;
+        const nextStep = insertLi?.nextElementSibling;
+        if (prevStep?.classList.contains('task-step-row')) {
+          addStepAfter(prevStep, stepsList);
+          onChange?.();
+        } else if (nextStep?.classList.contains('task-step-row')) {
+          addStepBefore(nextStep, stepsList);
+          onChange?.();
+        }
+        return;
+      }
 
-      if (btn.classList.contains('task-step-action--actor')) {
-        const actor = row.querySelector('.task-step-input')?.dataset.actor === 'human' ? 'agent' : 'human';
-        setTaskStepRowActor(row, actor);
-      } else if (btn.classList.contains('task-step-action--delete')) {
-        row.remove();
-        ensureTaskStepsEmptyPlaceholder(stepsList);
-        updateTaskStepsCount(stepsList);
+      const deleteBtn = ev.target.closest('.task-step-delete');
+      if (deleteBtn && stepsList.contains(deleteBtn)) {
+        ev.preventDefault();
+        const row = deleteBtn.closest('.task-step-row');
+        if (row) {
+          removeStepRow(row, stepsList);
+          onChange?.();
+        }
       }
     });
 
+    ensureTaskStepsEmptyPlaceholder(stepsList);
     updateTaskStepsCount(stepsList);
   }
 
@@ -6478,13 +6603,16 @@
     });
 
     const runBtn = document.getElementById('task-run-btn');
-    const approveBtn = document.getElementById('task-approve-plan');
-    const approveAndRunBtn = document.getElementById('task-approve-and-run');
     const resumeBtn = document.getElementById('task-resume-btn');
     const doneBtn = document.getElementById('task-done-btn');
     const failBtn = document.getElementById('task-fail-btn');
     const stepsList = document.getElementById('task-steps-list');
-    initTaskStepsEditor(stepsList);
+    const taskMeta = window.__ICLAW_TASK__;
+    const planAutosaveEnabled = taskMeta && taskMeta.status === 'ready';
+
+    let planSaveTimer = null;
+    let planSaveInFlight = false;
+    let planSaveQueued = false;
 
     function collectSteps() {
       if (!stepsList) return [];
@@ -6494,6 +6622,35 @@
         return { actor, title: (input?.value || '').trim(), description: null };
       }).filter((s) => s.title);
     }
+
+    function schedulePlanAutosave(immediate) {
+      if (!planAutosaveEnabled) return;
+      clearTimeout(planSaveTimer);
+      const delay = immediate ? 0 : 450;
+      planSaveTimer = setTimeout(() => void flushPlanAutosave(), delay);
+    }
+
+    async function flushPlanAutosave() {
+      if (!planAutosaveEnabled || planSaveInFlight) {
+        if (planAutosaveEnabled) planSaveQueued = true;
+        return;
+      }
+      planSaveInFlight = true;
+      try {
+        const steps = collectSteps();
+        await patchTask({ steps });
+      } catch (err) {
+        console.warn('Plan autosave failed:', err);
+      } finally {
+        planSaveInFlight = false;
+        if (planSaveQueued) {
+          planSaveQueued = false;
+          schedulePlanAutosave(true);
+        }
+      }
+    }
+
+    initTaskStepsEditor(stepsList, () => schedulePlanAutosave(true));
 
     function wireClick(id, handler) {
       const el = document.getElementById(id);
@@ -6511,6 +6668,17 @@
       return data;
     }
 
+    async function patchTask(body) {
+      const res = await fetch('/tasks/' + encodeURIComponent(taskId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
     function requireSteps() {
       const steps = collectSteps();
       if (!steps.length) {
@@ -6520,49 +6688,36 @@
       return steps;
     }
 
-    async function onApprove() {
-      const steps = requireSteps();
-      if (!steps) return;
-      try {
-        await postAction('/approve-plan', { steps });
-        window.location.reload();
-      } catch (err) {
-        alert(err instanceof Error ? err.message : String(err));
+    async function savePlanBeforeRun() {
+      clearTimeout(planSaveTimer);
+      planSaveTimer = null;
+      while (planSaveInFlight) {
+        await new Promise((r) => setTimeout(r, 30));
       }
+      const steps = requireSteps();
+      if (!steps) return null;
+      await patchTask({ steps });
+      return steps;
     }
 
-    async function onApproveAndRun(btn) {
-      const steps = requireSteps();
-      if (!steps) return;
+    async function onRunAgent(btn) {
       if (btn) btn.disabled = true;
       try {
-        await postAction('/approve-plan', { steps });
+        const steps = await savePlanBeforeRun();
+        if (!steps) {
+          if (btn) btn.disabled = false;
+          return;
+        }
         const title =
           document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
-        const taskMeta = window.__ICLAW_TASK__;
         redirectToTasksAfterApproveRun(taskId, title, taskMeta && taskMeta.projectId);
       } catch (err) {
         alert(err instanceof Error ? err.message : String(err));
         if (btn) btn.disabled = false;
       }
     }
-    async function onRun(btn) {
-      if (btn) btn.disabled = true;
-      try {
-        await postAction('/run');
-        window.location.reload();
-      } catch (err) {
-        alert(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (btn) btn.disabled = false;
-      }
-    }
 
-    if (approveBtn) approveBtn.addEventListener('click', onApprove);
-    if (approveAndRunBtn) {
-      approveAndRunBtn.addEventListener('click', () => onApproveAndRun(approveAndRunBtn));
-    }
-    if (runBtn) runBtn.addEventListener('click', () => onRun(runBtn));
+    if (runBtn) runBtn.addEventListener('click', () => onRunAgent(runBtn));
     if (resumeBtn) {
       resumeBtn.addEventListener('click', () => {
         const humanInput = document.getElementById('task-human-input')?.value?.trim();

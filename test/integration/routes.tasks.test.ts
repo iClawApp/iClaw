@@ -144,4 +144,95 @@ describe('approve and run', () => {
     expect(steps[0].status).toBe('needs_human');
     expect(steps[1].status).toBe('todo');
   });
+
+  it('runs each agent plan step before marking the task done', async () => {
+    const chat = chats.create('openclaw/default', null);
+    const createRes = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'Multi-step',
+        goal: 'check project',
+        generatePlan: false,
+      });
+    const taskId = createRes.body.task.id;
+
+    await request(app)
+      .post(`/tasks/${taskId}/approve-plan`)
+      .set('Accept', 'application/json')
+      .send({
+        steps: [
+          { actor: 'agent', title: 'Inspect repo' },
+          { actor: 'agent', title: 'Summarize findings' },
+        ],
+      });
+
+    let turn = 0;
+    openclawWsMock.runTurn.mockImplementation(
+      async ({ onEvent }: { onEvent?: (e: { type: string; text?: string }) => void }) => {
+        turn += 1;
+        const text =
+          turn === 1 ? 'First step ok.\nTASK_DONE' : 'Second step ok.\nTASK_DONE';
+        onEvent?.({ type: 'text-final', text });
+        return { runId: 'r' + turn, text };
+      },
+    );
+
+    const runRes = await request(app)
+      .post(`/tasks/${taskId}/run`)
+      .set('Accept', 'application/json')
+      .send({});
+    expect(runRes.status).toBe(200);
+    expect(runRes.body.task.status).toBe('done');
+    expect(turn).toBe(2);
+
+    const steps = taskSteps.listByTask(taskId);
+    expect(steps.every((s) => s.status === 'done')).toBe(true);
+  });
+
+  it('TASK_DONE after first agent step does not close task while plan has more steps', async () => {
+    const chat = chats.create('openclaw/default', null);
+    const createRes = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'Partial plan',
+        goal: 'deploy services',
+        generatePlan: false,
+      });
+    const taskId = createRes.body.task.id;
+
+    await request(app)
+      .post(`/tasks/${taskId}/approve-plan`)
+      .set('Accept', 'application/json')
+      .send({
+        steps: [
+          { actor: 'agent', title: 'List services' },
+          { actor: 'human', title: 'Confirm targets' },
+          { actor: 'agent', title: 'Deploy' },
+        ],
+      });
+
+    openclawWsMock.runTurn.mockImplementation(
+      async ({ onEvent }: { onEvent?: (e: { type: string; text?: string }) => void }) => {
+        const text = 'Listed.\nTASK_DONE';
+        onEvent?.({ type: 'text-final', text });
+        return { runId: 'r1', text };
+      },
+    );
+
+    const runRes = await request(app)
+      .post(`/tasks/${taskId}/run`)
+      .set('Accept', 'application/json')
+      .send({});
+    expect(runRes.status).toBe(200);
+    expect(runRes.body.task.status).toBe('needs_human');
+
+    const steps = taskSteps.listByTask(taskId);
+    expect(steps[0].status).toBe('done');
+    expect(steps[1].status).toBe('needs_human');
+    expect(steps[2].status).toBe('todo');
+  });
 });
