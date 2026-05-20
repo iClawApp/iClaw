@@ -1,0 +1,61 @@
+<%- include('partials/head', { title: 'Tasks — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main task-page task-page--board">
+    <div class="task-shell">
+      <header class="task-board-header">
+        <h1 class="task-board-title">Tasks</h1>
+        <div class="task-project-filter">
+          <select id="task-project-filter" class="task-project-filter-select" aria-label="Filter tasks by project">
+            <option value=""<%= !orphanOnly && filterProjectId == null ? ' selected' : '' %>>All projects</option>
+            <option value="orphan"<%= orphanOnly ? ' selected' : '' %>>No project</option>
+            <% (allProjects || []).forEach(function (p) { %>
+              <option value="<%= p.id %>"<%= filterProjectId === p.id ? ' selected' : '' %>><%= p.name %></option>
+            <% }); %>
+          </select>
+        </div>
+      </header>
+
+      <div class="task-board" id="task-board" data-project-id="<%= filterProjectId != null ? filterProjectId : '' %>">
+        <% const cols = [
+          { key: 'ready', label: 'Ready' },
+          { key: 'running', label: 'Running' },
+          { key: 'needs_human', label: 'Your turn' },
+          { key: 'review', label: 'Review' },
+          { key: 'done', label: 'Done' },
+        ]; %>
+        <% cols.forEach(function (col) {
+          const items = board[col.key] || [];
+        %>
+          <section class="task-board-col" data-col="<%= col.key %>">
+            <header class="task-board-col-head">
+              <h2 class="task-board-col-label"><%= col.label %></h2>
+              <span class="task-board-col-count"><%= items.length %></span>
+            </header>
+            <ul class="task-board-cards">
+              <% if (items.length === 0) { %>
+                <li class="task-board-empty" aria-hidden="true">—</li>
+              <% } %>
+              <% items.forEach(function (t) { %>
+                <li>
+                  <a href="/tasks/<%= t.id %>" class="task-board-card<%= t.status === 'failed' ? ' task-board-card--failed' : '' %>">
+                    <span class="task-board-card-title"><%= t.title %></span>
+                    <% if (t.current_step_title) { %>
+                      <span class="task-board-card-sub"><%= t.current_step_title %></span>
+                    <% } %>
+                  </a>
+                </li>
+              <% }); %>
+            </ul>
+          </section>
+        <% }); %>
+      </div>
+    </div>
+
+    <script src="/js/iclaw.js"></script>
+  </main>
+</div>
+
+<%- include('partials/foot') %>

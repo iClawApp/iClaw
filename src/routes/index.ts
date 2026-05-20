@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { chats, projectSecrets, projects } from '../services/store';
+import { chats, projectSecrets, projects, tasks } from '../services/store';
 import { openclaw } from '../services/openclaw';
 import { openclawWs } from '../services/openclawWs';
 import { chatStatus } from '../services/chatStatus';
@@ -35,6 +35,8 @@ indexRouter.get('/', async (req, res) => {
   res.render('index', {
     chats: list,
     allProjects,
+    hasAnyTasks: tasks.hasAny(),
+    taskStatusSignals: tasks.statusSignals(),
     preselectedProject,
     activeChat: null,
     activeProject: preselectedProject,

@@ -10,6 +10,7 @@ import {
   secretUsableInChat,
   scheduledMessages,
   queuedMessages,
+  tasks,
   enrichFactWithSourceChatTitle,
 } from '../services/store';
 import { persistIncomingAttachments, type IncomingAttachment } from '../services/uploads';
@@ -138,6 +139,8 @@ chatsRouter.get('/:id', async (req, res, next) => {
     res.render('chat', {
       chats: chats.list(),
       allProjects: projects.list(),
+      hasAnyTasks: tasks.hasAny(),
+      taskStatusSignals: tasks.statusSignals(),
       activeChat: chat,
       chatMessages: messages.listByChat(id),
       agents,

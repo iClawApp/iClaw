@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -19,9 +23,7 @@ jobs:
           CURRENT=$(node -p "require('./package.json').version")
           PUBLISHED=$(npm show @iclawapp/iclaw version 2>/dev/null || echo "none")
           if [ "$CURRENT" != "$PUBLISHED" ]; then
-            npm publish --access public
+            npm publish --access public --provenance
           else
             echo "Version $CURRENT already published, skipping."
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

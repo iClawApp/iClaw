@@ -150,6 +150,13 @@
             data-tab-base="Secrets"
             data-tab-count="<%= (projectSecrets || []).length %>"
           >Secrets</button>
+          <% if (typeof hasAnyTasks !== 'undefined' && hasAnyTasks) { %>
+          <a
+            href="/tasks?projectId=<%= project.id %>"
+            class="project-tab project-tab--tasks"
+            id="project-tab-tasks"
+          >Tasks</a>
+          <% } %>
         </nav>
 
         <div
@@ -317,6 +324,7 @@
             </ul>
           </div>
         </div>
+
       </div>
     </section>
 
