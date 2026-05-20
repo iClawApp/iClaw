@@ -129,10 +129,46 @@ export function parsePlanLines(raw: string): { actor: TaskStepActor; title: stri
   return steps;
 }
 
+const TASK_OUTCOME_MARKERS = ['NEEDS_HUMAN', 'TASK_DONE', 'NEEDS_REVIEW'] as const;
+
+/** Strip protocol lines agents append for the runner (not for humans). */
+export function stripTaskOutcomeMarkers(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => !/^\s*(NEEDS_HUMAN|TASK_DONE|NEEDS_REVIEW)\s*:?\s*$/i.test(line.trim()))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Split agent output into context (before NEEDS_HUMAN) and the actual question (after).
+ * Used on the task detail "response needed" panel.
+ */
+export function formatAgentHumanAsk(text: string | null | undefined): {
+  preamble: string;
+  question: string;
+} {
+  const raw = String(text ?? '').trim();
+  if (!raw) return { preamble: '', question: '' };
+
+  const upper = raw.toUpperCase();
+  const idx = upper.lastIndexOf('NEEDS_HUMAN');
+  if (idx >= 0) {
+    const before = stripTaskOutcomeMarkers(raw.slice(0, idx));
+    const after = stripTaskOutcomeMarkers(
+      raw.slice(idx + 'NEEDS_HUMAN'.length).replace(/^[:\s-]+/, ''),
+    );
+    if (after) return { preamble: before, question: after };
+    return { preamble: '', question: before || stripTaskOutcomeMarkers(raw) };
+  }
+  return { preamble: '', question: stripTaskOutcomeMarkers(raw) };
+}
+
 export function parseTaskOutcome(text: string): ParsedTaskOutcome {
   const t = text.trim();
   const upper = t.toUpperCase();
-  for (const marker of ['NEEDS_HUMAN', 'TASK_DONE', 'NEEDS_REVIEW'] as const) {
+  for (const marker of TASK_OUTCOME_MARKERS) {
     const idx = upper.lastIndexOf(marker);
     if (idx >= 0) {
       const after = t.slice(idx + marker.length).trim();
@@ -308,9 +344,15 @@ function applyOutcomeToTask(taskId: number, outcome: ParsedTaskOutcome, assistan
 
   if (outcome.kind === 'needs_human') {
     const humanStep = findHumanGateStep(taskId);
+    const ask = formatAgentHumanAsk(assistantText);
+    const summary =
+      ask.question ||
+      ask.preamble ||
+      outcome.instruction ||
+      stripTaskOutcomeMarkers(assistantText).slice(0, 4000);
     tasks.patch(taskId, {
       status: 'needs_human',
-      resultSummary: outcome.instruction || assistantText.slice(0, 2000),
+      resultSummary: summary,
     });
     if (humanStep) taskSteps.updateStatus(humanStep.id, 'needs_human');
     postSourceChatNote(

@@ -634,7 +634,9 @@
   /** Wrap fenced ``` blocks for a floating copy control (after markdown → DOM). */
   function enhanceCodeBlocks(root) {
     if (!root || root.nodeType !== 1) return;
-    const pres = root.querySelectorAll('.msg-body pre, .stream-body pre, .reasoning-body pre');
+    const pres = root.querySelectorAll(
+      '.msg-body pre, .stream-body pre, .reasoning-body pre, .task-log-entry-body pre',
+    );
     pres.forEach((pre) => {
       if (pre.parentElement?.classList.contains('code-block-wrap')) return;
       const wrap = document.createElement('div');
@@ -673,7 +675,7 @@
     const hl = window.hljs;
     if (!root || root.nodeType !== 1 || !hl || typeof hl.highlightElement !== 'function') return;
     root.querySelectorAll(
-      '.msg-body pre code, .stream-body pre code, .reasoning-body pre code',
+      '.msg-body pre code, .stream-body pre code, .reasoning-body pre code, .task-log-entry-body pre code',
     ).forEach((code) => {
       const pre = code.parentElement;
       if (!pre || pre.tagName !== 'PRE') return;
@@ -965,6 +967,27 @@
       body.innerHTML = renderMessageHtml(raw);
       decorateMessageBody(body);
     });
+  }
+
+  /** Task detail: goal, agent ask, execution log (server-rendered + streaming). */
+  function hydrateTaskMarkdownFields() {
+    const root = document.querySelector('.task-page');
+    if (!root) return;
+    root.querySelectorAll('.task-md').forEach((el) => {
+      const raw = (el.dataset.rawMd != null ? el.dataset.rawMd : el.textContent) ?? '';
+      if (!String(raw).trim()) return;
+      el.dataset.rawMd = raw;
+      el.innerHTML = renderMessageHtml(raw);
+      decorateMessageBody(el);
+    });
+  }
+
+  function appendTaskLogMarkdown(body, chunk) {
+    if (!body) return;
+    const next = String(body.dataset.rawMd ?? body.textContent ?? '') + String(chunk ?? '');
+    body.dataset.rawMd = next;
+    body.innerHTML = renderMessageHtml(next);
+    decorateMessageBody(body, { deferSyntaxHighlight: true });
   }
 
   function existingFactSuggestionIds() {
@@ -2811,15 +2834,15 @@
         const emptyEl = logEl.querySelector('.task-log-empty');
         if (emptyEl) emptyEl.remove();
         const last = logEl.querySelector('.task-log-entry--assistant:last-child .task-log-entry-body');
-        if (last) last.textContent += msg.text;
+        if (last) appendTaskLogMarkdown(last, msg.text);
         else {
           const article = document.createElement('article');
           article.className = 'task-log-entry task-log-entry--assistant';
           article.innerHTML =
             '<header class="task-log-entry-head">assistant</header>' +
-            '<div class="task-log-entry-body"></div>';
+            '<div class="task-log-entry-body task-md msg-body"></div>';
           const body = article.querySelector('.task-log-entry-body');
-          if (body) body.textContent = msg.text;
+          appendTaskLogMarkdown(body, msg.text);
           logEl.appendChild(article);
         }
         logEl.scrollTop = logEl.scrollHeight;
@@ -6034,11 +6057,28 @@
     }
   }
 
+  const TASK_HUMAN_INPUT_MAX_PX = 288; /* keep in sync with .task-human-input max-height (18rem) */
+
+  function bindAutoGrowTextarea(el, maxPx) {
+    if (!el || el.tagName !== 'TEXTAREA') return;
+    const cap = Number.isFinite(maxPx) ? maxPx : TASK_HUMAN_INPUT_MAX_PX;
+    const grow = () => {
+      el.style.height = 'auto';
+      const next = Math.min(el.scrollHeight, cap);
+      el.style.height = next + 'px';
+      el.style.overflowY = el.scrollHeight > cap ? 'auto' : 'hidden';
+    };
+    el.addEventListener('input', grow);
+    grow();
+  }
+
   function initTaskDetailPage() {
     const root = document.querySelector('.task-page[data-task-id]');
     if (!root) return;
     const taskId = Number(root.dataset.taskId);
     if (!Number.isFinite(taskId)) return;
+
+    bindAutoGrowTextarea(document.getElementById('task-human-input'), TASK_HUMAN_INPUT_MAX_PX);
 
     const runBtn = document.getElementById('task-run-btn');
     const approveBtn = document.getElementById('task-approve-plan');
@@ -6180,6 +6220,7 @@
   initProjectPageTabs();
   initTaskDetailPage();
   hydrateServerRenderedMessages();
+  hydrateTaskMarkdownFields();
   (function seedMidTurnStreamStatusDots() {
     const st = document.querySelector('#reload-placeholder .stream-status');
     if (!st || st.classList.contains('detail-expanded')) return;

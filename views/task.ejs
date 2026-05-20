@@ -23,8 +23,8 @@
       body: 'Watch Agent output below. You can leave this page — the source chat stays quiet.',
     },
     needs_human: {
-      title: 'Waiting for you',
-      body: 'Reply in the section below, then tap Continue.',
+      title: 'Your input needed',
+      body: 'The agent paused this task. Answer the request below, then tap Continue.',
     },
     needs_review: {
       title: 'Check the result',
@@ -57,7 +57,7 @@
   <%- include('partials/sidebar') %>
 
   <main class="col col-main task-page" data-task-id="<%= task.id %>">
-    <div class="task-shell">
+    <div class="task-shell task-shell--wide">
       <a href="<%= task.project_id ? '/projects/' + task.project_id : '/tasks' %>" class="task-back">
         <span class="task-back-chevron" aria-hidden="true">‹</span> Tasks
       </a>
@@ -65,17 +65,6 @@
       <header class="task-large-header">
         <h1 class="task-large-title"><%= task.title %></h1>
       </header>
-
-      <div class="task-lede-card">
-        <p class="task-lede-title">Not the same as chat</p>
-        <p class="task-lede-body">
-          A <strong>task</strong> freezes your chat context, runs the agent on a plan, and keeps a
-          separate log here. Your message thread does not fill with tool output.
-        </p>
-        <% if (sourceChat) { %>
-          <a href="/chats/<%= sourceChat.id %>" class="task-lede-link">Source chat: <%= sourceChat.title %></a>
-        <% } %>
-      </div>
 
       <div class="task-next-card task-next-card--<%= task.status %>">
         <% if (showApprove || canRun) { %>
@@ -92,40 +81,77 @@
         <h2 class="task-next-title"><%= next.title %></h2>
         <p class="task-next-body"><%= next.body %></p>
         <p class="task-goal-label">Goal</p>
-        <p class="task-goal-text" id="task-goal-text"><%= task.goal %></p>
-        <% if (task.current_step_title && (task.status === 'needs_human' || task.status === 'running')) { %>
+        <div class="task-goal-text task-md msg-body" id="task-goal-text"><%= task.goal %></div>
+        <% if (task.current_step_title && task.status === 'running') { %>
           <p class="task-plan-step-now">Plan step: <%= task.current_step_title %></p>
         <% } %>
       </div>
 
-      <ul class="task-inset-list task-inset-list--actions task-inset-list--primary">
-        <% if (showApprove) { %>
-          <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-approve-and-run">Approve &amp; run</button></li>
-          <li><button type="button" class="task-row-btn" id="task-approve-plan">Approve plan only</button></li>
-        <% } %>
-        <% if (canRun) { %>
-          <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-run-btn">Run agent</button></li>
-        <% } %>
-        <% if (task.status === 'needs_human') { %>
-          <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-resume-btn">Continue</button></li>
-        <% } %>
-        <% if (!showApprove && !canRun && task.status !== 'needs_human') { %>
+      <% if (showApprove || canRun) { %>
+        <ul class="task-inset-list task-inset-list--actions task-inset-list--primary">
+          <% if (showApprove) { %>
+            <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-approve-and-run">Approve &amp; run</button></li>
+            <li><button type="button" class="task-row-btn" id="task-approve-plan">Approve plan only</button></li>
+          <% } %>
+          <% if (canRun) { %>
+            <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-run-btn">Run agent</button></li>
+          <% } %>
+        </ul>
+      <% } else if (task.status !== 'needs_human') { %>
+        <ul class="task-inset-list task-inset-list--actions task-inset-list--primary">
           <li class="task-inset-empty task-inset-empty--inline">Use the actions below when you are ready.</li>
-        <% } %>
-      </ul>
+        </ul>
+      <% } %>
 
-      <% if (task.status === 'needs_human') { %>
-        <section class="task-group" id="task-human-block">
-          <h2 class="task-section-title">Your reply</h2>
-          <p class="task-section-footnote">The agent asked for this before continuing</p>
-          <div class="task-inset-list task-inset-list--single">
-            <div class="task-inset-pad">
-              <% if (task.result_summary) { %>
-                <p class="task-human-ask"><%= task.result_summary %></p>
+      <% if (task.status === 'needs_human') {
+        const askPreamble = humanAsk && humanAsk.preamble ? humanAsk.preamble : '';
+        const askQuestion = humanAsk && humanAsk.question
+          ? humanAsk.question
+          : (task.result_summary || '');
+      %>
+        <section class="task-group task-human-card" id="task-human-block">
+          <h2 class="task-section-title">Response needed</h2>
+          <p class="task-human-lead">
+            The agent stopped and is waiting for you. Read the request, write your answer, then tap
+            <strong>Continue</strong>.
+          </p>
+          <% if (task.current_step_title) { %>
+            <p class="task-human-plan-step">
+              <span class="task-human-plan-step-label">Plan step</span>
+              <%= task.current_step_title %>
+            </p>
+          <% } %>
+          <% if (askPreamble || askQuestion) { %>
+            <div class="task-human-ask">
+              <h3 class="task-human-ask-heading">Agent request</h3>
+              <% if (askPreamble) { %>
+                <p class="task-human-ask-label">Context</p>
+                <div class="task-human-ask-copy task-md msg-body"><%= askPreamble %></div>
               <% } %>
-              <textarea id="task-human-input" class="task-field-textarea" rows="3" placeholder="Type your answer…"></textarea>
+              <% if (askQuestion) { %>
+                <% if (askPreamble) { %>
+                  <p class="task-human-ask-label">What we need from you</p>
+                <% } %>
+                <div class="task-human-ask-copy task-md msg-body"><%= askQuestion %></div>
+              <% } %>
+            </div>
+          <% } %>
+          <div class="task-human-compose">
+            <label class="task-human-compose-label" for="task-human-input">Your answer</label>
+            <div class="task-human-field">
+              <textarea
+                id="task-human-input"
+                class="task-human-input iclaw-thin-scroll"
+                rows="1"
+                placeholder="Write your reply to the agent…"
+              ></textarea>
             </div>
           </div>
+          <ul class="task-inset-list task-inset-list--actions task-human-actions">
+            <li>
+              <button type="button" class="task-row-btn task-row-btn--primary" id="task-resume-btn">Continue</button>
+            </li>
+          </ul>
         </section>
       <% } %>
 
@@ -162,21 +188,6 @@
         </ul>
       </section>
 
-      <details class="task-disclosure">
-        <summary>
-          <span class="task-disclosure-title">Frozen context</span>
-          <span class="task-disclosure-sub">Chat at the moment you created this task</span>
-        </summary>
-        <div class="task-disclosure-body">
-          <% if (snapshotPreview) { %>
-            <p><%= snapshotPreview.messageCount %> messages · <%= snapshotPreview.projectFactsCount %> project facts</p>
-            <% if (snapshotPreview.secretRefs.length) { %>
-              <p>Secrets (refs only): <%= snapshotPreview.secretRefs.map(function (r) { return r.label; }).join(', ') %></p>
-            <% } %>
-          <% } %>
-        </div>
-      </details>
-
       <section class="task-group task-group--log">
         <h2 class="task-section-title">Agent output</h2>
         <p class="task-section-footnote">Execution log — not saved to the chat</p>
@@ -187,7 +198,7 @@
           <% executionLog.forEach(function (m) { %>
             <article class="task-log-entry task-log-entry--<%= m.role %>">
               <header class="task-log-entry-head"><%= m.role === 'assistant' ? 'Agent' : m.role %></header>
-              <div class="task-log-entry-body"><%= m.content.slice(0, 8000) %></div>
+              <div class="task-log-entry-body task-md msg-body"><%= m.content.slice(0, 8000) %></div>
             </article>
           <% }); %>
         </div>
@@ -195,6 +206,35 @@
           <a href="/chats/<%= task.execution_chat_id %>" class="task-lede-link task-log-link">Open technical thread</a>
         <% } %>
       </section>
+
+      <details class="task-disclosure">
+        <summary>
+          <span class="task-disclosure-title">Frozen context</span>
+          <span class="task-disclosure-sub">Source chat and snapshot from when this task was created</span>
+        </summary>
+        <div class="task-disclosure-body">
+          <p class="task-disclosure-lede-title">Not the same as chat</p>
+          <p class="task-disclosure-lede">
+            A <strong>task</strong> freezes your chat context, runs the agent on a plan, and keeps a
+            separate log here. Your message thread does not fill with tool output.
+          </p>
+          <% if (sourceChat) { %>
+            <p class="task-disclosure-source">
+              <a href="/chats/<%= sourceChat.id %>" class="task-lede-link">Source chat: <%= sourceChat.title %></a>
+            </p>
+          <% } %>
+          <% if (snapshotPreview) { %>
+            <p class="task-disclosure-meta">
+              <%= snapshotPreview.messageCount %> messages · <%= snapshotPreview.projectFactsCount %> project facts
+            </p>
+            <% if (snapshotPreview.secretRefs.length) { %>
+              <p class="task-disclosure-meta">
+                Secrets (refs only): <%= snapshotPreview.secretRefs.map(function (r) { return r.label; }).join(', ') %>
+              </p>
+            <% } %>
+          <% } %>
+        </div>
+      </details>
     </div>
   </main>
 </div>
@@ -202,6 +242,8 @@
 <script>
   window.__ICLAW_TASK__ = <%- JSON.stringify({ id: task.id, status: task.status, executionChatId: task.execution_chat_id }) %>;
 </script>
+<script src="/js/vendor/marked.min.js"></script>
+<script src="/js/vendor/highlight.min.js"></script>
 <script src="/js/iclaw.js"></script>
 
 <%- include('partials/foot') %>

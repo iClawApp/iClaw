@@ -1,8 +1,10 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
   buildContextSnapshot,
+  formatAgentHumanAsk,
   parsePlanLines,
   parseTaskOutcome,
+  stripTaskOutcomeMarkers,
 } from '../../src/services/taskRunner';
 import {
   chats,
@@ -41,6 +43,22 @@ describe('taskRunner parsers', () => {
       instruction: undefined,
     });
     expect(parseTaskOutcome('no marker here')).toEqual({ kind: 'none' });
+  });
+
+  it('formatAgentHumanAsk splits context and question at NEEDS_HUMAN', () => {
+    const raw = [
+      'Текстовий список зафіксований.',
+      'NEEDS_HUMAN',
+      '"Усі на 20k" — глянь чи вже розгорнуто.',
+    ].join('\n');
+    expect(formatAgentHumanAsk(raw)).toEqual({
+      preamble: 'Текстовий список зафіксований.',
+      question: '"Усі на 20k" — глянь чи вже розгорнуто.',
+    });
+  });
+
+  it('stripTaskOutcomeMarkers removes protocol lines', () => {
+    expect(stripTaskOutcomeMarkers('Hello\nNEEDS_HUMAN\nWorld')).toBe('Hello\nWorld');
   });
 });
 

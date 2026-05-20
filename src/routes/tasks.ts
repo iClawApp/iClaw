@@ -19,6 +19,7 @@ import {
   approvePlan,
   completeTask,
   createTask,
+  formatAgentHumanAsk,
   groupTasksForBoard,
   resumeTask,
   runTask,
@@ -128,9 +129,12 @@ tasksRouter.get('/:id', async (req, res) => {
 
   const locals = await viewLocals();
   const srcChat = chats.get(task.source_chat_id);
+  const humanAsk =
+    enriched.status === 'needs_human' ? formatAgentHumanAsk(enriched.result_summary) : null;
   res.render('task', {
     ...locals,
     task: enriched,
+    humanAsk,
     snapshotPreview: preview,
     executionLog: execMessages,
     sourceChat: srcChat,

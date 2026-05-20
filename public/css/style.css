@@ -1068,6 +1068,33 @@ code {
  * `#messages` — full-width scroll pane (scrollbar at the right edge of the main column).
  * `.messages-thread` — centered transcript column (`--thread-max-width`).
  */
+.iclaw-thin-scroll,
+.messages {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 30%, transparent) transparent;
+}
+.iclaw-thin-scroll::-webkit-scrollbar,
+.messages::-webkit-scrollbar {
+  width: 10px;
+}
+.iclaw-thin-scroll::-webkit-scrollbar-track,
+.messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+.iclaw-thin-scroll::-webkit-scrollbar-thumb,
+.messages::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 26%, transparent);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.iclaw-thin-scroll::-webkit-scrollbar-thumb:hover,
+.messages::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted) 44%, transparent);
+  background-clip: padding-box;
+}
+
 .messages {
   flex: 1;
   min-height: 0;
@@ -1077,29 +1104,6 @@ code {
   max-width: none;
   margin: 0;
   padding: 0;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--muted) 30%, transparent) transparent;
-}
-
-.messages::-webkit-scrollbar {
-  width: 10px;
-}
-
-.messages::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.messages::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--muted) 26%, transparent);
-  border-radius: 99px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-
-.messages::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--muted) 44%, transparent);
-  background-clip: padding-box;
 }
 
 .messages-thread {
@@ -4832,8 +4836,113 @@ code {
 }
 .task-goal-text {
   margin: 0;
+}
+.task-goal-text.msg-body {
+  font-size: var(--text-sm);
+  color: var(--msg-prose);
+}
+.task-human-card {
+  margin-bottom: var(--space-8);
+}
+.task-human-lead {
+  margin: var(--space-2) 0 var(--space-6);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--text) 72%, var(--muted));
+}
+.task-human-lead strong {
+  font-weight: 600;
+  color: var(--text);
+}
+.task-human-plan-step {
+  margin: 0 0 var(--space-6);
+  padding: var(--space-5) var(--space-6);
+  border-radius: 10px;
+  background: color-mix(in srgb, #007aff 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, #007aff 18%, var(--border));
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+.task-human-plan-step-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #007aff;
+}
+.task-human-ask {
+  margin-bottom: var(--space-7);
+}
+.task-human-ask-heading {
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.task-human-ask-label {
+  margin: var(--space-5) 0 var(--space-3);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.task-human-ask-label:first-of-type {
+  margin-top: 0;
+}
+.task-human-ask-copy {
+  margin: 0;
+}
+.task-human-ask-copy.msg-body {
+  font-size: var(--text-sm);
+  color: var(--msg-prose);
+}
+.task-human-compose {
+  margin-bottom: var(--space-3);
+}
+.task-human-compose-label {
+  display: block;
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.task-human-field {
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-5) var(--space-6);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.task-human-field:focus-within {
+  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 8%, transparent);
+}
+.task-human-input {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
   font-size: var(--text-base);
   line-height: 1.45;
+  color: var(--text);
+  resize: none;
+  min-height: 5.5rem;
+  max-height: 18rem;
+  field-sizing: content;
+  overflow-y: auto;
+}
+.task-human-input::placeholder {
+  color: var(--muted);
+  opacity: 0.55;
+}
+.task-human-input:focus {
+  outline: none;
 }
 .task-plan-step-now {
   margin: var(--space-5) 0 0;
@@ -4857,6 +4966,11 @@ code {
 }
 .task-inset-list--actions { margin-bottom: var(--space-8); }
 .task-inset-list--primary { margin-bottom: var(--space-8); }
+.task-human-actions {
+  margin-top: var(--space-3);
+  margin-bottom: 0;
+  border-radius: 12px;
+}
 .task-inset-list--single {
   margin-bottom: 0;
   border-radius: 12px;
@@ -4930,12 +5044,6 @@ code {
   resize: vertical;
 }
 .task-field-textarea:focus { outline: none; }
-.task-human-ask {
-  margin: 0 0 var(--space-4);
-  font-size: var(--text-sm);
-  line-height: 1.45;
-  color: var(--text);
-}
 .task-disclosure-title {
   display: block;
   font-size: var(--text-base);
@@ -5211,9 +5319,33 @@ code {
   color: var(--muted);
   line-height: 1.45;
 }
+.task-disclosure-lede-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.task-disclosure-lede {
+  margin: 0 0 var(--space-5);
+  color: color-mix(in srgb, var(--text) 78%, var(--muted));
+}
+.task-disclosure-lede strong {
+  font-weight: 600;
+  color: var(--text);
+}
+.task-disclosure-source {
+  margin: 0 0 var(--space-5);
+}
+.task-disclosure-meta {
+  margin: 0 0 var(--space-3);
+}
+.task-disclosure-meta:last-child {
+  margin-bottom: 0;
+}
 
 /* Execution log */
-.task-group--log { margin-bottom: 0; }
+.task-group--log { margin-bottom: var(--space-8); }
 .task-log {
   border-radius: 12px;
   background: var(--surface);
@@ -5241,12 +5373,9 @@ code {
   text-transform: uppercase;
   color: var(--muted);
 }
-.task-log-entry-body {
-  font-size: 0.82rem;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+.task-log-entry-body.msg-body {
+  font-size: var(--text-sm);
+  color: var(--msg-prose);
 }
 .task-log-link {
   display: inline-block;
