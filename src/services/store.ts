@@ -959,6 +959,24 @@ export const tasks = {
     const row = db.prepare('SELECT 1 AS n FROM tasks LIMIT 1').get() as { n: number } | undefined;
     return row != null;
   },
+  statusSignals(): { needsHuman: boolean; running: boolean; needsReview: boolean } {
+    const row = db
+      .prepare(
+        `SELECT
+          MAX(CASE WHEN status = 'needs_human' THEN 1 ELSE 0 END) AS needs_human,
+          MAX(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
+          MAX(CASE WHEN status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review
+        FROM tasks`,
+      )
+      .get() as
+      | { needs_human: number; running: number; needs_review: number }
+      | undefined;
+    return {
+      needsHuman: (row?.needs_human ?? 0) > 0,
+      running: (row?.running ?? 0) > 0,
+      needsReview: (row?.needs_review ?? 0) > 0,
+    };
+  },
   list(opts?: { projectId?: number | null; orphanOnly?: boolean }): Task[] {
     if (opts?.orphanOnly) {
       return db

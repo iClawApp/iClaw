@@ -49,6 +49,11 @@
   const waitingPlanStep = isNeedsHuman
     ? task.steps.find(function (s) { return s.status === 'needs_human'; })
     : null;
+  const taskSyncFingerprint = [
+    task.status,
+    task.current_step_title || '',
+    task.steps.map(function (s) { return s.id + ':' + s.status; }).join(','),
+  ].join('|');
 %>
 <%- include('partials/head', { title: task.title + ' — iClaw' }) %>
 
@@ -235,7 +240,7 @@
 </div>
 
 <script>
-  window.__ICLAW_TASK__ = <%- JSON.stringify({ id: task.id, status: task.status, executionChatId: task.execution_chat_id, projectId: task.project_id }) %>;
+  window.__ICLAW_TASK__ = <%- JSON.stringify({ id: task.id, status: task.status, executionChatId: task.execution_chat_id, projectId: task.project_id, syncFingerprint: taskSyncFingerprint }) %>;
 </script>
 <script src="/js/vendor/marked.min.js"></script>
 <script src="/js/vendor/highlight.min.js"></script>

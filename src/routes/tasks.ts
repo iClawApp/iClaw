@@ -70,6 +70,7 @@ async function viewLocals() {
     workingIds: chatStatus.workingIds(),
     allProjects: projects.list(),
     hasAnyTasks: tasks.hasAny(),
+    taskStatusSignals: tasks.statusSignals(),
     gatewayUp,
     agents,
     agentsError,
@@ -77,6 +78,13 @@ async function viewLocals() {
     openclawBaseUrl: openclaw.baseUrl,
   };
 }
+
+tasksRouter.get('/signals', (_req, res) => {
+  res.json({
+    hasAny: tasks.hasAny(),
+    signals: tasks.statusSignals(),
+  });
+});
 
 tasksRouter.get('/', async (req, res) => {
   const orphanOnly = req.query.orphan === '1' || req.query.orphan === 'true';

@@ -36,6 +36,7 @@ indexRouter.get('/', async (req, res) => {
     chats: list,
     allProjects,
     hasAnyTasks: tasks.hasAny(),
+    taskStatusSignals: tasks.statusSignals(),
     preselectedProject,
     activeChat: null,
     activeProject: preselectedProject,

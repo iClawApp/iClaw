@@ -712,6 +712,24 @@ code {
 .status-dot.unread {
   background: var(--md-link);
 }
+.status-dot.task-human {
+  background: #ff9500;
+}
+.status-dot.task-review {
+  background: var(--md-link);
+}
+.sidebar-tasks-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.sidebar-tasks-dots .status-dot {
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  display: block;
+}
 @keyframes pulse-dot {
   0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent); }
   70%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--ok) 0%, transparent); }
@@ -2766,9 +2784,10 @@ code {
 }
 
 .sidebar-projects-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   width: 100%;
   padding: 9px 12px;
   border-radius: 10px;
@@ -4636,12 +4655,12 @@ code {
 }
 .create-task-modal__panel {
   position: relative;
-  width: min(400px, 100%);
-  max-height: 88vh;
+  width: min(34rem, 100%);
+  max-height: 90vh;
   overflow: auto;
-  padding: var(--space-9);
+  padding: var(--space-9) var(--space-8);
   background: var(--surface);
-  border-radius: 14px;
+  border-radius: 16px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.18);
 }
 .create-task-modal__head { margin-bottom: var(--space-7); }
@@ -4669,19 +4688,32 @@ code {
 .create-task-modal__field input,
 .create-task-modal__field select {
   width: 100%;
+  box-sizing: border-box;
   font: inherit;
   font-size: var(--text-base);
-  padding: 11px 12px;
+  line-height: 1.45;
+  padding: 12px 14px;
   border: none;
   border-radius: 10px;
   background: color-mix(in srgb, var(--text) 5%, var(--surface));
   color: var(--text);
 }
+.create-task-modal__field--goal textarea,
+.create-task-goal-input {
+  display: block;
+  min-height: 11rem;
+  max-height: min(40vh, 20rem);
+  resize: vertical;
+  field-sizing: content;
+}
+.create-task-modal__field input {
+  min-height: 2.75rem;
+}
 .create-task-modal__field textarea:focus,
 .create-task-modal__field input:focus,
 .create-task-modal__field select:focus {
   outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, #007aff 35%, transparent);
+  box-shadow: none;
 }
 .create-task-modal__check {
   display: flex;
@@ -5884,6 +5916,6 @@ a.project-tab.project-tab--tasks:hover {
   .create-task-modal__field textarea:focus,
   .create-task-modal__field input:focus,
   .create-task-modal__field select:focus {
-    box-shadow: 0 0 0 3px color-mix(in srgb, #0a84ff 40%, transparent);
+    box-shadow: none;
   }
 }

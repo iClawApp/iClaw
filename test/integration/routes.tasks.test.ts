@@ -236,3 +236,49 @@ describe('approve and run', () => {
     expect(steps[2].status).toBe('todo');
   });
 });
+
+describe('GET /tasks/signals', () => {
+  it('reports which task statuses need attention', async () => {
+    const chat = chats.create('openclaw/default', null);
+    const createRes = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'Signals',
+        goal: 'g',
+        generatePlan: false,
+      });
+    const baseId = createRes.body.task.id;
+    const snapId = createRes.body.task.context_snapshot_id;
+
+    tasks.create({
+      projectId: null,
+      sourceChatId: chat.id,
+      title: 'Run',
+      goal: 'g',
+      agent: 'openclaw/default',
+      contextSnapshotId: snapId,
+      status: 'running',
+    });
+    tasks.create({
+      projectId: null,
+      sourceChatId: chat.id,
+      title: 'Review',
+      goal: 'g',
+      agent: 'openclaw/default',
+      contextSnapshotId: snapId,
+      status: 'needs_review',
+    });
+    tasks.updateStatus(baseId, 'needs_human');
+
+    const res = await request(app).get('/tasks/signals').set('Accept', 'application/json');
+    expect(res.status).toBe(200);
+    expect(res.body.hasAny).toBe(true);
+    expect(res.body.signals).toEqual({
+      needsHuman: true,
+      running: true,
+      needsReview: true,
+    });
+  });
+});

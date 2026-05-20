@@ -2858,10 +2858,13 @@
 
       case 'task-updated':
         if (document.getElementById('task-board')) refreshGlobalTasksBoard();
+        if (msg.task) applyTaskDetailRemoteTask(msg.task);
+        void refreshTasksNavSignals();
         return;
 
       case 'task-created':
         finishPendingTaskCreateFromWs(msg.task);
+        void refreshTasksNavSignals();
         return;
 
       case 'gateway-status':
@@ -4762,8 +4765,50 @@
     });
   }
 
+  function renderTasksNavDotsHtml(signals) {
+    if (!signals) return '';
+    const parts = [];
+    if (signals.needsHuman) parts.push('<span class="status-dot task-human"></span>');
+    if (signals.running) parts.push('<span class="status-dot working"></span>');
+    if (signals.needsReview) parts.push('<span class="status-dot task-review"></span>');
+    if (!parts.length) return '';
+    return '<span class="sidebar-tasks-dots" aria-hidden="true">' + parts.join('') + '</span>';
+  }
+
+  function applyTasksNavSignals(signals) {
+    const link = document.getElementById('sidebar-tasks-link');
+    if (!link) return;
+    if (!link.querySelector('.sidebar-projects-btn__label')) {
+      const label = document.createElement('span');
+      label.className = 'sidebar-projects-btn__label';
+      label.textContent = (link.textContent || 'Tasks').trim() || 'Tasks';
+      link.textContent = '';
+      link.appendChild(label);
+    }
+    link.querySelector('.sidebar-tasks-dots')?.remove();
+    const html = renderTasksNavDotsHtml(signals);
+    if (html) link.insertAdjacentHTML('beforeend', html);
+  }
+
+  async function refreshTasksNavSignals() {
+    try {
+      const res = await fetch('/tasks/signals', {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      if (data.hasAny) revealTasksNav();
+      applyTasksNavSignals(data.signals || {});
+    } catch {
+      /* best-effort */
+    }
+  }
+
   function revealTasksNav() {
-    if (document.documentElement.dataset.tasksNavVisible === '1') return;
+    if (document.documentElement.dataset.tasksNavVisible === '1') {
+      void refreshTasksNavSignals();
+      return;
+    }
     document.documentElement.dataset.tasksNavVisible = '1';
 
     const sidebarNav = document.querySelector('.sidebar-projects-nav');
@@ -4772,8 +4817,9 @@
       a.href = '/tasks';
       a.className = 'sidebar-projects-btn';
       a.id = 'sidebar-tasks-link';
-      a.textContent = 'Tasks';
+      a.innerHTML = '<span class="sidebar-projects-btn__label">Tasks</span>';
       sidebarNav.appendChild(a);
+      void refreshTasksNavSignals();
     }
 
     const projectRoot = document.querySelector('main.project-page[data-project-id]');
@@ -6051,6 +6097,37 @@
   const TASK_RESUME_FLASH_KEY = 'iclaw.taskResumeFlash.v1';
   let boardFlashBannerEl = null;
   let boardFlashDismissTimer = null;
+  let taskDetailSyncFingerprint = null;
+  let taskDetailReloadTimer = null;
+
+  function taskDetailFingerprint(task) {
+    if (!task) return '';
+    const steps = Array.isArray(task.steps) ? task.steps : [];
+    return [
+      task.status,
+      task.current_step_title || '',
+      steps.map((s) => String(s.id) + ':' + (s.status || '')).join(','),
+    ].join('|');
+  }
+
+  function scheduleTaskDetailReload() {
+    if (taskDetailReloadTimer != null) return;
+    taskDetailReloadTimer = window.setTimeout(() => {
+      taskDetailReloadTimer = null;
+      window.location.reload();
+    }, 400);
+  }
+
+  function applyTaskDetailRemoteTask(task) {
+    const taskRoot = document.querySelector('.task-page[data-task-id]');
+    if (!taskRoot || !task || Number(taskRoot.dataset.taskId) !== Number(task.id)) return;
+    const fp = taskDetailFingerprint(task);
+    if (taskDetailSyncFingerprint == null) {
+      taskDetailSyncFingerprint = fp;
+      return;
+    }
+    if (fp !== taskDetailSyncFingerprint) scheduleTaskDetailReload();
+  }
 
   function showBoardFlashBanner(opts) {
     const lead = opts && opts.lead ? String(opts.lead) : '';
@@ -6749,11 +6826,16 @@
       });
     }
 
+    taskDetailSyncFingerprint =
+      taskMeta && taskMeta.syncFingerprint
+        ? String(taskMeta.syncFingerprint)
+        : taskDetailFingerprint({ status: taskMeta?.status, steps: [] });
   }
 
   initProjectPageTabs();
   initTasksBoardPage();
   initTaskDetailPage();
+  if (document.getElementById('sidebar-tasks-link')) void refreshTasksNavSignals();
   hydrateTaskApproveRunFlash();
   hydrateTaskResumeFlash();
   hydrateServerRenderedMessages();

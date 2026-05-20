@@ -140,6 +140,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
       chats: chats.list(),
       allProjects: projects.list(),
       hasAnyTasks: tasks.hasAny(),
+      taskStatusSignals: tasks.statusSignals(),
       activeChat: chat,
       chatMessages: messages.listByChat(id),
       agents,
