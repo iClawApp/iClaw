@@ -284,6 +284,26 @@ class GatewayWsBridge {
     });
   }
 
+  /** Drop a dead socket so the next RPC opens a fresh connection (e.g. after gateway start). */
+  resetConnection(): void {
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        /* best-effort */
+      }
+      this.ws = null;
+    }
+    this.connectTask = null;
+    this.connectSent = false;
+    this.clearTickWatchdog();
+    for (const [, entry] of this.pending) {
+      clearTimeout(entry.timer);
+      entry.reject(new Error('gatewayWs: socket closed'));
+    }
+    this.pending.clear();
+  }
+
   async ensureConnected(): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN && !this.connectTask) return;
     if (this.connectTask) return this.connectTask;

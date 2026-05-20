@@ -3,14 +3,60 @@
  *
  *   GET  /api/gateway/commands               — slash-command catalog for `/` autocomplete
  *   GET  /api/gateway/usage/today            — gateway-side spend (cached 30s)
+ *   GET  /api/gateway/status                 — is the gateway HTTP health endpoint up?
+ *   POST /api/gateway/start                  — `openclaw gateway start` (localhost only)
  *   GET  /api/gateway/session-reset-status   — does the user need to disable daily auto-reset?
  *   POST /api/gateway/session-reset-fix      — apply the "never reset" policy via config.patch
  */
 
 import { Router } from 'express';
+import { broadcastGatewayStatus } from '../services/gatewayEvents';
+import { gatewayWs } from '../services/gatewayWs';
+import { isLocalhostRequest, queueGatewayStart } from '../services/gatewayStart';
+import { openclaw } from '../services/openclaw';
 import { openclawWs } from '../services/openclawWs';
 
 export const gatewayRouter: Router = Router();
+
+gatewayRouter.get('/status', async (_req, res) => {
+  res.json({ up: await openclaw.health() });
+});
+
+gatewayRouter.post('/start', async (req, res) => {
+  if (!isLocalhostRequest(req)) {
+    res.status(403).json({ error: 'forbidden' });
+    return;
+  }
+  if (await openclaw.health()) {
+    broadcastGatewayStatus('ok', null, { force: true });
+    res.json({ ready: true });
+    return;
+  }
+
+  void queueGatewayStart()
+    .then(async (result) => {
+      if (!result.ready) return;
+      gatewayWs.resetConnection();
+      try {
+        await gatewayWs.ensureConnected();
+        await openclawWs.subscribeSessions();
+      } catch (err) {
+        console.warn(
+          '[gateway] reconnect after start failed:',
+          err instanceof Error ? err.message : err,
+        );
+      }
+      broadcastGatewayStatus('ok', null, { force: true });
+    })
+    .catch((err) => {
+      console.warn(
+        '[gateway] start task failed:',
+        err instanceof Error ? err.message : err,
+      );
+    });
+
+  res.json({ started: true });
+});
 
 interface CommandsResult {
   commands?: Array<{

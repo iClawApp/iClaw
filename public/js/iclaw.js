@@ -2896,8 +2896,21 @@
    * reconnect) we update the existing chip in place so users see when the
    * gateway is unhealthy without needing F5.
    */
+  const gatewayBanner = document.getElementById('sidebar-gateway-banner');
+  const gatewayBannerStatus = document.getElementById('sidebar-gateway-status');
+  const gatewayBannerStart = document.getElementById('sidebar-gateway-start');
+  let gatewayStatusPollTimer = null;
+
+  function setGatewayOfflineBannerVisible(visible) {
+    if (gatewayBanner) gatewayBanner.hidden = !visible;
+  }
+
   function applyGatewayStatus(status, detail) {
     const badge = document.getElementById('gateway-badge');
+    const offline =
+      status === 'down' || status === 'degraded' || status === 'shutdown';
+    setGatewayOfflineBannerVisible(offline);
+
     if (!badge) return;
     badge.classList.remove('ok', 'down', 'degraded', 'shutdown');
     if (status === 'ok') {
@@ -2911,10 +2924,108 @@
       badge.textContent = 'OpenClaw: shutting down';
     } else {
       badge.classList.add('down');
-      badge.textContent = 'OpenClaw: unreachable';
+      badge.textContent = 'OpenClaw: off';
     }
     const baseUrl = badge.dataset.baseUrl || '';
-    badge.title = detail ? detail + (baseUrl ? ' — ' + baseUrl : '') : baseUrl;
+    badge.title = baseUrl;
+  }
+
+  (function initGatewayOfflineBanner() {
+    const badge = document.getElementById('gateway-badge');
+    if (
+      badge &&
+      (badge.classList.contains('down') || badge.classList.contains('degraded'))
+    ) {
+      setGatewayOfflineBannerVisible(true);
+      return;
+    }
+    if (!gatewayBanner) return;
+    void fetch('/api/gateway/status', { headers: { Accept: 'application/json' } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && data.up !== true) setGatewayOfflineBannerVisible(true);
+      })
+      .catch(() => {});
+  })();
+
+  function stopGatewayStatusPoll() {
+    if (gatewayStatusPollTimer != null) {
+      clearInterval(gatewayStatusPollTimer);
+      gatewayStatusPollTimer = null;
+    }
+  }
+
+  function startGatewayStatusPoll(onReady) {
+    stopGatewayStatusPoll();
+    const deadline = Date.now() + 90_000;
+    gatewayStatusPollTimer = setInterval(async () => {
+      if (Date.now() > deadline) {
+        stopGatewayStatusPoll();
+        if (gatewayBannerStatus) {
+          gatewayBannerStatus.textContent = 'Still starting — almost there';
+        }
+        if (gatewayBannerStart) {
+          gatewayBannerStart.disabled = false;
+          gatewayBannerStart.textContent = 'Start OpenClaw';
+        }
+        return;
+      }
+      try {
+        const res = await fetch('/api/gateway/status', {
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.up === true) {
+          stopGatewayStatusPoll();
+          onReady();
+        }
+      } catch {
+        /* retry */
+      }
+    }, 1500);
+  }
+
+  if (gatewayBannerStart) {
+    gatewayBannerStart.addEventListener('click', async () => {
+      if (gatewayBannerStart.disabled) return;
+      const prevLabel = gatewayBannerStart.textContent;
+      gatewayBannerStart.disabled = true;
+      gatewayBannerStart.textContent = 'Starting…';
+      if (gatewayBannerStatus) {
+        gatewayBannerStatus.textContent = 'You can keep chatting';
+      }
+      try {
+        const res = await fetch('/api/gateway/start', {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || 'HTTP ' + res.status);
+        }
+        if (data.ready === true) {
+          applyGatewayStatus('ok', null);
+          window.location.reload();
+          return;
+        }
+        if (gatewayBannerStatus) {
+          gatewayBannerStatus.textContent = 'Starting — almost there';
+        }
+        startGatewayStatusPoll(() => {
+          applyGatewayStatus('ok', null);
+          window.location.reload();
+        });
+      } catch (err) {
+        stopGatewayStatusPoll();
+        const msg = err instanceof Error ? err.message : String(err);
+        if (gatewayBannerStatus) {
+          gatewayBannerStatus.textContent = msg;
+        }
+        gatewayBannerStart.disabled = false;
+        gatewayBannerStart.textContent = prevLabel || 'Start OpenClaw';
+      }
+    });
   }
 
   // -------------------------------------------------------------------------

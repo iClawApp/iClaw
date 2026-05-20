@@ -45,7 +45,7 @@
         data-base-url="<%= openclawBaseUrl %>"
         title="<%= openclawBaseUrl %>"
       >
-        OpenClaw: <%= gatewayUp ? 'connected' : 'unreachable' %>
+        OpenClaw: <%= gatewayUp ? 'connected' : 'off' %>
       </span>
     </header>
 
@@ -99,7 +99,7 @@
       <section class="messages" id="messages" data-chat-id="" data-draft="1">
         <div class="messages-thread">
           <% if (agentsError) { %>
-            <p class="error">Gateway unreachable: <code><%= agentsError %></code></p>
+            <p class="muted empty-state">Start OpenClaw from the sidebar to begin.</p>
           <% } else { %>
             <p class="muted empty-state" id="draft-empty-hint" hidden>Write your first message.</p>
           <% } %>

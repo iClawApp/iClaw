@@ -6,6 +6,7 @@
 
 import { spawn } from 'node:child_process';
 import { Router, type Request } from 'express';
+import { isLocalhostRequest } from '../services/gatewayStart';
 
 export const updateRouter = Router();
 
@@ -14,21 +15,12 @@ const INSTALL_ARGS = ['install', '-g', NPM_PACKAGE] as const;
 
 let updateRunning = false;
 
-function isLocalhost(req: Request): boolean {
-  const addr = req.socket.remoteAddress ?? req.ip ?? '';
-  return (
-    addr === '127.0.0.1' ||
-    addr === '::1' ||
-    addr === '::ffff:127.0.0.1'
-  );
-}
-
 function npmCommand(): string {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm';
 }
 
 updateRouter.post('/run', (req, res) => {
-  if (!isLocalhost(req)) {
+  if (!isLocalhostRequest(req)) {
     res.status(403).json({ error: 'forbidden' });
     return;
   }
