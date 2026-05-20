@@ -237,6 +237,90 @@ describe('approve and run', () => {
   });
 });
 
+describe('ADD_HUMAN_STEP during run', () => {
+  it('inserts a new human plan step and pauses the task', async () => {
+    const chat = chats.create('openclaw/default', null);
+    const createRes = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'Dynamic human',
+        goal: 'deploy',
+        generatePlan: false,
+      });
+    const taskId = createRes.body.task.id;
+
+    await request(app)
+      .post(`/tasks/${taskId}/approve-plan`)
+      .set('Accept', 'application/json')
+      .send({
+        steps: [
+          { actor: 'human', title: 'Initial approval' },
+          { actor: 'agent', title: 'Deploy service' },
+          { actor: 'agent', title: 'Smoke test' },
+        ],
+      });
+
+    const runRes = await request(app)
+      .post(`/tasks/${taskId}/run`)
+      .set('Accept', 'application/json')
+      .send({});
+    expect(runRes.status).toBe(200);
+    expect(runRes.body.task.status).toBe('needs_human');
+
+    openclawWsMock.runTurn.mockImplementationOnce(
+      async ({ onEvent }: { onEvent?: (e: { type: string; text?: string }) => void }) => {
+        const text =
+          'Credentials invalid after deploy.\nADD_HUMAN_STEP: Re-enter API credentials\nNEEDS_HUMAN';
+        onEvent?.({ type: 'text-final', text });
+        return { runId: 'r-dyn', text };
+      },
+    );
+
+    const resumeRes = await request(app)
+      .post(`/tasks/${taskId}/resume`)
+      .set('Accept', 'application/json')
+      .send({ humanInput: 'approved once' });
+    expect(resumeRes.status).toBe(200);
+    expect(resumeRes.body.task.status).toBe('needs_human');
+
+    const steps = taskSteps.listByTask(taskId);
+    expect(steps).toHaveLength(4);
+    expect(steps[0].status).toBe('done');
+    expect(steps[1].title).toBe('Deploy service');
+    expect(steps[1].status).toBe('todo');
+    expect(steps[2].actor).toBe('human');
+    expect(steps[2].title).toBe('Re-enter API credentials');
+    expect(steps[2].status).toBe('needs_human');
+    expect(steps[3].title).toBe('Smoke test');
+    expect(steps[3].status).toBe('todo');
+  });
+});
+
+describe('DELETE /tasks/:id', () => {
+  it('removes the task and returns projectId for redirect', async () => {
+    const chat = chats.create('openclaw/default', null);
+    const createRes = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'To delete',
+        goal: 'g',
+        generatePlan: false,
+      });
+    const taskId = createRes.body.task.id;
+
+    const delRes = await request(app)
+      .delete(`/tasks/${taskId}`)
+      .set('Accept', 'application/json');
+    expect(delRes.status).toBe(200);
+    expect(delRes.body.ok).toBe(true);
+    expect(tasks.get(taskId)).toBeUndefined();
+  });
+});
+
 describe('GET /tasks/signals', () => {
   it('reports which task statuses need attention', async () => {
     const chat = chats.create('openclaw/default', null);

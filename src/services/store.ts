@@ -1054,6 +1054,17 @@ export const tasks = {
     ).run(title, goal, agent, status, execution_chat_id, result_summary, id);
     return this.get(id);
   },
+  remove(id: number): { executionChatId: number | null; snapshotId: number } | null {
+    const task = this.get(id);
+    if (!task) return null;
+    const meta = {
+      executionChatId: task.execution_chat_id,
+      snapshotId: task.context_snapshot_id,
+    };
+    db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+    db.prepare('DELETE FROM task_context_snapshots WHERE id = ?').run(task.context_snapshot_id);
+    return meta;
+  },
 };
 
 export const taskSteps = {
@@ -1085,6 +1096,32 @@ export const taskSteps = {
     db.prepare(
       "UPDATE task_steps SET status = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(status, stepId);
+  },
+  /** Insert a human gate after an existing step; shifts later positions. */
+  insertHumanAfter(taskId: number, afterStepId: number, title: string): TaskStep {
+    const after = db
+      .prepare('SELECT * FROM task_steps WHERE id = ? AND task_id = ?')
+      .get(afterStepId, taskId) as TaskStep | undefined;
+    if (!after) throw new Error('step not found');
+    const label = title.trim() || 'Your input needed';
+    const newPos = after.position + 1;
+    const bump = db.prepare(
+      'UPDATE task_steps SET position = position + 1 WHERE task_id = ? AND position >= ?',
+    );
+    const ins = db.prepare(
+      `INSERT INTO task_steps (task_id, position, actor, title, description, status)
+       VALUES (?, ?, 'human', ?, NULL, 'needs_human')`,
+    );
+    const run = db.transaction(() => {
+      bump.run(taskId, newPos);
+      ins.run(taskId, newPos, label);
+    });
+    run();
+    touchTask(taskId);
+    const row = db
+      .prepare('SELECT * FROM task_steps WHERE task_id = ? AND position = ?')
+      .get(taskId, newPos) as TaskStep;
+    return row;
   },
   /** First plan step that is not finished (done/failed). */
   getActiveStep(taskId: number): TaskStep | undefined {

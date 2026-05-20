@@ -39,10 +39,16 @@ const SNAPSHOT_MSG_BUDGET_CHARS = 12_000;
 const PLAN_BUDGET_MS = 120_000;
 const RUN_BUDGET_MS = 60 * 60_000;
 
-export type TaskOutcomeKind = 'needs_human' | 'task_done' | 'needs_review' | 'none';
+export type TaskOutcomeKind =
+  | 'needs_human'
+  | 'add_human_step'
+  | 'task_done'
+  | 'needs_review'
+  | 'none';
 
 export interface ParsedTaskOutcome {
   kind: TaskOutcomeKind;
+  /** NEEDS_HUMAN hint, or ADD_HUMAN_STEP plan row title. */
   instruction?: string;
 }
 
@@ -129,13 +135,22 @@ export function parsePlanLines(raw: string): { actor: TaskStepActor; title: stri
   return steps;
 }
 
-const TASK_OUTCOME_MARKERS = ['NEEDS_HUMAN', 'TASK_DONE', 'NEEDS_REVIEW'] as const;
+const TASK_OUTCOME_MARKERS = [
+  'ADD_HUMAN_STEP',
+  'NEEDS_HUMAN',
+  'TASK_DONE',
+  'NEEDS_REVIEW',
+] as const;
 
 /** Strip protocol lines agents append for the runner (not for humans). */
 export function stripTaskOutcomeMarkers(text: string): string {
   return text
     .split('\n')
-    .filter((line) => !/^\s*(NEEDS_HUMAN|TASK_DONE|NEEDS_REVIEW)\s*:?\s*$/i.test(line.trim()))
+    .filter((line) => {
+      const t = line.trim();
+      if (/^\s*ADD_HUMAN_STEP\b/i.test(t)) return false;
+      return !/^\s*(NEEDS_HUMAN|TASK_DONE|NEEDS_REVIEW)\s*:?\s*$/i.test(t);
+    })
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -174,6 +189,11 @@ export function parseTaskOutcome(text: string): ParsedTaskOutcome {
       const after = t.slice(idx + marker.length).trim();
       const instruction =
         after.replace(/^[:\s-]+/, '').split(/\n/)[0]?.trim() || undefined;
+      if (marker === 'ADD_HUMAN_STEP') {
+        const title =
+          after.replace(/^[:\s-]+/, '').split(/\n/)[0]?.trim() || 'Your input needed';
+        return { kind: 'add_human_step', instruction: title };
+      }
       if (marker === 'NEEDS_HUMAN') return { kind: 'needs_human', instruction };
       if (marker === 'TASK_DONE') return { kind: 'task_done', instruction };
       return { kind: 'needs_review', instruction };
@@ -262,6 +282,9 @@ function buildExecutionPrompt(opts: {
       ? '- Current step is HUMAN: do not run agent work; return NEEDS_HUMAN immediately.'
       : '- Execute only the current agent step; do not skip ahead past unfinished human steps.',
     '- If a human step is required, stop and return NEEDS_HUMAN with a clear instruction on the last line.',
+    '- If the user must act again and no upcoming human plan step fits, add a new plan step:',
+    '  ADD_HUMAN_STEP: <short step title>',
+    '  then your question (the runner inserts the human step and pauses).',
     '- Do not continue past human approval gates.',
     '- When the current agent step is finished, end with TASK_DONE on its own line (the runner advances to the next plan step).',
     '- Use TASK_DONE only after completing the current step — not while human steps are still pending.',
@@ -442,6 +465,44 @@ function markRunningStepDone(taskId: number): void {
   if (running) taskSteps.updateStatus(running.id, 'done');
 }
 
+function revertRunningStepToTodo(taskId: number): TaskStep | undefined {
+  const running = taskSteps.listByTask(taskId).find((s) => s.status === 'running');
+  if (running) {
+    taskSteps.updateStatus(running.id, 'todo');
+    return running;
+  }
+  return undefined;
+}
+
+function applyAddHumanStepOutcome(
+  taskId: number,
+  stepTitle: string,
+  assistantText: string,
+): TaskWithSteps {
+  const task = tasks.get(taskId);
+  if (!task) throw new Error('task not found');
+  const anchor =
+    revertRunningStepToTodo(taskId) ?? taskSteps.getActiveStep(taskId);
+  if (!anchor) throw new Error('no active step to attach human step');
+  const title = stepTitle.trim() || 'Your input needed';
+  const inserted = taskSteps.insertHumanAfter(taskId, anchor.id, title);
+  const ask = formatAgentHumanAsk(assistantText);
+  const summary =
+    ask.question ||
+    ask.preamble ||
+    stripTaskOutcomeMarkers(assistantText).slice(0, 4000) ||
+    title;
+  taskSteps.updateStatus(inserted.id, 'needs_human');
+  tasks.patch(taskId, { status: 'needs_human', resultSummary: summary });
+  postSourceChatNote(
+    task.source_chat_id,
+    `Task needs human: ${task.title} — ${title}`,
+  );
+  const enriched = enrichTaskWithSteps(tasks.get(taskId)!);
+  broadcastTaskUpdated(enriched);
+  return enriched;
+}
+
 function finishTaskComplete(taskId: number, summary: string | null): void {
   const task = tasks.get(taskId)!;
   tasks.patch(taskId, {
@@ -515,6 +576,14 @@ async function runTaskStepLoop(
     runSummary = finalText.slice(0, 4000) || null;
     const outcome = parseTaskOutcome(finalText);
 
+    if (outcome.kind === 'add_human_step') {
+      applyAddHumanStepOutcome(
+        taskId,
+        outcome.instruction ?? 'Your input needed',
+        finalText,
+      );
+      return;
+    }
     if (outcome.kind === 'needs_human') {
       applyOutcomeToTask(taskId, outcome, finalText);
       return;

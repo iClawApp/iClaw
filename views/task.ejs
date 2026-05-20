@@ -128,8 +128,11 @@
       </details>
 
       <% if (canRun) { %>
-        <ul class="task-inset-list task-inset-list--actions task-inset-list--actions-primary">
-          <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-run-btn">Run agent</button></li>
+        <ul class="task-inset-list task-inset-list--actions task-inset-list--actions-primary task-inset-list--run-row">
+          <li class="task-run-row">
+            <button type="button" class="task-row-btn task-row-btn--primary" id="task-run-btn">Run agent</button>
+            <button type="button" class="task-row-btn task-row-btn--compact task-row-btn--destructive" id="task-delete-btn">Delete task</button>
+          </li>
         </ul>
       <% } %>
 

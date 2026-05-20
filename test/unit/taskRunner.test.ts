@@ -30,6 +30,12 @@ describe('taskRunner parsers', () => {
   });
 
   it('parseTaskOutcome detects markers', () => {
+    expect(
+      parseTaskOutcome('Deploy failed.\nADD_HUMAN_STEP: Re-verify credentials\nPlease retry.'),
+    ).toEqual({
+      kind: 'add_human_step',
+      instruction: 'Re-verify credentials',
+    });
     expect(parseTaskOutcome('Done.\nNEEDS_HUMAN: paste API key')).toEqual({
       kind: 'needs_human',
       instruction: 'paste API key',
@@ -59,6 +65,7 @@ describe('taskRunner parsers', () => {
 
   it('stripTaskOutcomeMarkers removes protocol lines', () => {
     expect(stripTaskOutcomeMarkers('Hello\nNEEDS_HUMAN\nWorld')).toBe('Hello\nWorld');
+    expect(stripTaskOutcomeMarkers('Hi\nADD_HUMAN_STEP: Fix\nBye')).toBe('Hi\nBye');
   });
 });
 

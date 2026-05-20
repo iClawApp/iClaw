@@ -2867,6 +2867,11 @@
         void refreshTasksNavSignals();
         return;
 
+      case 'task-deleted':
+        if (document.getElementById('task-board')) void refreshGlobalTasksBoard();
+        void refreshTasksNavSignals();
+        return;
+
       case 'gateway-status':
         applyGatewayStatus(msg.status, msg.detail);
         return;
@@ -6680,6 +6685,7 @@
     });
 
     const runBtn = document.getElementById('task-run-btn');
+    const deleteBtn = document.getElementById('task-delete-btn');
     const resumeBtn = document.getElementById('task-resume-btn');
     const doneBtn = document.getElementById('task-done-btn');
     const failBtn = document.getElementById('task-fail-btn');
@@ -6795,6 +6801,33 @@
     }
 
     if (runBtn) runBtn.addEventListener('click', () => onRunAgent(runBtn));
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', async () => {
+        if (
+          !window.confirm(
+            'Видалити цю задачу? Цю дію не можна скасувати.',
+          )
+        ) {
+          return;
+        }
+        deleteBtn.disabled = true;
+        if (runBtn) runBtn.disabled = true;
+        try {
+          const res = await fetch('/tasks/' + encodeURIComponent(taskId), {
+            method: 'DELETE',
+            headers: { Accept: 'application/json' },
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || res.statusText);
+          const pid = data.projectId != null ? Number(data.projectId) : taskMeta?.projectId;
+          window.location.href = tasksBoardHref(pid);
+        } catch (err) {
+          alert(err instanceof Error ? err.message : String(err));
+          deleteBtn.disabled = false;
+          if (runBtn) runBtn.disabled = false;
+        }
+      });
+    }
     if (resumeBtn) {
       resumeBtn.addEventListener('click', () => {
         const humanInput = document.getElementById('task-human-input')?.value?.trim();

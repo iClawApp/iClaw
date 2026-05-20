@@ -5585,6 +5585,27 @@ code {
   margin-top: 0;
   margin-bottom: var(--space-6);
 }
+.task-inset-list--run-row > li.task-run-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-bottom: none;
+}
+.task-run-row .task-row-btn--primary {
+  flex: 1;
+  min-width: 0;
+}
+.task-row-btn--compact {
+  flex-shrink: 0;
+  width: auto;
+  padding: 14px 12px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+.task-run-row .task-row-btn--compact.task-row-btn--destructive {
+  color: #ff3b30;
+}
 .task-disclosure--inline {
   margin-bottom: var(--space-6);
   border-top: none;

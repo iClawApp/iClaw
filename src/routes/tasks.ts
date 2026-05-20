@@ -24,6 +24,7 @@ import {
   resumeTask,
   runTask,
 } from '../services/taskRunner';
+import { wsHub } from '../services/wsHub';
 import type { TaskContextSnapshotPayload, TaskStepActor } from '../types';
 
 export const tasksRouter: Router = Router();
@@ -122,6 +123,42 @@ tasksRouter.get('/', async (req, res) => {
     activeProject: filterProject,
     activeTasksList: true,
   });
+});
+
+tasksRouter.delete('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const task = tasks.get(id);
+  if (!task) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  const projectId = task.project_id;
+  const meta = tasks.remove(id);
+  if (!meta) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  if (meta.executionChatId) {
+    const execChat = chats.get(meta.executionChatId);
+    if (execChat?.chat_kind === 'task_execution') {
+      const sk = execChat.openclaw_session_id;
+      if (typeof sk === 'string' && sk.startsWith('agent:')) {
+        try {
+          await openclawWs.deleteSession(sk);
+        } catch (err) {
+          console.warn(
+            '[tasks] sessions.delete failed for execution chat',
+            meta.executionChatId,
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
+      chats.remove(meta.executionChatId);
+      wsHub.broadcastAll({ type: 'chat-deleted', chatId: meta.executionChatId });
+    }
+  }
+  wsHub.broadcastAll({ type: 'task-deleted', taskId: id });
+  res.json({ ok: true, projectId });
 });
 
 tasksRouter.get('/:id', async (req, res) => {

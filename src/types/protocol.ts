@@ -184,6 +184,7 @@ export type ServerMsg =
   /* ---- agent tasks ---- */
   | { type: 'task-created'; task: TaskWithSteps }
   | { type: 'task-updated'; task: TaskWithSteps }
+  | { type: 'task-deleted'; taskId: number }
   | { type: 'task-run-started'; taskId: number; executionChatId: number }
   | { type: 'task-run-delta'; taskId: number; executionChatId: number; text: string }
   | { type: 'task-run-ended'; taskId: number; executionChatId: number }
