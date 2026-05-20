@@ -3,6 +3,7 @@ import { db } from '../db/database';
 import { deriveTitle } from './chatTitle';
 import type {
   Chat,
+  ChatKind,
   Message,
   MessageAttachment,
   Project,
@@ -11,16 +12,30 @@ import type {
   ProjectSecret,
   QueuedMessage,
   ScheduledMessage,
+  Task,
+  TaskAskSession,
+  TaskContextSnapshot,
+  TaskContextSnapshotPayload,
+  TaskRun,
+  TaskStatus,
+  TaskStep,
+  TaskStepActor,
+  TaskStepStatus,
+  TaskWithSteps,
 } from '../types';
 import type { InlineSecretWire } from './inlineSecrets';
 import { clampLogoColor, clampLogoEmoji } from '../constants/projectLogos';
 
 // ---------- chats ----------
 
+const CHAT_KIND_NORMAL = "COALESCE(chat_kind, 'normal') = 'normal'";
+
 export const chats = {
   list(): Chat[] {
     return db
-      .prepare('SELECT * FROM chats ORDER BY updated_at DESC, id DESC')
+      .prepare(
+        `SELECT * FROM chats WHERE ${CHAT_KIND_NORMAL} ORDER BY updated_at DESC, id DESC`,
+      )
       .all() as Chat[];
   },
   get(id: number): Chat | undefined {
@@ -37,24 +52,30 @@ export const chats = {
   listOrphans(): Chat[] {
     return db
       .prepare(
-        'SELECT * FROM chats WHERE project_id IS NULL ORDER BY updated_at DESC, id DESC',
+        `SELECT * FROM chats WHERE project_id IS NULL AND ${CHAT_KIND_NORMAL} ORDER BY updated_at DESC, id DESC`,
       )
       .all() as Chat[];
   },
   listByProject(projectId: number): Chat[] {
     return db
       .prepare(
-        'SELECT * FROM chats WHERE project_id = ? ORDER BY updated_at DESC, id DESC',
+        `SELECT * FROM chats WHERE project_id = ? AND ${CHAT_KIND_NORMAL} ORDER BY updated_at DESC, id DESC`,
       )
       .all(projectId) as Chat[];
   },
-  create(agent: string, projectId: number | null = null): Chat {
+  create(
+    agent: string,
+    projectId: number | null = null,
+    opts?: { chatKind?: ChatKind; title?: string },
+  ): Chat {
     const sessionKey = randomUUID();
+    const kind = opts?.chatKind ?? 'normal';
+    const title = opts?.title?.trim() || 'New chat';
     const info = db
       .prepare(
-        'INSERT INTO chats (agent, openclaw_session_id, project_id) VALUES (?, ?, ?)',
+        'INSERT INTO chats (agent, openclaw_session_id, project_id, chat_kind, title) VALUES (?, ?, ?, ?, ?)',
       )
-      .run(agent, sessionKey, projectId);
+      .run(agent, sessionKey, projectId, kind, title);
     return this.get(Number(info.lastInsertRowid))!;
   },
   /** Rename only — does not touch `updated_at` so sidebar order stays put. */
@@ -900,6 +921,349 @@ export const scheduledMessages = {
   },
 };
 
+// ---------- tasks ----------
+
+export const taskContextSnapshots = {
+  create(opts: {
+    projectId: number | null;
+    sourceChatId: number;
+    payload: TaskContextSnapshotPayload;
+  }): TaskContextSnapshot {
+    const info = db
+      .prepare(
+        'INSERT INTO task_context_snapshots (project_id, source_chat_id, content_json) VALUES (?, ?, ?)',
+      )
+      .run(opts.projectId, opts.sourceChatId, JSON.stringify(opts.payload));
+    return db
+      .prepare('SELECT * FROM task_context_snapshots WHERE id = ?')
+      .get(Number(info.lastInsertRowid)) as TaskContextSnapshot;
+  },
+  get(id: number): TaskContextSnapshot | undefined {
+    return db.prepare('SELECT * FROM task_context_snapshots WHERE id = ?').get(id) as
+      | TaskContextSnapshot
+      | undefined;
+  },
+  parsePayload(row: TaskContextSnapshot): TaskContextSnapshotPayload {
+    return JSON.parse(row.content_json) as TaskContextSnapshotPayload;
+  },
+  delete(id: number): void {
+    db.prepare('DELETE FROM task_context_snapshots WHERE id = ?').run(id);
+  },
+};
+
+export const taskAskSessions = {
+  create(opts: {
+    taskId: number;
+    contextSnapshotId: number;
+    openclawSessionKey: string;
+  }): TaskAskSession {
+    const info = db
+      .prepare(
+        `INSERT INTO task_ask_sessions (task_id, context_snapshot_id, openclaw_session_key, turn_count)
+         VALUES (?, ?, ?, 0)`,
+      )
+      .run(opts.taskId, opts.contextSnapshotId, opts.openclawSessionKey);
+    return db
+      .prepare('SELECT * FROM task_ask_sessions WHERE id = ?')
+      .get(Number(info.lastInsertRowid)) as TaskAskSession;
+  },
+  get(id: number): TaskAskSession | undefined {
+    return db.prepare('SELECT * FROM task_ask_sessions WHERE id = ?').get(id) as
+      | TaskAskSession
+      | undefined;
+  },
+  listOpenByTask(taskId: number): TaskAskSession[] {
+    return db
+      .prepare('SELECT * FROM task_ask_sessions WHERE task_id = ? ORDER BY id ASC')
+      .all(taskId) as TaskAskSession[];
+  },
+  incrementTurnCount(id: number): void {
+    db.prepare(
+      'UPDATE task_ask_sessions SET turn_count = turn_count + 1 WHERE id = ?',
+    ).run(id);
+  },
+  delete(id: number): void {
+    db.prepare('DELETE FROM task_ask_sessions WHERE id = ?').run(id);
+  },
+};
+
+function touchTask(id: number): void {
+  db.prepare("UPDATE tasks SET updated_at = datetime('now') WHERE id = ?").run(id);
+}
+
+export const tasks = {
+  get(id: number): Task | undefined {
+    return db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Task | undefined;
+  },
+  hasAny(): boolean {
+    const row = db.prepare('SELECT 1 AS n FROM tasks LIMIT 1').get() as { n: number } | undefined;
+    return row != null;
+  },
+  statusSignals(): { needsHuman: boolean; running: boolean; needsReview: boolean } {
+    const row = db
+      .prepare(
+        `SELECT
+          MAX(CASE WHEN status IN ('needs_human', 'needs_clarification') THEN 1 ELSE 0 END) AS needs_human,
+          MAX(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
+          MAX(CASE WHEN status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review
+        FROM tasks`,
+      )
+      .get() as
+      | { needs_human: number; running: number; needs_review: number }
+      | undefined;
+    return {
+      needsHuman: (row?.needs_human ?? 0) > 0,
+      running: (row?.running ?? 0) > 0,
+      needsReview: (row?.needs_review ?? 0) > 0,
+    };
+  },
+  list(opts?: { projectId?: number | null; orphanOnly?: boolean }): Task[] {
+    if (opts?.orphanOnly) {
+      return db
+        .prepare('SELECT * FROM tasks WHERE project_id IS NULL ORDER BY updated_at DESC, id DESC')
+        .all() as Task[];
+    }
+    if (opts?.projectId != null) {
+      return db
+        .prepare(
+          'SELECT * FROM tasks WHERE project_id = ? ORDER BY updated_at DESC, id DESC',
+        )
+        .all(opts.projectId) as Task[];
+    }
+    return db
+      .prepare('SELECT * FROM tasks ORDER BY updated_at DESC, id DESC')
+      .all() as Task[];
+  },
+  create(opts: {
+    projectId: number | null;
+    sourceChatId: number;
+    title: string;
+    goal: string;
+    agent: string | null;
+    contextSnapshotId: number;
+    status?: TaskStatus;
+  }): Task {
+    const info = db
+      .prepare(
+        `INSERT INTO tasks (
+          project_id, source_chat_id, title, goal, status, agent, context_snapshot_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        opts.projectId,
+        opts.sourceChatId,
+        opts.title.trim() || 'Task',
+        opts.goal.trim(),
+        opts.status ?? 'ready',
+        opts.agent,
+        opts.contextSnapshotId,
+      );
+    return this.get(Number(info.lastInsertRowid))!;
+  },
+  updateStatus(id: number, status: TaskStatus): void {
+    db.prepare("UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?").run(
+      status,
+      id,
+    );
+  },
+  patch(
+    id: number,
+    patch: {
+      title?: string;
+      goal?: string;
+      agent?: string | null;
+      status?: TaskStatus;
+      executionChatId?: number | null;
+      resultSummary?: string | null;
+    },
+  ): Task | undefined {
+    const row = this.get(id);
+    if (!row) return undefined;
+    const title = patch.title !== undefined ? patch.title.trim() || row.title : row.title;
+    const goal = patch.goal !== undefined ? patch.goal.trim() : row.goal;
+    const agent = patch.agent !== undefined ? patch.agent : row.agent;
+    const status = patch.status ?? row.status;
+    const execution_chat_id =
+      patch.executionChatId !== undefined ? patch.executionChatId : row.execution_chat_id;
+    const result_summary =
+      patch.resultSummary !== undefined ? patch.resultSummary : row.result_summary;
+    db.prepare(
+      `UPDATE tasks SET title = ?, goal = ?, agent = ?, status = ?,
+        execution_chat_id = ?, result_summary = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+    ).run(title, goal, agent, status, execution_chat_id, result_summary, id);
+    return this.get(id);
+  },
+  remove(id: number): { executionChatId: number | null; snapshotId: number } | null {
+    const task = this.get(id);
+    if (!task) return null;
+    const meta = {
+      executionChatId: task.execution_chat_id,
+      snapshotId: task.context_snapshot_id,
+    };
+    db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+    db.prepare('DELETE FROM task_context_snapshots WHERE id = ?').run(task.context_snapshot_id);
+    return meta;
+  },
+};
+
+export const taskSteps = {
+  listByTask(taskId: number): TaskStep[] {
+    return db
+      .prepare('SELECT * FROM task_steps WHERE task_id = ? ORDER BY position ASC, id ASC')
+      .all(taskId) as TaskStep[];
+  },
+  replaceAll(
+    taskId: number,
+    steps: {
+      id?: number;
+      actor: TaskStepActor;
+      title: string;
+      description?: string | null;
+    }[],
+  ): TaskStep[] {
+    const existing = this.listByTask(taskId);
+    const locked = new Map(
+      existing
+        .filter((s) => s.status === 'done' || s.status === 'failed')
+        .map((s) => [s.id, s]),
+    );
+    const del = db.prepare('DELETE FROM task_steps WHERE task_id = ?');
+    const ins = db.prepare(
+      `INSERT INTO task_steps (
+         task_id, position, actor, title, description, status, result_summary, result_body
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const run = db.transaction(() => {
+      del.run(taskId);
+      steps.forEach((s, i) => {
+        const stepId = s.id != null ? Number(s.id) : NaN;
+        const preserved = Number.isFinite(stepId) ? locked.get(stepId) : undefined;
+        if (preserved) {
+          ins.run(
+            taskId,
+            i,
+            preserved.actor,
+            preserved.title,
+            preserved.description,
+            preserved.status,
+            preserved.result_summary,
+            preserved.result_body,
+          );
+        } else {
+          ins.run(
+            taskId,
+            i,
+            s.actor,
+            s.title.trim(),
+            s.description?.trim() || null,
+            'todo',
+            null,
+            null,
+          );
+        }
+      });
+    });
+    run();
+    touchTask(taskId);
+    return this.listByTask(taskId);
+  },
+  saveResult(stepId: number, body: string | null, summary?: string | null): void {
+    const b =
+      body != null && String(body).trim() ? String(body).trim().slice(0, 20_000) : null;
+    const sum =
+      summary != null && String(summary).trim()
+        ? String(summary).trim().slice(0, 500)
+        : null;
+    db.prepare(
+      `UPDATE task_steps SET result_summary = ?, result_body = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+    ).run(sum, b, stepId);
+  },
+  updateStatus(stepId: number, status: TaskStepStatus): void {
+    db.prepare(
+      "UPDATE task_steps SET status = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(status, stepId);
+  },
+  /** Insert a human gate after an existing step; shifts later positions. */
+  insertHumanAfter(taskId: number, afterStepId: number, title: string): TaskStep {
+    const after = db
+      .prepare('SELECT * FROM task_steps WHERE id = ? AND task_id = ?')
+      .get(afterStepId, taskId) as TaskStep | undefined;
+    if (!after) throw new Error('step not found');
+    const label = title.trim() || 'Your input needed';
+    const newPos = after.position + 1;
+    const bump = db.prepare(
+      'UPDATE task_steps SET position = position + 1 WHERE task_id = ? AND position >= ?',
+    );
+    const ins = db.prepare(
+      `INSERT INTO task_steps (task_id, position, actor, title, description, status)
+       VALUES (?, ?, 'human', ?, NULL, 'needs_human')`,
+    );
+    const run = db.transaction(() => {
+      bump.run(taskId, newPos);
+      ins.run(taskId, newPos, label);
+    });
+    run();
+    touchTask(taskId);
+    const row = db
+      .prepare('SELECT * FROM task_steps WHERE task_id = ? AND position = ?')
+      .get(taskId, newPos) as TaskStep;
+    return row;
+  },
+  /** First plan step that is not finished (done/failed). */
+  getActiveStep(taskId: number): TaskStep | undefined {
+    const steps = this.listByTask(taskId);
+    return steps.find((s) => s.status !== 'done' && s.status !== 'failed');
+  },
+  getCurrentTodo(taskId: number): TaskStep | undefined {
+    return this.getActiveStep(taskId);
+  },
+};
+
+export const taskRuns = {
+  create(opts: {
+    taskId: number;
+    executionChatId: number;
+    status: string;
+    taskStepId?: number | null;
+  }): TaskRun {
+    const info = db
+      .prepare(
+        'INSERT INTO task_runs (task_id, execution_chat_id, task_step_id, status) VALUES (?, ?, ?, ?)',
+      )
+      .run(opts.taskId, opts.executionChatId, opts.taskStepId ?? null, opts.status);
+    return db.prepare('SELECT * FROM task_runs WHERE id = ?').get(Number(info.lastInsertRowid)) as TaskRun;
+  },
+  finish(id: number, status: string, logSummary: string | null): void {
+    db.prepare(
+      `UPDATE task_runs SET status = ?, finished_at = datetime('now'), log_summary = ? WHERE id = ?`,
+    ).run(status, logSummary, id);
+  },
+  listByTask(taskId: number): TaskRun[] {
+    return db
+      .prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY id DESC')
+      .all(taskId) as TaskRun[];
+  },
+  getLatest(taskId: number): TaskRun | undefined {
+    return db
+      .prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY id DESC LIMIT 1')
+      .get(taskId) as TaskRun | undefined;
+  },
+};
+
+export function enrichTaskWithSteps(task: Task): TaskWithSteps {
+  const steps = taskSteps.listByTask(task.id);
+  const src = chats.get(task.source_chat_id);
+  const current = taskSteps.getActiveStep(task.id);
+  return {
+    ...task,
+    steps,
+    source_chat_title: (src?.title ?? '').trim() || 'Chat',
+    current_step_title: current?.title,
+  };
+}
+
 // ---------- search ----------
 
 const SEARCH_MAX_LEN = 200;
@@ -914,8 +1278,9 @@ export const chatSearch = {
         `SELECT DISTINCT c.id AS id
          FROM chats c
          LEFT JOIN messages m ON m.chat_id = c.id
-         WHERE instr(unicode_lower(c.title), ?) > 0
-            OR instr(unicode_lower(COALESCE(m.content, '')), ?) > 0
+         WHERE ${CHAT_KIND_NORMAL}
+           AND (instr(unicode_lower(c.title), ?) > 0
+            OR instr(unicode_lower(COALESCE(m.content, '')), ?) > 0)
          ORDER BY c.updated_at DESC, c.id DESC
          LIMIT 500`,
       )

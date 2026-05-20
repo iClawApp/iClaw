@@ -49,6 +49,28 @@
         href="/projects"
         class="sidebar-projects-btn<%= typeof activeProjectsList !== 'undefined' && activeProjectsList ? ' active' : '' %>"
       >Projects</a>
+      <% if (typeof hasAnyTasks !== 'undefined' && hasAnyTasks) {
+        const _taskSignals = typeof taskStatusSignals !== 'undefined' ? taskStatusSignals : {};
+        const _taskDotHuman = _taskSignals.needsHuman;
+        const _taskDotRunning = _taskSignals.running;
+        const _taskDotReview = _taskSignals.needsReview;
+        const _taskDotAny = _taskDotHuman || _taskDotRunning || _taskDotReview;
+      %>
+      <a
+        href="/tasks"
+        class="sidebar-projects-btn<%= typeof activeTasksList !== 'undefined' && activeTasksList ? ' active' : '' %>"
+        id="sidebar-tasks-link"
+      >
+        <span class="sidebar-projects-btn__label">Tasks</span>
+        <% if (_taskDotAny) { %>
+        <span class="sidebar-tasks-dots" aria-hidden="true">
+          <% if (_taskDotHuman) { %><span class="status-dot task-human"></span><% } %>
+          <% if (_taskDotRunning) { %><span class="status-dot working"></span><% } %>
+          <% if (_taskDotReview) { %><span class="status-dot task-review"></span><% } %>
+        </span>
+        <% } %>
+      </a>
+      <% } %>
     </div>
   </div>
 

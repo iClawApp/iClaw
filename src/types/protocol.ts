@@ -9,7 +9,14 @@
  * creation (WebSocket `send` without `chatId`).
  */
 
-import type { Message, Project, ProjectFact, QueuedMessage, ScheduledMessage } from './index';
+import type {
+  Message,
+  Project,
+  ProjectFact,
+  QueuedMessage,
+  ScheduledMessage,
+  TaskWithSteps,
+} from './index';
 
 /* ---------------- Client → Server ---------------- */
 
@@ -173,6 +180,14 @@ export type ServerMsg =
   | { type: 'queue-added'; chatId: number; item: QueuedMessage }
   | { type: 'queue-deleted'; chatId: number; queueId: number }
   | { type: 'queue-reordered'; chatId: number; queue: QueuedMessage[] }
+
+  /* ---- agent tasks ---- */
+  | { type: 'task-created'; task: TaskWithSteps }
+  | { type: 'task-updated'; task: TaskWithSteps }
+  | { type: 'task-deleted'; taskId: number }
+  | { type: 'task-run-started'; taskId: number; executionChatId: number }
+  | { type: 'task-run-delta'; taskId: number; executionChatId: number; text: string }
+  | { type: 'task-run-ended'; taskId: number; executionChatId: number }
 
   /* ---- gateway events forwarded to UI ---- */
   /** Gateway session index/metadata changed (possibly from another tab/CLI). */

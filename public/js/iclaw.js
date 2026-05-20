@@ -634,7 +634,9 @@
   /** Wrap fenced ``` blocks for a floating copy control (after markdown → DOM). */
   function enhanceCodeBlocks(root) {
     if (!root || root.nodeType !== 1) return;
-    const pres = root.querySelectorAll('.msg-body pre, .stream-body pre, .reasoning-body pre');
+    const pres = root.querySelectorAll(
+      '.msg-body pre, .stream-body pre, .reasoning-body pre, .task-log-entry-body pre',
+    );
     pres.forEach((pre) => {
       if (pre.parentElement?.classList.contains('code-block-wrap')) return;
       const wrap = document.createElement('div');
@@ -673,7 +675,7 @@
     const hl = window.hljs;
     if (!root || root.nodeType !== 1 || !hl || typeof hl.highlightElement !== 'function') return;
     root.querySelectorAll(
-      '.msg-body pre code, .stream-body pre code, .reasoning-body pre code',
+      '.msg-body pre code, .stream-body pre code, .reasoning-body pre code, .task-log-entry-body pre code',
     ).forEach((code) => {
       const pre = code.parentElement;
       if (!pre || pre.tagName !== 'PRE') return;
@@ -967,6 +969,27 @@
     });
   }
 
+  /** Task detail: goal, agent ask, execution log (server-rendered + streaming). */
+  function hydrateTaskMarkdownFields() {
+    const root = document.querySelector('.task-page');
+    if (!root) return;
+    root.querySelectorAll('.task-md').forEach((el) => {
+      const raw = (el.dataset.rawMd != null ? el.dataset.rawMd : el.textContent) ?? '';
+      if (!String(raw).trim()) return;
+      el.dataset.rawMd = raw;
+      el.innerHTML = renderMessageHtml(raw);
+      decorateMessageBody(el);
+    });
+  }
+
+  function appendTaskLogMarkdown(body, chunk) {
+    if (!body) return;
+    const next = String(body.dataset.rawMd ?? body.textContent ?? '') + String(chunk ?? '');
+    body.dataset.rawMd = next;
+    body.innerHTML = renderMessageHtml(next);
+    decorateMessageBody(body, { deferSyntaxHighlight: true });
+  }
+
   function existingFactSuggestionIds() {
     const ids = new Set();
     if (!messagesEl) return ids;
@@ -993,6 +1016,75 @@
     '<circle cx="18" cy="18" r="14" fill="none" stroke-width="2" stroke-linecap="round" ' +
     'stroke-dasharray="87.965 87.965" stroke-dashoffset="0"/>' +
     '</svg>';
+
+  /**
+   * Countdown with setTimeout + optional CSS ring; pauses while hoverEl is hovered.
+   * @returns {() => void} cancel
+   */
+  function attachPausableCountdown(opts) {
+    const { hoverEl, durationMs, onExpire, onTickStart, onTickClear } = opts;
+    let timeoutId = null;
+    let remaining = durationMs;
+    let deadline = 0;
+    let paused = false;
+
+    function detachHover() {
+      if (!hoverEl) return;
+      hoverEl.removeEventListener('mouseenter', onEnter);
+      hoverEl.removeEventListener('mouseleave', onLeave);
+    }
+
+    function cancel() {
+      if (timeoutId != null) clearTimeout(timeoutId);
+      timeoutId = null;
+      paused = false;
+      deadline = 0;
+      detachHover();
+      if (onTickClear) onTickClear();
+    }
+
+    function armTimeout() {
+      if (timeoutId != null) clearTimeout(timeoutId);
+      deadline = Date.now() + remaining;
+      timeoutId = setTimeout(() => {
+        timeoutId = null;
+        detachHover();
+        if (onTickClear) onTickClear();
+        onExpire();
+      }, remaining);
+    }
+
+    function onEnter() {
+      if (paused) return;
+      paused = true;
+      if (!deadline) return;
+      remaining = Math.max(0, deadline - Date.now());
+      if (timeoutId != null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    }
+
+    function onLeave() {
+      if (!paused) return;
+      paused = false;
+      if (remaining <= 0) {
+        detachHover();
+        if (onTickClear) onTickClear();
+        onExpire();
+        return;
+      }
+      armTimeout();
+    }
+
+    if (onTickStart) onTickStart();
+    if (hoverEl) {
+      hoverEl.addEventListener('mouseenter', onEnter);
+      hoverEl.addEventListener('mouseleave', onLeave);
+    }
+    armTimeout();
+    return cancel;
+  }
 
   /** @type {HTMLElement[]} */
   const factSuggestionExpiryQueue = [];
@@ -1047,33 +1139,30 @@
     return new Promise((resolve) => {
       const sid = Number(btn.dataset.suggestionId);
       const cid = activeChatId;
-      let t = null;
-      btn.classList.add('fact-suggestion-reject--expiring');
-      row._factExpiryClear = () => {
-        if (t != null) clearTimeout(t);
-        t = null;
-        btn.classList.remove('fact-suggestion-reject--expiring');
-        delete row._factExpiryClear;
-        resolve();
-      };
-      t = setTimeout(() => {
-        t = null;
-        delete row._factExpiryClear;
-        btn.classList.remove('fact-suggestion-reject--expiring');
-        if (document.contains(row) && Number.isFinite(sid) && cid != null) {
-          fetch(
-            '/chats/' +
-              encodeURIComponent(cid) +
-              '/fact-suggestions/' +
-              encodeURIComponent(sid) +
-              '/reject',
-            { method: 'POST', headers: { Accept: 'application/json' } },
-          ).then((res) => {
-            if (res.ok) removeFactSuggestionRow(cid, sid);
-          });
-        }
-        resolve();
-      }, FACT_SUGGESTION_AUTO_REJECT_MS);
+      const hoverEl = row.closest('.fact-suggestions-card') || row;
+      row._factExpiryClear = attachPausableCountdown({
+        hoverEl,
+        durationMs: FACT_SUGGESTION_AUTO_REJECT_MS,
+        onTickStart: () => btn.classList.add('fact-suggestion-reject--expiring'),
+        onTickClear: () => btn.classList.remove('fact-suggestion-reject--expiring'),
+        onExpire: () => {
+          delete row._factExpiryClear;
+          btn.classList.remove('fact-suggestion-reject--expiring');
+          if (document.contains(row) && Number.isFinite(sid) && cid != null) {
+            fetch(
+              '/chats/' +
+                encodeURIComponent(cid) +
+                '/fact-suggestions/' +
+                encodeURIComponent(sid) +
+                '/reject',
+              { method: 'POST', headers: { Accept: 'application/json' } },
+            ).then((res) => {
+              if (res.ok) removeFactSuggestionRow(cid, sid);
+            });
+          }
+          resolve();
+        },
+      });
     });
   }
 
@@ -2737,6 +2826,55 @@
         console.debug('[iclaw] gateway-session-changed', msg.kind, msg.sessionKey);
         return;
 
+      case 'task-run-delta': {
+        const taskRoot = document.querySelector('.task-page[data-task-id]');
+        if (!taskRoot || Number(taskRoot.dataset.taskId) !== msg.taskId) return;
+        const logEl = document.getElementById('task-execution-log');
+        if (!logEl) return;
+        const emptyEl = logEl.querySelector('.task-log-empty');
+        if (emptyEl) emptyEl.remove();
+        const last = logEl.querySelector('.task-log-entry--assistant:last-child .task-log-entry-body');
+        if (last) appendTaskLogMarkdown(last, msg.text);
+        else {
+          const article = document.createElement('article');
+          article.className = 'task-log-entry task-log-entry--assistant';
+          article.innerHTML =
+            '<header class="task-log-entry-head">assistant</header>' +
+            '<div class="task-log-entry-body task-md msg-body"></div>';
+          const body = article.querySelector('.task-log-entry-body');
+          appendTaskLogMarkdown(body, msg.text);
+          logEl.appendChild(article);
+        }
+        logEl.scrollTop = logEl.scrollHeight;
+        return;
+      }
+
+      case 'task-run-ended': {
+        const taskRoot = document.querySelector('.task-page[data-task-id]');
+        if (!taskRoot || Number(taskRoot.dataset.taskId) !== msg.taskId) return;
+        window.location.reload();
+        return;
+      }
+
+      case 'task-updated':
+        if (document.getElementById('task-board')) refreshGlobalTasksBoard();
+        if (msg.task) {
+          finishPendingTaskCreateWhenReady(msg.task);
+          applyTaskDetailRemoteTask(msg.task);
+        }
+        void refreshTasksNavSignals();
+        return;
+
+      case 'task-created':
+        if (msg.task?.status === 'ready') finishPendingTaskCreateFromWs(msg.task);
+        void refreshTasksNavSignals();
+        return;
+
+      case 'task-deleted':
+        if (document.getElementById('task-board')) void refreshGlobalTasksBoard();
+        void refreshTasksNavSignals();
+        return;
+
       case 'gateway-status':
         applyGatewayStatus(msg.status, msg.detail);
         return;
@@ -3957,6 +4095,8 @@
   // scheduled messages (Telegram-style hold-to-send-later)
   // -------------------------------------------------------------------------
   const scheduleMenu = document.getElementById('schedule-menu');
+  const scheduleMenuMain = document.getElementById('schedule-menu-main');
+  const scheduleMenuSchedule = document.getElementById('schedule-menu-schedule');
   const sendBtn = document.getElementById('composer-send-btn');
   const scheduledListEl = document.getElementById('scheduled-list');
   const schedulePicker = document.getElementById('schedule-picker');
@@ -4049,6 +4189,19 @@
     });
   }
 
+  function composerHasMessageText() {
+    return Boolean(input && String(input.value).trim());
+  }
+
+  /** After task create / send / schedule — empty composer and reset secret UI. */
+  function clearComposerInput() {
+    if (!input) return;
+    input.value = '';
+    clearComposerSecretDraft();
+    closeScheduleMenu();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
   function isScheduleMenuOpen() {
     return scheduleMenu != null && !scheduleMenu.hidden;
   }
@@ -4061,8 +4214,18 @@
     closeScheduleMenu();
   }
 
+  function showScheduleMenuPanel(panel) {
+    const main = scheduleMenuMain || scheduleMenu?.querySelector('[data-panel="main"]');
+    const times = scheduleMenuSchedule || scheduleMenu?.querySelector('[data-panel="schedule"]');
+    if (!main || !times) return;
+    const showTimes = panel === 'schedule';
+    main.hidden = showTimes;
+    times.hidden = !showTimes;
+  }
+
   function closeScheduleMenu() {
     if (!scheduleMenu) return;
+    showScheduleMenuPanel('main');
     scheduleMenu.hidden = true;
     scheduleMenuJustOpened = false;
     if (scheduleMenuAutoCloseTimer != null) {
@@ -4073,10 +4236,10 @@
   }
 
   function openScheduleMenu() {
-    if (!scheduleMenu) return;
-    if (!input.value.trim()) return;
+    if (!scheduleMenu || !composerHasMessageText()) return;
     closeComposerAttachMenus();
     document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
+    showScheduleMenuPanel('main');
     scheduleMenu.hidden = false;
     if (scheduleMenuAutoCloseTimer != null) clearTimeout(scheduleMenuAutoCloseTimer);
     scheduleMenuAutoCloseTimer = setTimeout(() => {
@@ -4296,7 +4459,7 @@
   if (sendBtn) {
     sendBtn.addEventListener('pointerdown', () => {
       if (startedOnDraft || activeChatId == null) return;
-      if (!input.value.trim()) return;
+      if (!composerHasMessageText()) return;
       if (schedulePressTimer) clearTimeout(schedulePressTimer);
       schedulePressTimer = setTimeout(() => {
         schedulePressTimer = null;
@@ -4375,10 +4538,664 @@
     });
   }
 
+  const createTaskModal = document.getElementById('create-task-modal');
+  const createTaskBackdrop = document.getElementById('create-task-modal-backdrop');
+  const createTaskTitle = document.getElementById('create-task-title');
+  const createTaskGoal = document.getElementById('create-task-goal');
+  const createTaskAgent = document.getElementById('create-task-agent');
+  const createTaskGeneratePlan = document.getElementById('create-task-generate-plan');
+  const createTaskCancel = document.getElementById('create-task-cancel');
+  const createTaskSubmit = document.getElementById('create-task-submit');
+
+  function ensureCreateTaskModalPortal() {
+    if (!createTaskModal || createTaskModal.parentElement === document.body) return;
+    document.body.appendChild(createTaskModal);
+  }
+
+  function populateCreateTaskAgentSelect() {
+    if (!createTaskAgent) return;
+    const src =
+      document.getElementById('chat-agent-select') || document.getElementById('draft-agent');
+    createTaskAgent.innerHTML = '';
+    if (src && src.options.length) {
+      for (const opt of src.options) {
+        const o = document.createElement('option');
+        o.value = opt.value;
+        o.textContent = opt.textContent;
+        if (opt.selected) o.selected = true;
+        createTaskAgent.appendChild(o);
+      }
+      return;
+    }
+    const o = document.createElement('option');
+    o.value = 'openclaw/default';
+    o.textContent = 'openclaw/default';
+    createTaskAgent.appendChild(o);
+  }
+
+  function openCreateTaskModal() {
+    if (!createTaskModal) return;
+    if (activeChatId == null || startedOnDraft) {
+      alert('Open or start a saved chat first — tasks need a chat context.');
+      return;
+    }
+    ensureCreateTaskModalPortal();
+    closeScheduleMenu();
+    const composerText = (input && input.value.trim()) || '';
+    if (createTaskGoal) createTaskGoal.value = composerText;
+    if (createTaskTitle) {
+      createTaskTitle.value =
+        composerText.slice(0, 80) || 'New task';
+    }
+    populateCreateTaskAgentSelect();
+    createTaskModal.hidden = false;
+    requestAnimationFrame(() => {
+      (createTaskGoal || createTaskTitle)?.focus();
+    });
+  }
+
+  function closeCreateTaskModal() {
+    if (createTaskModal) createTaskModal.hidden = true;
+  }
+
+  const pendingTaskCreateBanners = new Map();
+  const PENDING_TASK_STORAGE_KEY = 'iclaw.pendingTaskCreates.v1';
+  const PENDING_TASK_MAX_AGE_MS = 30 * 60_000;
+  const TASK_READY_BANNER_DISMISS_MS = 30_000;
+  const ICLAW_BANNER_COUNTDOWN_RING_SVG =
+    '<svg class="iclaw-inline-banner__countdown-ring" aria-hidden="true" viewBox="0 0 36 36">' +
+    '<circle cx="18" cy="18" r="14" fill="none" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-dasharray="87.965 87.965" stroke-dashoffset="0"/>' +
+    '</svg>';
+
+  function readPendingTaskCreatesStore() {
+    try {
+      const raw = sessionStorage.getItem(PENDING_TASK_STORAGE_KEY);
+      if (!raw) return {};
+      const obj = JSON.parse(raw);
+      return obj && typeof obj === 'object' ? obj : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function writePendingTaskCreatesStore(store) {
+    try {
+      sessionStorage.setItem(PENDING_TASK_STORAGE_KEY, JSON.stringify(store));
+    } catch {
+      /* storage full or disabled */
+    }
+  }
+
+  function prunePendingTaskCreatesStore(store) {
+    const now = Date.now();
+    for (const id of Object.keys(store)) {
+      const rec = store[id];
+      if (!rec || now - (rec.createdAt || 0) > PENDING_TASK_MAX_AGE_MS) delete store[id];
+    }
+  }
+
+  function upsertPendingTaskCreateRecord(rec) {
+    const store = readPendingTaskCreatesStore();
+    prunePendingTaskCreatesStore(store);
+    store[rec.pendingId] = rec;
+    writePendingTaskCreatesStore(store);
+  }
+
+  function removePendingTaskCreateRecord(pendingId) {
+    const store = readPendingTaskCreatesStore();
+    delete store[pendingId];
+    writePendingTaskCreatesStore(store);
+  }
+
+  function shouldSuppressTaskReadyBanner(rec) {
+    if (document.getElementById('task-board')) return true;
+    const projectPage = document.querySelector('.project-page[data-project-id]');
+    if (projectPage && rec && rec.projectId != null) {
+      return Number(projectPage.dataset.projectId) === Number(rec.projectId);
+    }
+    return false;
+  }
+
+  function buildTaskBannerActionsHtml(opts) {
+    const openDisabled = opts && opts.openDisabled;
+    const openSpinner = opts && opts.openSpinner;
+    const showDismiss = opts && opts.showDismiss;
+    let html = '<div class="iclaw-inline-banner__actions">';
+    if (showDismiss) {
+      html +=
+        '<button type="button" class="iclaw-inline-banner-dismiss task-create-banner-dismiss" aria-label="Закрити">' +
+        ICLAW_BANNER_COUNTDOWN_RING_SVG +
+        '<span class="iclaw-inline-banner-dismiss-glyph" aria-hidden="true">✕</span></button>';
+    }
+    html +=
+      '<button type="button" class="btn btn--sm task-create-banner-open"' +
+      (openDisabled ? ' disabled' : '') +
+      (openSpinner ? ' aria-busy="true"' : '') +
+      '>' +
+      (openSpinner ? '<span class="iclaw-inline-banner__btn-spinner" aria-hidden="true"></span> ' : '') +
+      'Відкрити</button></div>';
+    return html;
+  }
+
+  function wireTaskBannerActions(pendingId, taskId) {
+    const row = pendingTaskCreateBanners.get(pendingId);
+    if (!row?.el) return;
+    const dismiss = row.el.querySelector('.task-create-banner-dismiss');
+    if (dismiss && dismiss.dataset.bound !== '1') {
+      dismiss.dataset.bound = '1';
+      dismiss.addEventListener('click', () => removeTaskCreateBanner(pendingId));
+    }
+    const openBtn = row.el.querySelector('.task-create-banner-open');
+    if (openBtn && taskId != null && openBtn.dataset.bound !== '1') {
+      openBtn.dataset.bound = '1';
+      openBtn.addEventListener('click', () => {
+        removeTaskCreateBanner(pendingId);
+        window.location.href = '/tasks/' + encodeURIComponent(taskId);
+      });
+    }
+  }
+
+  function removeTaskCreateBanner(pendingId) {
+    const row = pendingTaskCreateBanners.get(pendingId);
+    if (row && typeof row._readyExpiryClear === 'function') row._readyExpiryClear();
+    pendingTaskCreateBanners.delete(pendingId);
+    removePendingTaskCreateRecord(pendingId);
+    const el = row?.el || document.querySelector('[data-pending-id="' + pendingId + '"]');
+    if (el) el.remove();
+    const host = document.getElementById('iclaw-inline-banner-host');
+    if (host && !host.children.length) host.remove();
+  }
+
+  function startTaskReadyBannerExpiry(pendingId) {
+    const row = pendingTaskCreateBanners.get(pendingId);
+    if (!row || !row.el) return;
+    const dismiss = row.el.querySelector('.task-create-banner-dismiss');
+    if (!dismiss) return;
+    if (typeof row._readyExpiryClear === 'function') row._readyExpiryClear();
+    row._readyExpiryClear = attachPausableCountdown({
+      hoverEl: row.el,
+      durationMs: TASK_READY_BANNER_DISMISS_MS,
+      onTickStart: () => dismiss.classList.add('iclaw-inline-banner-dismiss--expiring'),
+      onTickClear: () => dismiss.classList.remove('iclaw-inline-banner-dismiss--expiring'),
+      onExpire: () => {
+        delete row._readyExpiryClear;
+        removeTaskCreateBanner(pendingId);
+      },
+    });
+  }
+
+  function getTaskCreateBannerHost() {
+    let host = document.getElementById('iclaw-inline-banner-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'iclaw-inline-banner-host';
+      host.className = 'iclaw-inline-banner-host';
+      host.setAttribute('aria-live', 'polite');
+      const main = document.querySelector('.col-main');
+      const anchor =
+        main?.querySelector('.chat-header') ||
+        main?.querySelector('.project-header') ||
+        main?.querySelector('.task-board-header') ||
+        main?.firstElementChild;
+      if (main && anchor) {
+        anchor.insertAdjacentElement('afterend', host);
+      } else {
+        document.body.prepend(host);
+      }
+    }
+    return host;
+  }
+
+  function showTaskCreatingBanner(pendingId, title, rec) {
+    if (pendingTaskCreateBanners.has(pendingId)) return;
+    const host = getTaskCreateBannerHost();
+    const safeTitle = escapeHtml(title);
+    const el = document.createElement('aside');
+    el.className = 'iclaw-inline-banner iclaw-inline-banner--info card is-loading';
+    el.dataset.pendingId = pendingId;
+    el.setAttribute('role', 'status');
+    el.innerHTML =
+      '<div class="iclaw-inline-banner__main">' +
+      '<p class="iclaw-inline-banner__lead">Задача «' +
+      safeTitle +
+      '» створюється…</p>' +
+      '<p class="iclaw-inline-banner__detail muted">План і контекст готуються у фоні - можна продовжувати чат</p>' +
+      '</div>' +
+      buildTaskBannerActionsHtml({ openDisabled: true, openSpinner: true, showDismiss: false });
+    host.prepend(el);
+    pendingTaskCreateBanners.set(pendingId, {
+      el,
+      title,
+      taskId: null,
+      sourceChatId: rec?.sourceChatId ?? activeChatId,
+      projectId: rec?.projectId ?? currentComposerProjectId(),
+    });
+  }
+
+  function renderTasksNavDotsHtml(signals) {
+    if (!signals) return '';
+    const parts = [];
+    if (signals.needsHuman) parts.push('<span class="status-dot task-human"></span>');
+    if (signals.running) parts.push('<span class="status-dot working"></span>');
+    if (signals.needsReview) parts.push('<span class="status-dot task-review"></span>');
+    if (!parts.length) return '';
+    return '<span class="sidebar-tasks-dots" aria-hidden="true">' + parts.join('') + '</span>';
+  }
+
+  function applyTasksNavSignals(signals) {
+    const link = document.getElementById('sidebar-tasks-link');
+    if (!link) return;
+    if (!link.querySelector('.sidebar-projects-btn__label')) {
+      const label = document.createElement('span');
+      label.className = 'sidebar-projects-btn__label';
+      label.textContent = (link.textContent || 'Tasks').trim() || 'Tasks';
+      link.textContent = '';
+      link.appendChild(label);
+    }
+    link.querySelector('.sidebar-tasks-dots')?.remove();
+    const html = renderTasksNavDotsHtml(signals);
+    if (html) link.insertAdjacentHTML('beforeend', html);
+  }
+
+  async function refreshTasksNavSignals() {
+    try {
+      const res = await fetch('/tasks/signals', {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      if (data.hasAny) revealTasksNav();
+      applyTasksNavSignals(data.signals || {});
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  function revealTasksNav() {
+    if (document.documentElement.dataset.tasksNavVisible === '1') {
+      void refreshTasksNavSignals();
+      return;
+    }
+    document.documentElement.dataset.tasksNavVisible = '1';
+
+    const sidebarNav = document.querySelector('.sidebar-projects-nav');
+    if (sidebarNav && !sidebarNav.querySelector('#sidebar-tasks-link')) {
+      const a = document.createElement('a');
+      a.href = '/tasks';
+      a.className = 'sidebar-projects-btn';
+      a.id = 'sidebar-tasks-link';
+      a.innerHTML = '<span class="sidebar-projects-btn__label">Tasks</span>';
+      sidebarNav.appendChild(a);
+      void refreshTasksNavSignals();
+    }
+
+    const projectRoot = document.querySelector('main.project-page[data-project-id]');
+    if (projectRoot && !projectRoot.querySelector('#project-tab-tasks')) {
+      const tabs = projectRoot.querySelector('.project-tabs');
+      const pid = projectRoot.dataset.projectId;
+      if (tabs && pid) {
+        const tab = document.createElement('a');
+        tab.href = '/tasks?projectId=' + encodeURIComponent(pid);
+        tab.className = 'project-tab project-tab--tasks';
+        tab.id = 'project-tab-tasks';
+        tab.textContent = 'Tasks';
+        tabs.appendChild(tab);
+      }
+    }
+  }
+
+  function markTaskCreateBannerReady(pendingId, taskId, title) {
+    revealTasksNav();
+    const row = pendingTaskCreateBanners.get(pendingId);
+    const storeRec = readPendingTaskCreatesStore()[pendingId];
+    const rec = {
+      ...(storeRec || {}),
+      pendingId,
+      title,
+      taskId,
+      projectId: row?.projectId ?? storeRec?.projectId ?? null,
+      sourceChatId: row?.sourceChatId ?? storeRec?.sourceChatId ?? null,
+      status: 'ready',
+    };
+    if (shouldSuppressTaskReadyBanner(rec)) {
+      removeTaskCreateBanner(pendingId);
+      return;
+    }
+    if (!row || !row.el || row.taskId != null) return;
+    row.taskId = taskId;
+    if (storeRec) {
+      upsertPendingTaskCreateRecord({
+        ...storeRec,
+        status: 'ready',
+        taskId,
+        error: null,
+        projectId: rec.projectId,
+      });
+    }
+    row.el.classList.remove('is-loading', 'is-error', 'iclaw-inline-banner--info');
+    row.el.classList.add('is-ready', 'iclaw-inline-banner--success');
+    const lead = row.el.querySelector('.iclaw-inline-banner__lead');
+    if (lead) {
+      lead.textContent = 'Задача «' + title + '» готова';
+    }
+    const detail = row.el.querySelector('.iclaw-inline-banner__detail');
+    if (detail) detail.textContent = 'План збережено — можна переглянути та запустити агента.';
+    const actions = row.el.querySelector('.iclaw-inline-banner__actions');
+    if (actions) {
+      actions.outerHTML = buildTaskBannerActionsHtml({
+        openDisabled: false,
+        openSpinner: false,
+        showDismiss: true,
+      });
+    }
+    wireTaskBannerActions(pendingId, taskId);
+    startTaskReadyBannerExpiry(pendingId);
+  }
+
+  function taskCreateErrorMessage(err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/failed to fetch/i.test(msg)) {
+      return 'Звʼязок перервалось (перехід на іншу сторінку або мережа). Оновіть чат — задача могла вже створитись.';
+    }
+    return msg;
+  }
+
+  function showTaskCreateBannerError(pendingId, title, errMsg, rec) {
+    const msg = taskCreateErrorMessage(errMsg);
+    const storeRec = readPendingTaskCreatesStore()[pendingId];
+    if (storeRec) {
+      upsertPendingTaskCreateRecord({
+        ...storeRec,
+        status: 'error',
+        error: msg,
+      });
+    }
+    const existing = pendingTaskCreateBanners.get(pendingId);
+    if (existing?.el) {
+      markTaskCreateBannerError(pendingId, title, msg);
+      return;
+    }
+    const host = getTaskCreateBannerHost();
+    const safeTitle = escapeHtml(title);
+    const el = document.createElement('aside');
+    el.className = 'iclaw-inline-banner iclaw-inline-banner--error card is-error';
+    el.dataset.pendingId = pendingId;
+    el.setAttribute('role', 'status');
+    el.innerHTML =
+      '<div class="iclaw-inline-banner__main">' +
+      '<p class="iclaw-inline-banner__lead">Не вдалося створити задачу «' +
+      safeTitle +
+      '»</p>' +
+      '<p class="iclaw-inline-banner__detail">' +
+      escapeHtml(msg) +
+      '</p>' +
+      '</div>' +
+      buildTaskBannerActionsHtml({ openDisabled: true, openSpinner: false, showDismiss: true });
+    host.prepend(el);
+    pendingTaskCreateBanners.set(pendingId, {
+      el,
+      title,
+      taskId: null,
+      sourceChatId: rec?.sourceChatId ?? activeChatId,
+      projectId: rec?.projectId ?? currentComposerProjectId(),
+    });
+    wireTaskBannerActions(pendingId, null);
+    startTaskReadyBannerExpiry(pendingId);
+  }
+
+  function markTaskCreateBannerError(pendingId, title, err) {
+    const row = pendingTaskCreateBanners.get(pendingId);
+    if (!row || !row.el) return;
+    const msg = typeof err === 'string' ? err : taskCreateErrorMessage(err);
+    const storeRec = readPendingTaskCreatesStore()[pendingId];
+    if (storeRec) {
+      upsertPendingTaskCreateRecord({
+        ...storeRec,
+        status: 'error',
+        error: msg,
+      });
+    }
+    row.el.classList.remove(
+      'is-loading',
+      'is-ready',
+      'iclaw-inline-banner--info',
+      'iclaw-inline-banner--success',
+    );
+    row.el.classList.add('is-error', 'iclaw-inline-banner--error');
+    const lead = row.el.querySelector('.iclaw-inline-banner__lead');
+    if (lead) {
+      lead.textContent = 'Не вдалося створити задачу «' + title + '»';
+    }
+    const detail = row.el.querySelector('.iclaw-inline-banner__detail');
+    if (detail) {
+      detail.textContent = msg;
+      detail.classList.remove('muted');
+    }
+    const actions = row.el.querySelector('.iclaw-inline-banner__actions');
+    if (actions) {
+      actions.outerHTML = buildTaskBannerActionsHtml({
+        openDisabled: true,
+        openSpinner: false,
+        showDismiss: true,
+      });
+    }
+    wireTaskBannerActions(pendingId, null);
+    startTaskReadyBannerExpiry(pendingId);
+  }
+
+  function taskMatchesPendingRecord(task, rec) {
+    if (!task || !rec || rec.status !== 'pending') return false;
+    if (rec.title !== task.title) return false;
+    if (
+      rec.sourceChatId != null &&
+      task.source_chat_id != null &&
+      task.source_chat_id !== rec.sourceChatId
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  function finishPendingTaskCreateWhenReady(task) {
+    if (!task || task.status !== 'ready') return;
+    finishPendingTaskCreateFromWs(task);
+  }
+
+  function resolvePendingTaskCreateByTask(task) {
+    if (!task || task.id == null || task.status !== 'ready') return false;
+    const store = readPendingTaskCreatesStore();
+    for (const rec of Object.values(store)) {
+      if (!taskMatchesPendingRecord(task, rec)) continue;
+      const merged = {
+        ...rec,
+        projectId: task.project_id ?? rec.projectId ?? null,
+      };
+      if (shouldSuppressTaskReadyBanner(merged)) {
+        removePendingTaskCreateRecord(rec.pendingId);
+        return true;
+      }
+      if (!pendingTaskCreateBanners.has(rec.pendingId)) {
+        showTaskCreatingBanner(rec.pendingId, rec.title, merged);
+      }
+      markTaskCreateBannerReady(rec.pendingId, task.id, rec.title);
+      return true;
+    }
+    for (const [pendingId, row] of pendingTaskCreateBanners) {
+      if (row.taskId != null) continue;
+      if (row.title !== task.title) continue;
+      if (
+        row.sourceChatId != null &&
+        task.source_chat_id != null &&
+        task.source_chat_id !== row.sourceChatId
+      ) {
+        continue;
+      }
+      markTaskCreateBannerReady(pendingId, task.id, row.title);
+      return true;
+    }
+    return false;
+  }
+
+  function finishPendingTaskCreateFromWs(task) {
+    resolvePendingTaskCreateByTask(task);
+  }
+
+  async function reconcilePendingTaskCreate(rec) {
+    if (!rec || rec.status !== 'pending') return;
+    try {
+      const res = await fetch('/tasks', { headers: { Accept: 'application/json' } });
+      const data = await res.json().catch(() => ({}));
+      const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+      const started = rec.createdAt || 0;
+      const match = tasks.find((t) => {
+        if (t.title !== rec.title) return false;
+        if (rec.sourceChatId != null && t.source_chat_id !== rec.sourceChatId) return false;
+        const created = Date.parse(t.created_at || '');
+        return !Number.isNaN(created) && created >= started - 5000;
+      });
+      if (match && match.status === 'ready') resolvePendingTaskCreateByTask(match);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function hydratePendingTaskCreateBanners() {
+    const store = readPendingTaskCreatesStore();
+    prunePendingTaskCreatesStore(store);
+    writePendingTaskCreatesStore(store);
+    const records = Object.values(store).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    for (const rec of records) {
+      if (!rec || !rec.pendingId) continue;
+      if (rec.status === 'pending') {
+        showTaskCreatingBanner(rec.pendingId, rec.title, rec);
+        reconcilePendingTaskCreate(rec);
+      } else if (rec.status === 'ready' && rec.taskId) {
+        if (shouldSuppressTaskReadyBanner(rec)) {
+          removePendingTaskCreateRecord(rec.pendingId);
+          continue;
+        }
+        showTaskCreatingBanner(rec.pendingId, rec.title, rec);
+        markTaskCreateBannerReady(rec.pendingId, rec.taskId, rec.title);
+      } else if (rec.status === 'error') {
+        showTaskCreateBannerError(rec.pendingId, rec.title, rec.error || 'Помилка', rec);
+      }
+    }
+  }
+
+  async function submitCreateTask() {
+    if (activeChatId == null || !createTaskGoal) return;
+    const goal = createTaskGoal.value.trim();
+    if (!goal) {
+      alert('Enter a goal for the task.');
+      createTaskGoal.focus();
+      return;
+    }
+    const title = (createTaskTitle && createTaskTitle.value.trim()) || goal.slice(0, 80);
+    const agent = createTaskAgent ? createTaskAgent.value : undefined;
+    const generatePlan = createTaskGeneratePlan ? createTaskGeneratePlan.checked : false;
+    const pendingId = 'tc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const sourceChatId = activeChatId;
+    const projectId = currentComposerProjectId();
+    upsertPendingTaskCreateRecord({
+      pendingId,
+      title,
+      sourceChatId,
+      projectId,
+      status: 'pending',
+      taskId: null,
+      error: null,
+      createdAt: Date.now(),
+    });
+    closeCreateTaskModal();
+    clearComposerInput();
+    showTaskCreatingBanner(pendingId, title, { sourceChatId, projectId });
+    try {
+      const res = await fetch('/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          sourceChatId: activeChatId,
+          title,
+          goal,
+          agent,
+          generatePlan,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      if (data.task && data.task.id) {
+        const storeRec = readPendingTaskCreatesStore()[pendingId];
+        if (storeRec) {
+          upsertPendingTaskCreateRecord({
+            ...storeRec,
+            taskId: data.task.id,
+            projectId: data.task.project_id ?? storeRec.projectId,
+          });
+        }
+        const row = pendingTaskCreateBanners.get(pendingId);
+        if (row) {
+          row.taskId = data.task.id;
+          row.projectId = data.task.project_id ?? row.projectId;
+        }
+        if (data.task.status === 'ready') {
+          markTaskCreateBannerReady(pendingId, data.task.id, title);
+        }
+      }
+    } catch (err) {
+      const storeRec = readPendingTaskCreatesStore()[pendingId];
+      if (storeRec && /failed to fetch/i.test(err instanceof Error ? err.message : String(err))) {
+        await reconcilePendingTaskCreate(storeRec);
+        const updated = readPendingTaskCreatesStore()[pendingId];
+        if (updated?.taskId) {
+          const row = pendingTaskCreateBanners.get(pendingId);
+          if (row) row.projectId = updated.projectId ?? row.projectId;
+          markTaskCreateBannerReady(pendingId, updated.taskId, title);
+          return;
+        }
+      }
+      markTaskCreateBannerError(pendingId, title, err);
+    }
+  }
+
+  if (createTaskBackdrop) {
+    createTaskBackdrop.addEventListener('click', closeCreateTaskModal);
+  }
+  if (createTaskCancel) {
+    createTaskCancel.addEventListener('click', closeCreateTaskModal);
+  }
+  if (createTaskSubmit) {
+    createTaskSubmit.addEventListener('click', () => submitCreateTask());
+  }
+  hydratePendingTaskCreateBanners();
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && createTaskModal && !createTaskModal.hidden) {
+      closeCreateTaskModal();
+    }
+  });
+
   if (scheduleMenu) {
     scheduleMenu.addEventListener('click', (e) => {
       const btn = e.target.closest('.schedule-menu-item');
       if (!btn) return;
+      const action = btn.dataset.action;
+      if (action === 'open-schedule') {
+        e.preventDefault();
+        showScheduleMenuPanel('schedule');
+        return;
+      }
+      if (action === 'schedule-back') {
+        e.preventDefault();
+        showScheduleMenuPanel('main');
+        return;
+      }
+      if (action === 'create-task') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeScheduleMenu();
+        openCreateTaskModal();
+        return;
+      }
       const offset = btn.dataset.offset;
       if (offset === 'custom') {
         openSchedulePicker(new Date(Date.now() + 60 * 60_000), (when) => submitScheduled(when));
@@ -4567,8 +5384,8 @@
   function showResetBannerFixed() {
     if (!resetBannerBody || !resetBannerActions) return;
     resetBannerBody.innerHTML =
-      '<p class="reset-policy-banner-lead">Done ✓</p>' +
-      '<p class="reset-policy-banner-detail">OpenClaw will no longer reset chats daily.</p>';
+      '<p class="iclaw-inline-banner__lead">Done ✓</p>' +
+      '<p class="iclaw-inline-banner__detail">OpenClaw will no longer reset chats daily.</p>';
     resetBannerActions.innerHTML = '';
     // Banner already explains the success — auto-close after a beat.
     setTimeout(hideResetBanner, 2400);
@@ -4599,8 +5416,8 @@
   function showResetBannerManualFallback() {
     if (!resetBannerBody || !resetBannerActions) return;
     resetBannerBody.innerHTML =
-      '<p class="reset-policy-banner-lead">Automatic setup failed — the gateway token needs admin scope.</p>' +
-      '<p class="reset-policy-banner-detail">' +
+      '<p class="iclaw-inline-banner__lead">Automatic setup failed — the gateway token needs admin scope.</p>' +
+      '<p class="iclaw-inline-banner__detail">' +
       'Run this in your terminal (same machine as OpenClaw), or paste the JSON into ' +
       '<code>~/.openclaw/openclaw.json</code> under <code>session</code> and restart the gateway.' +
       '</p>' +
@@ -5236,7 +6053,14 @@
       files: document.getElementById('project-panel-files'),
       secrets: document.getElementById('project-panel-secrets'),
     };
-    if (!tabs.length || !panels.chats || !panels.memory || !panels.links || !panels.files || !panels.secrets)
+    if (
+      !tabs.length ||
+      !panels.chats ||
+      !panels.memory ||
+      !panels.links ||
+      !panels.files ||
+      !panels.secrets
+    )
       return;
 
     function activate(name) {
@@ -5264,8 +6088,1022 @@
       });
     });
   }
+
+  function tasksBoardQueryFromFilterValue(value) {
+    const v = String(value ?? '').trim();
+    if (!v) return '';
+    if (v === 'orphan') return '?orphan=1';
+    return '?projectId=' + encodeURIComponent(v);
+  }
+
+  function initTasksBoardPage() {
+    const sel = document.getElementById('task-project-filter');
+    if (!sel) return;
+    sel.addEventListener('change', () => {
+      window.location.href = '/tasks' + tasksBoardQueryFromFilterValue(sel.value);
+    });
+  }
+
+  const TASK_BOARD_COLS = [
+    { key: 'ready', label: 'Ready' },
+    { key: 'running', label: 'Running' },
+    { key: 'needs_human', label: 'Your turn' },
+    { key: 'review', label: 'Review' },
+    { key: 'done', label: 'Done' },
+  ];
+
+  const TASK_APPROVE_RUN_FLASH_KEY = 'iclaw.taskApproveRun.v1';
+  const TASK_RESUME_FLASH_KEY = 'iclaw.taskResumeFlash.v1';
+  let boardFlashBannerEl = null;
+  let boardFlashDismissTimer = null;
+  let taskDetailSyncFingerprint = null;
+  let taskDetailReloadTimer = null;
+
+  function taskDetailFingerprint(task) {
+    if (!task) return '';
+    const steps = Array.isArray(task.steps) ? task.steps : [];
+    return [
+      task.status,
+      task.current_step_title || '',
+      steps
+        .map((s) => String(s.id) + ':' + (s.status || '') + ':' + (s.result_summary || ''))
+        .join(','),
+    ].join('|');
+  }
+
+  function scheduleTaskDetailReload() {
+    if (taskDetailReloadTimer != null) return;
+    taskDetailReloadTimer = window.setTimeout(() => {
+      taskDetailReloadTimer = null;
+      window.location.reload();
+    }, 400);
+  }
+
+  function applyTaskDetailRemoteTask(task) {
+    const taskRoot = document.querySelector('.task-page[data-task-id]');
+    if (!taskRoot || !task || Number(taskRoot.dataset.taskId) !== Number(task.id)) return;
+    const fp = taskDetailFingerprint(task);
+    if (taskDetailSyncFingerprint == null) {
+      taskDetailSyncFingerprint = fp;
+      return;
+    }
+    if (fp !== taskDetailSyncFingerprint) scheduleTaskDetailReload();
+  }
+
+  function showBoardFlashBanner(opts) {
+    const lead = opts && opts.lead ? String(opts.lead) : '';
+    const detail = opts && opts.detail ? String(opts.detail) : '';
+    const variant =
+      opts && opts.variant === 'info'
+        ? 'info'
+        : opts && opts.variant === 'error'
+          ? 'error'
+          : 'success';
+    const host = getTaskCreateBannerHost();
+    if (boardFlashDismissTimer != null) {
+      clearTimeout(boardFlashDismissTimer);
+      boardFlashDismissTimer = null;
+    }
+    if (boardFlashBannerEl) boardFlashBannerEl.remove();
+    const el = document.createElement('aside');
+    el.className = 'iclaw-inline-banner iclaw-inline-banner--' + variant + ' card';
+    el.setAttribute('role', 'status');
+    el.innerHTML =
+      '<div class="iclaw-inline-banner__main">' +
+      '<p class="iclaw-inline-banner__lead">' +
+      escapeHtml(lead) +
+      '</p>' +
+      (detail
+        ? '<p class="iclaw-inline-banner__detail' +
+          (variant === 'success' ? ' muted' : '') +
+          '">' +
+          escapeHtml(detail) +
+          '</p>'
+        : '') +
+      '</div>';
+    host.prepend(el);
+    boardFlashBannerEl = el;
+    const dismissMs = opts && opts.dismissMs;
+    if (Number.isFinite(dismissMs) && dismissMs > 0) {
+      boardFlashDismissTimer = setTimeout(() => {
+        boardFlashDismissTimer = null;
+        if (boardFlashBannerEl === el) {
+          el.remove();
+          boardFlashBannerEl = null;
+        }
+      }, dismissMs);
+    }
+  }
+
+  async function refreshGlobalTasksBoard() {
+    const boardEl = document.getElementById('task-board');
+    if (!boardEl) return;
+    try {
+      const res = await fetch('/tasks' + (window.location.search || ''), {
+        headers: { Accept: 'application/json' },
+      });
+      const data = await res.json();
+      boardEl.innerHTML = renderTaskBoardHtml(data.board || {});
+    } catch {
+      /* board stays as server-rendered */
+    }
+  }
+
+  function redirectToTasksAfterApproveRun(taskId, title) {
+    sessionStorage.setItem(
+      TASK_APPROVE_RUN_FLASH_KEY,
+      JSON.stringify({
+        taskId,
+        title: title || 'Task',
+        at: Date.now(),
+      }),
+    );
+    window.location.href = '/tasks';
+  }
+
+  function redirectToTasksAfterResumeSubmit(taskId, title, humanInput) {
+    sessionStorage.setItem(
+      TASK_RESUME_FLASH_KEY,
+      JSON.stringify({
+        taskId,
+        title: title || 'Task',
+        humanInput: String(humanInput || '').trim(),
+        at: Date.now(),
+      }),
+    );
+    window.location.href = '/tasks';
+  }
+
+  async function hydrateTaskApproveRunFlash() {
+    const boardEl = document.getElementById('task-board');
+    if (!boardEl) return;
+    const raw = sessionStorage.getItem(TASK_APPROVE_RUN_FLASH_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(TASK_APPROVE_RUN_FLASH_KEY);
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const taskId = Number(payload.taskId);
+    const title = String(payload.title || 'Task').trim() || 'Task';
+    if (!Number.isFinite(taskId)) return;
+
+    await refreshGlobalTasksBoard();
+    showBoardFlashBanner({
+      lead: 'Задачу «' + title + '» запущено',
+      detail: 'Агент працює у фоні. Статус оновлюється на дошці.',
+      variant: 'success',
+      dismissMs: 12000,
+    });
+
+    fetch('/tasks/' + encodeURIComponent(taskId) + '/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        await refreshGlobalTasksBoard();
+        const status = data.task && data.task.status;
+        if (status === 'needs_human') {
+          showBoardFlashBanner({
+            lead: 'Потрібна ваша відповідь',
+            detail: 'Задачу «' + title + '» відкрийте в колонці Your turn.',
+            variant: 'info',
+            dismissMs: 15000,
+          });
+        }
+      })
+      .catch(async (err) => {
+        await refreshGlobalTasksBoard();
+        showBoardFlashBanner({
+          lead: 'Не вдалося запустити агента',
+          detail: err instanceof Error ? err.message : String(err),
+          variant: 'error',
+          dismissMs: 15000,
+        });
+      });
+  }
+
+  async function hydrateTaskResumeFlash() {
+    const boardEl = document.getElementById('task-board');
+    if (!boardEl) return;
+    const raw = sessionStorage.getItem(TASK_RESUME_FLASH_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(TASK_RESUME_FLASH_KEY);
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const taskId = Number(payload.taskId);
+    const title = String(payload.title || 'Task').trim() || 'Task';
+    const humanInput = String(payload.humanInput || '').trim();
+    if (!Number.isFinite(taskId) || !humanInput) return;
+
+    await refreshGlobalTasksBoard();
+    showBoardFlashBanner({
+      lead: 'Відповідь надіслана — агент продовжує «' + title + '»',
+      detail: 'Статус оновлюється на дошці.',
+      variant: 'success',
+      dismissMs: 12000,
+    });
+
+    fetch('/tasks/' + encodeURIComponent(taskId) + '/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ humanInput }),
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        await refreshGlobalTasksBoard();
+        const status = data.task && data.task.status;
+        if (status === 'needs_human') {
+          showBoardFlashBanner({
+            lead: 'Потрібна ваша відповідь',
+            detail: 'Задачу «' + title + '» відкрийте в колонці Your turn.',
+            variant: 'info',
+            dismissMs: 15000,
+          });
+        } else if (status === 'needs_review') {
+          showBoardFlashBanner({
+            lead: 'Задачу «' + title + '» готово до перевірки',
+            detail: 'Відкрийте її в колонці Review.',
+            variant: 'success',
+            dismissMs: 12000,
+          });
+        } else if (status === 'done') {
+          showBoardFlashBanner({
+            lead: 'Задачу «' + title + '» завершено',
+            detail: 'Картка на дошці в колонці Done.',
+            variant: 'success',
+            dismissMs: 12000,
+          });
+        } else if (status === 'failed') {
+          showBoardFlashBanner({
+            lead: 'Задачу «' + title + '» не вдалося продовжити',
+            detail: 'Перевірте задачу на дошці або відкрийте її знову.',
+            variant: 'error',
+            dismissMs: 15000,
+          });
+        }
+      })
+      .catch(async (err) => {
+        await refreshGlobalTasksBoard();
+        showBoardFlashBanner({
+          lead: 'Не вдалося продовжити задачу',
+          detail: err instanceof Error ? err.message : String(err),
+          variant: 'error',
+          dismissMs: 15000,
+        });
+      });
+  }
+
+  function renderTaskBoardHtml(board) {
+    return TASK_BOARD_COLS.map((col) => {
+      const items = (board && board[col.key]) || [];
+      const cards =
+        items.length === 0
+          ? '<li class="task-board-empty" aria-hidden="true">—</li>'
+          : items
+              .map((t) => {
+                const failed = t.status === 'failed' ? ' task-board-card--failed' : '';
+                const step = t.current_step_title
+                  ? '<span class="task-board-card-sub">' +
+                    escapeHtml(t.current_step_title) +
+                    '</span>'
+                  : '';
+                return (
+                  '<li><a href="/tasks/' +
+                  encodeURIComponent(t.id) +
+                  '" class="task-board-card' +
+                  failed +
+                  '"><span class="task-board-card-title">' +
+                  escapeHtml(t.title) +
+                  '</span>' +
+                  step +
+                  '</a></li>'
+                );
+              })
+              .join('');
+      return (
+        '<section class="task-board-col" data-col="' +
+        col.key +
+        '"><header class="task-board-col-head"><h2 class="task-board-col-label">' +
+        escapeHtml(col.label) +
+        '</h2><span class="task-board-col-count">' +
+        items.length +
+        '</span></header><ul class="task-board-cards">' +
+        cards +
+        '</ul></section>'
+      );
+    }).join('');
+  }
+
+  const TASK_HUMAN_INPUT_MAX_PX = 288; /* keep in sync with .task-human-input max-height (18rem) */
+  const TASK_STEP_INPUT_MAX_PX = 120;
+
+  const TASK_STEP_TRASH_SVG =
+    '<svg class="task-step-delete-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+
+  function taskStepDeleteHtml() {
+    return (
+      '<button type="button" class="task-step-delete" title="Remove step" aria-label="Remove step">' +
+      TASK_STEP_TRASH_SVG +
+      '</button>'
+    );
+  }
+
+  function createTaskStepInsert() {
+    const li = document.createElement('li');
+    li.className = 'task-step-insert';
+    li.innerHTML =
+      '<button type="button" class="task-step-insert-btn" title="Add step after" aria-label="Add step after">+</button>';
+    return li;
+  }
+
+  function taskStepActorToggleHtml(actor) {
+    const a = actor === 'human' ? 'human' : 'agent';
+    const label = taskStepActorLabel(a);
+    const other = a === 'human' ? 'Agent' : 'You';
+    return (
+      '<button type="button" class="task-step-actor-toggle task-step-actor-toggle--' +
+      a +
+      '" aria-label="' +
+      label +
+      ' — switch to ' +
+      other +
+      '">' +
+      '<span class="task-step-badge task-step-badge--' +
+      a +
+      '" aria-hidden="true">' +
+      taskStepBadgeChar(a) +
+      '</span>' +
+      '<span class="task-step-actor-label">' +
+      label +
+      '</span>' +
+      '</button>'
+    );
+  }
+
+  function taskStepActorLabel(actor) {
+    return actor === 'human' ? 'You' : 'Agent';
+  }
+
+  function taskStepBadgeChar(actor) {
+    return actor === 'human' ? '👤' : '✦';
+  }
+
+  function isTaskStepRowLocked(row) {
+    return row?.dataset?.stepLocked === '1';
+  }
+
+  function taskStepRowActor(row) {
+    const staticActor = row?.querySelector('.task-step-actor-static');
+    if (staticActor?.classList.contains('task-step-actor-static--human')) return 'human';
+    if (staticActor?.classList.contains('task-step-actor-static--agent')) return 'agent';
+    const toggle = row?.querySelector('.task-step-actor-toggle');
+    if (toggle?.classList.contains('task-step-actor-toggle--human')) return 'human';
+    const input = row?.querySelector('.task-step-input');
+    if (input?.dataset.actor === 'human') return 'human';
+    return 'agent';
+  }
+
+  function createTaskStepRow(opts) {
+    const actor = opts && opts.actor === 'human' ? 'human' : 'agent';
+    const title = opts && opts.title != null ? String(opts.title) : '';
+    const stepId = opts && opts.stepId != null ? String(opts.stepId) : '';
+    const li = document.createElement('li');
+    li.className = 'task-step-row';
+    if (stepId) li.dataset.stepId = stepId;
+    li.innerHTML =
+      taskStepActorToggleHtml(actor) +
+      '<div class="task-step-main">' +
+      '<textarea class="task-step-input" rows="1" data-actor="' +
+      actor +
+      '" aria-label="Step"></textarea>' +
+      '</div>' +
+      taskStepDeleteHtml();
+    const input = li.querySelector('.task-step-input');
+    if (input) input.value = title;
+    return li;
+  }
+
+  function setTaskStepRowActor(row, actor) {
+    const next = actor === 'human' ? 'human' : 'agent';
+    const input = row.querySelector('.task-step-input');
+    const toggle = row.querySelector('.task-step-actor-toggle');
+    const badge = row.querySelector('.task-step-badge');
+    const label = row.querySelector('.task-step-actor-label');
+    if (input) input.dataset.actor = next;
+    if (toggle) {
+      toggle.className = 'task-step-actor-toggle task-step-actor-toggle--' + next;
+      const lbl = taskStepActorLabel(next);
+      toggle.setAttribute('aria-label', lbl + ' — switch to ' + (next === 'human' ? 'Agent' : 'You'));
+    }
+    if (badge) {
+      badge.className = 'task-step-badge task-step-badge--' + next;
+      badge.textContent = taskStepBadgeChar(next);
+    }
+    if (label) label.textContent = taskStepActorLabel(next);
+  }
+
+  function ensureTaskStepsEmptyPlaceholder(stepsList) {
+    if (!stepsList) return;
+    if (stepsList.querySelector('.task-step-row')) {
+      stepsList.querySelector('.task-step-insert--empty')?.remove();
+      return;
+    }
+    if (stepsList.querySelector('.task-step-insert--empty')) return;
+    const li = createTaskStepInsert();
+    li.classList.add('task-step-insert--empty');
+    stepsList.appendChild(li);
+  }
+
+  function ensureLeadingStepInsert(stepsList) {
+    const firstRow = stepsList.querySelector('.task-step-row');
+    if (!firstRow) return;
+    stepsList.querySelector('.task-step-insert--empty')?.remove();
+    const prev = firstRow.previousElementSibling;
+    if (isTaskStepRowLocked(firstRow)) {
+      if (prev?.classList.contains('task-step-insert')) {
+        prev.classList.add('task-step-insert--hidden');
+      }
+      return;
+    }
+    if (prev?.classList.contains('task-step-insert')) {
+      prev.classList.remove('task-step-insert--hidden');
+    }
+    if (!prev?.classList.contains('task-step-insert')) {
+      const leading = createTaskStepInsert();
+      leading.classList.add('task-step-insert--leading');
+      firstRow.before(leading);
+    } else if (!prev.classList.contains('task-step-insert--leading')) {
+      prev.classList.add('task-step-insert--leading');
+    }
+  }
+
+  function normalizeTaskStepsList(stepsList) {
+    stepsList.querySelectorAll('.task-step-actions').forEach((el) => el.remove());
+    const rows = [...stepsList.querySelectorAll('.task-step-row')];
+    if (rows.length) ensureLeadingStepInsert(stepsList);
+    else {
+      stepsList.querySelectorAll('.task-step-insert:not(.task-step-insert--empty)').forEach((el) => el.remove());
+    }
+    rows.forEach((row) => {
+      const locked = isTaskStepRowLocked(row);
+      if (locked) {
+        row.querySelector('.task-step-delete')?.remove();
+        row.querySelector('.task-step-actor-toggle')?.remove();
+        const next = row.nextElementSibling;
+        if (next?.classList.contains('task-step-insert')) {
+          next.classList.add('task-step-insert--hidden');
+        }
+        return;
+      }
+      if (!row.querySelector('.task-step-delete')) {
+        row.insertAdjacentHTML('beforeend', taskStepDeleteHtml());
+      }
+      const next = row.nextElementSibling;
+      if (!next?.classList.contains('task-step-insert')) {
+        row.after(createTaskStepInsert());
+      } else {
+        next.classList.remove('task-step-insert--hidden');
+      }
+    });
+  }
+
+  function addStepBefore(nextStepRow, stepsList) {
+    if (isTaskStepRowLocked(nextStepRow)) return;
+    const row = createTaskStepRow({ actor: 'agent', title: '' });
+    nextStepRow.before(row);
+    if (!row.nextElementSibling?.classList.contains('task-step-insert')) {
+      row.after(createTaskStepInsert());
+    }
+    const ta = row.querySelector('.task-step-input');
+    if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+    ta?.focus();
+    updateTaskStepsCount(stepsList);
+  }
+
+  function addStepAfter(prevStepRow, stepsList) {
+    if (isTaskStepRowLocked(prevStepRow)) return;
+    const row = createTaskStepRow({ actor: 'agent', title: '' });
+    const insertLi = prevStepRow.nextElementSibling;
+    if (insertLi?.classList.contains('task-step-insert')) {
+      insertLi.before(row);
+    } else {
+      prevStepRow.after(row);
+      prevStepRow.after(createTaskStepInsert());
+    }
+    const ta = row.querySelector('.task-step-input');
+    if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+    ta?.focus();
+    updateTaskStepsCount(stepsList);
+  }
+
+  function removeStepRow(row, stepsList) {
+    if (isTaskStepRowLocked(row)) return;
+    const next = row.nextElementSibling;
+    row.remove();
+    if (next?.classList.contains('task-step-insert')) next.remove();
+    normalizeTaskStepsList(stepsList);
+    ensureTaskStepsEmptyPlaceholder(stepsList);
+    updateTaskStepsCount(stepsList);
+  }
+
+  function updateTaskStepsCount(stepsList) {
+    const el = document.getElementById('task-steps-count');
+    if (!el || !stepsList) return;
+    const n = stepsList.querySelectorAll('.task-step-row:not(.task-step-row--empty)').length;
+    el.textContent = n + (n === 1 ? ' step' : ' steps');
+  }
+
+  function initTaskStepsEditor(stepsList, onChange) {
+    if (!stepsList) return;
+    const planReadonly = stepsList.dataset.planReadonly === '1';
+
+    if (!planReadonly) normalizeTaskStepsList(stepsList);
+
+    if (!planReadonly && typeof onChange === 'function') {
+      stepsList.addEventListener('input', (ev) => {
+        if (ev.target.closest('.task-step-input')) onChange();
+      });
+    }
+
+    if (!planReadonly) {
+      stepsList.querySelectorAll('.task-step-row').forEach((row) => {
+        const ta = row.querySelector('.task-step-input');
+        if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+      });
+    }
+
+    if (planReadonly) {
+      updateTaskStepsCount(stepsList);
+      return;
+    }
+
+    stepsList.addEventListener('click', (ev) => {
+      const actorToggle = ev.target.closest('.task-step-actor-toggle');
+      if (actorToggle && stepsList.contains(actorToggle)) {
+        ev.preventDefault();
+        const row = actorToggle.closest('.task-step-row');
+        if (row && isTaskStepRowLocked(row)) return;
+        if (row) {
+          const next =
+            row.querySelector('.task-step-input')?.dataset.actor === 'human' ? 'agent' : 'human';
+          setTaskStepRowActor(row, next);
+          onChange?.();
+        }
+        return;
+      }
+
+      const insertBtn = ev.target.closest('.task-step-insert-btn');
+      if (insertBtn && stepsList.contains(insertBtn)) {
+        ev.preventDefault();
+        const insertLi = insertBtn.closest('.task-step-insert');
+        if (insertLi?.classList.contains('task-step-insert--hidden')) return;
+        if (insertLi?.classList.contains('task-step-insert--empty')) {
+          const row = createTaskStepRow({ actor: 'agent', title: '' });
+          const leading = createTaskStepInsert();
+          leading.classList.add('task-step-insert--leading');
+          const trailing = createTaskStepInsert();
+          insertLi.replaceWith(leading, row, trailing);
+          const ta = row.querySelector('.task-step-input');
+          if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+          ta?.focus();
+          updateTaskStepsCount(stepsList);
+          onChange?.();
+          return;
+        }
+        const prevStep = insertLi?.previousElementSibling;
+        const nextStep = insertLi?.nextElementSibling;
+        if (prevStep?.classList.contains('task-step-row') && !isTaskStepRowLocked(prevStep)) {
+          addStepAfter(prevStep, stepsList);
+          onChange?.();
+        } else if (nextStep?.classList.contains('task-step-row') && !isTaskStepRowLocked(nextStep)) {
+          addStepBefore(nextStep, stepsList);
+          onChange?.();
+        }
+        return;
+      }
+
+      const deleteBtn = ev.target.closest('.task-step-delete');
+      if (deleteBtn && stepsList.contains(deleteBtn)) {
+        ev.preventDefault();
+        const row = deleteBtn.closest('.task-step-row');
+        if (row && isTaskStepRowLocked(row)) return;
+        if (row) {
+          removeStepRow(row, stepsList);
+          onChange?.();
+        }
+      }
+    });
+
+    ensureTaskStepsEmptyPlaceholder(stepsList);
+    updateTaskStepsCount(stepsList);
+  }
+
+  function bindAutoGrowTextarea(el, maxPx) {
+    if (!el || el.tagName !== 'TEXTAREA') return;
+    const cap = Number.isFinite(maxPx) ? maxPx : TASK_HUMAN_INPUT_MAX_PX;
+    const grow = () => {
+      el.style.height = 'auto';
+      const next = Math.min(el.scrollHeight, cap);
+      el.style.height = next + 'px';
+      el.style.overflowY = el.scrollHeight > cap ? 'auto' : 'hidden';
+    };
+    el.addEventListener('input', grow);
+    grow();
+  }
+
+  function initTaskAskModal(taskId, postAction) {
+    const modal = document.getElementById('task-ask-modal');
+    const openBtn = document.getElementById('task-ask-open-btn');
+    const backdrop = document.getElementById('task-ask-modal-backdrop');
+    const shell = document.getElementById('task-ask-modal-shell');
+    const messagesPane = document.getElementById('task-ask-messages');
+    const closeConfirm = document.getElementById('task-ask-close-confirm');
+    const closeConfirmBackdrop = document.getElementById('task-ask-close-confirm-backdrop');
+    const closeConfirmCancel = document.getElementById('task-ask-close-confirm-cancel');
+    const closeConfirmOk = document.getElementById('task-ask-close-confirm-ok');
+    const sendBtn = document.getElementById('task-ask-send-btn');
+    const input = document.getElementById('task-ask-input');
+    const thread = document.getElementById('task-ask-thread');
+    if (!modal || !openBtn || !thread) return;
+
+    bindAutoGrowTextarea(input, 200);
+
+    function scrollAskThread() {
+      const el = messagesPane || thread;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+
+    let sessionId = null;
+    let closing = false;
+    let opening = false;
+
+    function hideCloseConfirm() {
+      if (closeConfirm) closeConfirm.hidden = true;
+    }
+
+    function showCloseConfirm() {
+      if (closeConfirm) closeConfirm.hidden = false;
+    }
+
+    function requestCloseAsk() {
+      if (opening) return;
+      if (!Number.isFinite(sessionId)) {
+        modal.hidden = true;
+        hideCloseConfirm();
+        return;
+      }
+      showCloseConfirm();
+    }
+
+    function appendAskBubble(role, text) {
+      const div = document.createElement('div');
+      const msgRole = role === 'user' ? 'user' : 'assistant';
+      div.className = 'msg ' + msgRole;
+      const bodyHtml =
+        msgRole === 'assistant'
+          ? '<div class="msg-body">' + renderMessageHtml(text) + '</div>'
+          : '<div class="msg-body">' + escapeHtml(text) + '</div>';
+      div.innerHTML = '<div class="role">' + msgRole + '</div>' + bodyHtml;
+      if (msgRole === 'assistant') decorateMessageBody(div);
+      thread.appendChild(div);
+      scrollAskThread();
+    }
+
+    async function closeAskModal() {
+      if (closing) return;
+      closing = true;
+      const sid = sessionId;
+      sessionId = null;
+      modal.hidden = true;
+      hideCloseConfirm();
+      thread.innerHTML = '';
+      if (input) input.value = '';
+      if (Number.isFinite(sid)) {
+        try {
+          await postAction('/ask/close', { sessionId: sid });
+        } catch {
+          /* best-effort */
+        }
+      }
+      closing = false;
+    }
+
+    async function openAskModal() {
+      thread.innerHTML = '';
+      if (input) input.value = '';
+      modal.hidden = false;
+      hideCloseConfirm();
+      opening = true;
+      openBtn.disabled = true;
+      try {
+        const data = await postAction('/ask/open', {});
+        sessionId = Number(data.sessionId);
+        if (!Number.isFinite(sessionId)) throw new Error('invalid session');
+        appendAskBubble(
+          'assistant',
+          'Знімок контексту зроблено. Питай що завгодно про цю задачу — це не впливає на план і виконання.',
+        );
+        input?.focus();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+        modal.hidden = true;
+      } finally {
+        opening = false;
+        openBtn.disabled = false;
+      }
+    }
+
+    openBtn.addEventListener('click', () => void openAskModal());
+    shell?.addEventListener('click', (e) => e.stopPropagation());
+    backdrop?.addEventListener('click', () => requestCloseAsk());
+    closeConfirm?.querySelector('.task-ask-close-confirm__panel')?.addEventListener('click', (e) => e.stopPropagation());
+    closeConfirmBackdrop?.addEventListener('click', () => hideCloseConfirm());
+    closeConfirmCancel?.addEventListener('click', () => hideCloseConfirm());
+    closeConfirmOk?.addEventListener('click', () => void closeAskModal());
+
+    async function sendAsk() {
+      const message = input?.value?.trim();
+      if (!message || !Number.isFinite(sessionId)) return;
+      appendAskBubble('user', message);
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      sendBtn.disabled = true;
+      try {
+        const data = await postAction('/ask/turn', { sessionId, message });
+        appendAskBubble('assistant', data.reply || '(no response)');
+      } catch (err) {
+        appendAskBubble('assistant', err instanceof Error ? err.message : String(err));
+      } finally {
+        sendBtn.disabled = false;
+        input?.focus();
+      }
+    }
+
+    sendBtn?.addEventListener('click', () => void sendAsk());
+    input?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        void sendAsk();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || modal.hidden) return;
+      if (closeConfirm && !closeConfirm.hidden) {
+        hideCloseConfirm();
+        return;
+      }
+      requestCloseAsk();
+    });
+  }
+
+  function initTaskDetailPage() {
+    const root = document.querySelector('.task-page[data-task-id]');
+    if (!root) return;
+    const taskId = Number(root.dataset.taskId);
+    if (!Number.isFinite(taskId)) return;
+
+    bindAutoGrowTextarea(document.getElementById('task-human-input'), TASK_HUMAN_INPUT_MAX_PX);
+
+    const taskScrollEl = root;
+    root.querySelectorAll('details').forEach((det) => {
+      det.addEventListener('toggle', () => {
+        const scrollTop = taskScrollEl.scrollTop;
+        requestAnimationFrame(() => {
+          taskScrollEl.scrollTop = scrollTop;
+        });
+        if (!det.open) return;
+        det.querySelectorAll('.task-step-input').forEach((ta) => {
+          bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+        });
+      });
+    });
+
+    const runBtn = document.getElementById('task-run-btn');
+    const deleteBtn = document.getElementById('task-delete-btn');
+    const resumeBtn = document.getElementById('task-resume-btn');
+    const doneBtn = document.getElementById('task-done-btn');
+    const failBtn = document.getElementById('task-fail-btn');
+    const stepsList = document.getElementById('task-steps-list');
+    const taskMeta = window.__ICLAW_TASK__;
+    const planAutosaveEnabled = taskMeta && taskMeta.status === 'ready';
+
+    let planSaveTimer = null;
+    let planSaveInFlight = false;
+    let planSaveQueued = false;
+
+    function collectSteps() {
+      if (!stepsList) return [];
+      return [...stepsList.querySelectorAll('.task-step-row:not(.task-step-row--empty)')].map((row) => {
+        const stepId = row.dataset.stepId ? Number(row.dataset.stepId) : undefined;
+        if (isTaskStepRowLocked(row) && Number.isFinite(stepId)) {
+          const readonly = row.querySelector('.task-step-title-readonly');
+          return {
+            id: stepId,
+            actor: taskStepRowActor(row),
+            title: (readonly?.textContent || '').trim(),
+            description: null,
+          };
+        }
+        const input = row.querySelector('.task-step-input');
+        const actor = input?.dataset.actor === 'human' ? 'human' : 'agent';
+        const step = {
+          actor,
+          title: (input?.value || '').trim(),
+          description: null,
+        };
+        if (Number.isFinite(stepId)) step.id = stepId;
+        return step;
+      }).filter((s) => s.title);
+    }
+
+    function schedulePlanAutosave(immediate) {
+      if (!planAutosaveEnabled) return;
+      clearTimeout(planSaveTimer);
+      const delay = immediate ? 0 : 450;
+      planSaveTimer = setTimeout(() => void flushPlanAutosave(), delay);
+    }
+
+    async function flushPlanAutosave() {
+      if (!planAutosaveEnabled || planSaveInFlight) {
+        if (planAutosaveEnabled) planSaveQueued = true;
+        return;
+      }
+      planSaveInFlight = true;
+      try {
+        const steps = collectSteps();
+        await patchTask({ steps });
+      } catch (err) {
+        console.warn('Plan autosave failed:', err);
+      } finally {
+        planSaveInFlight = false;
+        if (planSaveQueued) {
+          planSaveQueued = false;
+          schedulePlanAutosave(true);
+        }
+      }
+    }
+
+    initTaskStepsEditor(stepsList, () => schedulePlanAutosave(true));
+
+    function wireClick(id, handler) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', handler);
+    }
+
+    async function postAction(path, body) {
+      const res = await fetch('/tasks/' + encodeURIComponent(taskId) + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    async function patchTask(body) {
+      const res = await fetch('/tasks/' + encodeURIComponent(taskId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    function requireSteps() {
+      const steps = collectSteps();
+      if (!steps.length) {
+        alert('Add at least one step to the plan before continuing.');
+        return null;
+      }
+      return steps;
+    }
+
+    async function savePlanBeforeRun() {
+      clearTimeout(planSaveTimer);
+      planSaveTimer = null;
+      while (planSaveInFlight) {
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      const steps = requireSteps();
+      if (!steps) return null;
+      await patchTask({ steps });
+      return steps;
+    }
+
+    async function onRunAgent(btn) {
+      if (btn) btn.disabled = true;
+      try {
+        const steps = await savePlanBeforeRun();
+        if (!steps) {
+          if (btn) btn.disabled = false;
+          return;
+        }
+        const title =
+          document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
+        redirectToTasksAfterApproveRun(taskId, title);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    if (runBtn) runBtn.addEventListener('click', () => onRunAgent(runBtn));
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', async () => {
+        if (
+          !window.confirm(
+            'Видалити цю задачу? Цю дію не можна скасувати.',
+          )
+        ) {
+          return;
+        }
+        deleteBtn.disabled = true;
+        if (runBtn) runBtn.disabled = true;
+        try {
+          const res = await fetch('/tasks/' + encodeURIComponent(taskId), {
+            method: 'DELETE',
+            headers: { Accept: 'application/json' },
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || res.statusText);
+          window.location.href = '/tasks';
+        } catch (err) {
+          alert(err instanceof Error ? err.message : String(err));
+          deleteBtn.disabled = false;
+          if (runBtn) runBtn.disabled = false;
+        }
+      });
+    }
+    initTaskAskModal(taskId, postAction);
+
+    if (resumeBtn) {
+      resumeBtn.addEventListener('click', () => {
+        const humanInput = document.getElementById('task-human-input')?.value?.trim();
+        if (!humanInput) return;
+        const title =
+          document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
+        const taskMeta = window.__ICLAW_TASK__;
+        redirectToTasksAfterResumeSubmit(taskId, title, humanInput);
+      });
+    }
+    if (doneBtn) {
+      doneBtn.addEventListener('click', async () => {
+        doneBtn.disabled = true;
+        if (failBtn) failBtn.disabled = true;
+        try {
+          await postAction('/complete', { status: 'done' });
+          window.location.href = '/tasks';
+        } catch (err) {
+          alert(err instanceof Error ? err.message : String(err));
+          doneBtn.disabled = false;
+          if (failBtn) failBtn.disabled = false;
+        }
+      });
+    }
+    if (failBtn) {
+      failBtn.addEventListener('click', async () => {
+        if (failBtn) failBtn.disabled = true;
+        if (doneBtn) doneBtn.disabled = true;
+        try {
+          await postAction('/complete', { status: 'failed' });
+          window.location.href = '/tasks';
+        } catch (err) {
+          alert(err instanceof Error ? err.message : String(err));
+          failBtn.disabled = false;
+          if (doneBtn) doneBtn.disabled = false;
+        }
+      });
+    }
+
+    taskDetailSyncFingerprint =
+      taskMeta && taskMeta.syncFingerprint
+        ? String(taskMeta.syncFingerprint)
+        : taskDetailFingerprint({ status: taskMeta?.status, steps: [] });
+  }
+
   initProjectPageTabs();
+  initTasksBoardPage();
+  initTaskDetailPage();
+  if (document.getElementById('sidebar-tasks-link')) void refreshTasksNavSignals();
+  hydrateTaskApproveRunFlash();
+  hydrateTaskResumeFlash();
   hydrateServerRenderedMessages();
+  hydrateTaskMarkdownFields();
   (function seedMidTurnStreamStatusDots() {
     const st = document.querySelector('#reload-placeholder .stream-status');
     if (!st || st.classList.contains('detail-expanded')) return;

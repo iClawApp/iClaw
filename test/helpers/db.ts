@@ -25,10 +25,16 @@ export function resetTestDb(): void {
   assertTestDbPath();
   // Order matters because of FKs / cascade.
   db.exec(`
+    DELETE FROM task_ask_sessions;
+    DELETE FROM task_runs;
+    DELETE FROM task_steps;
+    DELETE FROM tasks;
+    DELETE FROM task_context_snapshots;
     DELETE FROM project_fact_suggestions;
     DELETE FROM project_facts;
     DELETE FROM project_secrets;
     DELETE FROM scheduled_messages;
+    DELETE FROM queued_messages;
     DELETE FROM messages;
     DELETE FROM chats;
     DELETE FROM projects;

@@ -8,6 +8,7 @@ import { projectsRouter } from './routes/projects';
 import { agentsRouter } from './routes/sessions';
 import { mediaRouter } from './routes/media';
 import { gatewayRouter } from './routes/gateway';
+import { tasksRouter } from './routes/tasks';
 import { projects } from './services/store';
 
 import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
@@ -68,6 +69,7 @@ export function createApp(): express.Express {
   app.use('/', indexRouter);
   app.use('/chats', chatsRouter);
   app.use('/projects', projectsRouter);
+  app.use('/tasks', tasksRouter);
   app.use('/api/agents', agentsRouter);
   app.use('/api/gateway', gatewayRouter);
   app.use('/media', mediaRouter);
