@@ -203,6 +203,10 @@ function buildExecutionPrompt(opts: {
   const stepLines = opts.steps
     .map((s, i) => `${i + 1}. [${s.actor}] ${s.title} (${s.status})`)
     .join('\n');
+  const current = opts.steps.find((s) => s.status !== 'done' && s.status !== 'failed');
+  const activeLine = current
+    ? `Current step (execute only this gate): ${current.position + 1}. [${current.actor}] ${current.title}`
+    : '';
   return [
     'You are executing an iClaw task.',
     '',
@@ -214,10 +218,13 @@ function buildExecutionPrompt(opts: {
     'Plan steps:',
     stepLines || '(no steps — execute the goal directly)',
     '',
+    ...(activeLine ? [activeLine, ''] : []),
     ...(opts.runSummary ? [`Previous run summary:\n${opts.runSummary}`, ''] : []),
     ...(opts.resumeNote ? [`Human input for resume:\n${opts.resumeNote}`, ''] : []),
     'Rules:',
-    '- Execute only current agent steps.',
+    current?.actor === 'human'
+      ? '- Current step is HUMAN: do not run agent work; return NEEDS_HUMAN immediately.'
+      : '- Execute only the current agent step; do not skip ahead past unfinished human steps.',
     '- If a human step is required, stop and return NEEDS_HUMAN with a clear instruction on the last line.',
     '- Do not continue past human approval gates.',
     '- When finished successfully, end with TASK_DONE on its own line.',
@@ -271,16 +278,41 @@ async function ensureExecutionSession(executionChatId: number): Promise<string> 
   return fresh.key;
 }
 
+function findHumanGateStep(taskId: number): TaskStep | undefined {
+  const steps = taskSteps.listByTask(taskId);
+  return (
+    steps.find((s) => s.actor === 'human' && s.status === 'needs_human') ??
+    steps.find((s) => s.actor === 'human' && s.status === 'todo') ??
+    steps.find((s) => s.status === 'needs_human')
+  );
+}
+
+export function pauseTaskForHumanStep(
+  taskId: number,
+  step: TaskStep,
+  summary?: string | null,
+): TaskWithSteps {
+  const task = tasks.get(taskId);
+  if (!task) throw new Error('task not found');
+  const text = (summary ?? step.title).trim() || step.title;
+  taskSteps.updateStatus(step.id, 'needs_human');
+  tasks.patch(taskId, { status: 'needs_human', resultSummary: text });
+  postSourceChatNote(task.source_chat_id, `Task needs human: ${task.title} — ${step.title}`);
+  const enriched = enrichTaskWithSteps(tasks.get(taskId)!);
+  broadcastTaskUpdated(enriched);
+  return enriched;
+}
+
 function applyOutcomeToTask(taskId: number, outcome: ParsedTaskOutcome, assistantText: string): TaskStatus {
   const task = tasks.get(taskId)!;
-  const currentStep = taskSteps.getCurrentTodo(taskId);
 
   if (outcome.kind === 'needs_human') {
+    const humanStep = findHumanGateStep(taskId);
     tasks.patch(taskId, {
       status: 'needs_human',
       resultSummary: outcome.instruction || assistantText.slice(0, 2000),
     });
-    if (currentStep) taskSteps.updateStatus(currentStep.id, 'needs_human');
+    if (humanStep) taskSteps.updateStatus(humanStep.id, 'needs_human');
     postSourceChatNote(
       task.source_chat_id,
       `Task needs human: ${task.title}${outcome.instruction ? ` — ${outcome.instruction}` : ''}`,
@@ -292,7 +324,8 @@ function applyOutcomeToTask(taskId: number, outcome: ParsedTaskOutcome, assistan
       status: 'done',
       resultSummary: assistantText.slice(0, 4000) || null,
     });
-    if (currentStep) taskSteps.updateStatus(currentStep.id, 'done');
+    const active = taskSteps.getActiveStep(taskId);
+    if (active) taskSteps.updateStatus(active.id, 'done');
     postSourceChatNote(task.source_chat_id, `Task done: ${task.title}`);
     return 'done';
   }
@@ -449,6 +482,14 @@ export async function runTask(taskId: number): Promise<TaskWithSteps> {
   const steps = taskSteps.listByTask(taskId);
   if (!steps.length) throw new Error('approve a plan with at least one step before running');
 
+  const active = taskSteps.getActiveStep(taskId);
+  if (active?.actor === 'human') {
+    return pauseTaskForHumanStep(taskId, active);
+  }
+  if (active?.actor === 'agent' && active.status === 'todo') {
+    taskSteps.updateStatus(active.id, 'running');
+  }
+
   const executionChatId = getOrCreateExecutionChat(task);
   tasks.patch(taskId, { status: 'running' });
   broadcastTaskUpdated(tasks.get(taskId)!);
@@ -505,8 +546,25 @@ export async function resumeTask(taskId: number, humanInput: string): Promise<Ta
   if (!task) throw new Error('task not found');
   if (task.status !== 'needs_human') throw new Error('task is not waiting for human input');
 
-  const executionChatId = getOrCreateExecutionChat(task);
   const steps = taskSteps.listByTask(taskId);
+  const waiting = steps.find((s) => s.status === 'needs_human');
+  if (waiting) taskSteps.updateStatus(waiting.id, 'done');
+
+  const next = taskSteps.getActiveStep(taskId);
+  if (!next) {
+    tasks.patch(taskId, { status: 'done' });
+    const enriched = enrichTaskWithSteps(tasks.get(taskId)!);
+    broadcastTaskUpdated(enriched);
+    return enriched;
+  }
+  if (next.actor === 'human') {
+    return pauseTaskForHumanStep(taskId, next, humanInput);
+  }
+  if (next.actor === 'agent' && next.status === 'todo') {
+    taskSteps.updateStatus(next.id, 'running');
+  }
+
+  const executionChatId = getOrCreateExecutionChat(task);
   const snap = taskContextSnapshots.get(task.context_snapshot_id)!;
   const payload = taskContextSnapshots.parsePayload(snap);
   const lastRun = taskRuns.getLatest(taskId);

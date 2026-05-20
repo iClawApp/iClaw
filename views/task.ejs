@@ -41,6 +41,13 @@
   };
   const next = nextByStatus[task.status] || nextByStatus.inbox;
   const actorLabels = { agent: 'Agent', human: 'You' };
+  const stepStatusLabels = {
+    todo: '',
+    running: 'In progress',
+    needs_human: 'Your turn',
+    done: 'Done',
+    failed: 'Failed',
+  };
   const canRun = task.status === 'ready';
   const showApprove = task.status === 'inbox';
 %>
@@ -86,6 +93,9 @@
         <p class="task-next-body"><%= next.body %></p>
         <p class="task-goal-label">Goal</p>
         <p class="task-goal-text" id="task-goal-text"><%= task.goal %></p>
+        <% if (task.current_step_title && (task.status === 'needs_human' || task.status === 'running')) { %>
+          <p class="task-plan-step-now">Plan step: <%= task.current_step_title %></p>
+        <% } %>
       </div>
 
       <ul class="task-inset-list task-inset-list--actions task-inset-list--primary">
@@ -133,6 +143,10 @@
                 <span class="task-step-actor-label"><%= actorLabels[s.actor] || s.actor %></span>
                 <textarea class="task-step-input" rows="1" data-actor="<%= s.actor %>" aria-label="Step"><%= s.title %></textarea>
               </div>
+              <% const stepStatus = stepStatusLabels[s.status] || ''; %>
+              <% if (stepStatus) { %>
+                <span class="task-step-state task-step-state--<%= s.status %>"><%= stepStatus %></span>
+              <% } %>
             </li>
           <% }); %>
         </ul>

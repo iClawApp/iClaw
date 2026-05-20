@@ -1064,13 +1064,13 @@ export const taskSteps = {
       "UPDATE task_steps SET status = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(status, stepId);
   },
+  /** First plan step that is not finished (done/failed). */
+  getActiveStep(taskId: number): TaskStep | undefined {
+    const steps = this.listByTask(taskId);
+    return steps.find((s) => s.status !== 'done' && s.status !== 'failed');
+  },
   getCurrentTodo(taskId: number): TaskStep | undefined {
-    return db
-      .prepare(
-        `SELECT * FROM task_steps WHERE task_id = ? AND status IN ('todo', 'running', 'needs_human')
-         ORDER BY position ASC LIMIT 1`,
-      )
-      .get(taskId) as TaskStep | undefined;
+    return this.getActiveStep(taskId);
   },
 };
 
@@ -1103,7 +1103,7 @@ export const taskRuns = {
 export function enrichTaskWithSteps(task: Task): TaskWithSteps {
   const steps = taskSteps.listByTask(task.id);
   const src = chats.get(task.source_chat_id);
-  const current = steps.find((s) => s.status === 'running' || s.status === 'needs_human') ?? steps.find((s) => s.status === 'todo');
+  const current = taskSteps.getActiveStep(task.id);
   return {
     ...task,
     steps,

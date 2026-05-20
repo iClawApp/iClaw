@@ -4835,6 +4835,13 @@ code {
   font-size: var(--text-base);
   line-height: 1.45;
 }
+.task-plan-step-now {
+  margin: var(--space-5) 0 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  color: #007aff;
+}
 .task-section-title {
   margin: 0;
   font-size: var(--text-base);
@@ -5156,10 +5163,30 @@ code {
 .task-step-input:focus { outline: none; }
 .task-step-state {
   flex-shrink: 0;
+  align-self: center;
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
   font-size: 0.68rem;
-  font-weight: 500;
-  text-transform: capitalize;
-  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.task-step-state--running {
+  color: #007aff;
+  background: color-mix(in srgb, #007aff 10%, var(--surface));
+}
+.task-step-state--needs_human {
+  color: #c93400;
+  background: color-mix(in srgb, #ff9500 12%, var(--surface));
+}
+.task-step-state--done {
+  color: #248a3d;
+  background: color-mix(in srgb, #34c759 12%, var(--surface));
+}
+.task-step-state--failed {
+  color: #d70015;
+  background: color-mix(in srgb, #ff3b30 10%, var(--surface));
 }
 
 /* Disclosure */

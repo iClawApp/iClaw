@@ -106,4 +106,42 @@ describe('approve and run', () => {
     expect(['done', 'needs_review']).toContain(runRes.body.task.status);
     expect(taskSteps.listByTask(taskId).length).toBeGreaterThan(0);
   });
+
+  it('run pauses at first human step without calling the agent', async () => {
+    const chat = chats.create('openclaw/default', null);
+    const createRes = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'Human gate',
+        goal: 'deploy',
+        generatePlan: false,
+      });
+    const taskId = createRes.body.task.id;
+
+    await request(app)
+      .post(`/tasks/${taskId}/approve-plan`)
+      .set('Accept', 'application/json')
+      .send({
+        steps: [
+          { actor: 'human', title: 'Share credentials' },
+          { actor: 'agent', title: 'Deploy service' },
+        ],
+      });
+
+    openclawWsMock.runTurn.mockClear();
+
+    const runRes = await request(app)
+      .post(`/tasks/${taskId}/run`)
+      .set('Accept', 'application/json')
+      .send({});
+    expect(runRes.status).toBe(200);
+    expect(runRes.body.task.status).toBe('needs_human');
+    expect(openclawWsMock.runTurn).not.toHaveBeenCalled();
+
+    const steps = taskSteps.listByTask(taskId);
+    expect(steps[0].status).toBe('needs_human');
+    expect(steps[1].status).toBe('todo');
+  });
 });
