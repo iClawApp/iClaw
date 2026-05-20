@@ -6211,7 +6211,7 @@
     window.location.href = tasksBoardHref(projectId);
   }
 
-  function redirectToTasksAfterResumeSubmit(taskId, title, humanInput, projectId) {
+  function redirectToTasksAfterResumeSubmit(taskId, title, humanInput) {
     sessionStorage.setItem(
       TASK_RESUME_FLASH_KEY,
       JSON.stringify({
@@ -6221,7 +6221,7 @@
         at: Date.now(),
       }),
     );
-    window.location.href = tasksBoardHref(projectId);
+    window.location.href = '/tasks';
   }
 
   async function hydrateTaskApproveRunFlash() {
@@ -6835,7 +6835,7 @@
         const title =
           document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
         const taskMeta = window.__ICLAW_TASK__;
-        redirectToTasksAfterResumeSubmit(taskId, title, humanInput, taskMeta && taskMeta.projectId);
+        redirectToTasksAfterResumeSubmit(taskId, title, humanInput);
       });
     }
     if (doneBtn) {
