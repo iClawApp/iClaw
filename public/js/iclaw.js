@@ -5780,6 +5780,8 @@
       updateComposerReplyBar();
       return;
     }
+    const taskAskModal = document.getElementById('task-ask-modal');
+    if (taskAskModal && !taskAskModal.hidden) return;
     if (location.pathname === '/' || location.pathname === '') return;
     window.location.assign('/');
   });
@@ -7060,14 +7062,18 @@
       }
     });
 
-    document.addEventListener('keydown', (e) => {
+    function onAskEscapeKey(e) {
       if (e.key !== 'Escape' || modal.hidden) return;
+      e.preventDefault();
+      e.stopPropagation();
       if (closeConfirm && !closeConfirm.hidden) {
         hideCloseConfirm();
         return;
       }
       requestCloseAsk();
-    });
+    }
+    // Capture so we run before the global Escape → home handler on task pages.
+    document.addEventListener('keydown', onAskEscapeKey, true);
   }
 
   function initTaskDetailPage() {
