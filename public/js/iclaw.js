@@ -6722,6 +6722,152 @@
     grow();
   }
 
+  function initTaskAskModal(taskId, postAction) {
+    const modal = document.getElementById('task-ask-modal');
+    const openBtn = document.getElementById('task-ask-open-btn');
+    const backdrop = document.getElementById('task-ask-modal-backdrop');
+    const shell = document.getElementById('task-ask-modal-shell');
+    const messagesPane = document.getElementById('task-ask-messages');
+    const closeConfirm = document.getElementById('task-ask-close-confirm');
+    const closeConfirmBackdrop = document.getElementById('task-ask-close-confirm-backdrop');
+    const closeConfirmCancel = document.getElementById('task-ask-close-confirm-cancel');
+    const closeConfirmOk = document.getElementById('task-ask-close-confirm-ok');
+    const sendBtn = document.getElementById('task-ask-send-btn');
+    const input = document.getElementById('task-ask-input');
+    const thread = document.getElementById('task-ask-thread');
+    if (!modal || !openBtn || !thread) return;
+
+    bindAutoGrowTextarea(input, 200);
+
+    function scrollAskThread() {
+      const el = messagesPane || thread;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+
+    let sessionId = null;
+    let closing = false;
+    let opening = false;
+
+    function hideCloseConfirm() {
+      if (closeConfirm) closeConfirm.hidden = true;
+    }
+
+    function showCloseConfirm() {
+      if (closeConfirm) closeConfirm.hidden = false;
+    }
+
+    function requestCloseAsk() {
+      if (opening) return;
+      if (!Number.isFinite(sessionId)) {
+        modal.hidden = true;
+        hideCloseConfirm();
+        return;
+      }
+      showCloseConfirm();
+    }
+
+    function appendAskBubble(role, text) {
+      const div = document.createElement('div');
+      const msgRole = role === 'user' ? 'user' : 'assistant';
+      div.className = 'msg ' + msgRole;
+      const bodyHtml =
+        msgRole === 'assistant'
+          ? '<div class="msg-body">' + renderMessageHtml(text) + '</div>'
+          : '<div class="msg-body">' + escapeHtml(text) + '</div>';
+      div.innerHTML = '<div class="role">' + msgRole + '</div>' + bodyHtml;
+      if (msgRole === 'assistant') decorateMessageBody(div);
+      thread.appendChild(div);
+      scrollAskThread();
+    }
+
+    async function closeAskModal() {
+      if (closing) return;
+      closing = true;
+      const sid = sessionId;
+      sessionId = null;
+      modal.hidden = true;
+      hideCloseConfirm();
+      thread.innerHTML = '';
+      if (input) input.value = '';
+      if (Number.isFinite(sid)) {
+        try {
+          await postAction('/ask/close', { sessionId: sid });
+        } catch {
+          /* best-effort */
+        }
+      }
+      closing = false;
+    }
+
+    async function openAskModal() {
+      thread.innerHTML = '';
+      if (input) input.value = '';
+      modal.hidden = false;
+      hideCloseConfirm();
+      opening = true;
+      openBtn.disabled = true;
+      try {
+        const data = await postAction('/ask/open', {});
+        sessionId = Number(data.sessionId);
+        if (!Number.isFinite(sessionId)) throw new Error('invalid session');
+        appendAskBubble(
+          'assistant',
+          'Знімок контексту зроблено. Питай що завгодно про цю задачу — це не впливає на план і виконання.',
+        );
+        input?.focus();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+        modal.hidden = true;
+      } finally {
+        opening = false;
+        openBtn.disabled = false;
+      }
+    }
+
+    openBtn.addEventListener('click', () => void openAskModal());
+    shell?.addEventListener('click', (e) => e.stopPropagation());
+    backdrop?.addEventListener('click', () => requestCloseAsk());
+    closeConfirm?.querySelector('.task-ask-close-confirm__panel')?.addEventListener('click', (e) => e.stopPropagation());
+    closeConfirmBackdrop?.addEventListener('click', () => hideCloseConfirm());
+    closeConfirmCancel?.addEventListener('click', () => hideCloseConfirm());
+    closeConfirmOk?.addEventListener('click', () => void closeAskModal());
+
+    async function sendAsk() {
+      const message = input?.value?.trim();
+      if (!message || !Number.isFinite(sessionId)) return;
+      appendAskBubble('user', message);
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      sendBtn.disabled = true;
+      try {
+        const data = await postAction('/ask/turn', { sessionId, message });
+        appendAskBubble('assistant', data.reply || '(no response)');
+      } catch (err) {
+        appendAskBubble('assistant', err instanceof Error ? err.message : String(err));
+      } finally {
+        sendBtn.disabled = false;
+        input?.focus();
+      }
+    }
+
+    sendBtn?.addEventListener('click', () => void sendAsk());
+    input?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        void sendAsk();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || modal.hidden) return;
+      if (closeConfirm && !closeConfirm.hidden) {
+        hideCloseConfirm();
+        return;
+      }
+      requestCloseAsk();
+    });
+  }
+
   function initTaskDetailPage() {
     const root = document.querySelector('.task-page[data-task-id]');
     if (!root) return;
@@ -6903,6 +7049,8 @@
         }
       });
     }
+    initTaskAskModal(taskId, postAction);
+
     if (resumeBtn) {
       resumeBtn.addEventListener('click', () => {
         const humanInput = document.getElementById('task-human-input')?.value?.trim();

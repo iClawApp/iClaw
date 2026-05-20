@@ -73,6 +73,7 @@ export type TaskStatus =
   | 'ready'
   | 'running'
   | 'needs_human'
+  | 'needs_clarification'
   | 'needs_review'
   | 'done'
   | 'failed';
@@ -103,6 +104,16 @@ export interface TaskContextSnapshot {
   project_id: number | null;
   source_chat_id: number;
   content_json: string;
+  created_at: string;
+}
+
+/** Ephemeral Ask panel on a task page (deleted when the panel closes). */
+export interface TaskAskSession {
+  id: number;
+  task_id: number;
+  context_snapshot_id: number;
+  openclaw_session_key: string;
+  turn_count: number;
   created_at: string;
 }
 

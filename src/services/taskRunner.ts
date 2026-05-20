@@ -39,8 +39,11 @@ const SNAPSHOT_MSG_BUDGET_CHARS = 12_000;
 const PLAN_BUDGET_MS = 120_000;
 const RUN_BUDGET_MS = 60 * 60_000;
 
+const activeTaskLoops = new Set<number>();
+
 export type TaskOutcomeKind =
   | 'needs_human'
+  | 'ask_user'
   | 'add_human_step'
   | 'task_done'
   | 'needs_review'
@@ -137,6 +140,7 @@ export function parsePlanLines(raw: string): { actor: TaskStepActor; title: stri
 
 const TASK_OUTCOME_MARKERS = [
   'ADD_HUMAN_STEP',
+  'ASK_USER',
   'NEEDS_HUMAN',
   'TASK_DONE',
   'NEEDS_REVIEW',
@@ -149,15 +153,17 @@ export function stripTaskOutcomeMarkers(text: string): string {
     .filter((line) => {
       const t = line.trim();
       if (/^\s*ADD_HUMAN_STEP\b/i.test(t)) return false;
-      return !/^\s*(NEEDS_HUMAN|TASK_DONE|NEEDS_REVIEW)\s*:?\s*$/i.test(t);
+      return !/^\s*(ASK_USER|NEEDS_HUMAN|TASK_DONE|NEEDS_REVIEW)\s*:?\s*$/i.test(t);
     })
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
+const ASK_SPLIT_MARKERS = ['ASK_USER', 'NEEDS_HUMAN'] as const;
+
 /**
- * Split agent output into context (before NEEDS_HUMAN) and the actual question (after).
+ * Split agent output into context (before ASK_USER / NEEDS_HUMAN) and the question (after).
  * Used on the task detail "response needed" panel.
  */
 export function formatAgentHumanAsk(text: string | null | undefined): {
@@ -168,11 +174,19 @@ export function formatAgentHumanAsk(text: string | null | undefined): {
   if (!raw) return { preamble: '', question: '' };
 
   const upper = raw.toUpperCase();
-  const idx = upper.lastIndexOf('NEEDS_HUMAN');
-  if (idx >= 0) {
-    const before = stripTaskOutcomeMarkers(raw.slice(0, idx));
+  let bestIdx = -1;
+  let bestMarker = '';
+  for (const marker of ASK_SPLIT_MARKERS) {
+    const idx = upper.lastIndexOf(marker);
+    if (idx >= 0 && idx >= bestIdx) {
+      bestIdx = idx;
+      bestMarker = marker;
+    }
+  }
+  if (bestIdx >= 0 && bestMarker) {
+    const before = stripTaskOutcomeMarkers(raw.slice(0, bestIdx));
     const after = stripTaskOutcomeMarkers(
-      raw.slice(idx + 'NEEDS_HUMAN'.length).replace(/^[:\s-]+/, ''),
+      raw.slice(bestIdx + bestMarker.length).replace(/^[:\s-]+/, ''),
     );
     if (after) return { preamble: before, question: after };
     return { preamble: '', question: before || stripTaskOutcomeMarkers(raw) };
@@ -194,6 +208,7 @@ export function parseTaskOutcome(text: string): ParsedTaskOutcome {
           after.replace(/^[:\s-]+/, '').split(/\n/)[0]?.trim() || 'Your input needed';
         return { kind: 'add_human_step', instruction: title };
       }
+      if (marker === 'ASK_USER') return { kind: 'ask_user', instruction };
       if (marker === 'NEEDS_HUMAN') return { kind: 'needs_human', instruction };
       if (marker === 'TASK_DONE') return { kind: 'task_done', instruction };
       return { kind: 'needs_review', instruction };
@@ -202,7 +217,7 @@ export function parseTaskOutcome(text: string): ParsedTaskOutcome {
   return { kind: 'none' };
 }
 
-function truncateSnapshotForPrompt(payload: TaskContextSnapshotPayload): string {
+export function truncateSnapshotForPrompt(payload: TaskContextSnapshotPayload): string {
   let used = 0;
   const parts: string[] = [];
   if (payload.projectFacts.length) {
@@ -254,6 +269,8 @@ function buildExecutionPrompt(opts: {
   payload: TaskContextSnapshotPayload;
   steps: TaskStep[];
   resumeNote?: string;
+  /** One-shot user reply to ASK_USER; not stored on plan steps or prior run summary. */
+  ephemeralNote?: string;
   runSummary?: string | null;
 }): string {
   const stepLines = opts.steps
@@ -276,12 +293,20 @@ function buildExecutionPrompt(opts: {
     '',
     ...(activeLine ? [activeLine, ''] : []),
     ...(opts.runSummary ? [`Previous run summary:\n${opts.runSummary}`, ''] : []),
+    ...(opts.ephemeralNote
+      ? [
+          'One-shot clarification from the user (not part of the frozen snapshot, plan, or prior OpenClaw transcript — use only to continue the current agent step):',
+          opts.ephemeralNote,
+          '',
+        ]
+      : []),
     ...(opts.resumeNote ? [`Human input for resume:\n${opts.resumeNote}`, ''] : []),
     'Rules:',
     current?.actor === 'human'
       ? '- Current step is HUMAN: do not run agent work; return NEEDS_HUMAN immediately.'
       : '- Execute only the current agent step; do not skip ahead past unfinished human steps.',
-    '- If a human step is required, stop and return NEEDS_HUMAN with a clear instruction on the last line.',
+    '- For a quick clarification while staying on the current agent step (no new plan step), end with ASK_USER on its own line, then your question. The answer is one-shot and is not added to long-term task context.',
+    '- If a human plan gate is required, stop and return NEEDS_HUMAN with a clear instruction on the last line.',
     '- If the user must act again and no upcoming human plan step fits, add a new plan step:',
     '  ADD_HUMAN_STEP: <short step title>',
     '  then your question (the runner inserts the human step and pauses).',
@@ -336,6 +361,33 @@ async function ensureExecutionSession(executionChatId: number): Promise<string> 
   });
   chats.replaceSessionKey(executionChatId, fresh.key);
   return fresh.key;
+}
+
+/** Drop OpenClaw session history so the next turn only sees the rebuilt iClaw prompt. */
+async function resetExecutionSession(executionChatId: number): Promise<void> {
+  const chat = chats.get(executionChatId);
+  if (!chat) return;
+  const sk = chat.openclaw_session_id;
+  if (typeof sk === 'string' && sk.startsWith('agent:')) {
+    await openclawWs.deleteSession(sk).catch(() => {});
+  }
+  chats.replaceSessionKey(executionChatId, '');
+}
+
+function applyAskUserOutcome(taskId: number, assistantText: string): TaskWithSteps {
+  const task = tasks.get(taskId);
+  if (!task) throw new Error('task not found');
+  const ask = formatAgentHumanAsk(assistantText);
+  const summary =
+    ask.question ||
+    ask.preamble ||
+    stripTaskOutcomeMarkers(assistantText).slice(0, 4000) ||
+    'Clarification needed';
+  tasks.patch(taskId, { status: 'needs_clarification', resultSummary: summary });
+  postSourceChatNote(task.source_chat_id, `Task clarification: ${task.title}`);
+  const enriched = enrichTaskWithSteps(tasks.get(taskId)!);
+  broadcastTaskUpdated(enriched);
+  return enriched;
 }
 
 function findHumanGateStep(taskId: number): TaskStep | undefined {
@@ -402,18 +454,23 @@ async function runExecutionTurn(opts: {
   executionChatId: number;
   gatewayMessage: string;
   runId: number;
+  /** When false, user turn is not stored in the execution chat log (ephemeral clarification). */
+  persistUser?: boolean;
 }): Promise<string> {
+  return chatStatus.withLock(opts.executionChatId, async () => {
   const sessionKey = await ensureExecutionSession(opts.executionChatId);
   const execChat = chats.get(opts.executionChatId)!;
   const stored = opts.gatewayMessage;
   const expanded = expandStoredSecretPlaceholdersForGateway(stored, execChat);
 
-  const userMsg = messages.append(opts.executionChatId, 'user', stored, null);
-  wsHub.broadcastToChat(opts.executionChatId, {
-    type: 'message-appended',
-    chatId: opts.executionChatId,
-    message: userMsg,
-  });
+  if (opts.persistUser !== false) {
+    const userMsg = messages.append(opts.executionChatId, 'user', stored, null);
+    wsHub.broadcastToChat(opts.executionChatId, {
+      type: 'message-appended',
+      chatId: opts.executionChatId,
+      message: userMsg,
+    });
+  }
 
   wsHub.broadcastAll({
     type: 'task-run-started',
@@ -459,6 +516,7 @@ async function runExecutionTurn(opts: {
   });
 
   return finalText;
+  });
 }
 
 /** Short preview under the step title (full text, not the expandable Agent output). */
@@ -548,14 +606,19 @@ async function runTaskStepLoop(
     payload: TaskContextSnapshotPayload;
     goal: string;
     resumeNote?: string;
+    ephemeralNote?: string;
     initialRunSummary?: string | null;
   },
 ): Promise<void> {
   const task = tasks.get(taskId);
   if (!task) throw new Error('task not found');
+  if (activeTaskLoops.has(taskId)) throw new Error('task step loop already active');
+  activeTaskLoops.add(taskId);
   let runSummary = opts.initialRunSummary ?? null;
   let resumeNote = opts.resumeNote;
+  let ephemeralNote = opts.ephemeralNote;
 
+  try {
   while (true) {
     const active = taskSteps.getActiveStep(taskId);
 
@@ -588,18 +651,29 @@ async function runTaskStepLoop(
       payload: opts.payload,
       steps: taskSteps.listByTask(taskId),
       resumeNote,
+      ephemeralNote,
       runSummary,
     });
     resumeNote = undefined;
+    const persistUser = ephemeralNote == null;
+    ephemeralNote = undefined;
 
     const finalText = await runExecutionTurn({
       taskId,
       executionChatId: opts.executionChatId,
       gatewayMessage: prompt,
       runId: run.id,
+      persistUser,
     });
-    runSummary = finalText.slice(0, 4000) || null;
     const outcome = parseTaskOutcome(finalText);
+
+    if (outcome.kind === 'ask_user') {
+      taskRuns.finish(run.id, 'completed', runSummary?.slice(0, 4000) ?? null);
+      applyAskUserOutcome(taskId, finalText);
+      return;
+    }
+
+    runSummary = finalText.slice(0, 4000) || null;
 
     if (outcome.kind === 'add_human_step') {
       applyAddHumanStepOutcome(
@@ -632,6 +706,9 @@ async function runTaskStepLoop(
     }
 
     broadcastTaskUpdated(enrichTaskWithSteps(tasks.get(taskId)!));
+  }
+  } finally {
+    activeTaskLoops.delete(taskId);
   }
 }
 
@@ -770,18 +847,16 @@ export async function runTask(taskId: number): Promise<TaskWithSteps> {
   const payload = taskContextSnapshots.parsePayload(snap);
 
   try {
-    await chatStatus.withLock(executionChatId, async () => {
-      await Promise.race([
-        runTaskStepLoop(taskId, {
-          executionChatId,
-          payload,
-          goal: task.goal,
-        }),
-        new Promise<void>((_, reject) =>
-          setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
-        ),
-      ]);
-    });
+    await Promise.race([
+      runTaskStepLoop(taskId, {
+        executionChatId,
+        payload,
+        goal: task.goal,
+      }),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
+      ),
+    ]);
   } catch (err) {
     const msg = isGatewayBridgeFailure(err)
       ? gatewayBridgeFailureUserMessage()
@@ -802,9 +877,61 @@ export async function runTask(taskId: number): Promise<TaskWithSteps> {
   return updated;
 }
 
+export async function resumeTaskClarification(
+  taskId: number,
+  humanInput: string,
+): Promise<TaskWithSteps> {
+  const task = tasks.get(taskId);
+  if (!task) throw new Error('task not found');
+  if (task.status !== 'needs_clarification') {
+    throw new Error('task is not waiting for clarification');
+  }
+
+  const executionChatId = getOrCreateExecutionChat(task);
+  await resetExecutionSession(executionChatId);
+
+  const snap = taskContextSnapshots.get(task.context_snapshot_id)!;
+  const payload = taskContextSnapshots.parsePayload(snap);
+  const lastRun = taskRuns.getLatest(taskId);
+  const checkpointSummary = lastRun?.log_summary ?? null;
+
+  tasks.patch(taskId, { status: 'running' });
+  broadcastTaskUpdated(tasks.get(taskId)!);
+
+  try {
+    await Promise.race([
+      runTaskStepLoop(taskId, {
+        executionChatId,
+        payload,
+        goal: task.goal,
+        ephemeralNote: humanInput.trim(),
+        initialRunSummary: checkpointSummary,
+      }),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
+      ),
+    ]);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    tasks.patch(taskId, { status: 'failed', resultSummary: msg });
+    const latestRun = taskRuns.getLatest(taskId);
+    if (latestRun && latestRun.status === 'running') {
+      taskRuns.finish(latestRun.id, 'failed', msg);
+    }
+    throw err;
+  }
+
+  const updated = enrichTaskWithSteps(tasks.get(taskId)!);
+  broadcastTaskUpdated(updated);
+  return updated;
+}
+
 export async function resumeTask(taskId: number, humanInput: string): Promise<TaskWithSteps> {
   const task = tasks.get(taskId);
   if (!task) throw new Error('task not found');
+  if (task.status === 'needs_clarification') {
+    return resumeTaskClarification(taskId, humanInput);
+  }
   if (task.status !== 'needs_human') throw new Error('task is not waiting for human input');
 
   const steps = taskSteps.listByTask(taskId);
@@ -835,20 +962,18 @@ export async function resumeTask(taskId: number, humanInput: string): Promise<Ta
   broadcastTaskUpdated(tasks.get(taskId)!);
 
   try {
-    await chatStatus.withLock(executionChatId, async () => {
-      await Promise.race([
-        runTaskStepLoop(taskId, {
-          executionChatId,
-          payload,
-          goal: task.goal,
-          resumeNote: humanInput.trim(),
-          initialRunSummary: lastRun?.log_summary ?? task.result_summary,
-        }),
-        new Promise<void>((_, reject) =>
-          setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
-        ),
-      ]);
-    });
+    await Promise.race([
+      runTaskStepLoop(taskId, {
+        executionChatId,
+        payload,
+        goal: task.goal,
+        resumeNote: humanInput.trim(),
+        initialRunSummary: lastRun?.log_summary ?? task.result_summary,
+      }),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
+      ),
+    ]);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     tasks.patch(taskId, { status: 'failed', resultSummary: msg });
@@ -882,7 +1007,7 @@ export function completeTask(taskId: number, status: 'done' | 'failed'): TaskWit
 export const TASK_BOARD_COLUMNS: { key: string; statuses: TaskStatus[] }[] = [
   { key: 'ready', statuses: ['ready', 'planning'] },
   { key: 'running', statuses: ['running'] },
-  { key: 'needs_human', statuses: ['needs_human'] },
+  { key: 'needs_human', statuses: ['needs_human', 'needs_clarification'] },
   { key: 'review', statuses: ['needs_review'] },
   { key: 'done', statuses: ['done', 'failed'] },
 ];

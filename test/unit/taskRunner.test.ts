@@ -31,6 +31,10 @@ describe('taskRunner parsers', () => {
   });
 
   it('parseTaskOutcome detects markers', () => {
+    expect(parseTaskOutcome('Working.\nASK_USER\nWhich org?')).toEqual({
+      kind: 'ask_user',
+      instruction: 'Which org?',
+    });
     expect(
       parseTaskOutcome('Deploy failed.\nADD_HUMAN_STEP: Re-verify credentials\nPlease retry.'),
     ).toEqual({
@@ -50,6 +54,14 @@ describe('taskRunner parsers', () => {
       instruction: undefined,
     });
     expect(parseTaskOutcome('no marker here')).toEqual({ kind: 'none' });
+  });
+
+  it('formatAgentHumanAsk splits context and question at ASK_USER', () => {
+    const raw = ['Progress logged.', 'ASK_USER', 'Which repo branch?'].join('\n');
+    expect(formatAgentHumanAsk(raw)).toEqual({
+      preamble: 'Progress logged.',
+      question: 'Which repo branch?',
+    });
   });
 
   it('formatAgentHumanAsk splits context and question at NEEDS_HUMAN', () => {

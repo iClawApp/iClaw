@@ -174,6 +174,17 @@ CREATE TABLE IF NOT EXISTS task_runs (
 
 CREATE INDEX IF NOT EXISTS idx_task_runs_task ON task_runs(task_id, id DESC);
 
+CREATE TABLE IF NOT EXISTS task_ask_sessions (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id              INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  context_snapshot_id  INTEGER NOT NULL REFERENCES task_context_snapshots(id) ON DELETE CASCADE,
+  openclaw_session_key TEXT NOT NULL,
+  turn_count           INTEGER NOT NULL DEFAULT 0,
+  created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_ask_sessions_task ON task_ask_sessions(task_id);
+
 -- Robustness: any new message bumps the parent chat's updated_at so sidebar
 -- sorting is always correct even if a caller forgets the manual chats.touch().
 CREATE TRIGGER IF NOT EXISTS trg_chats_touch_on_message
@@ -248,6 +259,17 @@ migrateTaskInboxToReady();
 ensureColumn('task_steps', 'result_summary', 'TEXT');
 ensureColumn('task_steps', 'result_body', 'TEXT');
 ensureColumn('task_runs', 'task_step_id', 'INTEGER REFERENCES task_steps(id) ON DELETE SET NULL');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS task_ask_sessions (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id              INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    context_snapshot_id  INTEGER NOT NULL REFERENCES task_context_snapshots(id) ON DELETE CASCADE,
+    openclaw_session_key TEXT NOT NULL,
+    turn_count           INTEGER NOT NULL DEFAULT 0,
+    created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_task_ask_sessions_task ON task_ask_sessions(task_id);
+`);
 
 /** SQLite's lower() is ASCII-only; JS toLowerCase() folds Cyrillic and other scripts for search. */
 db.function(

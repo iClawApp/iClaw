@@ -271,6 +271,57 @@ describe('approve and run', () => {
     expect(steps[1].status).toBe('needs_human');
     expect(steps[2].status).toBe('todo');
   });
+
+  it('ASK_USER pauses for clarification without completing the running step', async () => {
+    const chat = chats.create('openclaw/default', null);
+    const createRes = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'Clarify',
+        goal: 'list repos',
+        generatePlan: false,
+      });
+    const taskId = createRes.body.task.id;
+
+    await request(app)
+      .post(`/tasks/${taskId}/approve-plan`)
+      .set('Accept', 'application/json')
+      .send({ steps: [{ actor: 'agent', title: 'List repos' }] });
+
+    openclawWsMock.runTurn.mockImplementationOnce(
+      async ({ onEvent }: { onEvent?: (e: { type: string; text?: string }) => void }) => {
+        const text = 'Need scope.\nASK_USER\nWhich GitHub org?';
+        onEvent?.({ type: 'text-final', text });
+        return { runId: 'r1', text };
+      },
+    );
+
+    const runRes = await request(app)
+      .post(`/tasks/${taskId}/run`)
+      .set('Accept', 'application/json')
+      .send({});
+    expect(runRes.status).toBe(200);
+    expect(runRes.body.task.status).toBe('needs_clarification');
+    expect(taskSteps.listByTask(taskId)[0].status).toBe('running');
+
+    openclawWsMock.runTurn.mockImplementationOnce(
+      async ({ onEvent }: { onEvent?: (e: { type: string; text?: string }) => void }) => {
+        const text = 'Listed org repos.\nTASK_DONE';
+        onEvent?.({ type: 'text-final', text });
+        return { runId: 'r2', text };
+      },
+    );
+
+    const resumeRes = await request(app)
+      .post(`/tasks/${taskId}/resume`)
+      .set('Accept', 'application/json')
+      .send({ humanInput: 'acme-corp' });
+    expect(resumeRes.status).toBe(200);
+    expect(resumeRes.body.task.status).toBe('done');
+    expect(taskSteps.listByTask(taskId)[0].status).toBe('done');
+  });
 });
 
 describe('ADD_HUMAN_STEP during run', () => {

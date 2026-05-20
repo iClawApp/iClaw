@@ -15,6 +15,7 @@ import {
   tasks,
   taskSteps,
 } from '../services/store';
+import { closeTaskAsk, openTaskAsk, taskAskTurn } from '../services/taskAsk';
 import {
   approvePlan,
   completeTask,
@@ -183,7 +184,9 @@ tasksRouter.get('/:id', async (req, res) => {
   const locals = await viewLocals();
   const srcChat = chats.get(task.source_chat_id);
   const humanAsk =
-    enriched.status === 'needs_human' ? formatAgentHumanAsk(enriched.result_summary) : null;
+    enriched.status === 'needs_human' || enriched.status === 'needs_clarification'
+      ? formatAgentHumanAsk(enriched.result_summary)
+      : null;
   res.render('task', {
     ...locals,
     task: enriched,
@@ -335,6 +338,44 @@ tasksRouter.post('/:id/resume', async (req, res) => {
   try {
     const task = await resumeTask(Number(req.params.id), humanInput);
     res.json({ task });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+tasksRouter.post('/:id/ask/open', async (req, res) => {
+  try {
+    const result = await openTaskAsk(Number(req.params.id));
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+tasksRouter.post('/:id/ask/turn', async (req, res) => {
+  const sessionId = Number(req.body?.sessionId);
+  const message = String(req.body?.message ?? '').trim();
+  if (!Number.isFinite(sessionId) || !message) {
+    res.status(400).json({ error: 'sessionId and message required' });
+    return;
+  }
+  try {
+    const result = await taskAskTurn(Number(req.params.id), sessionId, message);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+tasksRouter.post('/:id/ask/close', async (req, res) => {
+  const sessionId = Number(req.body?.sessionId);
+  if (!Number.isFinite(sessionId)) {
+    res.status(400).json({ error: 'sessionId required' });
+    return;
+  }
+  try {
+    await closeTaskAsk(Number(req.params.id), sessionId);
+    res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }

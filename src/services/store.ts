@@ -13,6 +13,7 @@ import type {
   QueuedMessage,
   ScheduledMessage,
   Task,
+  TaskAskSession,
   TaskContextSnapshot,
   TaskContextSnapshotPayload,
   TaskRun,
@@ -945,6 +946,45 @@ export const taskContextSnapshots = {
   parsePayload(row: TaskContextSnapshot): TaskContextSnapshotPayload {
     return JSON.parse(row.content_json) as TaskContextSnapshotPayload;
   },
+  delete(id: number): void {
+    db.prepare('DELETE FROM task_context_snapshots WHERE id = ?').run(id);
+  },
+};
+
+export const taskAskSessions = {
+  create(opts: {
+    taskId: number;
+    contextSnapshotId: number;
+    openclawSessionKey: string;
+  }): TaskAskSession {
+    const info = db
+      .prepare(
+        `INSERT INTO task_ask_sessions (task_id, context_snapshot_id, openclaw_session_key, turn_count)
+         VALUES (?, ?, ?, 0)`,
+      )
+      .run(opts.taskId, opts.contextSnapshotId, opts.openclawSessionKey);
+    return db
+      .prepare('SELECT * FROM task_ask_sessions WHERE id = ?')
+      .get(Number(info.lastInsertRowid)) as TaskAskSession;
+  },
+  get(id: number): TaskAskSession | undefined {
+    return db.prepare('SELECT * FROM task_ask_sessions WHERE id = ?').get(id) as
+      | TaskAskSession
+      | undefined;
+  },
+  listOpenByTask(taskId: number): TaskAskSession[] {
+    return db
+      .prepare('SELECT * FROM task_ask_sessions WHERE task_id = ? ORDER BY id ASC')
+      .all(taskId) as TaskAskSession[];
+  },
+  incrementTurnCount(id: number): void {
+    db.prepare(
+      'UPDATE task_ask_sessions SET turn_count = turn_count + 1 WHERE id = ?',
+    ).run(id);
+  },
+  delete(id: number): void {
+    db.prepare('DELETE FROM task_ask_sessions WHERE id = ?').run(id);
+  },
 };
 
 function touchTask(id: number): void {
@@ -963,7 +1003,7 @@ export const tasks = {
     const row = db
       .prepare(
         `SELECT
-          MAX(CASE WHEN status = 'needs_human' THEN 1 ELSE 0 END) AS needs_human,
+          MAX(CASE WHEN status IN ('needs_human', 'needs_clarification') THEN 1 ELSE 0 END) AS needs_human,
           MAX(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
           MAX(CASE WHEN status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review
         FROM tasks`,
