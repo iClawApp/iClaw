@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   source_chat_id       INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
   title                TEXT NOT NULL,
   goal                 TEXT NOT NULL,
-  status               TEXT NOT NULL DEFAULT 'inbox',
+  status               TEXT NOT NULL DEFAULT 'ready',
   agent                TEXT,
   context_snapshot_id  INTEGER NOT NULL REFERENCES task_context_snapshots(id),
   execution_chat_id    INTEGER REFERENCES chats(id) ON DELETE SET NULL,
@@ -235,6 +235,12 @@ function migrateProjectSecretsNullableProjectId(): void {
   }
 }
 migrateProjectSecretsNullableProjectId();
+
+/** Legacy task status: inbox → ready (Draft column removed). */
+function migrateTaskInboxToReady(): void {
+  db.exec("UPDATE tasks SET status = 'ready' WHERE status = 'inbox'");
+}
+migrateTaskInboxToReady();
 
 /** SQLite's lower() is ASCII-only; JS toLowerCase() folds Cyrillic and other scripts for search. */
 db.function(

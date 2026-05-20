@@ -4762,7 +4762,37 @@
     });
   }
 
+  function revealTasksNav() {
+    if (document.documentElement.dataset.tasksNavVisible === '1') return;
+    document.documentElement.dataset.tasksNavVisible = '1';
+
+    const sidebarNav = document.querySelector('.sidebar-projects-nav');
+    if (sidebarNav && !sidebarNav.querySelector('#sidebar-tasks-link')) {
+      const a = document.createElement('a');
+      a.href = '/tasks';
+      a.className = 'sidebar-projects-btn';
+      a.id = 'sidebar-tasks-link';
+      a.textContent = 'Tasks';
+      sidebarNav.appendChild(a);
+    }
+
+    const projectRoot = document.querySelector('main.project-page[data-project-id]');
+    if (projectRoot && !projectRoot.querySelector('#project-tab-tasks')) {
+      const tabs = projectRoot.querySelector('.project-tabs');
+      const pid = projectRoot.dataset.projectId;
+      if (tabs && pid) {
+        const tab = document.createElement('a');
+        tab.href = '/tasks?projectId=' + encodeURIComponent(pid);
+        tab.className = 'project-tab project-tab--tasks';
+        tab.id = 'project-tab-tasks';
+        tab.textContent = 'Tasks';
+        tabs.appendChild(tab);
+      }
+    }
+  }
+
   function markTaskCreateBannerReady(pendingId, taskId, title) {
+    revealTasksNav();
     const row = pendingTaskCreateBanners.get(pendingId);
     const storeRec = readPendingTaskCreatesStore()[pendingId];
     const rec = {
@@ -5957,7 +5987,6 @@
       links: document.getElementById('project-panel-links'),
       files: document.getElementById('project-panel-files'),
       secrets: document.getElementById('project-panel-secrets'),
-      tasks: document.getElementById('project-panel-tasks'),
     };
     if (
       !tabs.length ||
@@ -5991,13 +6020,26 @@
         const name = btn.getAttribute('data-project-tab');
         if (!name || !panels[name]) return;
         activate(name);
-        if (name === 'tasks') loadProjectTaskBoard(root);
       });
     });
   }
 
+  function tasksBoardQueryFromFilterValue(value) {
+    const v = String(value ?? '').trim();
+    if (!v) return '';
+    if (v === 'orphan') return '?orphan=1';
+    return '?projectId=' + encodeURIComponent(v);
+  }
+
+  function initTasksBoardPage() {
+    const sel = document.getElementById('task-project-filter');
+    if (!sel) return;
+    sel.addEventListener('change', () => {
+      window.location.href = '/tasks' + tasksBoardQueryFromFilterValue(sel.value);
+    });
+  }
+
   const TASK_BOARD_COLS = [
-    { key: 'inbox', label: 'Draft' },
     { key: 'ready', label: 'Ready' },
     { key: 'running', label: 'Running' },
     { key: 'needs_human', label: 'Your turn' },
@@ -6069,7 +6111,13 @@
     }
   }
 
-  function redirectToTasksAfterApproveRun(taskId, title) {
+  function tasksBoardHref(projectId) {
+    const pid = projectId != null ? Number(projectId) : NaN;
+    if (Number.isFinite(pid) && pid > 0) return '/tasks?projectId=' + encodeURIComponent(pid);
+    return '/tasks';
+  }
+
+  function redirectToTasksAfterApproveRun(taskId, title, projectId) {
     sessionStorage.setItem(
       TASK_APPROVE_RUN_FLASH_KEY,
       JSON.stringify({
@@ -6078,10 +6126,10 @@
         at: Date.now(),
       }),
     );
-    window.location.href = '/tasks';
+    window.location.href = tasksBoardHref(projectId);
   }
 
-  function redirectToTasksAfterResumeSubmit(taskId, title, humanInput) {
+  function redirectToTasksAfterResumeSubmit(taskId, title, humanInput, projectId) {
     sessionStorage.setItem(
       TASK_RESUME_FLASH_KEY,
       JSON.stringify({
@@ -6091,7 +6139,7 @@
         at: Date.now(),
       }),
     );
-    window.location.href = '/tasks';
+    window.location.href = tasksBoardHref(projectId);
   }
 
   async function hydrateTaskApproveRunFlash() {
@@ -6264,29 +6312,135 @@
     }).join('');
   }
 
-  async function loadProjectTaskBoard(root) {
-    const boardEl = root.querySelector('#project-task-board');
-    if (!boardEl) return;
-    const projectId = boardEl.dataset.projectId;
-    if (!projectId) return;
-    try {
-      const res = await fetch('/projects/' + encodeURIComponent(projectId) + '/tasks', {
-        headers: { Accept: 'application/json' },
-      });
-      const data = await res.json();
-      boardEl.innerHTML = renderTaskBoardHtml(data.board || {});
-      const tab = root.querySelector('[data-project-tab="tasks"]');
-      if (tab) {
-        const n = (data.tasks || []).length;
-        tab.dataset.tabCount = String(n);
-        if (tab.classList.contains('is-active')) refreshProjectTabLabels('tasks');
-      }
-    } catch {
-      boardEl.innerHTML = '<p class="project-tasks-loading">Could not load tasks.</p>';
-    }
+  const TASK_HUMAN_INPUT_MAX_PX = 288; /* keep in sync with .task-human-input max-height (18rem) */
+  const TASK_STEP_INPUT_MAX_PX = 120;
+
+  const TASK_STEP_ACTIONS_HTML =
+    '<div class="task-step-actions">' +
+    '<button type="button" class="task-step-action task-step-action--actor" title="Switch agent / you" aria-label="Switch executor">⇄</button>' +
+    '<button type="button" class="task-step-action task-step-action--add" title="Add step after" aria-label="Add step after">+</button>' +
+    '<button type="button" class="task-step-action task-step-action--delete" title="Remove step" aria-label="Remove step">×</button>' +
+    '</div>';
+
+  function taskStepActorLabel(actor) {
+    return actor === 'human' ? 'You' : 'Agent';
   }
 
-  const TASK_HUMAN_INPUT_MAX_PX = 288; /* keep in sync with .task-human-input max-height (18rem) */
+  function taskStepBadgeChar(actor) {
+    return actor === 'human' ? '👤' : '✦';
+  }
+
+  function createTaskStepRow(opts) {
+    const actor = opts && opts.actor === 'human' ? 'human' : 'agent';
+    const title = opts && opts.title != null ? String(opts.title) : '';
+    const stepId = opts && opts.stepId != null ? String(opts.stepId) : '';
+    const li = document.createElement('li');
+    li.className = 'task-step-row';
+    if (stepId) li.dataset.stepId = stepId;
+    li.innerHTML =
+      '<span class="task-step-badge task-step-badge--' +
+      actor +
+      '" aria-hidden="true">' +
+      taskStepBadgeChar(actor) +
+      '</span>' +
+      '<div class="task-step-main">' +
+      '<span class="task-step-actor-label">' +
+      taskStepActorLabel(actor) +
+      '</span>' +
+      '<textarea class="task-step-input" rows="1" data-actor="' +
+      actor +
+      '" aria-label="Step"></textarea>' +
+      '</div>' +
+      TASK_STEP_ACTIONS_HTML;
+    const input = li.querySelector('.task-step-input');
+    if (input) input.value = title;
+    return li;
+  }
+
+  function setTaskStepRowActor(row, actor) {
+    const next = actor === 'human' ? 'human' : 'agent';
+    const input = row.querySelector('.task-step-input');
+    const badge = row.querySelector('.task-step-badge');
+    const label = row.querySelector('.task-step-actor-label');
+    if (input) input.dataset.actor = next;
+    if (badge) {
+      badge.className = 'task-step-badge task-step-badge--' + next;
+      badge.textContent = taskStepBadgeChar(next);
+    }
+    if (label) label.textContent = taskStepActorLabel(next);
+  }
+
+  function ensureTaskStepsEmptyPlaceholder(stepsList) {
+    if (!stepsList) return;
+    if (stepsList.querySelector('.task-step-row:not(.task-step-row--empty)')) return;
+    if (stepsList.querySelector('.task-step-row--empty')) return;
+    const li = document.createElement('li');
+    li.className = 'task-step-row task-step-row--empty';
+    li.dataset.placeholder = '1';
+    li.innerHTML =
+      '<span class="task-step-empty-label">No steps yet</span>' +
+      '<div class="task-step-actions">' +
+      '<button type="button" class="task-step-action task-step-action--add" title="Add step" aria-label="Add step">+</button>' +
+      '</div>';
+    stepsList.appendChild(li);
+  }
+
+  function updateTaskStepsCount(stepsList) {
+    const el = document.getElementById('task-steps-count');
+    if (!el || !stepsList) return;
+    const n = stepsList.querySelectorAll('.task-step-row:not(.task-step-row--empty)').length;
+    el.textContent = n + (n === 1 ? ' step' : ' steps');
+  }
+
+  function initTaskStepsEditor(stepsList) {
+    if (!stepsList) return;
+
+    function mountStepRow(row) {
+      const ta = row.querySelector('.task-step-input');
+      if (ta) bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
+    }
+
+    stepsList.querySelectorAll('.task-step-row:not(.task-step-row--empty)').forEach(mountStepRow);
+
+    stepsList.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.task-step-action');
+      if (!btn || !stepsList.contains(btn)) return;
+      ev.preventDefault();
+
+      const emptyRow = btn.closest('.task-step-row--empty');
+      if (btn.classList.contains('task-step-action--add')) {
+        const after = emptyRow || btn.closest('.task-step-row');
+        const row = createTaskStepRow({ actor: 'agent', title: '' });
+        if (emptyRow) {
+          emptyRow.replaceWith(row);
+        } else if (after && after.nextSibling) {
+          after.parentNode.insertBefore(row, after.nextSibling);
+        } else if (after) {
+          after.parentNode.appendChild(row);
+        } else {
+          stepsList.appendChild(row);
+        }
+        mountStepRow(row);
+        row.querySelector('.task-step-input')?.focus();
+        updateTaskStepsCount(stepsList);
+        return;
+      }
+
+      const row = btn.closest('.task-step-row');
+      if (!row || row.classList.contains('task-step-row--empty')) return;
+
+      if (btn.classList.contains('task-step-action--actor')) {
+        const actor = row.querySelector('.task-step-input')?.dataset.actor === 'human' ? 'agent' : 'human';
+        setTaskStepRowActor(row, actor);
+      } else if (btn.classList.contains('task-step-action--delete')) {
+        row.remove();
+        ensureTaskStepsEmptyPlaceholder(stepsList);
+        updateTaskStepsCount(stepsList);
+      }
+    });
+
+    updateTaskStepsCount(stepsList);
+  }
 
   function bindAutoGrowTextarea(el, maxPx) {
     if (!el || el.tagName !== 'TEXTAREA') return;
@@ -6318,7 +6472,7 @@
         });
         if (!det.open) return;
         det.querySelectorAll('.task-step-input').forEach((ta) => {
-          bindAutoGrowTextarea(ta, 120);
+          bindAutoGrowTextarea(ta, TASK_STEP_INPUT_MAX_PX);
         });
       });
     });
@@ -6329,34 +6483,16 @@
     const resumeBtn = document.getElementById('task-resume-btn');
     const doneBtn = document.getElementById('task-done-btn');
     const failBtn = document.getElementById('task-fail-btn');
-    const addStepBtn = document.getElementById('task-add-step');
     const stepsList = document.getElementById('task-steps-list');
-    const logEl = document.getElementById('task-execution-log');
+    initTaskStepsEditor(stepsList);
 
     function collectSteps() {
       if (!stepsList) return [];
-      return [...stepsList.querySelectorAll('.task-step-row')].map((row) => {
+      return [...stepsList.querySelectorAll('.task-step-row:not(.task-step-row--empty)')].map((row) => {
         const input = row.querySelector('.task-step-input');
         const actor = input?.dataset.actor === 'human' ? 'human' : 'agent';
         return { actor, title: (input?.value || '').trim(), description: null };
       }).filter((s) => s.title);
-    }
-
-    if (addStepBtn && stepsList) {
-      addStepBtn.addEventListener('click', () => {
-        const li = document.createElement('li');
-        li.className = 'task-step-row';
-        const empty = stepsList.querySelector('.task-inset-empty');
-        if (empty) empty.remove();
-        li.innerHTML =
-          '<span class="task-step-badge task-step-badge--agent" aria-hidden="true">✦</span>' +
-          '<div class="task-step-main">' +
-          '<span class="task-step-actor-label">Agent</span>' +
-          '<textarea class="task-step-input" rows="1" data-actor="agent" aria-label="Step"></textarea>' +
-          '</div>';
-        stepsList.appendChild(li);
-        li.querySelector('.task-step-input')?.focus();
-      });
     }
 
     function wireClick(id, handler) {
@@ -6403,7 +6539,8 @@
         await postAction('/approve-plan', { steps });
         const title =
           document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
-        redirectToTasksAfterApproveRun(taskId, title);
+        const taskMeta = window.__ICLAW_TASK__;
+        redirectToTasksAfterApproveRun(taskId, title, taskMeta && taskMeta.projectId);
       } catch (err) {
         alert(err instanceof Error ? err.message : String(err));
         if (btn) btn.disabled = false;
@@ -6432,7 +6569,8 @@
         if (!humanInput) return;
         const title =
           document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
-        redirectToTasksAfterResumeSubmit(taskId, title, humanInput);
+        const taskMeta = window.__ICLAW_TASK__;
+        redirectToTasksAfterResumeSubmit(taskId, title, humanInput, taskMeta && taskMeta.projectId);
       });
     }
     if (doneBtn) {
@@ -6459,6 +6597,7 @@
   }
 
   initProjectPageTabs();
+  initTasksBoardPage();
   initTaskDetailPage();
   hydrateTaskApproveRunFlash();
   hydrateTaskResumeFlash();

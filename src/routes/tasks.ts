@@ -69,6 +69,7 @@ async function viewLocals() {
     chats: chats.list(),
     workingIds: chatStatus.workingIds(),
     allProjects: projects.list(),
+    hasAnyTasks: tasks.hasAny(),
     gatewayUp,
     agents,
     agentsError,
@@ -80,30 +81,37 @@ async function viewLocals() {
 tasksRouter.get('/', async (req, res) => {
   const orphanOnly = req.query.orphan === '1' || req.query.orphan === 'true';
   const projectIdRaw = req.query.projectId;
-  let taskList = tasks.list(
+  let filterProjectId: number | null = null;
+  if (!orphanOnly && projectIdRaw != null && projectIdRaw !== '') {
+    const pid = Number(projectIdRaw);
+    if (Number.isFinite(pid) && projects.get(pid)) filterProjectId = pid;
+  }
+  const taskList = tasks.list(
     orphanOnly
       ? { orphanOnly: true }
-      : projectIdRaw != null && projectIdRaw !== ''
-        ? { projectId: Number(projectIdRaw) }
+      : filterProjectId != null
+        ? { projectId: filterProjectId }
         : undefined,
   );
   const enriched = taskList.map(enrichTaskWithSteps);
   const board = groupTasksForBoard(enriched);
 
   if (wantsJson(req)) {
-    res.json({ tasks: enriched, board });
+    res.json({ tasks: enriched, board, filterProjectId, orphanOnly });
     return;
   }
 
   const locals = await viewLocals();
+  const filterProject = filterProjectId != null ? projects.get(filterProjectId) : null;
   res.render('tasks', {
     ...locals,
     tasks: enriched,
     board,
     orphanOnly,
-    projectId: projectIdRaw ? Number(projectIdRaw) : null,
+    filterProjectId,
+    filterProject,
     activeChat: null,
-    activeProject: null,
+    activeProject: filterProject,
     activeTasksList: true,
   });
 });

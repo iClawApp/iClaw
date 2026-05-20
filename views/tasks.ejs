@@ -7,15 +7,19 @@
     <div class="task-shell">
       <header class="task-board-header">
         <h1 class="task-board-title">Tasks</h1>
-        <nav class="task-segmented" aria-label="Filter">
-          <a href="/tasks" class="task-segmented__item<%= !orphanOnly ? ' is-active' : '' %>">All</a>
-          <a href="/tasks?orphan=1" class="task-segmented__item<%= orphanOnly ? ' is-active' : '' %>">No project</a>
-        </nav>
+        <div class="task-project-filter">
+          <select id="task-project-filter" class="task-project-filter-select" aria-label="Filter tasks by project">
+            <option value=""<%= !orphanOnly && filterProjectId == null ? ' selected' : '' %>>All projects</option>
+            <option value="orphan"<%= orphanOnly ? ' selected' : '' %>>No project</option>
+            <% (allProjects || []).forEach(function (p) { %>
+              <option value="<%= p.id %>"<%= filterProjectId === p.id ? ' selected' : '' %>><%= p.name %></option>
+            <% }); %>
+          </select>
+        </div>
       </header>
 
-      <div class="task-board" id="task-board" data-project-id="">
+      <div class="task-board" id="task-board" data-project-id="<%= filterProjectId != null ? filterProjectId : '' %>">
         <% const cols = [
-          { key: 'inbox', label: 'Draft' },
           { key: 'ready', label: 'Ready' },
           { key: 'running', label: 'Running' },
           { key: 'needs_human', label: 'Your turn' },

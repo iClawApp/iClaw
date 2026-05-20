@@ -471,7 +471,7 @@ export async function createTask(opts: {
     goal: opts.goal,
     agent,
     contextSnapshotId: snap.id,
-    status: 'inbox',
+    status: 'ready',
   });
 
   let steps: TaskStep[] = [];
@@ -667,7 +667,6 @@ export function completeTask(taskId: number, status: 'done' | 'failed'): TaskWit
 
 /** Board column mapping for Kanban UI. */
 export const TASK_BOARD_COLUMNS: { key: string; statuses: TaskStatus[] }[] = [
-  { key: 'inbox', statuses: ['inbox'] },
   { key: 'ready', statuses: ['ready'] },
   { key: 'running', statuses: ['running'] },
   { key: 'needs_human', statuses: ['needs_human'] },
@@ -683,7 +682,7 @@ export function groupTasksForBoard(taskList: TaskWithSteps[]): Record<string, Ta
   for (const t of taskList) {
     const col = TASK_BOARD_COLUMNS.find((c) => c.statuses.includes(t.status));
     if (col) board[col.key].push(t);
-    else board.inbox.push(t);
+    else board.ready.push(t);
   }
   return board;
 }

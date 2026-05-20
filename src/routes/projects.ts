@@ -10,7 +10,7 @@
 
 import { Router } from 'express';
 import { listProjectLinkGroups } from '../services/projectLinks';
-import { chats, projects, projectFacts, projectSecrets, enrichFactsWithSourceChatTitles, enrichFactWithSourceChatTitle } from '../services/store';
+import { chats, projects, projectFacts, projectSecrets, tasks, enrichFactsWithSourceChatTitles, enrichFactWithSourceChatTitle } from '../services/store';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
 import { mountProjectTasksRoutes } from './tasks';
@@ -39,6 +39,7 @@ projectsRouter.get('/', (_req, res) => {
     chats: chats.list(),
     workingIds: chatStatus.workingIds(),
     allProjects,
+    hasAnyTasks: tasks.hasAny(),
     projectRows,
     activeChat: null,
     activeProject: null,
@@ -76,6 +77,7 @@ projectsRouter.get('/:id', (req, res) => {
   res.render('project', {
     chats: chats.list(),
     workingIds: chatStatus.workingIds(),
+    hasAnyTasks: tasks.hasAny(),
     project,
     projectChats: chats.listByProject(id),
     facts: enrichFactsWithSourceChatTitles(projectFacts.listByProject(id)),

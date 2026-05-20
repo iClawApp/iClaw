@@ -49,10 +49,13 @@
         href="/projects"
         class="sidebar-projects-btn<%= typeof activeProjectsList !== 'undefined' && activeProjectsList ? ' active' : '' %>"
       >Projects</a>
+      <% if (typeof hasAnyTasks !== 'undefined' && hasAnyTasks) { %>
       <a
         href="/tasks"
         class="sidebar-projects-btn<%= typeof activeTasksList !== 'undefined' && activeTasksList ? ' active' : '' %>"
+        id="sidebar-tasks-link"
       >Tasks</a>
+      <% } %>
     </div>
   </div>
 

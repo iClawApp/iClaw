@@ -955,6 +955,10 @@ export const tasks = {
   get(id: number): Task | undefined {
     return db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Task | undefined;
   },
+  hasAny(): boolean {
+    const row = db.prepare('SELECT 1 AS n FROM tasks LIMIT 1').get() as { n: number } | undefined;
+    return row != null;
+  },
   list(opts?: { projectId?: number | null; orphanOnly?: boolean }): Task[] {
     if (opts?.orphanOnly) {
       return db
@@ -992,7 +996,7 @@ export const tasks = {
         opts.sourceChatId,
         opts.title.trim() || 'Task',
         opts.goal.trim(),
-        opts.status ?? 'inbox',
+        opts.status ?? 'ready',
         opts.agent,
         opts.contextSnapshotId,
       );

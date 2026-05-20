@@ -1,7 +1,6 @@
 <%
   const statusLabels = {
-    inbox: 'Draft',
-    ready: 'Ready to run',
+    ready: 'Ready',
     running: 'Running',
     needs_human: 'Your turn',
     needs_review: 'Review result',
@@ -10,13 +9,9 @@
   };
   const statusLabel = statusLabels[task.status] || task.status;
   const nextByStatus = {
-    inbox: {
-      title: 'Step 1: approve the plan',
-      body: 'Run agent unlocks only after approval. Review the steps below, then tap Approve & run — or Approve plan if you want to run later.',
-    },
     ready: {
-      title: 'Run the agent',
-      body: 'The plan is approved. The agent works in the background; your chat only gets short status notes.',
+      title: 'Ready to run',
+      body: 'Review the plan below, then Approve & run or Run agent. Use Save plan to update steps without starting the agent.',
     },
     running: {
       title: 'Agent is working',
@@ -39,7 +34,7 @@
       body: 'You can mark Done to close it, or leave it as Failed.',
     },
   };
-  const next = nextByStatus[task.status] || nextByStatus.inbox;
+  const next = nextByStatus[task.status] || nextByStatus.ready;
   const actorLabels = { agent: 'Agent', human: 'You' };
   const stepStatusLabels = {
     todo: '',
@@ -49,8 +44,7 @@
     failed: 'Failed',
   };
   const canRun = task.status === 'ready';
-  const showApprove = task.status === 'inbox';
-  const showAgentOutput = task.status !== 'inbox' && task.status !== 'ready';
+  const showAgentOutput = task.status !== 'ready';
   const isNeedsHuman = task.status === 'needs_human';
   const waitingPlanStep = isNeedsHuman
     ? task.steps.find(function (s) { return s.status === 'needs_human'; })
@@ -63,7 +57,7 @@
 
   <main class="col col-main task-page" data-task-id="<%= task.id %>">
     <div class="task-shell">
-      <a href="/tasks" class="task-back">
+      <a href="<%= task.project_id ? '/tasks?projectId=' + task.project_id : '/tasks' %>" class="task-back">
         <span class="task-back-chevron" aria-hidden="true">‹</span> Tasks
       </a>
 
@@ -87,15 +81,11 @@
         </details>
       <% } %>
 
-      <% if (showApprove || canRun) { %>
+      <% if (canRun) { %>
         <ul class="task-inset-list task-inset-list--actions">
-          <% if (showApprove) { %>
-            <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-approve-and-run">Approve &amp; run</button></li>
-            <li><button type="button" class="task-row-btn" id="task-approve-plan">Approve plan only</button></li>
-          <% } %>
-          <% if (canRun) { %>
-            <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-run-btn">Run agent</button></li>
-          <% } %>
+          <li><button type="button" class="task-row-btn task-row-btn--primary" id="task-approve-and-run">Approve &amp; run</button></li>
+          <li><button type="button" class="task-row-btn" id="task-run-btn">Run agent</button></li>
+          <li><button type="button" class="task-row-btn" id="task-approve-plan">Save plan</button></li>
         </ul>
       <% } %>
 
@@ -140,12 +130,17 @@
       <details class="task-disclosure"<%= isNeedsHuman ? '' : ' open' %>>
         <summary>
           <span class="task-disclosure-title">Plan</span>
-          <span class="task-disclosure-sub"><%= task.steps.length %> steps</span>
+          <span class="task-disclosure-sub" id="task-steps-count"><%= task.steps.length %> steps</span>
         </summary>
         <div class="task-disclosure-body task-disclosure-body--flush">
-        <ul class="task-inset-list" id="task-steps-list">
+        <ul class="task-inset-list task-steps-list" id="task-steps-list">
           <% if (task.steps.length === 0) { %>
-            <li class="task-inset-empty">No steps — tap Add step below.</li>
+            <li class="task-step-row task-step-row--empty" data-placeholder="1">
+              <span class="task-step-empty-label">No steps yet</span>
+              <div class="task-step-actions">
+                <button type="button" class="task-step-action task-step-action--add" title="Add step" aria-label="Add step">+</button>
+              </div>
+            </li>
           <% } %>
           <% task.steps.forEach(function (s) { %>
             <li class="task-step-row" data-step-id="<%= s.id %>">
@@ -158,10 +153,14 @@
               <% if (stepStatus) { %>
                 <span class="task-step-state task-step-state--<%= s.status %>"><%= stepStatus %></span>
               <% } %>
+              <div class="task-step-actions">
+                <button type="button" class="task-step-action task-step-action--actor" title="Switch agent / you" aria-label="Switch executor">⇄</button>
+                <button type="button" class="task-step-action task-step-action--add" title="Add step after" aria-label="Add step after">+</button>
+                <button type="button" class="task-step-action task-step-action--delete" title="Remove step" aria-label="Remove step">×</button>
+              </div>
             </li>
           <% }); %>
         </ul>
-        <button type="button" class="task-row-action" id="task-add-step">Add step</button>
         </div>
       </details>
 
@@ -231,7 +230,7 @@
 </div>
 
 <script>
-  window.__ICLAW_TASK__ = <%- JSON.stringify({ id: task.id, status: task.status, executionChatId: task.execution_chat_id }) %>;
+  window.__ICLAW_TASK__ = <%- JSON.stringify({ id: task.id, status: task.status, executionChatId: task.execution_chat_id, projectId: task.project_id }) %>;
 </script>
 <script src="/js/vendor/marked.min.js"></script>
 <script src="/js/vendor/highlight.min.js"></script>

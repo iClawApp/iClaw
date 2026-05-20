@@ -69,7 +69,6 @@ export interface ProjectSecret {
 export type ChatKind = 'normal' | 'task_execution';
 
 export type TaskStatus =
-  | 'inbox'
   | 'ready'
   | 'running'
   | 'needs_human'

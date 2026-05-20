@@ -150,18 +150,13 @@
             data-tab-base="Secrets"
             data-tab-count="<%= (projectSecrets || []).length %>"
           >Secrets</button>
-          <button
-            type="button"
-            class="project-tab"
-            role="tab"
+          <% if (typeof hasAnyTasks !== 'undefined' && hasAnyTasks) { %>
+          <a
+            href="/tasks?projectId=<%= project.id %>"
+            class="project-tab project-tab--tasks"
             id="project-tab-tasks"
-            aria-controls="project-panel-tasks"
-            aria-selected="false"
-            tabindex="-1"
-            data-project-tab="tasks"
-            data-tab-base="Tasks"
-            data-tab-count="0"
-          >Tasks</button>
+          >Tasks</a>
+          <% } %>
         </nav>
 
         <div
@@ -330,19 +325,6 @@
           </div>
         </div>
 
-        <div
-          id="project-panel-tasks"
-          class="project-panel"
-          role="tabpanel"
-          aria-labelledby="project-tab-tasks"
-          hidden
-        >
-          <div class="project-sheet project-sheet--flush">
-            <div class="task-board task-board--project" id="project-task-board" data-project-id="<%= project.id %>">
-              <p class="muted project-tasks-loading">Loading tasks…</p>
-            </div>
-          </div>
-        </div>
       </div>
     </section>
 

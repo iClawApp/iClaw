@@ -67,7 +67,7 @@ describe('POST /tasks', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.task.title).toBe('Feature');
-    expect(res.body.task.status).toBe('inbox');
+    expect(res.body.task.status).toBe('ready');
 
     const sys = messages.listByChat(chat.id).filter((m) => m.role === 'system');
     expect(sys.some((m) => m.content.includes('Task created'))).toBe(true);
