@@ -8,11 +8,13 @@ import { projectsRouter } from './routes/projects';
 import { agentsRouter } from './routes/sessions';
 import { mediaRouter } from './routes/media';
 import { gatewayRouter } from './routes/gateway';
+import { updateRouter } from './routes/update';
 import { tasksRouter } from './routes/tasks';
 import { projects } from './services/store';
 
 import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
 import { resolveUploadsRoot } from './paths';
+import { getInstalledVersion } from './version';
 
 /** Resolves a project-relative directory when `__dirname` or cwd is not the package root (e.g. nested monorepos, odd runners). */
 function resolveProjectDir(
@@ -37,7 +39,10 @@ function resolveProjectDir(
 export function createApp(): express.Express {
   const app = express();
 
+  const iclawVersion = getInstalledVersion();
+
   app.use((_req, res, next) => {
+    res.locals.iclawVersion = iclawVersion;
     res.locals.projectLogoEmojis = PROJECT_LOGO_EMOJIS;
     res.locals.projectsMini = projects.list().map((p) => ({
       id: p.id,
@@ -72,6 +77,7 @@ export function createApp(): express.Express {
   app.use('/tasks', tasksRouter);
   app.use('/api/agents', agentsRouter);
   app.use('/api/gateway', gatewayRouter);
+  app.use('/api/update', updateRouter);
   app.use('/media', mediaRouter);
 
   app.use(

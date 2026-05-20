@@ -3017,6 +3017,80 @@ code {
   display: none;
 }
 
+/* Sidebar update — grouped “Settings” style card (Apple-like, minimal) */
+.sidebar-update-banner {
+  flex: 0 0 auto;
+  margin: 0 10px 12px;
+  padding: 11px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  border-radius: 12px;
+  background: var(--sidebar-elevated);
+  box-shadow:
+    0 0 0 0.5px color-mix(in srgb, var(--border) 65%, transparent),
+    var(--shadow-sm);
+}
+.sidebar-update-banner[hidden] {
+  display: none !important;
+}
+.sidebar-update-banner__title {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.024em;
+  line-height: 1.2;
+  color: var(--text);
+}
+.sidebar-update-banner__subtitle {
+  margin: 0 0 8px;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  color: var(--muted);
+}
+.sidebar-update-banner__run {
+  width: 100%;
+  margin: 0;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--apple-blue);
+  color: var(--apple-blue-fg);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.sidebar-update-banner__run:hover:not(:disabled) {
+  background: var(--apple-blue-hover);
+}
+.sidebar-update-banner__run:active:not(:disabled) {
+  background: var(--apple-blue-active);
+}
+.sidebar-update-banner__run:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--apple-blue) 35%, transparent);
+}
+.sidebar-update-banner__run:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+@media (prefers-color-scheme: dark) {
+  .sidebar-update-banner {
+    background: color-mix(in srgb, var(--surface) 42%, var(--sidebar-bg));
+    box-shadow:
+      0 0 0 0.5px color-mix(in srgb, var(--border) 50%, transparent),
+      0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+}
+
 .sidebar-section-label {
   font-size: 0.6875rem;
   font-weight: 600;

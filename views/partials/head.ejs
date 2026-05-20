@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/css/highlight-github.min.css" media="(prefers-color-scheme: light), (prefers-color-scheme: no-preference)" />
   <link rel="stylesheet" href="/css/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)" />
   <script>
+    window.__ICLAW_VERSION__ = <%- JSON.stringify(typeof iclawVersion !== 'undefined' ? iclawVersion : '0.0.0') %>;
     window.__ICLAW_PROJECT_LOGO_EMOJIS__ = <%- JSON.stringify(projectLogoEmojis || []) %>;
     window.__ICLAW_PROJECTS__ = <%- JSON.stringify(typeof projectsMini !== 'undefined' ? projectsMini : []) %>;
   </script>

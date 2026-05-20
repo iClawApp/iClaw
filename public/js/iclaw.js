@@ -5597,6 +5597,123 @@
   }
 
   // -------------------------------------------------------------------------
+  // npm update banner — installed from __ICLAW_VERSION__, latest from registry
+  // -------------------------------------------------------------------------
+  const NPM_REGISTRY_LATEST =
+    'https://registry.npmjs.org/@iclawapp%2Ficlaw/latest';
+  const UPDATE_CHECK_STORAGE_KEY = 'iclaw-update-registry-check';
+  const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
+
+  const updateBanner = document.getElementById('sidebar-update-banner');
+  const updateBannerStatus = document.getElementById('sidebar-update-status');
+  const updateBannerRun = document.getElementById('sidebar-update-run');
+
+  function compareSemver(a, b) {
+    const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < 3; i++) {
+      const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+      if (d !== 0) return d;
+    }
+    return 0;
+  }
+
+  function readRegistryCheckCache() {
+    try {
+      const raw = localStorage.getItem(UPDATE_CHECK_STORAGE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (typeof data.latest !== 'string' || typeof data.checkedAt !== 'number') {
+        return null;
+      }
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeRegistryCheckCache(latest) {
+    try {
+      localStorage.setItem(
+        UPDATE_CHECK_STORAGE_KEY,
+        JSON.stringify({ latest, checkedAt: Date.now() }),
+      );
+    } catch {
+      /* private mode / quota */
+    }
+  }
+
+  async function probeNpmUpdateAndMaybeShowBanner() {
+    if (!updateBanner) return;
+    const installed =
+      typeof window.__ICLAW_VERSION__ === 'string'
+        ? window.__ICLAW_VERSION__.trim()
+        : '';
+    if (!installed) return;
+
+    let latest = null;
+    const cached = readRegistryCheckCache();
+    const cacheFresh =
+      cached && Date.now() - cached.checkedAt < UPDATE_CHECK_TTL_MS;
+    if (cacheFresh) {
+      latest = cached.latest;
+    } else {
+      try {
+        const res = await fetch(NPM_REGISTRY_LATEST, {
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (typeof data.version !== 'string' || !data.version.trim()) return;
+        latest = data.version.trim();
+        writeRegistryCheckCache(latest);
+      } catch {
+        if (cached?.latest) latest = cached.latest;
+        else return;
+      }
+    }
+
+    if (!latest || compareSemver(latest, installed) <= 0) return;
+
+    updateBanner.hidden = false;
+  }
+
+  if (updateBannerRun) {
+    updateBannerRun.addEventListener('click', async () => {
+      if (updateBannerRun.disabled) return;
+      const prevLabel = updateBannerRun.textContent;
+      updateBannerRun.disabled = true;
+      updateBannerRun.textContent = 'Updating…';
+      if (updateBannerStatus) {
+        updateBannerStatus.textContent = 'You can keep chatting';
+      }
+      try {
+        const res = await fetch('/api/update/run', {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || 'HTTP ' + res.status);
+        }
+        if (updateBannerStatus) {
+          updateBannerStatus.textContent = 'When done, open iClaw again';
+        }
+        updateBannerRun.textContent = 'Updating…';
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (updateBannerStatus) {
+          updateBannerStatus.textContent = msg;
+        }
+        updateBannerRun.disabled = false;
+        updateBannerRun.textContent = prevLabel || 'Update now';
+      }
+    });
+  }
+
+  void probeNpmUpdateAndMaybeShowBanner();
+
+  // -------------------------------------------------------------------------
   // Exec approval cards (gateway → operator)
   // -------------------------------------------------------------------------
   function renderApprovalCard(opts) {

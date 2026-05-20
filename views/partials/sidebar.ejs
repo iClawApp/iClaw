@@ -122,6 +122,22 @@
 
     <div id="sidebar-list-tail" class="sidebar-list-tail" aria-hidden="true"></div>
   </nav>
+
+  <div
+    id="sidebar-update-banner"
+    class="sidebar-update-banner"
+    hidden
+    role="status"
+    aria-live="polite"
+  >
+    <p class="sidebar-update-banner__title">Update ready</p>
+    <p class="sidebar-update-banner__subtitle" id="sidebar-update-status">
+      Your chats keep working
+    </p>
+    <button type="button" class="sidebar-update-banner__run" id="sidebar-update-run">
+      Update now
+    </button>
+  </div>
 </aside>
 
 <!-- iclaw.js handles sidebar live updates via the page-level WS connection -->
