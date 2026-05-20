@@ -6,7 +6,7 @@
   "homepage": "https://github.com/iClawApp/iClaw",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/iClawApp/iClaw.git"
+    "url": "https://github.com/iClawApp/iClaw.git"
   },
   "bugs": {
     "url": "https://github.com/iClawApp/iClaw/issues"
