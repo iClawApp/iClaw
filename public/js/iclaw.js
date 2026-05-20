@@ -6069,7 +6069,7 @@
           '<span class="task-step-badge task-step-badge--agent" aria-hidden="true">✦</span>' +
           '<div class="task-step-main">' +
           '<span class="task-step-actor-label">Agent</span>' +
-          '<input type="text" class="task-step-input" value="" data-actor="agent" aria-label="Step" />' +
+          '<textarea class="task-step-input" rows="1" data-actor="agent" aria-label="Step"></textarea>' +
           '</div>';
         stepsList.appendChild(li);
         li.querySelector('.task-step-input')?.focus();

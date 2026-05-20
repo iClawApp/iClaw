@@ -56,7 +56,6 @@
       </a>
 
       <header class="task-large-header">
-        <p class="task-eyebrow">Agent task</p>
         <h1 class="task-large-title"><%= task.title %></h1>
       </header>
 
@@ -132,7 +131,7 @@
               <span class="task-step-badge task-step-badge--<%= s.actor %>" aria-hidden="true"><%= s.actor === 'human' ? '👤' : '✦' %></span>
               <div class="task-step-main">
                 <span class="task-step-actor-label"><%= actorLabels[s.actor] || s.actor %></span>
-                <input type="text" class="task-step-input" value="<%= s.title %>" data-actor="<%= s.actor %>" aria-label="Step" />
+                <textarea class="task-step-input" rows="1" data-actor="<%= s.actor %>" aria-label="Step"><%= s.title %></textarea>
               </div>
             </li>
           <% }); %>

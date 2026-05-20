@@ -4700,7 +4700,7 @@ code {
   -webkit-font-smoothing: antialiased;
 }
 .task-shell {
-  max-width: 680px;
+  max-width: min(56rem, 100%);
   margin: 0 auto;
   padding: var(--space-9) var(--space-8) var(--space-10);
 }
@@ -5106,7 +5106,7 @@ code {
 .task-inset-empty,
 .task-step-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-4);
   padding: 12px 14px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
@@ -5120,6 +5120,7 @@ code {
   flex-shrink: 0;
   width: 26px;
   height: 26px;
+  margin-top: 2px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5137,13 +5138,20 @@ code {
   color: #c93400;
 }
 .task-step-input {
-  flex: 1;
+  display: block;
+  width: 100%;
   min-width: 0;
   border: none;
   background: transparent;
   font: inherit;
   font-size: var(--text-base);
+  line-height: 1.45;
   color: var(--text);
+  resize: vertical;
+  min-height: 2.5rem;
+  padding: 0;
+  overflow-wrap: anywhere;
+  field-sizing: content;
 }
 .task-step-input:focus { outline: none; }
 .task-step-state {
