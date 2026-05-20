@@ -994,6 +994,75 @@
     'stroke-dasharray="87.965 87.965" stroke-dashoffset="0"/>' +
     '</svg>';
 
+  /**
+   * Countdown with setTimeout + optional CSS ring; pauses while hoverEl is hovered.
+   * @returns {() => void} cancel
+   */
+  function attachPausableCountdown(opts) {
+    const { hoverEl, durationMs, onExpire, onTickStart, onTickClear } = opts;
+    let timeoutId = null;
+    let remaining = durationMs;
+    let deadline = 0;
+    let paused = false;
+
+    function detachHover() {
+      if (!hoverEl) return;
+      hoverEl.removeEventListener('mouseenter', onEnter);
+      hoverEl.removeEventListener('mouseleave', onLeave);
+    }
+
+    function cancel() {
+      if (timeoutId != null) clearTimeout(timeoutId);
+      timeoutId = null;
+      paused = false;
+      deadline = 0;
+      detachHover();
+      if (onTickClear) onTickClear();
+    }
+
+    function armTimeout() {
+      if (timeoutId != null) clearTimeout(timeoutId);
+      deadline = Date.now() + remaining;
+      timeoutId = setTimeout(() => {
+        timeoutId = null;
+        detachHover();
+        if (onTickClear) onTickClear();
+        onExpire();
+      }, remaining);
+    }
+
+    function onEnter() {
+      if (paused) return;
+      paused = true;
+      if (!deadline) return;
+      remaining = Math.max(0, deadline - Date.now());
+      if (timeoutId != null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    }
+
+    function onLeave() {
+      if (!paused) return;
+      paused = false;
+      if (remaining <= 0) {
+        detachHover();
+        if (onTickClear) onTickClear();
+        onExpire();
+        return;
+      }
+      armTimeout();
+    }
+
+    if (onTickStart) onTickStart();
+    if (hoverEl) {
+      hoverEl.addEventListener('mouseenter', onEnter);
+      hoverEl.addEventListener('mouseleave', onLeave);
+    }
+    armTimeout();
+    return cancel;
+  }
+
   /** @type {HTMLElement[]} */
   const factSuggestionExpiryQueue = [];
   let processingFactSuggestionExpiry = false;
@@ -1047,33 +1116,30 @@
     return new Promise((resolve) => {
       const sid = Number(btn.dataset.suggestionId);
       const cid = activeChatId;
-      let t = null;
-      btn.classList.add('fact-suggestion-reject--expiring');
-      row._factExpiryClear = () => {
-        if (t != null) clearTimeout(t);
-        t = null;
-        btn.classList.remove('fact-suggestion-reject--expiring');
-        delete row._factExpiryClear;
-        resolve();
-      };
-      t = setTimeout(() => {
-        t = null;
-        delete row._factExpiryClear;
-        btn.classList.remove('fact-suggestion-reject--expiring');
-        if (document.contains(row) && Number.isFinite(sid) && cid != null) {
-          fetch(
-            '/chats/' +
-              encodeURIComponent(cid) +
-              '/fact-suggestions/' +
-              encodeURIComponent(sid) +
-              '/reject',
-            { method: 'POST', headers: { Accept: 'application/json' } },
-          ).then((res) => {
-            if (res.ok) removeFactSuggestionRow(cid, sid);
-          });
-        }
-        resolve();
-      }, FACT_SUGGESTION_AUTO_REJECT_MS);
+      const hoverEl = row.closest('.fact-suggestions-card') || row;
+      row._factExpiryClear = attachPausableCountdown({
+        hoverEl,
+        durationMs: FACT_SUGGESTION_AUTO_REJECT_MS,
+        onTickStart: () => btn.classList.add('fact-suggestion-reject--expiring'),
+        onTickClear: () => btn.classList.remove('fact-suggestion-reject--expiring'),
+        onExpire: () => {
+          delete row._factExpiryClear;
+          btn.classList.remove('fact-suggestion-reject--expiring');
+          if (document.contains(row) && Number.isFinite(sid) && cid != null) {
+            fetch(
+              '/chats/' +
+                encodeURIComponent(cid) +
+                '/fact-suggestions/' +
+                encodeURIComponent(sid) +
+                '/reject',
+              { method: 'POST', headers: { Accept: 'application/json' } },
+            ).then((res) => {
+              if (res.ok) removeFactSuggestionRow(cid, sid);
+            });
+          }
+          resolve();
+        },
+      });
     });
   }
 
@@ -2768,7 +2834,10 @@
       }
 
       case 'task-updated':
+        return;
+
       case 'task-created':
+        finishPendingTaskCreateFromWs(msg.task);
         return;
 
       case 'gateway-status':
@@ -4485,6 +4554,413 @@
     if (createTaskModal) createTaskModal.hidden = true;
   }
 
+  const pendingTaskCreateBanners = new Map();
+  const PENDING_TASK_STORAGE_KEY = 'iclaw.pendingTaskCreates.v1';
+  const PENDING_TASK_MAX_AGE_MS = 30 * 60_000;
+  const TASK_READY_BANNER_DISMISS_MS = 30_000;
+  const ICLAW_BANNER_COUNTDOWN_RING_SVG =
+    '<svg class="iclaw-inline-banner__countdown-ring" aria-hidden="true" viewBox="0 0 36 36">' +
+    '<circle cx="18" cy="18" r="14" fill="none" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-dasharray="87.965 87.965" stroke-dashoffset="0"/>' +
+    '</svg>';
+
+  function readPendingTaskCreatesStore() {
+    try {
+      const raw = sessionStorage.getItem(PENDING_TASK_STORAGE_KEY);
+      if (!raw) return {};
+      const obj = JSON.parse(raw);
+      return obj && typeof obj === 'object' ? obj : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function writePendingTaskCreatesStore(store) {
+    try {
+      sessionStorage.setItem(PENDING_TASK_STORAGE_KEY, JSON.stringify(store));
+    } catch {
+      /* storage full or disabled */
+    }
+  }
+
+  function prunePendingTaskCreatesStore(store) {
+    const now = Date.now();
+    for (const id of Object.keys(store)) {
+      const rec = store[id];
+      if (!rec || now - (rec.createdAt || 0) > PENDING_TASK_MAX_AGE_MS) delete store[id];
+    }
+  }
+
+  function upsertPendingTaskCreateRecord(rec) {
+    const store = readPendingTaskCreatesStore();
+    prunePendingTaskCreatesStore(store);
+    store[rec.pendingId] = rec;
+    writePendingTaskCreatesStore(store);
+  }
+
+  function removePendingTaskCreateRecord(pendingId) {
+    const store = readPendingTaskCreatesStore();
+    delete store[pendingId];
+    writePendingTaskCreatesStore(store);
+  }
+
+  function shouldSuppressTaskReadyBanner(rec) {
+    if (document.getElementById('task-board')) return true;
+    const projectPage = document.querySelector('.project-page[data-project-id]');
+    if (projectPage && rec && rec.projectId != null) {
+      return Number(projectPage.dataset.projectId) === Number(rec.projectId);
+    }
+    return false;
+  }
+
+  function buildTaskBannerActionsHtml(opts) {
+    const openDisabled = opts && opts.openDisabled;
+    const openSpinner = opts && opts.openSpinner;
+    const showDismiss = opts && opts.showDismiss;
+    let html = '<div class="iclaw-inline-banner__actions">';
+    if (showDismiss) {
+      html +=
+        '<button type="button" class="iclaw-inline-banner-dismiss task-create-banner-dismiss" aria-label="Закрити">' +
+        ICLAW_BANNER_COUNTDOWN_RING_SVG +
+        '<span class="iclaw-inline-banner-dismiss-glyph" aria-hidden="true">✕</span></button>';
+    }
+    html +=
+      '<button type="button" class="btn btn--sm task-create-banner-open"' +
+      (openDisabled ? ' disabled' : '') +
+      (openSpinner ? ' aria-busy="true"' : '') +
+      '>' +
+      (openSpinner ? '<span class="iclaw-inline-banner__btn-spinner" aria-hidden="true"></span> ' : '') +
+      'Відкрити</button></div>';
+    return html;
+  }
+
+  function wireTaskBannerActions(pendingId, taskId) {
+    const row = pendingTaskCreateBanners.get(pendingId);
+    if (!row?.el) return;
+    const dismiss = row.el.querySelector('.task-create-banner-dismiss');
+    if (dismiss && dismiss.dataset.bound !== '1') {
+      dismiss.dataset.bound = '1';
+      dismiss.addEventListener('click', () => removeTaskCreateBanner(pendingId));
+    }
+    const openBtn = row.el.querySelector('.task-create-banner-open');
+    if (openBtn && taskId != null && openBtn.dataset.bound !== '1') {
+      openBtn.dataset.bound = '1';
+      openBtn.addEventListener('click', () => {
+        removeTaskCreateBanner(pendingId);
+        window.location.href = '/tasks/' + encodeURIComponent(taskId);
+      });
+    }
+  }
+
+  function removeTaskCreateBanner(pendingId) {
+    const row = pendingTaskCreateBanners.get(pendingId);
+    if (row && typeof row._readyExpiryClear === 'function') row._readyExpiryClear();
+    pendingTaskCreateBanners.delete(pendingId);
+    removePendingTaskCreateRecord(pendingId);
+    const el = row?.el || document.querySelector('[data-pending-id="' + pendingId + '"]');
+    if (el) el.remove();
+    const host = document.getElementById('iclaw-inline-banner-host');
+    if (host && !host.children.length) host.remove();
+  }
+
+  function startTaskReadyBannerExpiry(pendingId) {
+    const row = pendingTaskCreateBanners.get(pendingId);
+    if (!row || !row.el) return;
+    const dismiss = row.el.querySelector('.task-create-banner-dismiss');
+    if (!dismiss) return;
+    if (typeof row._readyExpiryClear === 'function') row._readyExpiryClear();
+    row._readyExpiryClear = attachPausableCountdown({
+      hoverEl: row.el,
+      durationMs: TASK_READY_BANNER_DISMISS_MS,
+      onTickStart: () => dismiss.classList.add('iclaw-inline-banner-dismiss--expiring'),
+      onTickClear: () => dismiss.classList.remove('iclaw-inline-banner-dismiss--expiring'),
+      onExpire: () => {
+        delete row._readyExpiryClear;
+        removeTaskCreateBanner(pendingId);
+      },
+    });
+  }
+
+  function getTaskCreateBannerHost() {
+    let host = document.getElementById('iclaw-inline-banner-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'iclaw-inline-banner-host';
+      host.className = 'iclaw-inline-banner-host';
+      host.setAttribute('aria-live', 'polite');
+      const main = document.querySelector('.col-main');
+      const anchor =
+        main?.querySelector('.chat-header') ||
+        main?.querySelector('.project-header') ||
+        main?.querySelector('.task-board-header') ||
+        main?.firstElementChild;
+      if (main && anchor) {
+        anchor.insertAdjacentElement('afterend', host);
+      } else {
+        document.body.prepend(host);
+      }
+    }
+    return host;
+  }
+
+  function showTaskCreatingBanner(pendingId, title, rec) {
+    if (pendingTaskCreateBanners.has(pendingId)) return;
+    const host = getTaskCreateBannerHost();
+    const safeTitle = escapeHtml(title);
+    const el = document.createElement('aside');
+    el.className = 'iclaw-inline-banner iclaw-inline-banner--info card is-loading';
+    el.dataset.pendingId = pendingId;
+    el.setAttribute('role', 'status');
+    el.innerHTML =
+      '<div class="iclaw-inline-banner__main">' +
+      '<p class="iclaw-inline-banner__lead">Задача «' +
+      safeTitle +
+      '» створюється…</p>' +
+      '<p class="iclaw-inline-banner__detail muted">План і контекст готуються у фоні - можна продовжувати чат</p>' +
+      '</div>' +
+      buildTaskBannerActionsHtml({ openDisabled: true, openSpinner: true, showDismiss: false });
+    host.prepend(el);
+    pendingTaskCreateBanners.set(pendingId, {
+      el,
+      title,
+      taskId: null,
+      sourceChatId: rec?.sourceChatId ?? activeChatId,
+      projectId: rec?.projectId ?? currentComposerProjectId(),
+    });
+  }
+
+  function markTaskCreateBannerReady(pendingId, taskId, title) {
+    const row = pendingTaskCreateBanners.get(pendingId);
+    const storeRec = readPendingTaskCreatesStore()[pendingId];
+    const rec = {
+      ...(storeRec || {}),
+      pendingId,
+      title,
+      taskId,
+      projectId: row?.projectId ?? storeRec?.projectId ?? null,
+      sourceChatId: row?.sourceChatId ?? storeRec?.sourceChatId ?? null,
+      status: 'ready',
+    };
+    if (shouldSuppressTaskReadyBanner(rec)) {
+      removeTaskCreateBanner(pendingId);
+      return;
+    }
+    if (!row || !row.el || row.taskId != null) return;
+    row.taskId = taskId;
+    if (storeRec) {
+      upsertPendingTaskCreateRecord({
+        ...storeRec,
+        status: 'ready',
+        taskId,
+        error: null,
+        projectId: rec.projectId,
+      });
+    }
+    row.el.classList.remove('is-loading', 'is-error', 'iclaw-inline-banner--info');
+    row.el.classList.add('is-ready', 'iclaw-inline-banner--success');
+    const lead = row.el.querySelector('.iclaw-inline-banner__lead');
+    if (lead) {
+      lead.textContent = 'Задача «' + title + '» готова';
+    }
+    const detail = row.el.querySelector('.iclaw-inline-banner__detail');
+    if (detail) detail.textContent = 'План збережено — можна переглянути та запустити агента.';
+    const actions = row.el.querySelector('.iclaw-inline-banner__actions');
+    if (actions) {
+      actions.outerHTML = buildTaskBannerActionsHtml({
+        openDisabled: false,
+        openSpinner: false,
+        showDismiss: true,
+      });
+    }
+    wireTaskBannerActions(pendingId, taskId);
+    startTaskReadyBannerExpiry(pendingId);
+  }
+
+  function taskCreateErrorMessage(err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/failed to fetch/i.test(msg)) {
+      return 'Звʼязок перервалось (перехід на іншу сторінку або мережа). Оновіть чат — задача могла вже створитись.';
+    }
+    return msg;
+  }
+
+  function showTaskCreateBannerError(pendingId, title, errMsg, rec) {
+    const msg = taskCreateErrorMessage(errMsg);
+    const storeRec = readPendingTaskCreatesStore()[pendingId];
+    if (storeRec) {
+      upsertPendingTaskCreateRecord({
+        ...storeRec,
+        status: 'error',
+        error: msg,
+      });
+    }
+    const existing = pendingTaskCreateBanners.get(pendingId);
+    if (existing?.el) {
+      markTaskCreateBannerError(pendingId, title, msg);
+      return;
+    }
+    const host = getTaskCreateBannerHost();
+    const safeTitle = escapeHtml(title);
+    const el = document.createElement('aside');
+    el.className = 'iclaw-inline-banner iclaw-inline-banner--error card is-error';
+    el.dataset.pendingId = pendingId;
+    el.setAttribute('role', 'status');
+    el.innerHTML =
+      '<div class="iclaw-inline-banner__main">' +
+      '<p class="iclaw-inline-banner__lead">Не вдалося створити задачу «' +
+      safeTitle +
+      '»</p>' +
+      '<p class="iclaw-inline-banner__detail">' +
+      escapeHtml(msg) +
+      '</p>' +
+      '</div>' +
+      buildTaskBannerActionsHtml({ openDisabled: true, openSpinner: false, showDismiss: true });
+    host.prepend(el);
+    pendingTaskCreateBanners.set(pendingId, {
+      el,
+      title,
+      taskId: null,
+      sourceChatId: rec?.sourceChatId ?? activeChatId,
+      projectId: rec?.projectId ?? currentComposerProjectId(),
+    });
+    wireTaskBannerActions(pendingId, null);
+    startTaskReadyBannerExpiry(pendingId);
+  }
+
+  function markTaskCreateBannerError(pendingId, title, err) {
+    const row = pendingTaskCreateBanners.get(pendingId);
+    if (!row || !row.el) return;
+    const msg = typeof err === 'string' ? err : taskCreateErrorMessage(err);
+    const storeRec = readPendingTaskCreatesStore()[pendingId];
+    if (storeRec) {
+      upsertPendingTaskCreateRecord({
+        ...storeRec,
+        status: 'error',
+        error: msg,
+      });
+    }
+    row.el.classList.remove(
+      'is-loading',
+      'is-ready',
+      'iclaw-inline-banner--info',
+      'iclaw-inline-banner--success',
+    );
+    row.el.classList.add('is-error', 'iclaw-inline-banner--error');
+    const lead = row.el.querySelector('.iclaw-inline-banner__lead');
+    if (lead) {
+      lead.textContent = 'Не вдалося створити задачу «' + title + '»';
+    }
+    const detail = row.el.querySelector('.iclaw-inline-banner__detail');
+    if (detail) {
+      detail.textContent = msg;
+      detail.classList.remove('muted');
+    }
+    const actions = row.el.querySelector('.iclaw-inline-banner__actions');
+    if (actions) {
+      actions.outerHTML = buildTaskBannerActionsHtml({
+        openDisabled: true,
+        openSpinner: false,
+        showDismiss: true,
+      });
+    }
+    wireTaskBannerActions(pendingId, null);
+    startTaskReadyBannerExpiry(pendingId);
+  }
+
+  function taskMatchesPendingRecord(task, rec) {
+    if (!task || !rec || rec.status !== 'pending') return false;
+    if (rec.title !== task.title) return false;
+    if (
+      rec.sourceChatId != null &&
+      task.source_chat_id != null &&
+      task.source_chat_id !== rec.sourceChatId
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  function resolvePendingTaskCreateByTask(task) {
+    if (!task || task.id == null) return false;
+    const store = readPendingTaskCreatesStore();
+    for (const rec of Object.values(store)) {
+      if (!taskMatchesPendingRecord(task, rec)) continue;
+      const merged = {
+        ...rec,
+        projectId: task.project_id ?? rec.projectId ?? null,
+      };
+      if (shouldSuppressTaskReadyBanner(merged)) {
+        removePendingTaskCreateRecord(rec.pendingId);
+        return true;
+      }
+      if (!pendingTaskCreateBanners.has(rec.pendingId)) {
+        showTaskCreatingBanner(rec.pendingId, rec.title, merged);
+      }
+      markTaskCreateBannerReady(rec.pendingId, task.id, rec.title);
+      return true;
+    }
+    for (const [pendingId, row] of pendingTaskCreateBanners) {
+      if (row.taskId != null) continue;
+      if (row.title !== task.title) continue;
+      if (
+        row.sourceChatId != null &&
+        task.source_chat_id != null &&
+        task.source_chat_id !== row.sourceChatId
+      ) {
+        continue;
+      }
+      markTaskCreateBannerReady(pendingId, task.id, row.title);
+      return true;
+    }
+    return false;
+  }
+
+  function finishPendingTaskCreateFromWs(task) {
+    resolvePendingTaskCreateByTask(task);
+  }
+
+  async function reconcilePendingTaskCreate(rec) {
+    if (!rec || rec.status !== 'pending') return;
+    try {
+      const res = await fetch('/tasks', { headers: { Accept: 'application/json' } });
+      const data = await res.json().catch(() => ({}));
+      const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+      const started = rec.createdAt || 0;
+      const match = tasks.find((t) => {
+        if (t.title !== rec.title) return false;
+        if (rec.sourceChatId != null && t.source_chat_id !== rec.sourceChatId) return false;
+        const created = Date.parse(t.created_at || '');
+        return !Number.isNaN(created) && created >= started - 5000;
+      });
+      if (match) resolvePendingTaskCreateByTask(match);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function hydratePendingTaskCreateBanners() {
+    const store = readPendingTaskCreatesStore();
+    prunePendingTaskCreatesStore(store);
+    writePendingTaskCreatesStore(store);
+    const records = Object.values(store).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    for (const rec of records) {
+      if (!rec || !rec.pendingId) continue;
+      if (rec.status === 'pending') {
+        showTaskCreatingBanner(rec.pendingId, rec.title, rec);
+        reconcilePendingTaskCreate(rec);
+      } else if (rec.status === 'ready' && rec.taskId) {
+        if (shouldSuppressTaskReadyBanner(rec)) {
+          removePendingTaskCreateRecord(rec.pendingId);
+          continue;
+        }
+        showTaskCreatingBanner(rec.pendingId, rec.title, rec);
+        markTaskCreateBannerReady(rec.pendingId, rec.taskId, rec.title);
+      } else if (rec.status === 'error') {
+        showTaskCreateBannerError(rec.pendingId, rec.title, rec.error || 'Помилка', rec);
+      }
+    }
+  }
+
   async function submitCreateTask() {
     if (activeChatId == null || !createTaskGoal) return;
     const goal = createTaskGoal.value.trim();
@@ -4496,7 +4972,21 @@
     const title = (createTaskTitle && createTaskTitle.value.trim()) || goal.slice(0, 80);
     const agent = createTaskAgent ? createTaskAgent.value : undefined;
     const generatePlan = createTaskGeneratePlan ? createTaskGeneratePlan.checked : false;
-    if (createTaskSubmit) createTaskSubmit.disabled = true;
+    const pendingId = 'tc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const sourceChatId = activeChatId;
+    const projectId = currentComposerProjectId();
+    upsertPendingTaskCreateRecord({
+      pendingId,
+      title,
+      sourceChatId,
+      projectId,
+      status: 'pending',
+      taskId: null,
+      error: null,
+      createdAt: Date.now(),
+    });
+    closeCreateTaskModal();
+    showTaskCreatingBanner(pendingId, title, { sourceChatId, projectId });
     try {
       const res = await fetch('/tasks', {
         method: 'POST',
@@ -4511,14 +5001,31 @@
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || res.statusText);
-      closeCreateTaskModal();
       if (data.task && data.task.id) {
-        window.location.href = '/tasks/' + encodeURIComponent(data.task.id);
+        const storeRec = readPendingTaskCreatesStore()[pendingId];
+        if (storeRec) {
+          upsertPendingTaskCreateRecord({
+            ...storeRec,
+            projectId: data.task.project_id ?? storeRec.projectId,
+          });
+        }
+        const row = pendingTaskCreateBanners.get(pendingId);
+        if (row) row.projectId = data.task.project_id ?? row.projectId;
+        markTaskCreateBannerReady(pendingId, data.task.id, title);
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (createTaskSubmit) createTaskSubmit.disabled = false;
+      const storeRec = readPendingTaskCreatesStore()[pendingId];
+      if (storeRec && /failed to fetch/i.test(err instanceof Error ? err.message : String(err))) {
+        await reconcilePendingTaskCreate(storeRec);
+        const updated = readPendingTaskCreatesStore()[pendingId];
+        if (updated?.taskId) {
+          const row = pendingTaskCreateBanners.get(pendingId);
+          if (row) row.projectId = updated.projectId ?? row.projectId;
+          markTaskCreateBannerReady(pendingId, updated.taskId, title);
+          return;
+        }
+      }
+      markTaskCreateBannerError(pendingId, title, err);
     }
   }
 
@@ -4531,6 +5038,7 @@
   if (createTaskSubmit) {
     createTaskSubmit.addEventListener('click', () => submitCreateTask());
   }
+  hydratePendingTaskCreateBanners();
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && createTaskModal && !createTaskModal.hidden) {
       closeCreateTaskModal();
@@ -4747,8 +5255,8 @@
   function showResetBannerFixed() {
     if (!resetBannerBody || !resetBannerActions) return;
     resetBannerBody.innerHTML =
-      '<p class="reset-policy-banner-lead">Done ✓</p>' +
-      '<p class="reset-policy-banner-detail">OpenClaw will no longer reset chats daily.</p>';
+      '<p class="iclaw-inline-banner__lead">Done ✓</p>' +
+      '<p class="iclaw-inline-banner__detail">OpenClaw will no longer reset chats daily.</p>';
     resetBannerActions.innerHTML = '';
     // Banner already explains the success — auto-close after a beat.
     setTimeout(hideResetBanner, 2400);
@@ -4779,8 +5287,8 @@
   function showResetBannerManualFallback() {
     if (!resetBannerBody || !resetBannerActions) return;
     resetBannerBody.innerHTML =
-      '<p class="reset-policy-banner-lead">Automatic setup failed — the gateway token needs admin scope.</p>' +
-      '<p class="reset-policy-banner-detail">' +
+      '<p class="iclaw-inline-banner__lead">Automatic setup failed — the gateway token needs admin scope.</p>' +
+      '<p class="iclaw-inline-banner__detail">' +
       'Run this in your terminal (same machine as OpenClaw), or paste the JSON into ' +
       '<code>~/.openclaw/openclaw.json</code> under <code>session</code> and restart the gateway.' +
       '</p>' +
