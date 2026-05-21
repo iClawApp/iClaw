@@ -242,7 +242,9 @@ tasksRouter.post('/', async (req, res) => {
   try {
     const task = await createTask({
       sourceChatId,
-      title: title || goal.slice(0, 80),
+      /* Empty title → createTask sets a placeholder from goal and kicks off
+       * background auto-titling. UI never sends a title now. */
+      title,
       goal,
       agent: req.body?.agent ? String(req.body.agent) : null,
       generatePlan,

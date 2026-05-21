@@ -91,7 +91,17 @@
 
       <header class="task-large-header">
         <div class="task-large-header-row">
-          <h1 class="task-large-title"><%= task.title %></h1>
+          <form class="task-large-title-form" id="task-rename-form" onsubmit="return false">
+            <input
+              type="text"
+              id="task-title-input"
+              class="task-large-title"
+              value="<%= task.title %>"
+              aria-label="Task title"
+              maxlength="200"
+              autocomplete="off"
+            />
+          </form>
           <div class="task-large-header-actions">
             <button type="button" class="task-ask-open-btn" id="task-ask-open-btn">
               <span class="task-ask-open-btn__icon" aria-hidden="true">

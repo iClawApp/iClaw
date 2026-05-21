@@ -24,6 +24,7 @@ import {
   STORED_SECRET_PLACEHOLDER_RE,
 } from './inlineSecrets';
 import { normalizeAgentId, isGatewayBridgeFailure, gatewayBridgeFailureUserMessage } from './chatRunner';
+import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
 import type {
   MessageAttachment,
   Task,
@@ -782,6 +783,37 @@ async function finishTaskPlanning(
   broadcastTaskUpdated(enrichTaskWithSteps(tasks.get(taskId)!));
 }
 
+/**
+ * Background: generate a nicer task title via the agent and patch it in IF
+ * the user hasn't already edited the placeholder. Mirrors the chat title flow.
+ */
+async function finishTaskAutoTitle(opts: {
+  taskId: number;
+  agent: string;
+  goal: string;
+  placeholder: string;
+}): Promise<void> {
+  try {
+    const suggested = await suggestChatTitleWithTimeout({
+      model: opts.agent,
+      userMessage: opts.goal,
+    });
+    if (!suggested) return;
+    const current = tasks.get(opts.taskId);
+    /* Don't clobber a manual edit: only replace if title still matches the
+     * placeholder we set at creation. */
+    if (!current || current.title !== opts.placeholder) return;
+    const updated = tasks.patch(opts.taskId, { title: suggested });
+    if (updated) broadcastTaskUpdated(updated);
+  } catch (err) {
+    console.error(
+      '[taskRunner] auto-title failed for task',
+      opts.taskId,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 export async function createTask(opts: {
   sourceChatId: number;
   title: string;
@@ -804,15 +836,28 @@ export async function createTask(opts: {
   });
   const agent = (opts.agent ?? chat.agent).trim() || chat.agent;
   const initialStatus: TaskStatus = opts.generatePlan ? 'planning' : 'ready';
+  const providedTitle = (opts.title ?? '').trim();
+  const placeholder = providedTitle ? providedTitle : deriveTitle(opts.goal);
   const task = tasks.create({
     projectId: chat.project_id,
     sourceChatId: opts.sourceChatId,
-    title: opts.title,
+    title: placeholder,
     goal: opts.goal,
     agent,
     contextSnapshotId: snap.id,
     status: initialStatus,
   });
+
+  /* If the caller didn't supply a title, generate one in the background and
+   * patch it in once ready (mirroring chat title auto-generation). */
+  if (!providedTitle) {
+    void finishTaskAutoTitle({
+      taskId: task.id,
+      agent,
+      goal: opts.goal,
+      placeholder,
+    });
+  }
 
   if (opts.generatePlan) {
     const enriched = enrichTaskWithSteps(task);

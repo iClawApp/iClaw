@@ -4660,37 +4660,13 @@
 
   const createTaskModal = document.getElementById('create-task-modal');
   const createTaskBackdrop = document.getElementById('create-task-modal-backdrop');
-  const createTaskTitle = document.getElementById('create-task-title');
   const createTaskGoal = document.getElementById('create-task-goal');
-  const createTaskAgent = document.getElementById('create-task-agent');
-  const createTaskGeneratePlan = document.getElementById('create-task-generate-plan');
   const createTaskCancel = document.getElementById('create-task-cancel');
   const createTaskSubmit = document.getElementById('create-task-submit');
 
   function ensureCreateTaskModalPortal() {
     if (!createTaskModal || createTaskModal.parentElement === document.body) return;
     document.body.appendChild(createTaskModal);
-  }
-
-  function populateCreateTaskAgentSelect() {
-    if (!createTaskAgent) return;
-    const src =
-      document.getElementById('chat-agent-select') || document.getElementById('draft-agent');
-    createTaskAgent.innerHTML = '';
-    if (src && src.options.length) {
-      for (const opt of src.options) {
-        const o = document.createElement('option');
-        o.value = opt.value;
-        o.textContent = opt.textContent;
-        if (opt.selected) o.selected = true;
-        createTaskAgent.appendChild(o);
-      }
-      return;
-    }
-    const o = document.createElement('option');
-    o.value = 'openclaw/default';
-    o.textContent = 'openclaw/default';
-    createTaskAgent.appendChild(o);
   }
 
   function openCreateTaskModal() {
@@ -4703,14 +4679,9 @@
     closeScheduleMenu();
     const composerText = (input && input.value.trim()) || '';
     if (createTaskGoal) createTaskGoal.value = composerText;
-    if (createTaskTitle) {
-      createTaskTitle.value =
-        composerText.slice(0, 80) || 'New task';
-    }
-    populateCreateTaskAgentSelect();
     createTaskModal.hidden = false;
     requestAnimationFrame(() => {
-      (createTaskGoal || createTaskTitle)?.focus();
+      createTaskGoal?.focus();
     });
   }
 
@@ -5211,9 +5182,10 @@
       createTaskGoal.focus();
       return;
     }
-    const title = (createTaskTitle && createTaskTitle.value.trim()) || goal.slice(0, 80);
-    const agent = createTaskAgent ? createTaskAgent.value : undefined;
-    const generatePlan = createTaskGeneratePlan ? createTaskGeneratePlan.checked : false;
+    /* Title is auto-generated server-side from the goal — placeholder here is
+     * just for the "Creating task…" banner before the real title arrives.
+     * Agent defaults to the source chat's agent (backend handles fallback). */
+    const title = goal.slice(0, 60).replace(/\s+/g, ' ');
     const pendingId = 'tc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
     const sourceChatId = activeChatId;
     const projectId = currentComposerProjectId();
@@ -5236,10 +5208,9 @@
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           sourceChatId: activeChatId,
-          title,
           goal,
-          agent,
-          generatePlan,
+          /* Always generate a plan — no checkbox in the modal anymore. */
+          generatePlan: true,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -6381,6 +6352,17 @@
   function applyTaskDetailRemoteTask(task) {
     const taskRoot = document.querySelector('.task-page[data-task-id]');
     if (!taskRoot || !task || Number(taskRoot.dataset.taskId) !== Number(task.id)) return;
+    /* Title can change independently (background auto-title, manual rename
+     * from another tab). Update in place — no reload — since the title isn't
+     * part of taskDetailFingerprint. Skip if the user is currently editing. */
+    const inp = taskRoot.querySelector('#task-title-input');
+    if (inp && task.title && document.activeElement !== inp) {
+      if (inp.defaultValue !== task.title) {
+        inp.defaultValue = task.title;
+        inp.value = task.title;
+        document.title = task.title + ' — iClaw';
+      }
+    }
     const fp = taskDetailFingerprint(task);
     if (taskDetailSyncFingerprint == null) {
       taskDetailSyncFingerprint = fp;
@@ -7304,6 +7286,56 @@
     document.addEventListener('keydown', onAskEscapeKey, true);
   }
 
+  /**
+   * Inline rename for the task title. Mirrors the chat header rename input:
+   * permanent input styled as a heading, save on blur/Enter, Esc reverts,
+   * no auto-select on focus. WS `task-updated` updates `value` in place
+   * unless the input is focused — see applyTaskDetailRemoteTask.
+   */
+  function bindTaskTitleInlineEdit(root, taskId) {
+    const inp = root.querySelector('#task-title-input');
+    if (!inp || inp.dataset.titleBound === '1') return;
+    inp.dataset.titleBound = '1';
+
+    async function save() {
+      const next = inp.value.trim();
+      if (!next || next === inp.defaultValue) {
+        inp.value = inp.defaultValue;
+        return;
+      }
+      try {
+        const res = await fetch('/tasks/' + encodeURIComponent(taskId), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ title: next }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || res.statusText);
+        }
+        const data = await res.json();
+        inp.defaultValue = data.task?.title ?? next;
+        inp.value = inp.defaultValue;
+        document.title = inp.defaultValue + ' — iClaw';
+      } catch (err) {
+        inp.value = inp.defaultValue;
+        alert('Failed to rename task: ' + (err instanceof Error ? err.message : String(err)));
+      }
+    }
+
+    inp.addEventListener('blur', save);
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        inp.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        inp.value = inp.defaultValue;
+        inp.blur();
+      }
+    });
+  }
+
   function initTaskDetailPage() {
     const root = document.querySelector('.task-page[data-task-id]');
     if (!root) return;
@@ -7311,6 +7343,8 @@
     if (!Number.isFinite(taskId)) return;
 
     bindAutoGrowTextarea(document.getElementById('task-human-input'), TASK_HUMAN_INPUT_MAX_PX);
+
+    bindTaskTitleInlineEdit(root, taskId);
 
     const taskScrollEl = root;
     root.querySelectorAll('details').forEach((det) => {
@@ -7450,7 +7484,7 @@
           return;
         }
         const title =
-          document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
+          (document.getElementById('task-title-input')?.value || '').trim() || 'Task';
         redirectToTasksAfterApproveRun(taskId, title);
       } catch (err) {
         alert(err instanceof Error ? err.message : String(err));
@@ -7492,7 +7526,7 @@
         const humanInput = document.getElementById('task-human-input')?.value?.trim();
         if (!humanInput) return;
         const title =
-          document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
+          (document.getElementById('task-title-input')?.value || '').trim() || 'Task';
         const taskMeta = window.__ICLAW_TASK__;
         redirectToTasksAfterResumeSubmit(taskId, title, humanInput);
       });
