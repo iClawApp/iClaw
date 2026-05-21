@@ -446,6 +446,14 @@ function applyOutcomeToTask(taskId: number, outcome: ParsedTaskOutcome, assistan
     throw new Error('task_done is handled by runTaskStepLoop');
   }
   if (outcome.kind === 'needs_review') {
+    /* Mark the active running step as failed so the plan UI doesn't stay stuck
+     * showing "In progress" while the task card flips to Review. The agent
+     * explicitly escalated — current step did not complete. */
+    const active = taskSteps.listByTask(taskId).find((s) => s.status === 'running');
+    if (active) {
+      saveStepRunResult(active.id, assistantText);
+      taskSteps.updateStatus(active.id, 'failed');
+    }
     tasks.patch(taskId, { status: 'needs_review', resultSummary: assistantText.slice(0, 4000) });
     return 'needs_review';
   }
@@ -719,6 +727,12 @@ async function runTaskStepLoop(
         continue;
       }
       const summary = 'Agent returned empty output for this step; not marking as done.';
+      /* Keep step status consistent with the task: empty-output escalation is a
+       * failure of the current agent step, not a "still running" state. Without
+       * this the plan UI keeps the step at "In progress" while the task card
+       * flips to Review (desync seen in iClaw task #22). */
+      taskSteps.saveResult(active.id, summary, summary);
+      taskSteps.updateStatus(active.id, 'failed');
       tasks.patch(taskId, { status: 'needs_review', resultSummary: summary });
       postSourceChatNote(
         task.source_chat_id,
@@ -1122,6 +1136,16 @@ export async function retryTask(taskId: number): Promise<TaskWithSteps> {
 export function completeTask(taskId: number, status: 'done' | 'failed'): TaskWithSteps {
   const task = tasks.get(taskId);
   if (!task) throw new Error('task not found');
+  /* When closing a task that was paused in review/needs_human/running, the
+   * active step is usually still in `running` or `needs_human`. Roll it to the
+   * task's terminal status so the plan UI doesn't keep showing "In progress"
+   * forever. Only touch steps that aren't already terminal. */
+  const steps = taskSteps.listByTask(taskId);
+  for (const s of steps) {
+    if (s.status === 'running' || s.status === 'needs_human') {
+      taskSteps.updateStatus(s.id, status);
+    }
+  }
   const updated = tasks.patch(taskId, { status })!;
   if (status === 'done') {
     postSourceChatNote(task.source_chat_id, `Task done: ${task.title}`);

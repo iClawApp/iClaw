@@ -403,7 +403,10 @@ describe('approve and run', () => {
     expect(turn).toBe(2);
 
     const steps = taskSteps.listByTask(taskId);
-    expect(steps[0].status).toBe('running');
+    // Step that exhausted retries must roll to `failed` so the plan UI stays
+    // in sync with the task card (Review). Leaving it as `running` caused a
+    // visible desync (iClaw task #22).
+    expect(steps[0].status).toBe('failed');
     expect(steps[1].status).toBe('todo');
   });
 
