@@ -4741,6 +4741,11 @@
 
   function shouldSuppressTaskReadyBanner(rec) {
     if (document.getElementById('task-board')) return true;
+    // Suppress if we're already on the task's own detail page
+    if (rec && rec.taskId != null) {
+      const taskPage = document.querySelector('.task-page[data-task-id]');
+      if (taskPage && Number(taskPage.dataset.taskId) === Number(rec.taskId)) return true;
+    }
     const projectPage = document.querySelector('.project-page[data-project-id]');
     if (projectPage && rec && rec.projectId != null) {
       return Number(projectPage.dataset.projectId) === Number(rec.projectId);
@@ -5077,6 +5082,8 @@
 
   function taskMatchesPendingRecord(task, rec) {
     if (!task || !rec || rec.status !== 'pending') return false;
+    // Prefer matching by taskId — title can change after finishTaskAutoTitle runs
+    if (rec.taskId != null) return Number(rec.taskId) === Number(task.id);
     if (rec.title !== task.title) return false;
     if (
       rec.sourceChatId != null &&
@@ -5113,7 +5120,14 @@
       return true;
     }
     for (const [pendingId, row] of pendingTaskCreateBanners) {
-      if (row.taskId != null) continue;
+      // Also try banners that already have a taskId but weren't caught above
+      if (row.taskId != null) {
+        if (Number(row.taskId) === Number(task.id)) {
+          markTaskCreateBannerReady(pendingId, task.id, row.title);
+          return true;
+        }
+        continue;
+      }
       if (row.title !== task.title) continue;
       if (
         row.sourceChatId != null &&
@@ -5140,6 +5154,8 @@
       const tasks = Array.isArray(data.tasks) ? data.tasks : [];
       const started = rec.createdAt || 0;
       const match = tasks.find((t) => {
+        // Prefer matching by taskId if already known (title can change after auto-title)
+        if (rec.taskId != null) return Number(t.id) === Number(rec.taskId);
         if (t.title !== rec.title) return false;
         if (rec.sourceChatId != null && t.source_chat_id !== rec.sourceChatId) return false;
         const created = Date.parse(t.created_at || '');

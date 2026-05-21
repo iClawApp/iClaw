@@ -449,8 +449,7 @@ function applyOutcomeToTask(taskId: number, outcome: ParsedTaskOutcome, assistan
     tasks.patch(taskId, { status: 'needs_review', resultSummary: assistantText.slice(0, 4000) });
     return 'needs_review';
   }
-  tasks.patch(taskId, { status: 'needs_review', resultSummary: assistantText.slice(0, 4000) });
-  return 'needs_review';
+  throw new Error(`applyOutcomeToTask: unexpected outcome kind "${outcome.kind}"`);
 }
 
 async function runExecutionTurn(opts: {
@@ -512,7 +511,7 @@ async function runExecutionTurn(opts: {
     message: assistantMsg,
   });
 
-  taskRuns.finish(opts.runId, 'completed', finalText.slice(0, 4000));
+  taskRuns.finish(opts.runId, 'completed', stripTaskOutcomeMarkers(finalText).slice(0, 4000));
   wsHub.broadcastAll({
     type: 'task-run-ended',
     taskId: opts.taskId,
@@ -687,7 +686,7 @@ async function runTaskStepLoop(
       return;
     }
 
-    runSummary = finalText.slice(0, 4000) || null;
+    runSummary = stripTaskOutcomeMarkers(finalText).slice(0, 4000) || null;
 
     if (outcome.kind === 'add_human_step') {
       applyAddHumanStepOutcome(
@@ -716,7 +715,7 @@ async function runTaskStepLoop(
         ephemeralNote =
           'Previous turn returned an empty response. Please complete the current step now, ' +
           'or end with NEEDS_HUMAN/NEEDS_REVIEW if you cannot.';
-        runSummary = opts.initialRunSummary ?? runSummary;
+        runSummary = null;
         continue;
       }
       const summary = 'Agent returned empty output for this step; not marking as done.';
@@ -936,7 +935,15 @@ export async function runTask(taskId: number): Promise<TaskWithSteps> {
         goal: task.goal,
       }),
       new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
+        setTimeout(async () => {
+          // Abort the in-flight gateway turn so it doesn't become a dangling
+          // promise that corrupts the session for any subsequent retry.
+          const chat = chats.get(executionChatId);
+          if (chat?.openclaw_session_id) {
+            await openclawWs.abortRun(chat.openclaw_session_id).catch(() => {});
+          }
+          reject(new Error('task run timed out'));
+        }, RUN_BUDGET_MS),
       ),
     ]);
   } catch (err) {
@@ -990,7 +997,13 @@ export async function resumeTaskClarification(
         initialRunSummary: checkpointSummary,
       }),
       new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
+        setTimeout(async () => {
+          const chat = chats.get(executionChatId);
+          if (chat?.openclaw_session_id) {
+            await openclawWs.abortRun(chat.openclaw_session_id).catch(() => {});
+          }
+          reject(new Error('task run timed out'));
+        }, RUN_BUDGET_MS),
       ),
     ]);
   } catch (err) {
@@ -1053,7 +1066,13 @@ export async function resumeTask(taskId: number, humanInput: string): Promise<Ta
         initialRunSummary: lastRun?.log_summary ?? task.result_summary,
       }),
       new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
+        setTimeout(async () => {
+          const chat = chats.get(executionChatId);
+          if (chat?.openclaw_session_id) {
+            await openclawWs.abortRun(chat.openclaw_session_id).catch(() => {});
+          }
+          reject(new Error('task run timed out'));
+        }, RUN_BUDGET_MS),
       ),
     ]);
   } catch (err) {
@@ -1073,9 +1092,9 @@ export async function resumeTask(taskId: number, humanInput: string): Promise<Ta
 
 /**
  * Reset a failed task back to `ready` and run it again. Steps marked `done`
- * stay done; anything `running`/`failed` flips back to `todo`. The OpenClaw
- * session is intentionally kept — its turn history is the agent's own record
- * of what it did before the failure, so the retry resumes with context.
+ * stay done; anything `running`/`failed` flips back to `todo`.
+ * The execution session is reset to avoid running in a corrupted/stale session
+ * left over from a timed-out or crashed previous run.
  */
 export async function retryTask(taskId: number): Promise<TaskWithSteps> {
   const task = tasks.get(taskId);
@@ -1089,6 +1108,11 @@ export async function retryTask(taskId: number): Promise<TaskWithSteps> {
     if (s.status === 'running' || s.status === 'failed') {
       taskSteps.updateStatus(s.id, 'todo');
     }
+  }
+  // Reset the session before retrying — a previous run may have timed out with
+  // a dangling gateway turn, and reusing that session causes corrupted context.
+  if (task.execution_chat_id) {
+    await resetExecutionSession(task.execution_chat_id);
   }
   tasks.patch(taskId, { status: 'ready', resultSummary: null });
   broadcastTaskUpdated(tasks.get(taskId)!);
