@@ -272,6 +272,8 @@ function buildExecutionPrompt(opts: {
   /** One-shot user reply to ASK_USER; not stored on plan steps or prior run summary. */
   ephemeralNote?: string;
   runSummary?: string | null;
+  /** Include the full context snapshot (goal+facts+chat). Only the first turn of a loop needs it; the OpenClaw session keeps it in history afterwards. */
+  includeSnapshot?: boolean;
 }): string {
   const stepLines = opts.steps
     .map((s, i) => `${i + 1}. [${s.actor}] ${s.title} (${s.status})`)
@@ -280,14 +282,15 @@ function buildExecutionPrompt(opts: {
   const activeLine = current
     ? `Current step (execute only this gate): ${current.position + 1}. [${current.actor}] ${current.title}`
     : '';
+  const includeSnapshot = opts.includeSnapshot !== false;
   return [
     'You are executing an iClaw task.',
     '',
     `Goal: ${opts.goal.trim()}`,
     '',
-    'Context snapshot:',
-    truncateSnapshotForPrompt(opts.payload),
-    '',
+    ...(includeSnapshot
+      ? ['Context snapshot:', truncateSnapshotForPrompt(opts.payload), '']
+      : []),
     'Plan steps:',
     stepLines || '(no steps — execute the goal directly)',
     '',
@@ -617,6 +620,14 @@ async function runTaskStepLoop(
   let runSummary = opts.initialRunSummary ?? null;
   let resumeNote = opts.resumeNote;
   let ephemeralNote = opts.ephemeralNote;
+  /* Send the heavy context snapshot only once per loop invocation; the OpenClaw
+   * session keeps it in history. Re-sending it every turn was bloating the
+   * upstream context and correlated with degenerate empty turns. */
+  let isFirstTurn = true;
+  /* Per-step empty-output retries. Empty + markerless used to fall through to
+   * markRunningStepDone, silently promoting upstream failures to "step done". */
+  const emptyAttempts = new Map<number, number>();
+  const MAX_EMPTY_ATTEMPTS = 2;
 
   try {
   while (true) {
@@ -653,7 +664,9 @@ async function runTaskStepLoop(
       resumeNote,
       ephemeralNote,
       runSummary,
+      includeSnapshot: isFirstTurn,
     });
+    isFirstTurn = false;
     resumeNote = undefined;
     const persistUser = ephemeralNote == null;
     ephemeralNote = undefined;
@@ -692,7 +705,31 @@ async function runTaskStepLoop(
       return;
     }
 
-    /* task_done or none (no marker): treat current agent step as finished and continue */
+    /* Empty + no marker = upstream produced nothing useful (e.g. degenerate
+     * empty chat:final from the gateway). Do not promote to done. Retry once
+     * with a nudge, then escalate to needs_review so the human can see it. */
+    if (outcome.kind === 'none' && stripTaskOutcomeMarkers(finalText).trim().length === 0) {
+      const attempts = (emptyAttempts.get(active.id) ?? 0) + 1;
+      emptyAttempts.set(active.id, attempts);
+      if (attempts < MAX_EMPTY_ATTEMPTS) {
+        ephemeralNote =
+          'Previous turn returned an empty response. Please complete the current step now, ' +
+          'or end with NEEDS_HUMAN/NEEDS_REVIEW if you cannot.';
+        runSummary = opts.initialRunSummary ?? runSummary;
+        continue;
+      }
+      const summary = 'Agent returned empty output for this step; not marking as done.';
+      tasks.patch(taskId, { status: 'needs_review', resultSummary: summary });
+      postSourceChatNote(
+        task.source_chat_id,
+        `Task needs review: ${task.title} — agent returned empty output`,
+      );
+      broadcastTaskUpdated(enrichTaskWithSteps(tasks.get(taskId)!));
+      return;
+    }
+
+    /* task_done, or none (no marker) with non-empty text: agent did the work
+     * but forgot the marker. Treat current agent step as finished and continue. */
     markRunningStepDone(taskId, finalText);
 
     const next = taskSteps.getActiveStep(taskId);

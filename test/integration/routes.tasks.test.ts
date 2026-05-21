@@ -272,6 +272,90 @@ describe('approve and run', () => {
     expect(steps[2].status).toBe('todo');
   });
 
+  it('empty agent output is not promoted to done — retries once, then needs_review', async () => {
+    const chat = chats.create('openclaw/default', null);
+    const createRes = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'Empty turn',
+        goal: 'do work',
+        generatePlan: false,
+      });
+    const taskId = createRes.body.task.id;
+
+    await request(app)
+      .post(`/tasks/${taskId}/approve-plan`)
+      .set('Accept', 'application/json')
+      .send({
+        steps: [
+          { actor: 'agent', title: 'Step A' },
+          { actor: 'agent', title: 'Step B' },
+        ],
+      });
+
+    let turn = 0;
+    openclawWsMock.runTurn.mockImplementation(
+      async ({ onEvent }: { onEvent?: (e: { type: string; text?: string }) => void }) => {
+        turn += 1;
+        // Two consecutive empty turns on Step A → should escalate to needs_review.
+        onEvent?.({ type: 'text-final', text: '' });
+        return { runId: 'r' + turn, text: '' };
+      },
+    );
+
+    const runRes = await request(app)
+      .post(`/tasks/${taskId}/run`)
+      .set('Accept', 'application/json')
+      .send({});
+    expect(runRes.status).toBe(200);
+    expect(runRes.body.task.status).toBe('needs_review');
+    expect(turn).toBe(2);
+
+    const steps = taskSteps.listByTask(taskId);
+    expect(steps[0].status).toBe('running');
+    expect(steps[1].status).toBe('todo');
+  });
+
+  it('empty turn followed by a real TASK_DONE finishes the step normally', async () => {
+    const chat = chats.create('openclaw/default', null);
+    const createRes = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'Empty then ok',
+        goal: 'do work',
+        generatePlan: false,
+      });
+    const taskId = createRes.body.task.id;
+
+    await request(app)
+      .post(`/tasks/${taskId}/approve-plan`)
+      .set('Accept', 'application/json')
+      .send({ steps: [{ actor: 'agent', title: 'Step A' }] });
+
+    let turn = 0;
+    openclawWsMock.runTurn.mockImplementation(
+      async ({ onEvent }: { onEvent?: (e: { type: string; text?: string }) => void }) => {
+        turn += 1;
+        const text = turn === 1 ? '' : 'Did the work.\nTASK_DONE';
+        onEvent?.({ type: 'text-final', text });
+        return { runId: 'r' + turn, text };
+      },
+    );
+
+    const runRes = await request(app)
+      .post(`/tasks/${taskId}/run`)
+      .set('Accept', 'application/json')
+      .send({});
+    expect(runRes.status).toBe(200);
+    expect(runRes.body.task.status).toBe('done');
+    expect(turn).toBe(2);
+    expect(taskSteps.listByTask(taskId)[0].status).toBe('done');
+  });
+
   it('ASK_USER pauses for clarification without completing the running step', async () => {
     const chat = chats.create('openclaw/default', null);
     const createRes = await request(app)
