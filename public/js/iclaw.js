@@ -2311,6 +2311,15 @@
         wsSend({ type: 'subscribe', chatId: activeChatId });
         loadPendingFactSuggestions();
       }
+      /* If the socket dropped while we had pending task-create records (or
+       * was never up when the server emitted 'ready'), reconcile against the
+       * current task list as soon as we're back online. Closes the WS-race
+       * leak where the 'ready' broadcast was missed. */
+      try {
+        reconcilePendingTaskCreatesAfterReconnect();
+      } catch {
+        /* defensive — never let the open handler throw */
+      }
     });
     ws.addEventListener('close', () => {
       ws = null;
@@ -4737,6 +4746,9 @@
     const store = readPendingTaskCreatesStore();
     delete store[pendingId];
     writePendingTaskCreatesStore(store);
+    /* Defined later in the same IIFE; resolves at call time once the module
+     * is initialised. Keeps polling timers from outliving their record. */
+    stopPendingTaskCreatePoll(pendingId);
   }
 
   function shouldSuppressTaskReadyBanner(rec) {
@@ -4797,6 +4809,7 @@
     if (row && typeof row._readyExpiryClear === 'function') row._readyExpiryClear();
     pendingTaskCreateBanners.delete(pendingId);
     removePendingTaskCreateRecord(pendingId);
+    stopPendingTaskCreatePoll(pendingId);
     const el = row?.el || document.querySelector('[data-pending-id="' + pendingId + '"]');
     if (el) el.remove();
     const host = document.getElementById('iclaw-inline-banner-host');
@@ -5095,13 +5108,37 @@
     return true;
   }
 
+  /* A task is "materialised" once it has moved past the synchronous planning
+   * window. Anything that isn't 'planning' means the server is done queueing
+   * the task — pending banner is no longer needed. We used to gate this on
+   * status === 'ready' only, which broke whenever the task skipped through
+   * ready quickly (autorun, server-side autorun on fast-plan, WS race where the
+   * 'ready' event arrived before the client subscribed). See iClaw bug report
+   * "Задача ... створюється…" stuck for 30 min. */
+  function isTaskMaterialised(status) {
+    return typeof status === 'string' && status !== '' && status !== 'planning';
+  }
+
+  /* Silently drop the pending record/banner without showing the green "ready"
+   * card. Used when the task has already moved past 'ready' (running, review,
+   * etc.) — no point telling the user "your plan is ready" when it's been
+   * running for a while. */
+  function silentlyResolvePendingTaskCreate(pendingId) {
+    if (pendingTaskCreateBanners.has(pendingId)) {
+      removeTaskCreateBanner(pendingId);
+    } else {
+      removePendingTaskCreateRecord(pendingId);
+    }
+  }
+
   function finishPendingTaskCreateWhenReady(task) {
-    if (!task || task.status !== 'ready') return;
+    if (!task || !isTaskMaterialised(task.status)) return;
     finishPendingTaskCreateFromWs(task);
   }
 
   function resolvePendingTaskCreateByTask(task) {
-    if (!task || task.id == null || task.status !== 'ready') return false;
+    if (!task || task.id == null || !isTaskMaterialised(task.status)) return false;
+    const isReady = task.status === 'ready';
     const store = readPendingTaskCreatesStore();
     for (const rec of Object.values(store)) {
       if (!taskMatchesPendingRecord(task, rec)) continue;
@@ -5109,6 +5146,10 @@
         ...rec,
         projectId: task.project_id ?? rec.projectId ?? null,
       };
+      if (!isReady) {
+        silentlyResolvePendingTaskCreate(rec.pendingId);
+        return true;
+      }
       if (shouldSuppressTaskReadyBanner(merged)) {
         removePendingTaskCreateRecord(rec.pendingId);
         return true;
@@ -5123,7 +5164,11 @@
       // Also try banners that already have a taskId but weren't caught above
       if (row.taskId != null) {
         if (Number(row.taskId) === Number(task.id)) {
-          markTaskCreateBannerReady(pendingId, task.id, row.title);
+          if (!isReady) {
+            silentlyResolvePendingTaskCreate(pendingId);
+          } else {
+            markTaskCreateBannerReady(pendingId, task.id, row.title);
+          }
           return true;
         }
         continue;
@@ -5136,7 +5181,11 @@
       ) {
         continue;
       }
-      markTaskCreateBannerReady(pendingId, task.id, row.title);
+      if (!isReady) {
+        silentlyResolvePendingTaskCreate(pendingId);
+      } else {
+        markTaskCreateBannerReady(pendingId, task.id, row.title);
+      }
       return true;
     }
     return false;
@@ -5146,24 +5195,114 @@
     resolvePendingTaskCreateByTask(task);
   }
 
+  /* Active polling timers keyed by pendingId so we never start two for the
+   * same record, and so we can stop them when the record gets resolved by
+   * any other path (WS, manual dismiss, reconcile-on-hydrate). */
+  const pendingTaskCreatePolls = new Map();
+
+  function stopPendingTaskCreatePoll(pendingId) {
+    const t = pendingTaskCreatePolls.get(pendingId);
+    if (t) {
+      clearTimeout(t);
+      pendingTaskCreatePolls.delete(pendingId);
+    }
+  }
+
+  /* Polling fallback when the WS 'ready' event is missed for any reason:
+   *  - WS race on first connect (event flies before subscribe)
+   *  - Task skipped through 'ready' too fast (autorun → 'running')
+   *  - Transient WS disconnect during the planning window
+   *
+   * Cheap and bounded: ~10 attempts spaced 2s apart, total ~20s. Stops as
+   * soon as the store entry disappears (someone else resolved it) or we
+   * detect a materialised status. */
+  function startPendingTaskCreatePoll(pendingId) {
+    stopPendingTaskCreatePoll(pendingId);
+    const MAX_ATTEMPTS = 10;
+    const INTERVAL_MS = 2000;
+    let attempt = 0;
+    const tick = async () => {
+      pendingTaskCreatePolls.delete(pendingId);
+      const rec = readPendingTaskCreatesStore()[pendingId];
+      if (!rec || rec.status !== 'pending') return; // resolved elsewhere
+      attempt += 1;
+      try {
+        await reconcilePendingTaskCreate(rec);
+      } catch {
+        /* ignore, will retry */
+      }
+      const after = readPendingTaskCreatesStore()[pendingId];
+      if (!after || after.status !== 'pending') return; // resolved
+      if (attempt >= MAX_ATTEMPTS) return; // give up; hydrate/WS may still catch it
+      const timer = setTimeout(tick, INTERVAL_MS);
+      pendingTaskCreatePolls.set(pendingId, timer);
+    };
+    const timer = setTimeout(tick, INTERVAL_MS);
+    pendingTaskCreatePolls.set(pendingId, timer);
+  }
+
   async function reconcilePendingTaskCreate(rec) {
     if (!rec || rec.status !== 'pending') return;
     try {
-      const res = await fetch('/tasks', { headers: { Accept: 'application/json' } });
-      const data = await res.json().catch(() => ({}));
-      const tasks = Array.isArray(data.tasks) ? data.tasks : [];
-      const started = rec.createdAt || 0;
-      const match = tasks.find((t) => {
-        // Prefer matching by taskId if already known (title can change after auto-title)
-        if (rec.taskId != null) return Number(t.id) === Number(rec.taskId);
-        if (t.title !== rec.title) return false;
-        if (rec.sourceChatId != null && t.source_chat_id !== rec.sourceChatId) return false;
-        const created = Date.parse(t.created_at || '');
-        return !Number.isNaN(created) && created >= started - 5000;
-      });
-      if (match && match.status === 'ready') resolvePendingTaskCreateByTask(match);
+      let match = null;
+      /* Fast path: POST /tasks already gave us a taskId, so we can ask the
+       * server for that one task instead of the whole list. Cheap regardless
+       * of how many tasks the user has. */
+      if (rec.taskId != null) {
+        const res = await fetch('/tasks/' + encodeURIComponent(rec.taskId), {
+          headers: { Accept: 'application/json' },
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data && data.task) match = data.task;
+        } else if (res.status === 404) {
+          /* Task got deleted between POST and reconcile (rare). Drop the
+           * pending record so the banner doesn't loop forever. */
+          silentlyResolvePendingTaskCreate(rec.pendingId);
+          return;
+        }
+        /* Other non-OK statuses: fall through to the list endpoint as a
+         * defensive retry — keeps reconcile working through transient errors. */
+      }
+      if (!match) {
+        const res = await fetch('/tasks', { headers: { Accept: 'application/json' } });
+        const data = await res.json().catch(() => ({}));
+        const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+        const started = rec.createdAt || 0;
+        match = tasks.find((t) => {
+          // Prefer matching by taskId if already known (title can change after auto-title)
+          if (rec.taskId != null) return Number(t.id) === Number(rec.taskId);
+          if (t.title !== rec.title) return false;
+          if (rec.sourceChatId != null && t.source_chat_id !== rec.sourceChatId) return false;
+          const created = Date.parse(t.created_at || '');
+          return !Number.isNaN(created) && created >= started - 5000;
+        }) || null;
+      }
+      /* Any post-planning status is enough to resolve the pending record —
+       * not just 'ready'. resolvePendingTaskCreateByTask handles the difference
+       * between showing the success banner (ready) and silently clearing
+       * (running/review/done/...). */
+      if (match && isTaskMaterialised(match.status)) {
+        resolvePendingTaskCreateByTask(match);
+      }
     } catch {
       /* ignore */
+    }
+  }
+
+  /* Called from the WS 'open' handler. We iterate every pending record (the
+   * banner may not currently be in the DOM if the user navigated) and ask the
+   * server for fresh task state. Records still in 'pending' get their polling
+   * fallback restarted if it isn't already running, so we don't depend on a
+   * second WS event arriving. */
+  function reconcilePendingTaskCreatesAfterReconnect() {
+    const store = readPendingTaskCreatesStore();
+    for (const rec of Object.values(store)) {
+      if (!rec || rec.status !== 'pending') continue;
+      void reconcilePendingTaskCreate(rec);
+      if (!pendingTaskCreatePolls.has(rec.pendingId)) {
+        startPendingTaskCreatePoll(rec.pendingId);
+      }
     }
   }
 
@@ -5177,6 +5316,11 @@
       if (rec.status === 'pending') {
         showTaskCreatingBanner(rec.pendingId, rec.title, rec);
         reconcilePendingTaskCreate(rec);
+        /* Restart the polling safety net for records that survived a tab
+         * reload — the original poll timer lived only in the previous JS
+         * runtime. Without this, a refresh while a task was stuck would
+         * leave the banner up until PENDING_TASK_MAX_AGE_MS (30 min). */
+        startPendingTaskCreatePoll(rec.pendingId);
       } else if (rec.status === 'ready' && rec.taskId) {
         if (shouldSuppressTaskReadyBanner(rec)) {
           removePendingTaskCreateRecord(rec.pendingId);
@@ -5247,6 +5391,16 @@
         }
         if (data.task.status === 'ready') {
           markTaskCreateBannerReady(pendingId, data.task.id, title);
+        } else if (isTaskMaterialised(data.task.status)) {
+          /* Server already moved the task past planning by the time we got the
+           * response (very fast plan + autorun). Skip the banner-success path
+           * and just clear the pending record so it doesn't haunt the UI. */
+          silentlyResolvePendingTaskCreate(pendingId);
+        } else {
+          /* Still 'planning' — start the polling safety net in case the WS
+           * 'ready' event flies before our subscription, or the task skips
+           * through 'ready' too quickly. */
+          startPendingTaskCreatePoll(pendingId);
         }
       }
     } catch (err) {
