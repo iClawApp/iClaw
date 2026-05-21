@@ -23,6 +23,7 @@ import {
   formatAgentHumanAsk,
   groupTasksForBoard,
   resumeTask,
+  retryTask,
   runTask,
 } from '../services/taskRunner';
 import { wsHub } from '../services/wsHub';
@@ -325,6 +326,15 @@ tasksRouter.post('/:id/approve-plan', (req, res) => {
 tasksRouter.post('/:id/run', async (req, res) => {
   try {
     const task = await runTask(Number(req.params.id));
+    res.json({ task });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+tasksRouter.post('/:id/retry', async (req, res) => {
+  try {
+    const task = await retryTask(Number(req.params.id));
     res.json({ task });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });

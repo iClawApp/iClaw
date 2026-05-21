@@ -6324,6 +6324,7 @@
 
   const TASK_APPROVE_RUN_FLASH_KEY = 'iclaw.taskApproveRun.v1';
   const TASK_RESUME_FLASH_KEY = 'iclaw.taskResumeFlash.v1';
+  const TASK_RETRY_FLASH_KEY = 'iclaw.taskRetryFlash.v1';
   let boardFlashBannerEl = null;
   let boardFlashDismissTimer = null;
   let taskDetailSyncFingerprint = null;
@@ -6442,6 +6443,18 @@
     window.location.href = '/tasks';
   }
 
+  function redirectToTasksAfterRetry(taskId, title) {
+    sessionStorage.setItem(
+      TASK_RETRY_FLASH_KEY,
+      JSON.stringify({
+        taskId,
+        title: title || 'Task',
+        at: Date.now(),
+      }),
+    );
+    window.location.href = '/tasks';
+  }
+
   function redirectToTasksAfterResumeSubmit(taskId, title, humanInput) {
     sessionStorage.setItem(
       TASK_RESUME_FLASH_KEY,
@@ -6501,6 +6514,59 @@
         await refreshGlobalTasksBoard();
         showBoardFlashBanner({
           lead: 'Не вдалося запустити агента',
+          detail: err instanceof Error ? err.message : String(err),
+          variant: 'error',
+          dismissMs: 15000,
+        });
+      });
+  }
+
+  async function hydrateTaskRetryFlash() {
+    const boardEl = document.getElementById('task-board');
+    if (!boardEl) return;
+    const raw = sessionStorage.getItem(TASK_RETRY_FLASH_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(TASK_RETRY_FLASH_KEY);
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const taskId = Number(payload.taskId);
+    const title = String(payload.title || 'Task').trim() || 'Task';
+    if (!Number.isFinite(taskId)) return;
+
+    await refreshGlobalTasksBoard();
+    showBoardFlashBanner({
+      lead: 'Задачу «' + title + '» перезапущено',
+      detail: 'Агент продовжує з останнього кроку. Статус оновиться на дошці.',
+      variant: 'success',
+      dismissMs: 12000,
+    });
+
+    fetch('/tasks/' + encodeURIComponent(taskId) + '/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        await refreshGlobalTasksBoard();
+        const status = data.task && data.task.status;
+        if (status === 'needs_human') {
+          showBoardFlashBanner({
+            lead: 'Потрібна ваша відповідь',
+            detail: 'Задачу «' + title + '» відкрийте в колонці Your turn.',
+            variant: 'info',
+            dismissMs: 15000,
+          });
+        }
+      })
+      .catch(async (err) => {
+        await refreshGlobalTasksBoard();
+        showBoardFlashBanner({
+          lead: 'Не вдалося перезапустити',
           detail: err instanceof Error ? err.message : String(err),
           variant: 'error',
           dismissMs: 15000,
@@ -7365,6 +7431,7 @@
     const resumeBtn = document.getElementById('task-resume-btn');
     const doneBtn = document.getElementById('task-done-btn');
     const failBtn = document.getElementById('task-fail-btn');
+    const retryBtn = document.getElementById('task-retry-btn');
     const stepsList = document.getElementById('task-steps-list');
     const taskMeta = window.__ICLAW_TASK__;
     const planAutosaveEnabled = taskMeta && taskMeta.status === 'ready';
@@ -7493,6 +7560,15 @@
     }
 
     if (runBtn) runBtn.addEventListener('click', () => onRunAgent(runBtn));
+    if (retryBtn) {
+      retryBtn.addEventListener('click', () => {
+        retryBtn.disabled = true;
+        if (doneBtn) doneBtn.disabled = true;
+        const title =
+          (document.getElementById('task-title-input')?.value || '').trim() || 'Task';
+        redirectToTasksAfterRetry(taskId, title);
+      });
+    }
     if (deleteBtn) {
       deleteBtn.addEventListener('click', async () => {
         if (
@@ -7572,6 +7648,7 @@
   if (document.getElementById('sidebar-tasks-link')) void refreshTasksNavSignals();
   hydrateTaskApproveRunFlash();
   hydrateTaskResumeFlash();
+  hydrateTaskRetryFlash();
   hydrateServerRenderedMessages();
   hydrateTaskMarkdownFields();
   (function seedMidTurnStreamStatusDots() {

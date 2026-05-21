@@ -1071,6 +1071,30 @@ export async function resumeTask(taskId: number, humanInput: string): Promise<Ta
   return updated;
 }
 
+/**
+ * Reset a failed task back to `ready` and run it again. Steps marked `done`
+ * stay done; anything `running`/`failed` flips back to `todo`. The OpenClaw
+ * session is intentionally kept — its turn history is the agent's own record
+ * of what it did before the failure, so the retry resumes with context.
+ */
+export async function retryTask(taskId: number): Promise<TaskWithSteps> {
+  const task = tasks.get(taskId);
+  if (!task) throw new Error('task not found');
+  if (task.status !== 'failed') {
+    throw new Error(`task cannot retry from status ${task.status}`);
+  }
+  const steps = taskSteps.listByTask(taskId);
+  if (!steps.length) throw new Error('task has no plan to retry');
+  for (const s of steps) {
+    if (s.status === 'running' || s.status === 'failed') {
+      taskSteps.updateStatus(s.id, 'todo');
+    }
+  }
+  tasks.patch(taskId, { status: 'ready', resultSummary: null });
+  broadcastTaskUpdated(tasks.get(taskId)!);
+  return runTask(taskId);
+}
+
 export function completeTask(taskId: number, status: 'done' | 'failed'): TaskWithSteps {
   const task = tasks.get(taskId);
   if (!task) throw new Error('task not found');

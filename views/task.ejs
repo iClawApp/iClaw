@@ -41,7 +41,7 @@
     },
     failed: {
       title: 'Task failed',
-      body: 'You can mark Done to close it, or leave it as Failed.',
+      body: 'Retry to run again from where it stopped, or mark Done to close it.',
     },
   };
   const next = nextByStatus[task.status] || nextByStatus.ready;
@@ -265,9 +265,14 @@
       <% if (showCompleteActions) { %>
         <ul class="task-inset-list task-inset-list--actions task-inset-list--actions-primary task-inset-list--run-row">
           <li class="task-run-row">
-            <button type="button" class="task-row-btn task-row-btn--primary" id="task-done-btn">Mark as done</button>
-            <% if (isNeedsReview) { %>
-              <button type="button" class="task-row-btn task-row-btn--compact task-row-btn--destructive" id="task-fail-btn">Mark as failed</button>
+            <% if (isFailed) { %>
+              <button type="button" class="task-row-btn task-row-btn--primary" id="task-retry-btn">Retry</button>
+              <button type="button" class="task-row-btn task-row-btn--compact" id="task-done-btn">Mark as done</button>
+            <% } else { %>
+              <button type="button" class="task-row-btn task-row-btn--primary" id="task-done-btn">Mark as done</button>
+              <% if (isNeedsReview) { %>
+                <button type="button" class="task-row-btn task-row-btn--compact task-row-btn--destructive" id="task-fail-btn">Mark as failed</button>
+              <% } %>
             <% } %>
           </li>
         </ul>

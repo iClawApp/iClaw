@@ -272,6 +272,95 @@ describe('approve and run', () => {
     expect(steps[2].status).toBe('todo');
   });
 
+  it('retry resets failed/running steps and runs the task again', async () => {
+    const chat = chats.create('openclaw/default', null);
+    const createRes = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'Retry me',
+        goal: 'do work',
+        generatePlan: false,
+      });
+    const taskId = createRes.body.task.id;
+
+    await request(app)
+      .post(`/tasks/${taskId}/approve-plan`)
+      .set('Accept', 'application/json')
+      .send({
+        steps: [
+          { actor: 'agent', title: 'Step A' },
+          { actor: 'agent', title: 'Step B' },
+        ],
+      });
+
+    /* First run: Step A succeeds, Step B throws an upstream error. */
+    let turn = 0;
+    openclawWsMock.runTurn.mockImplementation(
+      async ({ onEvent }: { onEvent?: (e: { type: string; text?: string }) => void }) => {
+        turn += 1;
+        if (turn === 1) {
+          const text = 'Step A done.\nTASK_DONE';
+          onEvent?.({ type: 'text-final', text });
+          return { runId: 'r1', text };
+        }
+        throw new Error('agent run error');
+      },
+    );
+
+    await request(app)
+      .post(`/tasks/${taskId}/run`)
+      .set('Accept', 'application/json')
+      .send({})
+      .ok(() => true); // we expect 400, but supertest treats 4xx as ok=false otherwise
+    expect(tasks.get(taskId)?.status).toBe('failed');
+    let steps = taskSteps.listByTask(taskId);
+    expect(steps[0].status).toBe('done');
+    expect(steps[1].status).toBe('running');
+
+    /* Retry: Step B now succeeds. Step A should stay done. */
+    openclawWsMock.runTurn.mockImplementation(
+      async ({ onEvent }: { onEvent?: (e: { type: string; text?: string }) => void }) => {
+        const text = 'Step B done.\nTASK_DONE';
+        onEvent?.({ type: 'text-final', text });
+        return { runId: 'r-retry', text };
+      },
+    );
+
+    const retryRes = await request(app)
+      .post(`/tasks/${taskId}/retry`)
+      .set('Accept', 'application/json')
+      .send({});
+    expect(retryRes.status).toBe(200);
+    expect(retryRes.body.task.status).toBe('done');
+
+    steps = taskSteps.listByTask(taskId);
+    expect(steps[0].status).toBe('done');
+    expect(steps[1].status).toBe('done');
+  });
+
+  it('retry rejects when task is not in failed status', async () => {
+    const chat = chats.create('openclaw/default', null);
+    const createRes = await request(app)
+      .post('/tasks')
+      .set('Accept', 'application/json')
+      .send({
+        sourceChatId: chat.id,
+        title: 'Not failed',
+        goal: 'do work',
+        generatePlan: false,
+      });
+    const taskId = createRes.body.task.id;
+
+    const retryRes = await request(app)
+      .post(`/tasks/${taskId}/retry`)
+      .set('Accept', 'application/json')
+      .send({});
+    expect(retryRes.status).toBe(400);
+    expect(retryRes.body.error).toMatch(/cannot retry/);
+  });
+
   it('empty agent output is not promoted to done — retries once, then needs_review', async () => {
     const chat = chats.create('openclaw/default', null);
     const createRes = await request(app)
