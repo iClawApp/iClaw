@@ -1,10 +1,7 @@
 node_modules/
 dist/
-data/*.db
-data/*.db-journal
-data/*.db-shm
-data/*.db-wal
-data/uploads/
+# Local SQLite + uploads when DB_PATH=./data/iclaw.db (see .env.example)
+data/
 .env
 .env.local
 .DS_Store

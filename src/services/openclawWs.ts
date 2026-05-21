@@ -88,6 +88,25 @@ function safeString(v: unknown): string | undefined {
   return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
 
+/**
+ * Per-session abort callbacks. Each active `runTurn` registers a function
+ * here that resolves its `turnDone` promise as "aborted". When the gateway
+ * acks `chat.abort` with `aborted: true`, `abortRun` fires every callback
+ * for that sessionKey.
+ *
+ * Why a callback (not a flag the event handler reads): the gateway sends
+ * `lifecycle:end` as an *event* and the `chat.abort` RPC *response*
+ * separately on the same socket. The event can arrive on this side
+ * BEFORE the RPC response completes — if we relied on a flag set after
+ * the RPC awaited, the event handler would miss it and runTurn would
+ * hang. Driving the resolution straight from the RPC response makes the
+ * ordering irrelevant.
+ *
+ * The Set-of-callbacks shape covers the (theoretical) case of multiple
+ * concurrent `runTurn` on the same sessionKey — aborting fires all.
+ */
+const pendingAborts = new Map<string, Set<() => void>>();
+
 // ---------- public client -------------------------------------------------
 
 export const openclawWs = {
@@ -207,18 +226,44 @@ export const openclawWs = {
 
   /** Abort an in-flight turn (no-op if already finished). */
   async abortRun(sessionKey: string, runId?: string): Promise<void> {
-    const params: Record<string, unknown> = { key: sessionKey };
+    const params: Record<string, unknown> = { sessionKey };
     if (runId) params.runId = runId;
-    await gatewayWs.request('chat.abort', params).catch(() => {
-      // chat.abort can fail if the turn already ended — that's fine.
-    });
+    try {
+      const res = (await gatewayWs.request('chat.abort', params)) as {
+        ok?: boolean;
+        aborted?: boolean;
+      } | null;
+      // Gateway emits `lifecycle:end` (not `aborted`) after a successful abort
+      // and never emits `chat:state=final`, so runTurn would otherwise hang.
+      // Drive resolution directly from this RPC response — see comment on
+      // `pendingAborts` for why event-based marking is racey.
+      if (res?.aborted) {
+        const callbacks = pendingAborts.get(sessionKey);
+        if (callbacks) {
+          // Snapshot before iterating — callbacks may mutate the set via finally.
+          for (const cb of Array.from(callbacks)) {
+            try { cb(); } catch { /* never let one bad callback break the others */ }
+          }
+        }
+      }
+    } catch (err) {
+      // chat.abort can legitimately fail if the turn already ended.
+      // Surface any other failure so it doesn't stay silent.
+      console.warn('[openclawWs] chat.abort failed:', (err as Error).message);
+    }
   },
 
   /**
    * Send a user message and stream the resulting events.
    *
-   * Returns when the turn finishes (chat:final OR agent lifecycle:end).
-   * `onEvent` is called for every interesting event during the turn.
+   * Resolves on `chat:state=final` (normal completion) or when an abort
+   * fired via `abortRun` triggers our `onAbort` callback. Non-'end'
+   * terminal lifecycle phases (`error`, `failed`, …) reject the promise.
+   * The returned `aborted` flag tells the caller whether resolution came
+   * from a user-initiated abort (so it can skip canonical-history reads,
+   * fact extraction, etc.).
+   *
+   * `onEvent` fires for every interesting event during the turn.
    */
   async runTurn(opts: {
     sessionKey: string;
@@ -237,10 +282,11 @@ export const openclawWs = {
       fileName: string;
       content: string;
     }>;
-  }): Promise<{ runId: string; text: string }> {
+  }): Promise<{ runId: string; text: string; aborted: boolean }> {
     let runId: string | null = null;
     let accumulatedText = '';
     let finalEmitted = false;
+    let wasAborted = false;
 
     let resolveTurn!: () => void;
     let rejectTurn!: (err: Error) => void;
@@ -248,6 +294,24 @@ export const openclawWs = {
       resolveTurn = resolve;
       rejectTurn = reject;
     });
+
+    // Register an abort callback BEFORE we kick off chat.send so the
+    // race window (gateway acks abort before we register) is impossible.
+    const onAbort = (): void => {
+      if (wasAborted) return;          // idempotent — abort can fire twice
+      wasAborted = true;
+      if (!finalEmitted) {
+        finalEmitted = true;
+        opts.onEvent({ type: 'text-final', text: accumulatedText });
+      }
+      resolveTurn();
+    };
+    let abortSet = pendingAborts.get(opts.sessionKey);
+    if (!abortSet) {
+      abortSet = new Set();
+      pendingAborts.set(opts.sessionKey, abortSet);
+    }
+    abortSet.add(onAbort);
 
     // Buffer events that arrive before chat.send returns with the runId.
     // OpenClaw can emit lifecycle/item events for the new run before the
@@ -263,22 +327,19 @@ export const openclawWs = {
       if (stream === 'lifecycle') {
         const phase = safeString(data.phase) ?? 'unknown';
         opts.onEvent({ type: 'lifecycle', phase, label: lifecycleActivityLabel(phase) });
-        // Terminal lifecycle phases — anything that isn't 'start' means the
-        // turn is over. We used to handle only 'end'; if the agent erroreda
-        // or was aborted we'd hang forever on turnDone, leaving the chat
-        // stuck in `working` state until the 5-min safety timeout.
-        const TERMINAL = new Set([
-          'end', 'error', 'aborted', 'cancelled',
+        // Non-'end' terminal phases (error/aborted/cancelled/failed/...)
+        // arrive only on agent-level failures, never as part of a normal
+        // run. Reject so the caller surfaces them. For `phase === 'end'`
+        // we DO NOT resolve here — gateway also emits `chat:state=final`
+        // for successful completion which is the canonical terminator
+        // (resolves there). On a `chat.abort`, the abort RPC's response
+        // handler in `abortRun` calls our `onAbort` callback directly,
+        // which is race-proof against event/response ordering.
+        const TERMINAL_FAILURES = new Set([
+          'error', 'aborted', 'cancelled',
           'failed', 'terminated', 'stopped',
         ]);
-        if (TERMINAL.has(phase)) {
-          if (phase === 'end') {
-            // Successful completion: the gateway's canonical assistant message and
-            // turn resolution come from the `chat` event (`state:final`). Resolving
-            // here used to race ahead of that event, so chatRunner persisted from
-            // chat.history before the final merged assistant row existed.
-            return;
-          }
+        if (TERMINAL_FAILURES.has(phase)) {
           if (!finalEmitted) {
             finalEmitted = true;
             opts.onEvent({ type: 'text-final', text: accumulatedText });
@@ -422,8 +483,11 @@ export const openclawWs = {
       for (const f of buffered) dispatch(f);
       buffered.length = 0;
 
-      // Wait for the turn to finish (`chat` state:final resolves the promise;
-      // agent lifecycle:end alone does not — see handleAgent).
+      // Wait for the turn to finish. Resolvers:
+      //   - `chat:state=final` event → normal completion
+      //   - `onAbort` callback (from abortRun) → user abort
+      //   - non-'end' terminal lifecycle phase → rejection
+      //
       // 60 min upper bound — OpenClaw itself defaults to 48h for agent runs,
       // and real tool-heavy turns can comfortably run for 20–30 minutes. The
       // old 5 min cap was killing legitimate long runs on our side while the
@@ -438,8 +502,16 @@ export const openclawWs = {
       }
     } finally {
       off();
+      // Unregister the abort callback so a later abort on this sessionKey
+      // (e.g. a new turn that re-uses it) doesn't accidentally hit this
+      // run's resolver.
+      const cbs = pendingAborts.get(opts.sessionKey);
+      if (cbs) {
+        cbs.delete(onAbort);
+        if (cbs.size === 0) pendingAborts.delete(opts.sessionKey);
+      }
     }
 
-    return { runId: runId!, text: accumulatedText };
+    return { runId: runId!, text: accumulatedText, aborted: wasAborted };
   },
 };

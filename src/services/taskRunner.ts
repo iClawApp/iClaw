@@ -504,11 +504,24 @@ async function runExecutionTurn(opts: {
     }
   };
 
-  const { text: finalFromGateway } = await openclawWs.runTurn({
+  const { text: finalFromGateway, aborted } = await openclawWs.runTurn({
     sessionKey,
     message: expanded,
     onEvent,
   });
+
+  // The only abort path that reaches a task execution turn is the outer
+  // RUN_BUDGET_MS timeout in runTask/resumeTask/resumeTaskClarification —
+  // it calls openclawWs.abortRun then rejects its half of the Promise.race
+  // with "task run timed out", which is what marks the task as failed.
+  // The loop wrapping us is still alive though (Promise.race doesn't kill
+  // the losing branch). Bail out cleanly: don't persist an assistant row
+  // (it would be empty or partial), and finish the run as failed so the
+  // history doesn't show a fake "completed" entry.
+  if (aborted) {
+    try { taskRuns.finish(opts.runId, 'failed', 'aborted by timeout'); } catch {}
+    throw new Error('execution turn aborted');
+  }
 
   const finalText =
     finalFromGateway.trim().length > 0 ? finalFromGateway : assistantText;
@@ -758,6 +771,17 @@ async function runTaskStepLoop(
 
     broadcastTaskUpdated(enrichTaskWithSteps(tasks.get(taskId)!));
   }
+  } catch (err) {
+    // `runExecutionTurn` throws "execution turn aborted" when the outer
+    // RUN_BUDGET_MS timeout fired abortRun. The outer Promise.race already
+    // settled (rejected) on its timeout branch and persisted the task as
+    // failed — re-throwing here would surface as an unhandledRejection
+    // (Promise.race ignores the losing branch). Swallow this specific
+    // signal; everything else propagates.
+    if (err instanceof Error && err.message === 'execution turn aborted') {
+      return;
+    }
+    throw err;
   } finally {
     activeTaskLoops.delete(taskId);
   }

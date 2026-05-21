@@ -510,35 +510,44 @@ async function runTurnLocked(opts: {
     }
   };
 
-  const { text: gatewayAccumulated } = await openclawWs.runTurn({
+  const { text: gatewayAccumulated, aborted } = await openclawWs.runTurn({
     sessionKey,
     message: gatewayMessage,
     onEvent,
     attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
   });
 
-  // Prefer chat.history's last assistant text — it's the gateway's
-  // display-normalised view of the turn, which is the only place that
-  // correctly resolves message-tool routing.
-  //
-  // When an agent picks `sourceReplyDeliveryMode: "message_tool_only"`, its
-  // streamed freeform output (what `chat:final` carries) is an internal
-  // status note like "Надіслав у чат короткий зведений висновок…", while the
-  // real user-facing reply is appended to the transcript as a SEPARATE
-  // projected assistant row by `tools.message.send`. canonicalAssistantText()
-  // walks history backwards and returns that projected row.
-  //
-  // Since `runTurn` now waits for `chat:state=final` before resolving (see
-  // openclawWs.ts), `chat.history` is guaranteed fresh by the time we fetch
-  // it — no race. gatewayAccumulated stays as a fallback for cases where
-  // history fetch fails, and our own streaming buffer is the last resort.
-  const canonicalText = await canonicalAssistantText(sessionKey).catch(() => null);
-  const rawFinalText =
-    canonicalText && canonicalText.trim().length > 0
-      ? canonicalText
-      : gatewayAccumulated.trim().length > 0
-        ? gatewayAccumulated
-        : assistantText;
+  // Aborted turns never reach `chat:state=final`, so the gateway hasn't
+  // appended a fresh assistant row to history for this run. Skip the
+  // history fetch — it would return the PREVIOUS assistant row by mistake
+  // — and persist whatever we managed to stream live.
+  let rawFinalText: string;
+  if (aborted) {
+    rawFinalText = gatewayAccumulated.trim().length > 0 ? gatewayAccumulated : assistantText;
+  } else {
+    // Prefer chat.history's last assistant text — it's the gateway's
+    // display-normalised view of the turn, which is the only place that
+    // correctly resolves message-tool routing.
+    //
+    // When an agent picks `sourceReplyDeliveryMode: "message_tool_only"`, its
+    // streamed freeform output (what `chat:final` carries) is an internal
+    // status note like "Надіслав у чат короткий зведений висновок…", while the
+    // real user-facing reply is appended to the transcript as a SEPARATE
+    // projected assistant row by `tools.message.send`. canonicalAssistantText()
+    // walks history backwards and returns that projected row.
+    //
+    // Since `runTurn` waits for `chat:state=final` before resolving (see
+    // openclawWs.ts), `chat.history` is guaranteed fresh by the time we fetch
+    // it — no race. gatewayAccumulated stays as a fallback for cases where
+    // history fetch fails, and our own streaming buffer is the last resort.
+    const canonicalText = await canonicalAssistantText(sessionKey).catch(() => null);
+    rawFinalText =
+      canonicalText && canonicalText.trim().length > 0
+        ? canonicalText
+        : gatewayAccumulated.trim().length > 0
+          ? gatewayAccumulated
+          : assistantText;
+  }
 
   // Strip the "Надіслав у чат…" / "Sent in chat…" self-narration preamble
   // that OpenClaw emits when `agents.defaults.visibleReplies` is set to
@@ -546,17 +555,31 @@ async function runTurnLocked(opts: {
   // after the preamble (see stripAgentSelfActionPreamble for details).
   const finalText = stripAgentSelfActionPreamble(rawFinalText);
 
-  // Persist the assistant message + broadcast.
-  const assistantMsg = messages.append(chatId, 'assistant', finalText, null);
-  wsHub.broadcastToChat(chatId, {
-    type: 'message-appended',
-    chatId,
-    message: assistantMsg,
-  });
-  syncSidebarUnread(chatId);
+  // Aborted with no streamed content → no assistant row to persist
+  // (would be a confusing empty bubble). Still need to fire turn-ended
+  // below so the Stop button disappears and the chat unlocks.
+  const skipPersist = aborted && finalText.trim().length === 0;
+  const assistantMsg = skipPersist
+    ? null
+    : messages.append(chatId, 'assistant', finalText, null);
+  if (assistantMsg) {
+    wsHub.broadcastToChat(chatId, {
+      type: 'message-appended',
+      chatId,
+      message: assistantMsg,
+    });
+    syncSidebarUnread(chatId);
+  }
 
   const chatAfter = chats.get(chatId)!;
-  if (chatAfter.project_id != null && projects.get(chatAfter.project_id)) {
+  // Don't extract project facts from aborted turns — output is partial
+  // and would feed noisy/half-formed claims into long-term memory.
+  if (
+    assistantMsg &&
+    !aborted &&
+    chatAfter.project_id != null &&
+    projects.get(chatAfter.project_id)
+  ) {
     scheduleProjectFactExtraction({
       chatId,
       projectId: chatAfter.project_id,
