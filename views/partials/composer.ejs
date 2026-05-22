@@ -18,7 +18,7 @@
     kind: 'queue',
     rowId: q.id,
     metaIcon: '⏳',
-    metaText: 'У черзі #' + (idx + 1),
+    metaText: 'In queue #' + (idx + 1),
     content: q.content,
   }) %>
 <% }); %></div>
@@ -131,27 +131,27 @@
       id="schedule-menu"
       class="schedule-menu"
       role="menu"
-      aria-label="Дії надсилання"
+      aria-label="Send actions"
       hidden
     >
       <div class="schedule-menu-panel" id="schedule-menu-main" data-panel="main">
         <button type="button" class="schedule-menu-item" data-action="open-schedule" role="menuitem">
-          Заплановане повідомлення
+          Scheduled message
         </button>
         <button type="button" class="schedule-menu-item" data-action="create-task" role="menuitem">
-          Створити задачу
+          Create task
         </button>
       </div>
       <div class="schedule-menu-panel" id="schedule-menu-schedule" data-panel="schedule" hidden>
         <button type="button" class="schedule-menu-item schedule-menu-item--back" data-action="schedule-back" role="menuitem">
-          ‹ Назад
+          ‹ Back
         </button>
         <div class="schedule-menu-divider" role="separator" aria-hidden="true"></div>
-        <button type="button" class="schedule-menu-item" data-offset="5m" role="menuitem">5 хв</button>
-        <button type="button" class="schedule-menu-item" data-offset="30m" role="menuitem">30 хв</button>
-        <button type="button" class="schedule-menu-item" data-offset="1h" role="menuitem">1 година</button>
-        <button type="button" class="schedule-menu-item" data-offset="tomorrow9" role="menuitem">Завтра о 9:00</button>
-        <button type="button" class="schedule-menu-item" data-offset="custom" role="menuitem">Обрати час</button>
+        <button type="button" class="schedule-menu-item" data-offset="5m" role="menuitem">5 min</button>
+        <button type="button" class="schedule-menu-item" data-offset="30m" role="menuitem">30 min</button>
+        <button type="button" class="schedule-menu-item" data-offset="1h" role="menuitem">1 hour</button>
+        <button type="button" class="schedule-menu-item" data-offset="tomorrow9" role="menuitem">Tomorrow at 9:00</button>
+        <button type="button" class="schedule-menu-item" data-offset="custom" role="menuitem">Pick time</button>
       </div>
     </div>
 
@@ -160,19 +160,19 @@
       class="schedule-picker"
       role="dialog"
       aria-modal="true"
-      aria-label="Обрати час"
+      aria-label="Pick time"
       hidden
     >
       <div class="schedule-picker__backdrop" id="schedule-picker-backdrop"></div>
       <div class="schedule-picker__panel">
         <header class="schedule-picker__head">
-          <button type="button" class="schedule-picker__cancel" id="schedule-picker-cancel">Скасувати</button>
-          <span class="schedule-picker__title">Надіслати о</span>
-          <button type="button" class="schedule-picker__confirm" id="schedule-picker-confirm">Готово</button>
+          <button type="button" class="schedule-picker__cancel" id="schedule-picker-cancel">Cancel</button>
+          <span class="schedule-picker__title">Send at</span>
+          <button type="button" class="schedule-picker__confirm" id="schedule-picker-confirm">Done</button>
         </header>
         <div class="schedule-picker__body">
           <label class="schedule-picker__field" for="schedule-datetime-input">
-            <span class="schedule-picker__field-label">Дата й час</span>
+            <span class="schedule-picker__field-label">Date &amp; time</span>
             <input
               type="datetime-local"
               id="schedule-datetime-input"

@@ -79,7 +79,7 @@ async function ensureSession(chatId: number): Promise<string> {
  * agent's freeform output and the `tools.message.send` payload get merged
  * by the gateway into a single assistant row. The freeform half is the
  * agent's own narration about what it sent — looks like
- * "Надіслав у чат рекомендацію..." / "Sent X in chat." / "Отправил..." —
+ * "Sent X to chat…" — in Ukrainian ("Надіслав у чат…"), Russian ("Отправил…"), or English —
  * and clutters the user-visible reply.
  *
  * This heuristic strips that opening narration when:
@@ -443,7 +443,7 @@ async function runTurnLocked(opts: {
   //      or when the slice was empty.
   //   2. `gatewayAccumulated` — what we collected from `chat:state=delta`.
   //      Right answer for plain freeform turns; on message-tool turns this
-  //      is the agent's self-action status note (e.g. "Надіслав у чат…")
+  //      is the agent's self-action status note (e.g. "Sent to chat…")
   //      so it's a fallback, not the preferred source.
   //   3. `assistantText` — our own buffer, last-resort when the gateway
   //      stream gave us nothing (rare).
@@ -458,7 +458,7 @@ async function runTurnLocked(opts: {
         ? gatewayAccumulated
         : assistantText;
 
-  // Strip the "Надіслав у чат…" / "Sent in chat…" self-narration preamble
+  // Strip the "Sent to chat…" self-narration preamble
   // that OpenClaw emits when `agents.defaults.visibleReplies` is set to
   // "message_tool". Conservative — only fires when there's a real reply
   // after the preamble (see stripAgentSelfActionPreamble for details).

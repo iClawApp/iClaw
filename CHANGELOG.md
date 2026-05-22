@@ -19,11 +19,11 @@ All notable changes to iClaw are documented here. The format follows [Keep a Cha
 - After every assistant reply, an LLM sub-request proposes 0–3 short facts; the user accepts or rejects each inline. Accepted facts are injected into the next user message as `[Project context]` block under a ~1500-token budget.
 - Per-chat **Suggest facts for project** toggle blocks WRITE only (reads always happen if the chat is in a project).
 - Auto-compaction kicks in at 30 facts → merged down to 15 via LLM call.
-- Project page with **Чати / Памʼять / Посилання** tabs; activity-sorted project list with 14-day metrics.
+- Project page with **Chats / Memory / Links** tabs; activity-sorted project list with 14-day metrics.
 - Inline edit + delete on each fact card, with fact source-chat title rendered.
 
 #### Scheduled messages (Telegram-style)
-- Long-press the Send button (450 ms) opens a menu with presets (+10 min / +1 h / +3 h / завтра 9:00) and a custom datetime picker.
+- Long-press the Send button (450 ms) opens a menu with presets (+10 min / +1 h / +3 h / tomorrow 9:00) and a custom datetime picker.
 - Pending list rendered above the composer with cancel buttons; updated live via `scheduled-added` / `scheduled-deleted` events.
 - Background `scheduler` service sweeps `scheduled_messages` every 15 s, dispatches through the normal `sendMessage` path, and runs once on boot so anything that came due during downtime fires immediately. Restart-safe.
 
