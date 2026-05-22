@@ -438,6 +438,9 @@
       id: m.id,
       role: m.role,
       content: m.content,
+      // Carries 'aborted' for system rows that mark a stopped turn so
+      // the cloud viewer can render the Apple-style "Stopped" indicator.
+      finishReason: m.finish_reason ?? null,
       createdAt: m.created_at || null,
       replyToMessageId: m.reply_to_message_id ?? null,
       replyQuote: m.reply_quote ?? null,

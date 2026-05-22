@@ -112,14 +112,24 @@ function handleExecApprovalResolved(payload: Record<string, unknown>): void {
  */
 type GatewayStatus = 'ok' | 'degraded' | 'shutdown' | 'down';
 let lastStatus: GatewayStatus = 'ok';
-function pushStatus(next: GatewayStatus, detail?: string | null): void {
-  if (next === lastStatus) return;
+
+/** Push gateway badge state to all browser tabs (optionally force re-broadcast). */
+export function broadcastGatewayStatus(
+  next: GatewayStatus,
+  detail?: string | null,
+  opts: { force?: boolean } = {},
+): void {
+  if (!opts.force && next === lastStatus) return;
   lastStatus = next;
   wsHub.broadcastAll({
     type: 'gateway-status',
     status: next,
     detail: detail ?? null,
   });
+}
+
+function pushStatus(next: GatewayStatus, detail?: string | null): void {
+  broadcastGatewayStatus(next, detail);
 }
 
 function handleHealth(payload: Record<string, unknown>): void {

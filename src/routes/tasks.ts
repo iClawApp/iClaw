@@ -23,6 +23,7 @@ import {
   formatAgentHumanAsk,
   groupTasksForBoard,
   resumeTask,
+  retryTask,
   runTask,
 } from '../services/taskRunner';
 import { wsHub } from '../services/wsHub';
@@ -242,7 +243,9 @@ tasksRouter.post('/', async (req, res) => {
   try {
     const task = await createTask({
       sourceChatId,
-      title: title || goal.slice(0, 80),
+      /* Empty title → createTask sets a placeholder from goal and kicks off
+       * background auto-titling. UI never sends a title now. */
+      title,
       goal,
       agent: req.body?.agent ? String(req.body.agent) : null,
       generatePlan,
@@ -323,6 +326,15 @@ tasksRouter.post('/:id/approve-plan', (req, res) => {
 tasksRouter.post('/:id/run', async (req, res) => {
   try {
     const task = await runTask(Number(req.params.id));
+    res.json({ task });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+tasksRouter.post('/:id/retry', async (req, res) => {
+  try {
+    const task = await retryTask(Number(req.params.id));
     res.json({ task });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });

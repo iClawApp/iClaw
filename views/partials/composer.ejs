@@ -261,25 +261,12 @@
       <header class="create-task-modal__head">
         <h3 class="create-task-modal__title" id="create-task-modal-title">Create agent task</h3>
         <p class="create-task-modal__hint muted">
-          Turn this chat into background work: context is frozen, the agent runs on a plan, and the thread stays quiet.
-          Hold <strong>Send</strong> anytime to open this again.
+          Runs in the background on a snapshot of this chat. Hold <strong>Send</strong> to reopen this.
         </p>
       </header>
-      <label class="create-task-modal__field">
-        <span class="create-task-modal__caption">Title</span>
-        <input type="text" id="create-task-title" autocomplete="off" maxlength="200" />
-      </label>
       <label class="create-task-modal__field create-task-modal__field--goal">
         <span class="create-task-modal__caption">Goal</span>
         <textarea id="create-task-goal" class="create-task-goal-input iclaw-thin-scroll" rows="8" placeholder="What should the agent do?"></textarea>
-      </label>
-      <label class="create-task-modal__field">
-        <span class="create-task-modal__caption">Agent</span>
-        <select id="create-task-agent"></select>
-      </label>
-      <label class="create-task-modal__check">
-        <input type="checkbox" id="create-task-generate-plan" checked />
-        <span>Generate plan before running</span>
       </label>
       <div class="create-task-modal__actions">
         <button type="button" class="btn btn--ghost btn--sm" id="create-task-cancel">Cancel</button>

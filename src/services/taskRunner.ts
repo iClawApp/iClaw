@@ -24,6 +24,7 @@ import {
   STORED_SECRET_PLACEHOLDER_RE,
 } from './inlineSecrets';
 import { normalizeAgentId, isGatewayBridgeFailure, gatewayBridgeFailureUserMessage } from './chatRunner';
+import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
 import type {
   MessageAttachment,
   Task,
@@ -272,6 +273,8 @@ function buildExecutionPrompt(opts: {
   /** One-shot user reply to ASK_USER; not stored on plan steps or prior run summary. */
   ephemeralNote?: string;
   runSummary?: string | null;
+  /** Include the full context snapshot (goal+facts+chat). Only the first turn of a loop needs it; the OpenClaw session keeps it in history afterwards. */
+  includeSnapshot?: boolean;
 }): string {
   const stepLines = opts.steps
     .map((s, i) => `${i + 1}. [${s.actor}] ${s.title} (${s.status})`)
@@ -280,14 +283,15 @@ function buildExecutionPrompt(opts: {
   const activeLine = current
     ? `Current step (execute only this gate): ${current.position + 1}. [${current.actor}] ${current.title}`
     : '';
+  const includeSnapshot = opts.includeSnapshot !== false;
   return [
     'You are executing an iClaw task.',
     '',
     `Goal: ${opts.goal.trim()}`,
     '',
-    'Context snapshot:',
-    truncateSnapshotForPrompt(opts.payload),
-    '',
+    ...(includeSnapshot
+      ? ['Context snapshot:', truncateSnapshotForPrompt(opts.payload), '']
+      : []),
     'Plan steps:',
     stepLines || '(no steps — execute the goal directly)',
     '',
@@ -442,11 +446,18 @@ function applyOutcomeToTask(taskId: number, outcome: ParsedTaskOutcome, assistan
     throw new Error('task_done is handled by runTaskStepLoop');
   }
   if (outcome.kind === 'needs_review') {
+    /* Mark the active running step as failed so the plan UI doesn't stay stuck
+     * showing "In progress" while the task card flips to Review. The agent
+     * explicitly escalated — current step did not complete. */
+    const active = taskSteps.listByTask(taskId).find((s) => s.status === 'running');
+    if (active) {
+      saveStepRunResult(active.id, assistantText);
+      taskSteps.updateStatus(active.id, 'failed');
+    }
     tasks.patch(taskId, { status: 'needs_review', resultSummary: assistantText.slice(0, 4000) });
     return 'needs_review';
   }
-  tasks.patch(taskId, { status: 'needs_review', resultSummary: assistantText.slice(0, 4000) });
-  return 'needs_review';
+  throw new Error(`applyOutcomeToTask: unexpected outcome kind "${outcome.kind}"`);
 }
 
 async function runExecutionTurn(opts: {
@@ -493,11 +504,24 @@ async function runExecutionTurn(opts: {
     }
   };
 
-  const { text: finalFromGateway } = await openclawWs.runTurn({
+  const { text: finalFromGateway, aborted } = await openclawWs.runTurn({
     sessionKey,
     message: expanded,
     onEvent,
   });
+
+  // The only abort path that reaches a task execution turn is the outer
+  // RUN_BUDGET_MS timeout in runTask/resumeTask/resumeTaskClarification —
+  // it calls openclawWs.abortRun then rejects its half of the Promise.race
+  // with "task run timed out", which is what marks the task as failed.
+  // The loop wrapping us is still alive though (Promise.race doesn't kill
+  // the losing branch). Bail out cleanly: don't persist an assistant row
+  // (it would be empty or partial), and finish the run as failed so the
+  // history doesn't show a fake "completed" entry.
+  if (aborted) {
+    try { taskRuns.finish(opts.runId, 'failed', 'aborted by timeout'); } catch {}
+    throw new Error('execution turn aborted');
+  }
 
   const finalText =
     finalFromGateway.trim().length > 0 ? finalFromGateway : assistantText;
@@ -508,7 +532,7 @@ async function runExecutionTurn(opts: {
     message: assistantMsg,
   });
 
-  taskRuns.finish(opts.runId, 'completed', finalText.slice(0, 4000));
+  taskRuns.finish(opts.runId, 'completed', stripTaskOutcomeMarkers(finalText).slice(0, 4000));
   wsHub.broadcastAll({
     type: 'task-run-ended',
     taskId: opts.taskId,
@@ -617,6 +641,14 @@ async function runTaskStepLoop(
   let runSummary = opts.initialRunSummary ?? null;
   let resumeNote = opts.resumeNote;
   let ephemeralNote = opts.ephemeralNote;
+  /* Send the heavy context snapshot only once per loop invocation; the OpenClaw
+   * session keeps it in history. Re-sending it every turn was bloating the
+   * upstream context and correlated with degenerate empty turns. */
+  let isFirstTurn = true;
+  /* Per-step empty-output retries. Empty + markerless used to fall through to
+   * markRunningStepDone, silently promoting upstream failures to "step done". */
+  const emptyAttempts = new Map<number, number>();
+  const MAX_EMPTY_ATTEMPTS = 2;
 
   try {
   while (true) {
@@ -653,7 +685,9 @@ async function runTaskStepLoop(
       resumeNote,
       ephemeralNote,
       runSummary,
+      includeSnapshot: isFirstTurn,
     });
+    isFirstTurn = false;
     resumeNote = undefined;
     const persistUser = ephemeralNote == null;
     ephemeralNote = undefined;
@@ -673,7 +707,7 @@ async function runTaskStepLoop(
       return;
     }
 
-    runSummary = finalText.slice(0, 4000) || null;
+    runSummary = stripTaskOutcomeMarkers(finalText).slice(0, 4000) || null;
 
     if (outcome.kind === 'add_human_step') {
       applyAddHumanStepOutcome(
@@ -692,7 +726,37 @@ async function runTaskStepLoop(
       return;
     }
 
-    /* task_done or none (no marker): treat current agent step as finished and continue */
+    /* Empty + no marker = upstream produced nothing useful (e.g. degenerate
+     * empty chat:final from the gateway). Do not promote to done. Retry once
+     * with a nudge, then escalate to needs_review so the human can see it. */
+    if (outcome.kind === 'none' && stripTaskOutcomeMarkers(finalText).trim().length === 0) {
+      const attempts = (emptyAttempts.get(active.id) ?? 0) + 1;
+      emptyAttempts.set(active.id, attempts);
+      if (attempts < MAX_EMPTY_ATTEMPTS) {
+        ephemeralNote =
+          'Previous turn returned an empty response. Please complete the current step now, ' +
+          'or end with NEEDS_HUMAN/NEEDS_REVIEW if you cannot.';
+        runSummary = null;
+        continue;
+      }
+      const summary = 'Agent returned empty output for this step; not marking as done.';
+      /* Keep step status consistent with the task: empty-output escalation is a
+       * failure of the current agent step, not a "still running" state. Without
+       * this the plan UI keeps the step at "In progress" while the task card
+       * flips to Review (desync seen in iClaw task #22). */
+      taskSteps.saveResult(active.id, summary, summary);
+      taskSteps.updateStatus(active.id, 'failed');
+      tasks.patch(taskId, { status: 'needs_review', resultSummary: summary });
+      postSourceChatNote(
+        task.source_chat_id,
+        `Task needs review: ${task.title} — agent returned empty output`,
+      );
+      broadcastTaskUpdated(enrichTaskWithSteps(tasks.get(taskId)!));
+      return;
+    }
+
+    /* task_done, or none (no marker) with non-empty text: agent did the work
+     * but forgot the marker. Treat current agent step as finished and continue. */
     markRunningStepDone(taskId, finalText);
 
     const next = taskSteps.getActiveStep(taskId);
@@ -707,6 +771,17 @@ async function runTaskStepLoop(
 
     broadcastTaskUpdated(enrichTaskWithSteps(tasks.get(taskId)!));
   }
+  } catch (err) {
+    // `runExecutionTurn` throws "execution turn aborted" when the outer
+    // RUN_BUDGET_MS timeout fired abortRun. The outer Promise.race already
+    // settled (rejected) on its timeout branch and persisted the task as
+    // failed — re-throwing here would surface as an unhandledRejection
+    // (Promise.race ignores the losing branch). Swallow this specific
+    // signal; everything else propagates.
+    if (err instanceof Error && err.message === 'execution turn aborted') {
+      return;
+    }
+    throw err;
   } finally {
     activeTaskLoops.delete(taskId);
   }
@@ -745,6 +820,37 @@ async function finishTaskPlanning(
   broadcastTaskUpdated(enrichTaskWithSteps(tasks.get(taskId)!));
 }
 
+/**
+ * Background: generate a nicer task title via the agent and patch it in IF
+ * the user hasn't already edited the placeholder. Mirrors the chat title flow.
+ */
+async function finishTaskAutoTitle(opts: {
+  taskId: number;
+  agent: string;
+  goal: string;
+  placeholder: string;
+}): Promise<void> {
+  try {
+    const suggested = await suggestChatTitleWithTimeout({
+      model: opts.agent,
+      userMessage: opts.goal,
+    });
+    if (!suggested) return;
+    const current = tasks.get(opts.taskId);
+    /* Don't clobber a manual edit: only replace if title still matches the
+     * placeholder we set at creation. */
+    if (!current || current.title !== opts.placeholder) return;
+    const updated = tasks.patch(opts.taskId, { title: suggested });
+    if (updated) broadcastTaskUpdated(updated);
+  } catch (err) {
+    console.error(
+      '[taskRunner] auto-title failed for task',
+      opts.taskId,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 export async function createTask(opts: {
   sourceChatId: number;
   title: string;
@@ -767,15 +873,28 @@ export async function createTask(opts: {
   });
   const agent = (opts.agent ?? chat.agent).trim() || chat.agent;
   const initialStatus: TaskStatus = opts.generatePlan ? 'planning' : 'ready';
+  const providedTitle = (opts.title ?? '').trim();
+  const placeholder = providedTitle ? providedTitle : deriveTitle(opts.goal);
   const task = tasks.create({
     projectId: chat.project_id,
     sourceChatId: opts.sourceChatId,
-    title: opts.title,
+    title: placeholder,
     goal: opts.goal,
     agent,
     contextSnapshotId: snap.id,
     status: initialStatus,
   });
+
+  /* If the caller didn't supply a title, generate one in the background and
+   * patch it in once ready (mirroring chat title auto-generation). */
+  if (!providedTitle) {
+    void finishTaskAutoTitle({
+      taskId: task.id,
+      agent,
+      goal: opts.goal,
+      placeholder,
+    });
+  }
 
   if (opts.generatePlan) {
     const enriched = enrichTaskWithSteps(task);
@@ -854,7 +973,15 @@ export async function runTask(taskId: number): Promise<TaskWithSteps> {
         goal: task.goal,
       }),
       new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
+        setTimeout(async () => {
+          // Abort the in-flight gateway turn so it doesn't become a dangling
+          // promise that corrupts the session for any subsequent retry.
+          const chat = chats.get(executionChatId);
+          if (chat?.openclaw_session_id) {
+            await openclawWs.abortRun(chat.openclaw_session_id).catch(() => {});
+          }
+          reject(new Error('task run timed out'));
+        }, RUN_BUDGET_MS),
       ),
     ]);
   } catch (err) {
@@ -908,7 +1035,13 @@ export async function resumeTaskClarification(
         initialRunSummary: checkpointSummary,
       }),
       new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
+        setTimeout(async () => {
+          const chat = chats.get(executionChatId);
+          if (chat?.openclaw_session_id) {
+            await openclawWs.abortRun(chat.openclaw_session_id).catch(() => {});
+          }
+          reject(new Error('task run timed out'));
+        }, RUN_BUDGET_MS),
       ),
     ]);
   } catch (err) {
@@ -971,7 +1104,13 @@ export async function resumeTask(taskId: number, humanInput: string): Promise<Ta
         initialRunSummary: lastRun?.log_summary ?? task.result_summary,
       }),
       new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('task run timed out')), RUN_BUDGET_MS),
+        setTimeout(async () => {
+          const chat = chats.get(executionChatId);
+          if (chat?.openclaw_session_id) {
+            await openclawWs.abortRun(chat.openclaw_session_id).catch(() => {});
+          }
+          reject(new Error('task run timed out'));
+        }, RUN_BUDGET_MS),
       ),
     ]);
   } catch (err) {
@@ -989,9 +1128,48 @@ export async function resumeTask(taskId: number, humanInput: string): Promise<Ta
   return updated;
 }
 
+/**
+ * Reset a failed task back to `ready` and run it again. Steps marked `done`
+ * stay done; anything `running`/`failed` flips back to `todo`.
+ * The execution session is reset to avoid running in a corrupted/stale session
+ * left over from a timed-out or crashed previous run.
+ */
+export async function retryTask(taskId: number): Promise<TaskWithSteps> {
+  const task = tasks.get(taskId);
+  if (!task) throw new Error('task not found');
+  if (task.status !== 'failed') {
+    throw new Error(`task cannot retry from status ${task.status}`);
+  }
+  const steps = taskSteps.listByTask(taskId);
+  if (!steps.length) throw new Error('task has no plan to retry');
+  for (const s of steps) {
+    if (s.status === 'running' || s.status === 'failed') {
+      taskSteps.updateStatus(s.id, 'todo');
+    }
+  }
+  // Reset the session before retrying — a previous run may have timed out with
+  // a dangling gateway turn, and reusing that session causes corrupted context.
+  if (task.execution_chat_id) {
+    await resetExecutionSession(task.execution_chat_id);
+  }
+  tasks.patch(taskId, { status: 'ready', resultSummary: null });
+  broadcastTaskUpdated(tasks.get(taskId)!);
+  return runTask(taskId);
+}
+
 export function completeTask(taskId: number, status: 'done' | 'failed'): TaskWithSteps {
   const task = tasks.get(taskId);
   if (!task) throw new Error('task not found');
+  /* When closing a task that was paused in review/needs_human/running, the
+   * active step is usually still in `running` or `needs_human`. Roll it to the
+   * task's terminal status so the plan UI doesn't keep showing "In progress"
+   * forever. Only touch steps that aren't already terminal. */
+  const steps = taskSteps.listByTask(taskId);
+  for (const s of steps) {
+    if (s.status === 'running' || s.status === 'needs_human') {
+      taskSteps.updateStatus(s.id, status);
+    }
+  }
   const updated = tasks.patch(taskId, { status })!;
   if (status === 'done') {
     postSourceChatNote(task.source_chat_id, `Task done: ${task.title}`);

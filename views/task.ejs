@@ -41,7 +41,7 @@
     },
     failed: {
       title: 'Task failed',
-      body: 'You can mark Done to close it, or leave it as Failed.',
+      body: 'Retry to run again from where it stopped, or mark Done to close it.',
     },
   };
   const next = nextByStatus[task.status] || nextByStatus.ready;
@@ -91,7 +91,17 @@
 
       <header class="task-large-header">
         <div class="task-large-header-row">
-          <h1 class="task-large-title"><%= task.title %></h1>
+          <form class="task-large-title-form" id="task-rename-form" onsubmit="return false">
+            <input
+              type="text"
+              id="task-title-input"
+              class="task-large-title"
+              value="<%= task.title %>"
+              aria-label="Task title"
+              maxlength="200"
+              autocomplete="off"
+            />
+          </form>
           <div class="task-large-header-actions">
             <button type="button" class="task-ask-open-btn" id="task-ask-open-btn">
               <span class="task-ask-open-btn__icon" aria-hidden="true">
@@ -255,9 +265,14 @@
       <% if (showCompleteActions) { %>
         <ul class="task-inset-list task-inset-list--actions task-inset-list--actions-primary task-inset-list--run-row">
           <li class="task-run-row">
-            <button type="button" class="task-row-btn task-row-btn--primary" id="task-done-btn">Mark as done</button>
-            <% if (isNeedsReview) { %>
-              <button type="button" class="task-row-btn task-row-btn--compact task-row-btn--destructive" id="task-fail-btn">Mark as failed</button>
+            <% if (isFailed) { %>
+              <button type="button" class="task-row-btn task-row-btn--primary" id="task-retry-btn">Retry</button>
+              <button type="button" class="task-row-btn task-row-btn--compact" id="task-done-btn">Mark as done</button>
+            <% } else { %>
+              <button type="button" class="task-row-btn task-row-btn--primary" id="task-done-btn">Mark as done</button>
+              <% if (isNeedsReview) { %>
+                <button type="button" class="task-row-btn task-row-btn--compact task-row-btn--destructive" id="task-fail-btn">Mark as failed</button>
+              <% } %>
             <% } %>
           </li>
         </ul>

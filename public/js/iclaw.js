@@ -900,6 +900,26 @@
   function appendMessage(msg, opts) {
     if (!messagesEl) return null;
     clearEmptyState();
+    // Stopped-by-user marker (system row with finish_reason='aborted')
+    // arrives BEFORE turn-ended, so an empty streaming bubble would still
+    // be on the page with "Finishing…". Yank it now so the system pill
+    // doesn't appear stacked under a stale placeholder for the few ms
+    // until turn-ended's own cleanup runs. The marker itself is then
+    // rendered by the default .msg.system path below — same look as the
+    // existing "Task done: …" notes.
+    if (
+      msg.role === 'system' &&
+      msg.finish_reason === 'aborted' &&
+      currentStreamEl &&
+      currentStreamEl.classList.contains('streaming')
+    ) {
+      const body = currentStreamEl.querySelector('.stream-body, .msg-body');
+      const hasContent = !!(body && body.textContent && body.textContent.trim());
+      if (!hasContent) {
+        currentStreamEl.remove();
+        currentStreamEl = null;
+      }
+    }
     const div = document.createElement('div');
     div.className = 'msg ' + (msg.role || 'system');
     if (msg.id) div.dataset.msgId = String(msg.id);
@@ -2311,6 +2331,15 @@
         wsSend({ type: 'subscribe', chatId: activeChatId });
         loadPendingFactSuggestions();
       }
+      /* If the socket dropped while we had pending task-create records (or
+       * was never up when the server emitted 'ready'), reconcile against the
+       * current task list as soon as we're back online. Closes the WS-race
+       * leak where the 'ready' broadcast was missed. */
+      try {
+        reconcilePendingTaskCreatesAfterReconnect();
+      } catch {
+        /* defensive — never let the open handler throw */
+      }
     });
     ws.addEventListener('close', () => {
       ws = null;
@@ -2567,9 +2596,34 @@
         if (msg.chatId !== activeChatId) return;
         setStopVisible(false);
         finalizeReasoningBlock();
-        // Belt + suspenders: kill any leftover reload-placeholder that might
-        // still be on the page if events arrived in a weird order.
+        // Tear down a streaming element that nobody finalized — e.g. an
+        // abort with no streamed text (skipPersist on the server → no
+        // `message-appended` to clean it up), or any other edge where the
+        // turn ends without an assistant message. Without this, the
+        // "Finishing…" / "Thinking…" status would sit on the page until
+        // the user reloaded.
+        if (currentStreamEl && currentStreamEl.classList.contains('streaming')) {
+          const body = currentStreamEl.querySelector('.stream-body, .msg-body');
+          const hasContent = !!(body && body.textContent && body.textContent.trim());
+          if (hasContent) {
+            currentStreamEl.classList.remove(
+              'streaming', 'stream-waiting', 'stream-tool', 'stream-generating',
+            );
+            const st = currentStreamEl.querySelector('.stream-status');
+            if (st) { stopStreamStatusDotAnim(st); st.remove(); }
+            body?.classList.remove('stream-body');
+          } else {
+            currentStreamEl.remove();
+          }
+          currentStreamEl = null;
+        }
         clearStreamArtifacts();
+        // Note: the visible "Stopped" indicator is rendered by the
+        // persistent system marker row that arrives via `message-appended`
+        // (see appendMessage). We keep `msg.aborted` in the protocol but
+        // don't render anything ad-hoc here — that would duplicate the
+        // marker for aborted turns and (worse) the duplicate would vanish
+        // on reload while the persisted marker survives.
         // The in-flight item is no longer in waitingItems (shifted out when
         // flushNextQueued started). Just clear the inFlight flag and start
         // the next one if any.
@@ -2826,6 +2880,15 @@
         console.debug('[iclaw] gateway-session-changed', msg.kind, msg.sessionKey);
         return;
 
+      case 'task-ask-turn-started':
+      case 'task-ask-turn-delta':
+      case 'task-ask-turn-tool':
+      case 'task-ask-turn-lifecycle':
+      case 'task-ask-turn-ended':
+      case 'task-ask-turn-error':
+        handleTaskAskWs(msg);
+        return;
+
       case 'task-run-delta': {
         const taskRoot = document.querySelector('.task-page[data-task-id]');
         if (!taskRoot || Number(taskRoot.dataset.taskId) !== msg.taskId) return;
@@ -2887,8 +2950,21 @@
    * reconnect) we update the existing chip in place so users see when the
    * gateway is unhealthy without needing F5.
    */
+  const gatewayBanner = document.getElementById('sidebar-gateway-banner');
+  const gatewayBannerStatus = document.getElementById('sidebar-gateway-status');
+  const gatewayBannerStart = document.getElementById('sidebar-gateway-start');
+  let gatewayStatusPollTimer = null;
+
+  function setGatewayOfflineBannerVisible(visible) {
+    if (gatewayBanner) gatewayBanner.hidden = !visible;
+  }
+
   function applyGatewayStatus(status, detail) {
     const badge = document.getElementById('gateway-badge');
+    const offline =
+      status === 'down' || status === 'degraded' || status === 'shutdown';
+    setGatewayOfflineBannerVisible(offline);
+
     if (!badge) return;
     badge.classList.remove('ok', 'down', 'degraded', 'shutdown');
     if (status === 'ok') {
@@ -2902,10 +2978,108 @@
       badge.textContent = 'OpenClaw: shutting down';
     } else {
       badge.classList.add('down');
-      badge.textContent = 'OpenClaw: unreachable';
+      badge.textContent = 'OpenClaw: off';
     }
     const baseUrl = badge.dataset.baseUrl || '';
-    badge.title = detail ? detail + (baseUrl ? ' — ' + baseUrl : '') : baseUrl;
+    badge.title = baseUrl;
+  }
+
+  (function initGatewayOfflineBanner() {
+    const badge = document.getElementById('gateway-badge');
+    if (
+      badge &&
+      (badge.classList.contains('down') || badge.classList.contains('degraded'))
+    ) {
+      setGatewayOfflineBannerVisible(true);
+      return;
+    }
+    if (!gatewayBanner) return;
+    void fetch('/api/gateway/status', { headers: { Accept: 'application/json' } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && data.up !== true) setGatewayOfflineBannerVisible(true);
+      })
+      .catch(() => {});
+  })();
+
+  function stopGatewayStatusPoll() {
+    if (gatewayStatusPollTimer != null) {
+      clearInterval(gatewayStatusPollTimer);
+      gatewayStatusPollTimer = null;
+    }
+  }
+
+  function startGatewayStatusPoll(onReady) {
+    stopGatewayStatusPoll();
+    const deadline = Date.now() + 90_000;
+    gatewayStatusPollTimer = setInterval(async () => {
+      if (Date.now() > deadline) {
+        stopGatewayStatusPoll();
+        if (gatewayBannerStatus) {
+          gatewayBannerStatus.textContent = 'Still starting — almost there';
+        }
+        if (gatewayBannerStart) {
+          gatewayBannerStart.disabled = false;
+          gatewayBannerStart.textContent = 'Start OpenClaw';
+        }
+        return;
+      }
+      try {
+        const res = await fetch('/api/gateway/status', {
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.up === true) {
+          stopGatewayStatusPoll();
+          onReady();
+        }
+      } catch {
+        /* retry */
+      }
+    }, 1500);
+  }
+
+  if (gatewayBannerStart) {
+    gatewayBannerStart.addEventListener('click', async () => {
+      if (gatewayBannerStart.disabled) return;
+      const prevLabel = gatewayBannerStart.textContent;
+      gatewayBannerStart.disabled = true;
+      gatewayBannerStart.textContent = 'Starting…';
+      if (gatewayBannerStatus) {
+        gatewayBannerStatus.textContent = 'You can keep chatting';
+      }
+      try {
+        const res = await fetch('/api/gateway/start', {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || 'HTTP ' + res.status);
+        }
+        if (data.ready === true) {
+          applyGatewayStatus('ok', null);
+          window.location.reload();
+          return;
+        }
+        if (gatewayBannerStatus) {
+          gatewayBannerStatus.textContent = 'Starting — almost there';
+        }
+        startGatewayStatusPoll(() => {
+          applyGatewayStatus('ok', null);
+          window.location.reload();
+        });
+      } catch (err) {
+        stopGatewayStatusPoll();
+        const msg = err instanceof Error ? err.message : String(err);
+        if (gatewayBannerStatus) {
+          gatewayBannerStatus.textContent = msg;
+        }
+        gatewayBannerStart.disabled = false;
+        gatewayBannerStart.textContent = prevLabel || 'Start OpenClaw';
+      }
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -4540,37 +4714,13 @@
 
   const createTaskModal = document.getElementById('create-task-modal');
   const createTaskBackdrop = document.getElementById('create-task-modal-backdrop');
-  const createTaskTitle = document.getElementById('create-task-title');
   const createTaskGoal = document.getElementById('create-task-goal');
-  const createTaskAgent = document.getElementById('create-task-agent');
-  const createTaskGeneratePlan = document.getElementById('create-task-generate-plan');
   const createTaskCancel = document.getElementById('create-task-cancel');
   const createTaskSubmit = document.getElementById('create-task-submit');
 
   function ensureCreateTaskModalPortal() {
     if (!createTaskModal || createTaskModal.parentElement === document.body) return;
     document.body.appendChild(createTaskModal);
-  }
-
-  function populateCreateTaskAgentSelect() {
-    if (!createTaskAgent) return;
-    const src =
-      document.getElementById('chat-agent-select') || document.getElementById('draft-agent');
-    createTaskAgent.innerHTML = '';
-    if (src && src.options.length) {
-      for (const opt of src.options) {
-        const o = document.createElement('option');
-        o.value = opt.value;
-        o.textContent = opt.textContent;
-        if (opt.selected) o.selected = true;
-        createTaskAgent.appendChild(o);
-      }
-      return;
-    }
-    const o = document.createElement('option');
-    o.value = 'openclaw/default';
-    o.textContent = 'openclaw/default';
-    createTaskAgent.appendChild(o);
   }
 
   function openCreateTaskModal() {
@@ -4583,14 +4733,9 @@
     closeScheduleMenu();
     const composerText = (input && input.value.trim()) || '';
     if (createTaskGoal) createTaskGoal.value = composerText;
-    if (createTaskTitle) {
-      createTaskTitle.value =
-        composerText.slice(0, 80) || 'New task';
-    }
-    populateCreateTaskAgentSelect();
     createTaskModal.hidden = false;
     requestAnimationFrame(() => {
-      (createTaskGoal || createTaskTitle)?.focus();
+      createTaskGoal?.focus();
     });
   }
 
@@ -4646,10 +4791,18 @@
     const store = readPendingTaskCreatesStore();
     delete store[pendingId];
     writePendingTaskCreatesStore(store);
+    /* Defined later in the same IIFE; resolves at call time once the module
+     * is initialised. Keeps polling timers from outliving their record. */
+    stopPendingTaskCreatePoll(pendingId);
   }
 
   function shouldSuppressTaskReadyBanner(rec) {
     if (document.getElementById('task-board')) return true;
+    // Suppress if we're already on the task's own detail page
+    if (rec && rec.taskId != null) {
+      const taskPage = document.querySelector('.task-page[data-task-id]');
+      if (taskPage && Number(taskPage.dataset.taskId) === Number(rec.taskId)) return true;
+    }
     const projectPage = document.querySelector('.project-page[data-project-id]');
     if (projectPage && rec && rec.projectId != null) {
       return Number(projectPage.dataset.projectId) === Number(rec.projectId);
@@ -4701,6 +4854,7 @@
     if (row && typeof row._readyExpiryClear === 'function') row._readyExpiryClear();
     pendingTaskCreateBanners.delete(pendingId);
     removePendingTaskCreateRecord(pendingId);
+    stopPendingTaskCreatePoll(pendingId);
     const el = row?.el || document.querySelector('[data-pending-id="' + pendingId + '"]');
     if (el) el.remove();
     const host = document.getElementById('iclaw-inline-banner-host');
@@ -4986,6 +5140,8 @@
 
   function taskMatchesPendingRecord(task, rec) {
     if (!task || !rec || rec.status !== 'pending') return false;
+    // Prefer matching by taskId — title can change after finishTaskAutoTitle runs
+    if (rec.taskId != null) return Number(rec.taskId) === Number(task.id);
     if (rec.title !== task.title) return false;
     if (
       rec.sourceChatId != null &&
@@ -4997,13 +5153,37 @@
     return true;
   }
 
+  /* A task is "materialised" once it has moved past the synchronous planning
+   * window. Anything that isn't 'planning' means the server is done queueing
+   * the task — pending banner is no longer needed. We used to gate this on
+   * status === 'ready' only, which broke whenever the task skipped through
+   * ready quickly (autorun, server-side autorun on fast-plan, WS race where the
+   * 'ready' event arrived before the client subscribed). See iClaw bug report
+   * "Задача ... створюється…" stuck for 30 min. */
+  function isTaskMaterialised(status) {
+    return typeof status === 'string' && status !== '' && status !== 'planning';
+  }
+
+  /* Silently drop the pending record/banner without showing the green "ready"
+   * card. Used when the task has already moved past 'ready' (running, review,
+   * etc.) — no point telling the user "your plan is ready" when it's been
+   * running for a while. */
+  function silentlyResolvePendingTaskCreate(pendingId) {
+    if (pendingTaskCreateBanners.has(pendingId)) {
+      removeTaskCreateBanner(pendingId);
+    } else {
+      removePendingTaskCreateRecord(pendingId);
+    }
+  }
+
   function finishPendingTaskCreateWhenReady(task) {
-    if (!task || task.status !== 'ready') return;
+    if (!task || !isTaskMaterialised(task.status)) return;
     finishPendingTaskCreateFromWs(task);
   }
 
   function resolvePendingTaskCreateByTask(task) {
-    if (!task || task.id == null || task.status !== 'ready') return false;
+    if (!task || task.id == null || !isTaskMaterialised(task.status)) return false;
+    const isReady = task.status === 'ready';
     const store = readPendingTaskCreatesStore();
     for (const rec of Object.values(store)) {
       if (!taskMatchesPendingRecord(task, rec)) continue;
@@ -5011,6 +5191,10 @@
         ...rec,
         projectId: task.project_id ?? rec.projectId ?? null,
       };
+      if (!isReady) {
+        silentlyResolvePendingTaskCreate(rec.pendingId);
+        return true;
+      }
       if (shouldSuppressTaskReadyBanner(merged)) {
         removePendingTaskCreateRecord(rec.pendingId);
         return true;
@@ -5022,7 +5206,18 @@
       return true;
     }
     for (const [pendingId, row] of pendingTaskCreateBanners) {
-      if (row.taskId != null) continue;
+      // Also try banners that already have a taskId but weren't caught above
+      if (row.taskId != null) {
+        if (Number(row.taskId) === Number(task.id)) {
+          if (!isReady) {
+            silentlyResolvePendingTaskCreate(pendingId);
+          } else {
+            markTaskCreateBannerReady(pendingId, task.id, row.title);
+          }
+          return true;
+        }
+        continue;
+      }
       if (row.title !== task.title) continue;
       if (
         row.sourceChatId != null &&
@@ -5031,7 +5226,11 @@
       ) {
         continue;
       }
-      markTaskCreateBannerReady(pendingId, task.id, row.title);
+      if (!isReady) {
+        silentlyResolvePendingTaskCreate(pendingId);
+      } else {
+        markTaskCreateBannerReady(pendingId, task.id, row.title);
+      }
       return true;
     }
     return false;
@@ -5041,22 +5240,114 @@
     resolvePendingTaskCreateByTask(task);
   }
 
+  /* Active polling timers keyed by pendingId so we never start two for the
+   * same record, and so we can stop them when the record gets resolved by
+   * any other path (WS, manual dismiss, reconcile-on-hydrate). */
+  const pendingTaskCreatePolls = new Map();
+
+  function stopPendingTaskCreatePoll(pendingId) {
+    const t = pendingTaskCreatePolls.get(pendingId);
+    if (t) {
+      clearTimeout(t);
+      pendingTaskCreatePolls.delete(pendingId);
+    }
+  }
+
+  /* Polling fallback when the WS 'ready' event is missed for any reason:
+   *  - WS race on first connect (event flies before subscribe)
+   *  - Task skipped through 'ready' too fast (autorun → 'running')
+   *  - Transient WS disconnect during the planning window
+   *
+   * Cheap and bounded: ~10 attempts spaced 2s apart, total ~20s. Stops as
+   * soon as the store entry disappears (someone else resolved it) or we
+   * detect a materialised status. */
+  function startPendingTaskCreatePoll(pendingId) {
+    stopPendingTaskCreatePoll(pendingId);
+    const MAX_ATTEMPTS = 10;
+    const INTERVAL_MS = 2000;
+    let attempt = 0;
+    const tick = async () => {
+      pendingTaskCreatePolls.delete(pendingId);
+      const rec = readPendingTaskCreatesStore()[pendingId];
+      if (!rec || rec.status !== 'pending') return; // resolved elsewhere
+      attempt += 1;
+      try {
+        await reconcilePendingTaskCreate(rec);
+      } catch {
+        /* ignore, will retry */
+      }
+      const after = readPendingTaskCreatesStore()[pendingId];
+      if (!after || after.status !== 'pending') return; // resolved
+      if (attempt >= MAX_ATTEMPTS) return; // give up; hydrate/WS may still catch it
+      const timer = setTimeout(tick, INTERVAL_MS);
+      pendingTaskCreatePolls.set(pendingId, timer);
+    };
+    const timer = setTimeout(tick, INTERVAL_MS);
+    pendingTaskCreatePolls.set(pendingId, timer);
+  }
+
   async function reconcilePendingTaskCreate(rec) {
     if (!rec || rec.status !== 'pending') return;
     try {
-      const res = await fetch('/tasks', { headers: { Accept: 'application/json' } });
-      const data = await res.json().catch(() => ({}));
-      const tasks = Array.isArray(data.tasks) ? data.tasks : [];
-      const started = rec.createdAt || 0;
-      const match = tasks.find((t) => {
-        if (t.title !== rec.title) return false;
-        if (rec.sourceChatId != null && t.source_chat_id !== rec.sourceChatId) return false;
-        const created = Date.parse(t.created_at || '');
-        return !Number.isNaN(created) && created >= started - 5000;
-      });
-      if (match && match.status === 'ready') resolvePendingTaskCreateByTask(match);
+      let match = null;
+      /* Fast path: POST /tasks already gave us a taskId, so we can ask the
+       * server for that one task instead of the whole list. Cheap regardless
+       * of how many tasks the user has. */
+      if (rec.taskId != null) {
+        const res = await fetch('/tasks/' + encodeURIComponent(rec.taskId), {
+          headers: { Accept: 'application/json' },
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data && data.task) match = data.task;
+        } else if (res.status === 404) {
+          /* Task got deleted between POST and reconcile (rare). Drop the
+           * pending record so the banner doesn't loop forever. */
+          silentlyResolvePendingTaskCreate(rec.pendingId);
+          return;
+        }
+        /* Other non-OK statuses: fall through to the list endpoint as a
+         * defensive retry — keeps reconcile working through transient errors. */
+      }
+      if (!match) {
+        const res = await fetch('/tasks', { headers: { Accept: 'application/json' } });
+        const data = await res.json().catch(() => ({}));
+        const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+        const started = rec.createdAt || 0;
+        match = tasks.find((t) => {
+          // Prefer matching by taskId if already known (title can change after auto-title)
+          if (rec.taskId != null) return Number(t.id) === Number(rec.taskId);
+          if (t.title !== rec.title) return false;
+          if (rec.sourceChatId != null && t.source_chat_id !== rec.sourceChatId) return false;
+          const created = Date.parse(t.created_at || '');
+          return !Number.isNaN(created) && created >= started - 5000;
+        }) || null;
+      }
+      /* Any post-planning status is enough to resolve the pending record —
+       * not just 'ready'. resolvePendingTaskCreateByTask handles the difference
+       * between showing the success banner (ready) and silently clearing
+       * (running/review/done/...). */
+      if (match && isTaskMaterialised(match.status)) {
+        resolvePendingTaskCreateByTask(match);
+      }
     } catch {
       /* ignore */
+    }
+  }
+
+  /* Called from the WS 'open' handler. We iterate every pending record (the
+   * banner may not currently be in the DOM if the user navigated) and ask the
+   * server for fresh task state. Records still in 'pending' get their polling
+   * fallback restarted if it isn't already running, so we don't depend on a
+   * second WS event arriving. */
+  function reconcilePendingTaskCreatesAfterReconnect() {
+    const store = readPendingTaskCreatesStore();
+    for (const rec of Object.values(store)) {
+      if (!rec || rec.status !== 'pending') continue;
+      void reconcilePendingTaskCreate(rec);
+      if (!pendingTaskCreatePolls.has(rec.pendingId)) {
+        startPendingTaskCreatePoll(rec.pendingId);
+      }
     }
   }
 
@@ -5070,6 +5361,11 @@
       if (rec.status === 'pending') {
         showTaskCreatingBanner(rec.pendingId, rec.title, rec);
         reconcilePendingTaskCreate(rec);
+        /* Restart the polling safety net for records that survived a tab
+         * reload — the original poll timer lived only in the previous JS
+         * runtime. Without this, a refresh while a task was stuck would
+         * leave the banner up until PENDING_TASK_MAX_AGE_MS (30 min). */
+        startPendingTaskCreatePoll(rec.pendingId);
       } else if (rec.status === 'ready' && rec.taskId) {
         if (shouldSuppressTaskReadyBanner(rec)) {
           removePendingTaskCreateRecord(rec.pendingId);
@@ -5091,9 +5387,10 @@
       createTaskGoal.focus();
       return;
     }
-    const title = (createTaskTitle && createTaskTitle.value.trim()) || goal.slice(0, 80);
-    const agent = createTaskAgent ? createTaskAgent.value : undefined;
-    const generatePlan = createTaskGeneratePlan ? createTaskGeneratePlan.checked : false;
+    /* Title is auto-generated server-side from the goal — placeholder here is
+     * just for the "Creating task…" banner before the real title arrives.
+     * Agent defaults to the source chat's agent (backend handles fallback). */
+    const title = goal.slice(0, 60).replace(/\s+/g, ' ');
     const pendingId = 'tc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
     const sourceChatId = activeChatId;
     const projectId = currentComposerProjectId();
@@ -5116,10 +5413,9 @@
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           sourceChatId: activeChatId,
-          title,
           goal,
-          agent,
-          generatePlan,
+          /* Always generate a plan — no checkbox in the modal anymore. */
+          generatePlan: true,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -5140,6 +5436,16 @@
         }
         if (data.task.status === 'ready') {
           markTaskCreateBannerReady(pendingId, data.task.id, title);
+        } else if (isTaskMaterialised(data.task.status)) {
+          /* Server already moved the task past planning by the time we got the
+           * response (very fast plan + autorun). Skip the banner-success path
+           * and just clear the pending record so it doesn't haunt the UI. */
+          silentlyResolvePendingTaskCreate(pendingId);
+        } else {
+          /* Still 'planning' — start the polling safety net in case the WS
+           * 'ready' event flies before our subscription, or the task skips
+           * through 'ready' too quickly. */
+          startPendingTaskCreatePoll(pendingId);
         }
       }
     } catch (err) {
@@ -5588,6 +5894,123 @@
   }
 
   // -------------------------------------------------------------------------
+  // npm update banner — installed from __ICLAW_VERSION__, latest from registry
+  // -------------------------------------------------------------------------
+  const NPM_REGISTRY_LATEST =
+    'https://registry.npmjs.org/@iclawapp%2Ficlaw/latest';
+  const UPDATE_CHECK_STORAGE_KEY = 'iclaw-update-registry-check';
+  const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
+
+  const updateBanner = document.getElementById('sidebar-update-banner');
+  const updateBannerStatus = document.getElementById('sidebar-update-status');
+  const updateBannerRun = document.getElementById('sidebar-update-run');
+
+  function compareSemver(a, b) {
+    const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < 3; i++) {
+      const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+      if (d !== 0) return d;
+    }
+    return 0;
+  }
+
+  function readRegistryCheckCache() {
+    try {
+      const raw = localStorage.getItem(UPDATE_CHECK_STORAGE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (typeof data.latest !== 'string' || typeof data.checkedAt !== 'number') {
+        return null;
+      }
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeRegistryCheckCache(latest) {
+    try {
+      localStorage.setItem(
+        UPDATE_CHECK_STORAGE_KEY,
+        JSON.stringify({ latest, checkedAt: Date.now() }),
+      );
+    } catch {
+      /* private mode / quota */
+    }
+  }
+
+  async function probeNpmUpdateAndMaybeShowBanner() {
+    if (!updateBanner) return;
+    const installed =
+      typeof window.__ICLAW_VERSION__ === 'string'
+        ? window.__ICLAW_VERSION__.trim()
+        : '';
+    if (!installed) return;
+
+    let latest = null;
+    const cached = readRegistryCheckCache();
+    const cacheFresh =
+      cached && Date.now() - cached.checkedAt < UPDATE_CHECK_TTL_MS;
+    if (cacheFresh) {
+      latest = cached.latest;
+    } else {
+      try {
+        const res = await fetch(NPM_REGISTRY_LATEST, {
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (typeof data.version !== 'string' || !data.version.trim()) return;
+        latest = data.version.trim();
+        writeRegistryCheckCache(latest);
+      } catch {
+        if (cached?.latest) latest = cached.latest;
+        else return;
+      }
+    }
+
+    if (!latest || compareSemver(latest, installed) <= 0) return;
+
+    updateBanner.hidden = false;
+  }
+
+  if (updateBannerRun) {
+    updateBannerRun.addEventListener('click', async () => {
+      if (updateBannerRun.disabled) return;
+      const prevLabel = updateBannerRun.textContent;
+      updateBannerRun.disabled = true;
+      updateBannerRun.textContent = 'Updating…';
+      if (updateBannerStatus) {
+        updateBannerStatus.textContent = 'You can keep chatting';
+      }
+      try {
+        const res = await fetch('/api/update/run', {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || 'HTTP ' + res.status);
+        }
+        if (updateBannerStatus) {
+          updateBannerStatus.textContent = 'When done, open iClaw again';
+        }
+        updateBannerRun.textContent = 'Updating…';
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (updateBannerStatus) {
+          updateBannerStatus.textContent = msg;
+        }
+        updateBannerRun.disabled = false;
+        updateBannerRun.textContent = prevLabel || 'Update now';
+      }
+    });
+  }
+
+  void probeNpmUpdateAndMaybeShowBanner();
+
+  // -------------------------------------------------------------------------
   // Exec approval cards (gateway → operator)
   // -------------------------------------------------------------------------
   function renderApprovalCard(opts) {
@@ -5771,6 +6194,8 @@
       updateComposerReplyBar();
       return;
     }
+    const taskAskModal = document.getElementById('task-ask-modal');
+    if (taskAskModal && !taskAskModal.hidden) return;
     if (location.pathname === '/' || location.pathname === '') return;
     window.location.assign('/');
   });
@@ -6114,6 +6539,7 @@
 
   const TASK_APPROVE_RUN_FLASH_KEY = 'iclaw.taskApproveRun.v1';
   const TASK_RESUME_FLASH_KEY = 'iclaw.taskResumeFlash.v1';
+  const TASK_RETRY_FLASH_KEY = 'iclaw.taskRetryFlash.v1';
   let boardFlashBannerEl = null;
   let boardFlashDismissTimer = null;
   let taskDetailSyncFingerprint = null;
@@ -6142,6 +6568,17 @@
   function applyTaskDetailRemoteTask(task) {
     const taskRoot = document.querySelector('.task-page[data-task-id]');
     if (!taskRoot || !task || Number(taskRoot.dataset.taskId) !== Number(task.id)) return;
+    /* Title can change independently (background auto-title, manual rename
+     * from another tab). Update in place — no reload — since the title isn't
+     * part of taskDetailFingerprint. Skip if the user is currently editing. */
+    const inp = taskRoot.querySelector('#task-title-input');
+    if (inp && task.title && document.activeElement !== inp) {
+      if (inp.defaultValue !== task.title) {
+        inp.defaultValue = task.title;
+        inp.value = task.title;
+        document.title = task.title + ' — iClaw';
+      }
+    }
     const fp = taskDetailFingerprint(task);
     if (taskDetailSyncFingerprint == null) {
       taskDetailSyncFingerprint = fp;
@@ -6221,6 +6658,18 @@
     window.location.href = '/tasks';
   }
 
+  function redirectToTasksAfterRetry(taskId, title) {
+    sessionStorage.setItem(
+      TASK_RETRY_FLASH_KEY,
+      JSON.stringify({
+        taskId,
+        title: title || 'Task',
+        at: Date.now(),
+      }),
+    );
+    window.location.href = '/tasks';
+  }
+
   function redirectToTasksAfterResumeSubmit(taskId, title, humanInput) {
     sessionStorage.setItem(
       TASK_RESUME_FLASH_KEY,
@@ -6280,6 +6729,59 @@
         await refreshGlobalTasksBoard();
         showBoardFlashBanner({
           lead: 'Не вдалося запустити агента',
+          detail: err instanceof Error ? err.message : String(err),
+          variant: 'error',
+          dismissMs: 15000,
+        });
+      });
+  }
+
+  async function hydrateTaskRetryFlash() {
+    const boardEl = document.getElementById('task-board');
+    if (!boardEl) return;
+    const raw = sessionStorage.getItem(TASK_RETRY_FLASH_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(TASK_RETRY_FLASH_KEY);
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const taskId = Number(payload.taskId);
+    const title = String(payload.title || 'Task').trim() || 'Task';
+    if (!Number.isFinite(taskId)) return;
+
+    await refreshGlobalTasksBoard();
+    showBoardFlashBanner({
+      lead: 'Задачу «' + title + '» перезапущено',
+      detail: 'Агент продовжує з останнього кроку. Статус оновиться на дошці.',
+      variant: 'success',
+      dismissMs: 12000,
+    });
+
+    fetch('/tasks/' + encodeURIComponent(taskId) + '/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        await refreshGlobalTasksBoard();
+        const status = data.task && data.task.status;
+        if (status === 'needs_human') {
+          showBoardFlashBanner({
+            lead: 'Потрібна ваша відповідь',
+            detail: 'Задачу «' + title + '» відкрийте в колонці Your turn.',
+            variant: 'info',
+            dismissMs: 15000,
+          });
+        }
+      })
+      .catch(async (err) => {
+        await refreshGlobalTasksBoard();
+        showBoardFlashBanner({
+          lead: 'Не вдалося перезапустити',
           detail: err instanceof Error ? err.message : String(err),
           variant: 'error',
           dismissMs: 15000,
@@ -6722,6 +7224,181 @@
     grow();
   }
 
+  /** Live Ask modal — receives `task-ask-turn-*` from /ws (filtered by taskId + sessionId). */
+  let taskAskLive = null;
+
+  function taskAskIsActive() {
+    return taskAskLive && !taskAskLive.modal.hidden;
+  }
+
+  function taskAskMatches(msg) {
+    if (!taskAskIsActive()) return false;
+    return (
+      Number(msg.taskId) === taskAskLive.taskId &&
+      Number(msg.sessionId) === taskAskLive.sessionId
+    );
+  }
+
+  function taskAskScroll() {
+    if (!taskAskLive) return;
+    const el = taskAskLive.messagesPane || taskAskLive.thread;
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
+  function taskAskEnsureStream() {
+    if (!taskAskLive) return null;
+    if (taskAskLive.streamEl && taskAskLive.thread.contains(taskAskLive.streamEl)) {
+      return taskAskLive.streamEl;
+    }
+    const div = document.createElement('div');
+    div.className = 'msg assistant streaming stream-waiting';
+    div.innerHTML =
+      '<div class="role">assistant</div>' +
+      '<div class="stream-status"></div>' +
+      '<div class="msg-body stream-body"></div>';
+    taskAskLive.thread.appendChild(div);
+    const st = div.querySelector('.stream-status');
+    if (st) setStreamStatusLabel(st, 'Thinking…');
+    taskAskLive.streamEl = div;
+    taskAskLive.streamFullText = '';
+    taskAskScroll();
+    return div;
+  }
+
+  function taskAskFinalizeReply(text) {
+    if (!taskAskLive || taskAskLive.turnFinalized) return;
+    taskAskLive.turnFinalized = true;
+    const reply = String(text ?? '').trim() || '(no response)';
+    const el = taskAskLive.streamEl;
+    if (el && taskAskLive.thread.contains(el)) {
+      el.classList.remove(
+        'streaming', 'stream-waiting', 'stream-tool', 'stream-generating',
+      );
+      const status = el.querySelector('.stream-status');
+      if (status) {
+        stopStreamStatusDotAnim(status);
+        status.remove();
+      }
+      const body = el.querySelector('.stream-body, .msg-body');
+      if (body) {
+        body.classList.remove('stream-body');
+        body.innerHTML = renderMessageHtml(reply);
+        decorateMessageBody(body);
+      }
+    } else {
+      const div = document.createElement('div');
+      div.className = 'msg assistant';
+      div.innerHTML =
+        '<div class="role">assistant</div>' +
+        '<div class="msg-body">' + renderMessageHtml(reply) + '</div>';
+      decorateMessageBody(div);
+      taskAskLive.thread.appendChild(div);
+    }
+    taskAskLive.streamEl = null;
+    taskAskLive.streamFullText = '';
+    taskAskScroll();
+    if (taskAskLive.sendBtn) taskAskLive.sendBtn.disabled = false;
+    taskAskLive.input?.focus();
+  }
+
+  function handleTaskAskWs(msg) {
+    if (!taskAskMatches(msg)) return;
+
+    switch (msg.type) {
+      case 'task-ask-turn-started': {
+        taskAskLive.turnFinalized = false;
+        const el = taskAskEnsureStream();
+        if (!el) return;
+        el.classList.add('streaming', 'stream-waiting');
+        el.classList.remove('stream-tool', 'stream-generating');
+        const status = el.querySelector('.stream-status');
+        if (status) {
+          status.hidden = false;
+          status.classList.remove('detail-expanded', 'has-detail');
+          status.removeAttribute('title');
+          delete status.dataset.detail;
+          delete status.dataset.label;
+          setStreamStatusLabel(status, msg.activity?.label || 'Thinking…');
+        }
+        return;
+      }
+
+      case 'task-ask-turn-delta': {
+        const el = taskAskEnsureStream();
+        if (!el) return;
+        taskAskLive.streamFullText += msg.text;
+        if (el.classList.contains('stream-waiting') || el.classList.contains('stream-tool')) {
+          el.classList.remove('stream-waiting', 'stream-tool');
+          el.classList.add('stream-generating');
+          const status = el.querySelector('.stream-status');
+          if (status) {
+            stopStreamStatusDotAnim(status);
+            status.hidden = true;
+          }
+        }
+        const body = el.querySelector('.stream-body, .msg-body');
+        if (body) {
+          body.innerHTML = renderMarkdown(taskAskLive.streamFullText);
+          decorateMessageBody(body, { deferSyntaxHighlight: true });
+        }
+        taskAskScroll();
+        return;
+      }
+
+      case 'task-ask-turn-tool': {
+        const el = taskAskEnsureStream();
+        if (!el) return;
+        const status = el.querySelector('.stream-status');
+        if (msg.phase === 'start' && status) {
+          status.hidden = false;
+          const label = msg.label || msg.name;
+          const detail = msg.detail && msg.detail !== label ? msg.detail : '';
+          if (detail) {
+            status.dataset.detail = detail;
+            status.dataset.label = label;
+            status.title = detail;
+            status.classList.add('has-detail');
+            status.classList.remove('detail-expanded');
+            setStreamStatusLabel(status, label);
+          } else {
+            status.removeAttribute('title');
+            delete status.dataset.detail;
+            delete status.dataset.label;
+            status.classList.remove('has-detail', 'detail-expanded');
+            setStreamStatusLabel(status, label);
+          }
+          el.classList.remove('stream-waiting', 'stream-generating');
+          el.classList.add('stream-tool');
+        } else if (msg.phase === 'end' && status) {
+          setStreamStatusLabel(status, msg.label || msg.phase);
+        }
+        return;
+      }
+
+      case 'task-ask-turn-lifecycle': {
+        const el = taskAskEnsureStream();
+        if (!el) return;
+        const status = el.querySelector('.stream-status');
+        if (status) {
+          status.hidden = false;
+          setStreamStatusLabel(status, msg.label || msg.phase);
+        }
+        return;
+      }
+
+      case 'task-ask-turn-ended':
+        taskAskFinalizeReply(msg.reply);
+        return;
+
+      case 'task-ask-turn-error':
+        taskAskFinalizeReply(msg.error || 'Ask failed');
+        return;
+
+      default:
+        return;
+    }
+  }
+
   function initTaskAskModal(taskId, postAction) {
     const modal = document.getElementById('task-ask-modal');
     const openBtn = document.getElementById('task-ask-open-btn');
@@ -6785,6 +7462,7 @@
       closing = true;
       const sid = sessionId;
       sessionId = null;
+      taskAskLive = null;
       modal.hidden = true;
       hideCloseConfirm();
       thread.innerHTML = '';
@@ -6810,6 +7488,18 @@
         const data = await postAction('/ask/open', {});
         sessionId = Number(data.sessionId);
         if (!Number.isFinite(sessionId)) throw new Error('invalid session');
+        taskAskLive = {
+          taskId,
+          sessionId,
+          thread,
+          messagesPane,
+          modal,
+          sendBtn,
+          input,
+          streamEl: null,
+          streamFullText: '',
+          turnFinalized: false,
+        };
         appendAskBubble(
           'assistant',
           'Знімок контексту зроблено. Питай що завгодно про цю задачу — це не впливає на план і виконання.',
@@ -6834,19 +7524,24 @@
 
     async function sendAsk() {
       const message = input?.value?.trim();
-      if (!message || !Number.isFinite(sessionId)) return;
+      if (!message || !Number.isFinite(sessionId) || !taskAskLive) return;
+      if (sendBtn?.disabled) return;
       appendAskBubble('user', message);
       input.value = '';
       input.dispatchEvent(new Event('input', { bubbles: true }));
+      taskAskLive.turnFinalized = false;
+      taskAskLive.streamEl = null;
+      taskAskLive.streamFullText = '';
       sendBtn.disabled = true;
       try {
         const data = await postAction('/ask/turn', { sessionId, message });
-        appendAskBubble('assistant', data.reply || '(no response)');
+        if (!taskAskLive.turnFinalized) {
+          taskAskFinalizeReply(data.reply || '(no response)');
+        }
       } catch (err) {
-        appendAskBubble('assistant', err instanceof Error ? err.message : String(err));
-      } finally {
-        sendBtn.disabled = false;
-        input?.focus();
+        if (!taskAskLive.turnFinalized) {
+          taskAskFinalizeReply(err instanceof Error ? err.message : String(err));
+        }
       }
     }
 
@@ -6858,13 +7553,67 @@
       }
     });
 
-    document.addEventListener('keydown', (e) => {
+    function onAskEscapeKey(e) {
       if (e.key !== 'Escape' || modal.hidden) return;
+      e.preventDefault();
+      e.stopPropagation();
       if (closeConfirm && !closeConfirm.hidden) {
         hideCloseConfirm();
         return;
       }
       requestCloseAsk();
+    }
+    // Capture so we run before the global Escape → home handler on task pages.
+    document.addEventListener('keydown', onAskEscapeKey, true);
+  }
+
+  /**
+   * Inline rename for the task title. Mirrors the chat header rename input:
+   * permanent input styled as a heading, save on blur/Enter, Esc reverts,
+   * no auto-select on focus. WS `task-updated` updates `value` in place
+   * unless the input is focused — see applyTaskDetailRemoteTask.
+   */
+  function bindTaskTitleInlineEdit(root, taskId) {
+    const inp = root.querySelector('#task-title-input');
+    if (!inp || inp.dataset.titleBound === '1') return;
+    inp.dataset.titleBound = '1';
+
+    async function save() {
+      const next = inp.value.trim();
+      if (!next || next === inp.defaultValue) {
+        inp.value = inp.defaultValue;
+        return;
+      }
+      try {
+        const res = await fetch('/tasks/' + encodeURIComponent(taskId), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ title: next }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || res.statusText);
+        }
+        const data = await res.json();
+        inp.defaultValue = data.task?.title ?? next;
+        inp.value = inp.defaultValue;
+        document.title = inp.defaultValue + ' — iClaw';
+      } catch (err) {
+        inp.value = inp.defaultValue;
+        alert('Failed to rename task: ' + (err instanceof Error ? err.message : String(err)));
+      }
+    }
+
+    inp.addEventListener('blur', save);
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        inp.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        inp.value = inp.defaultValue;
+        inp.blur();
+      }
     });
   }
 
@@ -6875,6 +7624,8 @@
     if (!Number.isFinite(taskId)) return;
 
     bindAutoGrowTextarea(document.getElementById('task-human-input'), TASK_HUMAN_INPUT_MAX_PX);
+
+    bindTaskTitleInlineEdit(root, taskId);
 
     const taskScrollEl = root;
     root.querySelectorAll('details').forEach((det) => {
@@ -6895,6 +7646,7 @@
     const resumeBtn = document.getElementById('task-resume-btn');
     const doneBtn = document.getElementById('task-done-btn');
     const failBtn = document.getElementById('task-fail-btn');
+    const retryBtn = document.getElementById('task-retry-btn');
     const stepsList = document.getElementById('task-steps-list');
     const taskMeta = window.__ICLAW_TASK__;
     const planAutosaveEnabled = taskMeta && taskMeta.status === 'ready';
@@ -7014,7 +7766,7 @@
           return;
         }
         const title =
-          document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
+          (document.getElementById('task-title-input')?.value || '').trim() || 'Task';
         redirectToTasksAfterApproveRun(taskId, title);
       } catch (err) {
         alert(err instanceof Error ? err.message : String(err));
@@ -7023,6 +7775,15 @@
     }
 
     if (runBtn) runBtn.addEventListener('click', () => onRunAgent(runBtn));
+    if (retryBtn) {
+      retryBtn.addEventListener('click', () => {
+        retryBtn.disabled = true;
+        if (doneBtn) doneBtn.disabled = true;
+        const title =
+          (document.getElementById('task-title-input')?.value || '').trim() || 'Task';
+        redirectToTasksAfterRetry(taskId, title);
+      });
+    }
     if (deleteBtn) {
       deleteBtn.addEventListener('click', async () => {
         if (
@@ -7056,7 +7817,7 @@
         const humanInput = document.getElementById('task-human-input')?.value?.trim();
         if (!humanInput) return;
         const title =
-          document.querySelector('.task-large-title')?.textContent?.trim() || 'Task';
+          (document.getElementById('task-title-input')?.value || '').trim() || 'Task';
         const taskMeta = window.__ICLAW_TASK__;
         redirectToTasksAfterResumeSubmit(taskId, title, humanInput);
       });
@@ -7102,6 +7863,7 @@
   if (document.getElementById('sidebar-tasks-link')) void refreshTasksNavSignals();
   hydrateTaskApproveRunFlash();
   hydrateTaskResumeFlash();
+  hydrateTaskRetryFlash();
   hydrateServerRenderedMessages();
   hydrateTaskMarkdownFields();
   (function seedMidTurnStreamStatusDots() {

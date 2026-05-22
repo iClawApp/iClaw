@@ -284,6 +284,26 @@ class GatewayWsBridge {
     });
   }
 
+  /** Drop a dead socket so the next RPC opens a fresh connection (e.g. after gateway start). */
+  resetConnection(): void {
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        /* best-effort */
+      }
+      this.ws = null;
+    }
+    this.connectTask = null;
+    this.connectSent = false;
+    this.clearTickWatchdog();
+    for (const [, entry] of this.pending) {
+      clearTimeout(entry.timer);
+      entry.reject(new Error('gatewayWs: socket closed'));
+    }
+    this.pending.clear();
+  }
+
   async ensureConnected(): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN && !this.connectTask) return;
     if (this.connectTask) return this.connectTask;
@@ -345,12 +365,29 @@ class GatewayWsBridge {
     return this.connectTask;
   }
 
-  /** Subscribe to per-session transcript events for `sessionKey`. */
-  subscribeSession(sessionKey: string): void {
+  /**
+   * Subscribe to per-session transcript events for `sessionKey`. Awaitable
+   * so callers (e.g. `runTurn`) can guarantee the subscription is in place
+   * before they kick off `chat.send`. Registers the session in
+   * `subscribedSessions` so the post-reconnect `onConnected` hook
+   * re-subscribes automatically — without that bookkeeping, an in-flight
+   * turn that survives a socket reconnect would stop receiving events and
+   * hang until the upper-bound timeout fires.
+   */
+  async subscribeSession(sessionKey: string): Promise<void> {
     this.subscribedSessions.add(sessionKey);
-    void this.ensureConnected()
-      .then(() => this.sendSessionSubscribe(sessionKey))
-      .catch((err) => console.error('[gatewayWs] connect failed', err.message));
+    try {
+      await this.ensureConnected();
+      await this.request('sessions.messages.subscribe', { key: sessionKey });
+    } catch (err) {
+      // Broadcast events still flow via `operator.read`, so we don't reject
+      // the caller — but log because a silent failure here means missing
+      // per-session frames if the gateway later restricts them.
+      console.warn(
+        '[gatewayWs] sessions.messages.subscribe failed:',
+        (err as Error).message,
+      );
+    }
   }
 }
 

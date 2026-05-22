@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { chats, messages, projects, projectSecrets } from './store';
 import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
 import { chatStatus } from './chatStatus';
-import { openclawWs, type TurnEvent, type HistoryMessage } from './openclawWs';
+import { openclawWs, type TurnEvent } from './openclawWs';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
 import { toolActivityLabel } from './toolLabels';
 import { wsHub } from './wsHub';
@@ -72,95 +72,6 @@ async function ensureSession(chatId: number): Promise<string> {
   const fresh = await openclawWs.createSession({ agentId: normalizeAgentId(chat.agent) });
   chats.replaceSessionKey(chatId, fresh.key);
   return fresh.key;
-}
-
-/** Flat-text extraction from an assistant row's `content` (string or parts). */
-function extractAssistantText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter(
-      (p): p is { type?: string; text?: string } => p !== null && typeof p === 'object',
-    )
-    .filter((p) => p.type === 'text' && typeof p.text === 'string')
-    .map((p) => p.text as string)
-    .join('');
-}
-
-/**
- * When the agent routes its reply via `tools.message.send`, OpenClaw returns
- * the real user-facing answer **inside the toolResult's JSON content** as
- * `sourceReply.text` — see the `message` tool's protocol in OpenClaw. That
- * field is available as soon as the tool finishes, no projection race, no
- * status-note guessing. This extracts it from the row before the assistant's
- * freeform status note ("Відповідь у чат відправив.") even lands.
- */
-function extractSourceReplyFromMessageToolResult(row: HistoryMessage): string | null {
-  const isMessageTool =
-    row.role === 'toolResult' && (row as { toolName?: string }).toolName === 'message';
-  if (!isMessageTool) return null;
-  const content = row.content;
-  if (!Array.isArray(content)) return null;
-  for (const part of content) {
-    if (!part || typeof part !== 'object') continue;
-    const p = part as { type?: string; content?: unknown; text?: unknown };
-    if (p.type !== 'toolResult') continue;
-    // The tool returns its payload as a JSON string under `content` (and a
-    // duplicated `text`). Parse and pull out `sourceReply.text`.
-    const raw = typeof p.content === 'string' ? p.content : typeof p.text === 'string' ? p.text : '';
-    if (!raw) continue;
-    try {
-      const parsed = JSON.parse(raw) as {
-        sourceReply?: { text?: unknown };
-        message?: unknown;
-      };
-      const sourceReplyText = parsed?.sourceReply?.text;
-      if (typeof sourceReplyText === 'string' && sourceReplyText.trim().length > 0) {
-        return sourceReplyText;
-      }
-      // Some configurations put the user-facing text under `message`. Use it
-      // only when no sourceReply was emitted.
-      if (typeof parsed?.message === 'string' && parsed.message.trim().length > 0) {
-        return parsed.message;
-      }
-    } catch {
-      // Not JSON — fall through.
-    }
-  }
-  return null;
-}
-
-/**
- * Walk the canonical transcript backwards (within the current turn — stop at
- * the previous user row) and return the user-facing assistant reply.
- *
- * Strategy, in order of preference:
- *
- *   1. If the agent used `tools.message.send` this turn, read the reply text
- *      straight out of the `message` toolResult's `sourceReply.text`. This is
- *      the authoritative payload the tool sent to the channel — no race with
- *      the projection that the gateway separately appends as an assistant
- *      row, no guessing whether a short freeform string is a status note.
- *
- *   2. Otherwise (no message-tool call in this turn), take the most recent
- *      assistant text row. That's the normal freeform-output path.
- *
- * Returns '' when no usable content was found in the last `limit` rows.
- */
-async function canonicalAssistantText(sessionKey: string, limit = 20): Promise<string> {
-  const history = await openclawWs.getHistory(sessionKey, limit);
-  let assistantFallback = '';
-  for (let i = history.length - 1; i >= 0; i--) {
-    const row = history[i];
-    if (row.role === 'user') break;
-    const sourceReply = extractSourceReplyFromMessageToolResult(row);
-    if (sourceReply) return sourceReply;
-    if (row.role === 'assistant') {
-      const text = extractAssistantText(row.content);
-      if (text.trim().length > 0 && !assistantFallback) assistantFallback = text;
-    }
-  }
-  return assistantFallback;
 }
 
 /**
@@ -510,32 +421,39 @@ async function runTurnLocked(opts: {
     }
   };
 
-  const { text: gatewayAccumulated } = await openclawWs.runTurn({
+  const {
+    text: gatewayAccumulated,
+    aborted,
+    authoritativeText,
+  } = await openclawWs.runTurn({
     sessionKey,
     message: gatewayMessage,
     onEvent,
     attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
   });
 
-  // Prefer chat.history's last assistant text — it's the gateway's
-  // display-normalised view of the turn, which is the only place that
-  // correctly resolves message-tool routing.
+  // Picking the assistant text in priority order:
   //
-  // When an agent picks `sourceReplyDeliveryMode: "message_tool_only"`, its
-  // streamed freeform output (what `chat:final` carries) is an internal
-  // status note like "Надіслав у чат короткий зведений висновок…", while the
-  // real user-facing reply is appended to the transcript as a SEPARATE
-  // projected assistant row by `tools.message.send`. canonicalAssistantText()
-  // walks history backwards and returns that projected row.
+  //   1. `authoritativeText` — resolved inside `runTurn` from `chat.history`
+  //      sliced to AFTER the current turn's user row. With
+  //      `sourceReplyDeliveryMode: "message_tool_only"` it pulls
+  //      `sourceReply.text` from the `message` tool's toolResult (the real
+  //      user-facing answer); otherwise it falls back to the most recent
+  //      assistant row in the slice. `null` on abort, on fetch failure,
+  //      or when the slice was empty.
+  //   2. `gatewayAccumulated` — what we collected from `chat:state=delta`.
+  //      Right answer for plain freeform turns; on message-tool turns this
+  //      is the agent's self-action status note (e.g. "Надіслав у чат…")
+  //      so it's a fallback, not the preferred source.
+  //   3. `assistantText` — our own buffer, last-resort when the gateway
+  //      stream gave us nothing (rare).
   //
-  // Since `runTurn` now waits for `chat:state=final` before resolving (see
-  // openclawWs.ts), `chat.history` is guaranteed fresh by the time we fetch
-  // it — no race. gatewayAccumulated stays as a fallback for cases where
-  // history fetch fails, and our own streaming buffer is the last resort.
-  const canonicalText = await canonicalAssistantText(sessionKey).catch(() => null);
+  // On abort, `authoritativeText` is intentionally `null`: an aborted run
+  // has no fresh assistant row in history, so persisting a history-derived
+  // text would surface stale text from the previous turn.
   const rawFinalText =
-    canonicalText && canonicalText.trim().length > 0
-      ? canonicalText
+    authoritativeText && authoritativeText.trim().length > 0
+      ? authoritativeText
       : gatewayAccumulated.trim().length > 0
         ? gatewayAccumulated
         : assistantText;
@@ -546,17 +464,45 @@ async function runTurnLocked(opts: {
   // after the preamble (see stripAgentSelfActionPreamble for details).
   const finalText = stripAgentSelfActionPreamble(rawFinalText);
 
-  // Persist the assistant message + broadcast.
-  const assistantMsg = messages.append(chatId, 'assistant', finalText, null);
-  wsHub.broadcastToChat(chatId, {
-    type: 'message-appended',
-    chatId,
-    message: assistantMsg,
-  });
-  syncSidebarUnread(chatId);
+  // Aborted with no streamed content → skip the assistant row (would be
+  // a confusing empty bubble). The "Stopped" marker below still goes in.
+  const skipAssistant = aborted && finalText.trim().length === 0;
+  const assistantMsg = skipAssistant
+    ? null
+    : messages.append(chatId, 'assistant', finalText, aborted ? 'aborted' : null);
+  if (assistantMsg) {
+    wsHub.broadcastToChat(chatId, {
+      type: 'message-appended',
+      chatId,
+      message: assistantMsg,
+    });
+    syncSidebarUnread(chatId);
+  }
+
+  // Persistent "Stopped by user" marker. Lives in `messages` so it
+  // survives page reload + lands in the iClaw-cloud share payload.
+  // Rendered exactly like the existing "Task done: …" / "Task created:
+  // …" notes — same centred soft-grey pill via `.msg.system`, no
+  // special UI path. `finish_reason='aborted'` is kept for analytics /
+  // future filtering, but the readable content is what the UI shows.
+  if (aborted) {
+    const marker = messages.append(chatId, 'system', 'Stopped by user', 'aborted');
+    wsHub.broadcastToChat(chatId, {
+      type: 'message-appended',
+      chatId,
+      message: marker,
+    });
+  }
 
   const chatAfter = chats.get(chatId)!;
-  if (chatAfter.project_id != null && projects.get(chatAfter.project_id)) {
+  // Don't extract project facts from aborted turns — output is partial
+  // and would feed noisy/half-formed claims into long-term memory.
+  if (
+    assistantMsg &&
+    !aborted &&
+    chatAfter.project_id != null &&
+    projects.get(chatAfter.project_id)
+  ) {
     scheduleProjectFactExtraction({
       chatId,
       projectId: chatAfter.project_id,
@@ -571,10 +517,15 @@ async function runTurnLocked(opts: {
   await titleTask;
 
   // broadcastAll so every tab updates the sidebar dot (not only subscribers).
+  // `aborted` lets the client clean up the streaming element it would
+  // otherwise leave behind (status "Finishing…" never gets replaced when
+  // skipPersist suppresses `message-appended`), and surface a minimal
+  // "Stopped" indicator at the bottom of the thread.
   wsHub.broadcastAll({
     type: 'turn-ended',
     chatId,
     title: chats.get(chatId)?.title ?? '',
+    aborted,
   });
 }
 

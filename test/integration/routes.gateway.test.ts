@@ -27,10 +27,21 @@ vi.mock('../../src/services/gatewayWs', () => ({
     onFrame: vi.fn(() => () => {}),
     onReconnect: vi.fn(() => () => {}),
     ensureConnected: vi.fn(async () => undefined),
+    resetConnection: vi.fn(),
   },
 }));
+const openclawMock = {
+  baseUrl: 'http://127.0.0.1:18789',
+  hasToken: true,
+  tokenSource: 'test',
+  health: vi.fn(async () => true),
+};
 vi.mock('../../src/services/openclaw', () => ({
-  openclaw: { baseUrl: 'http://127.0.0.1:18789', hasToken: true, tokenSource: 'test' },
+  openclaw: openclawMock,
+}));
+vi.mock('../../src/services/gatewayStart', () => ({
+  isLocalhostRequest: () => true,
+  queueGatewayStart: vi.fn(async () => ({ ready: true })),
 }));
 
 const { createApp } = await import('../../src/app');
@@ -41,6 +52,24 @@ afterEach(() => {
   resetTestDb();
   openclawWsMock.usageCost.mockClear();
   openclawWsMock.listCommands.mockClear();
+});
+
+describe('GET /api/gateway/status', () => {
+  it('reports gateway health', async () => {
+    openclawMock.health.mockResolvedValueOnce(true);
+    const res = await request(app).get('/api/gateway/status');
+    expect(res.status).toBe(200);
+    expect(res.body.up).toBe(true);
+  });
+});
+
+describe('POST /api/gateway/start', () => {
+  it('returns ready when health is already up', async () => {
+    openclawMock.health.mockResolvedValue(true);
+    const res = await request(app).post('/api/gateway/start');
+    expect(res.status).toBe(200);
+    expect(res.body.ready).toBe(true);
+  });
 });
 
 describe('GET /api/gateway/commands', () => {
