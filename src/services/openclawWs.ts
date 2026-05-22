@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import { gatewayWs, type RawGatewayFrame } from './gatewayWs';
 import { toolActivityLabel, lifecycleActivityLabel } from './toolLabels';
+import { resolveFromHistorySlice, sliceFromLastUser } from './turnReply';
 
 // ---------- shapes ---------------------------------------------------------
 
@@ -106,6 +107,38 @@ function safeString(v: unknown): string | undefined {
  * concurrent `runTurn` on the same sessionKey — aborting fires all.
  */
 const pendingAborts = new Map<string, Set<() => void>>();
+
+/**
+ * Sessions where `abortRun` was called but the gateway returned
+ * `aborted: false` (typically because `chat.send` is still in flight and
+ * the run doesn't yet exist on the gateway). `runTurn` checks this set
+ * immediately after `chat.send` returns and, if its session is marked,
+ * re-issues `chat.abort` so the just-started run can be torn down.
+ *
+ * Without this, a Stop click during the brief `chat.send` window was
+ * silently lost — the abort RPC reached the gateway too early, callbacks
+ * never fired, and the user had to wait out the 3s button-debounce and
+ * click again.
+ */
+const pendingAbortIntents = new Set<string>();
+
+/**
+ * Hard ceiling on how long we wait for `chat:state=final` after the
+ * gateway already fired `lifecycle:end`. The two events normally arrive
+ * within milliseconds of each other; if `state:final` is genuinely lost
+ * (network blip across reconnect, gateway-side bug, certain agent
+ * configurations), we fall back on the buffered stream text rather than
+ * hang for the full 60-min upper-bound timeout.
+ */
+const POST_END_FINAL_GRACE_MS = 15_000;
+
+/**
+ * Cap on how many history rows we pull when resolving authoritative text.
+ * Comfortably larger than any single turn we've seen (turns with many tool
+ * calls top out around 50–80 rows; 2000 covers extreme edge cases too).
+ * Higher than this just adds latency without changing the result.
+ */
+const HISTORY_FETCH_LIMIT = 2000;
 
 // ---------- public client -------------------------------------------------
 
@@ -224,8 +257,23 @@ export const openclawWs = {
     await gatewayWs.request('sessions.subscribe', {});
   },
 
-  /** Abort an in-flight turn (no-op if already finished). */
+  /**
+   * Abort an in-flight turn (no-op if already finished).
+   *
+   * If a `runTurn` is currently active on this session, records an intent
+   * in `pendingAbortIntents` BEFORE awaiting the RPC. That covers the
+   * Stop-during-chat.send race: at that moment the gateway has no run yet
+   * (so `chat.abort` returns `aborted: false`), but the registered
+   * callback IS in place — `runTurn` consumes the intent the moment
+   * `chat.send` returns with a runId and re-issues the abort.
+   *
+   * We intentionally do NOT record an intent when no callback is
+   * registered. Otherwise a stale intent could outlive the abort and
+   * silently kill the very next turn the user starts on this session.
+   */
   async abortRun(sessionKey: string, runId?: string): Promise<void> {
+    const hasActiveRunTurn = (pendingAborts.get(sessionKey)?.size ?? 0) > 0;
+    if (hasActiveRunTurn) pendingAbortIntents.add(sessionKey);
     const params: Record<string, unknown> = { sessionKey };
     if (runId) params.runId = runId;
     try {
@@ -238,14 +286,19 @@ export const openclawWs = {
       // Drive resolution directly from this RPC response — see comment on
       // `pendingAborts` for why event-based marking is racey.
       if (res?.aborted) {
+        // Intent satisfied — clear before firing callbacks so the runTurn's
+        // post-chat.send re-check doesn't double-abort.
+        pendingAbortIntents.delete(sessionKey);
         const callbacks = pendingAborts.get(sessionKey);
         if (callbacks) {
-          // Snapshot before iterating — callbacks may mutate the set via finally.
           for (const cb of Array.from(callbacks)) {
             try { cb(); } catch { /* never let one bad callback break the others */ }
           }
         }
       }
+      // If `aborted: false`, the intent (if any) stays for the active
+      // runTurn to consume. Without an active runTurn there is no intent,
+      // so nothing leaks.
     } catch (err) {
       // chat.abort can legitimately fail if the turn already ended.
       // Surface any other failure so it doesn't stay silent.
@@ -282,11 +335,26 @@ export const openclawWs = {
       fileName: string;
       content: string;
     }>;
-  }): Promise<{ runId: string; text: string; aborted: boolean }> {
+  }): Promise<{
+    runId: string;
+    text: string;
+    aborted: boolean;
+    /**
+     * Best-effort canonical reply text, sliced from `chat.history` after
+     * `state:final`. Prefers the `message` tool's `sourceReply.text`
+     * (when the agent runs in `message_tool_only` mode), falling back to
+     * the most recent assistant text in the turn's slice. `null` when
+     * resolution was via abort (history wouldn't contain a fresh
+     * assistant row), when the fetch failed, or when nothing usable was
+     * found. Callers should treat `null` as "use streamed `text`".
+     */
+    authoritativeText: string | null;
+  }> {
     let runId: string | null = null;
     let accumulatedText = '';
     let finalEmitted = false;
     let wasAborted = false;
+    let endWatchdog: NodeJS.Timeout | null = null;
 
     let resolveTurn!: () => void;
     let rejectTurn!: (err: Error) => void;
@@ -330,11 +398,17 @@ export const openclawWs = {
         // Non-'end' terminal phases (error/aborted/cancelled/failed/...)
         // arrive only on agent-level failures, never as part of a normal
         // run. Reject so the caller surfaces them. For `phase === 'end'`
-        // we DO NOT resolve here — gateway also emits `chat:state=final`
-        // for successful completion which is the canonical terminator
-        // (resolves there). On a `chat.abort`, the abort RPC's response
-        // handler in `abortRun` calls our `onAbort` callback directly,
-        // which is race-proof against event/response ordering.
+        // we DO NOT resolve here directly — gateway also emits
+        // `chat:state=final` for successful completion which is the
+        // canonical terminator (resolves there). On a `chat.abort`, the
+        // abort RPC's response handler in `abortRun` calls our `onAbort`
+        // callback, which is race-proof against event/response ordering.
+        //
+        // BUT: occasionally `state:final` never arrives after `end` —
+        // network blip across reconnect, certain agent configs, gateway
+        // bug. Arm a short grace timer so we don't hang for the full 60-
+        // minute upper-bound timeout. If `state:final` does arrive later,
+        // its `resolveTurn()` is a no-op on an already-settled promise.
         const TERMINAL_FAILURES = new Set([
           'error', 'aborted', 'cancelled',
           'failed', 'terminated', 'stopped',
@@ -346,6 +420,21 @@ export const openclawWs = {
           }
           rejectTurn(new Error(`agent run ${phase}`));
           return;
+        }
+        if (phase === 'end' && !endWatchdog) {
+          endWatchdog = setTimeout(() => {
+            if (finalEmitted) return;
+            // state:final didn't arrive — settle with what we have.
+            finalEmitted = true;
+            opts.onEvent({ type: 'text-final', text: accumulatedText });
+            console.warn(
+              '[openclawWs] lifecycle:end without chat:state=final after',
+              POST_END_FINAL_GRACE_MS,
+              'ms — resolving with buffered stream text',
+            );
+            resolveTurn();
+          }, POST_END_FINAL_GRACE_MS);
+          endWatchdog.unref?.();
         }
         return;
       }
@@ -457,13 +546,13 @@ export const openclawWs = {
     });
 
     try {
-      // Make sure the session emits per-session events (sessions.messages.subscribe).
-      // This call is idempotent server-side.
-      await gatewayWs
-        .request('sessions.messages.subscribe', { key: opts.sessionKey })
-        .catch(() => {
-          /* if subscribe fails, broadcast events still flow for operator.read */
-        });
+      // Subscribe via the bookkeeping helper — `subscribedSessions` is
+      // tracked here so that an in-flight turn surviving a socket
+      // reconnect gets its subscription auto-restored by `onConnected`.
+      // Bypassing this (raw `request('sessions.messages.subscribe', …)`)
+      // would let a reconnect silently stop event delivery and hang the
+      // turn on its 60-minute upper-bound timeout.
+      await gatewayWs.subscribeSession(opts.sessionKey);
 
       const sendRes = await gatewayWs.request<{ runId: string; status?: string }>(
         'chat.send',
@@ -483,6 +572,19 @@ export const openclawWs = {
       for (const f of buffered) dispatch(f);
       buffered.length = 0;
 
+      // Stop-during-chat.send race: if abort was clicked while `chat.send`
+      // was in flight, the gateway returned `aborted: false` (no run to
+      // abort yet) and left the intent for us. Now that the run exists,
+      // re-issue the abort. The callback fires from that RPC response and
+      // resolves turnDone — no special handling needed below.
+      if (pendingAbortIntents.has(opts.sessionKey)) {
+        pendingAbortIntents.delete(opts.sessionKey);
+        // Fire-and-forget — onAbort path will settle turnDone when the
+        // gateway acks the abort. We don't await because awaiting here
+        // would deadlock against `await turnDone` if the abort raced.
+        void openclawWs.abortRun(opts.sessionKey, runId);
+      }
+
       // Wait for the turn to finish. Resolvers:
       //   - `chat:state=final` event → normal completion
       //   - `onAbort` callback (from abortRun) → user abort
@@ -501,6 +603,7 @@ export const openclawWs = {
         clearTimeout(timeout);
       }
     } finally {
+      if (endWatchdog) clearTimeout(endWatchdog);
       off();
       // Unregister the abort callback so a later abort on this sessionKey
       // (e.g. a new turn that re-uses it) doesn't accidentally hit this
@@ -510,8 +613,37 @@ export const openclawWs = {
         cbs.delete(onAbort);
         if (cbs.size === 0) pendingAborts.delete(opts.sessionKey);
       }
+      // Defensive: clear any leftover intent (e.g. a Stop click that
+      // landed between `state:final` resolving and us reaching here).
+      // The intent already missed its chance for this run; leaving it
+      // would unfairly kill the next turn.
+      pendingAbortIntents.delete(opts.sessionKey);
     }
 
-    return { runId: runId!, text: accumulatedText, aborted: wasAborted };
+    // Resolve the canonical, user-facing reply from gateway history.
+    // Skipped on abort: the gateway hasn't appended a fresh assistant row
+    // for an aborted run, so a history fetch would return stale text from
+    // the previous turn.
+    let authoritativeText: string | null = null;
+    if (!wasAborted) {
+      try {
+        const history = await openclawWs.getHistory(
+          opts.sessionKey,
+          HISTORY_FETCH_LIMIT,
+        );
+        const slice = sliceFromLastUser(history);
+        const resolved = resolveFromHistorySlice(slice);
+        if (resolved.trim().length > 0) authoritativeText = resolved;
+      } catch {
+        /* fall back to streamed `accumulatedText` */
+      }
+    }
+
+    return {
+      runId: runId!,
+      text: accumulatedText,
+      aborted: wasAborted,
+      authoritativeText,
+    };
   },
 };

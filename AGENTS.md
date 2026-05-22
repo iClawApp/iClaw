@@ -101,7 +101,19 @@ A `runTurn` call emits these `TurnEvent`s through `onEvent`:
 - `reasoning` — analysis-stream items (model chain-of-thought). Only forwarded to the client when `chats.reasoning_mode != 'off'` for that chat.
 - `text-final` — emitted once at end, with the canonical final text.
 
-`runTurn` resolves when the `chat` event arrives with `state=final` — **not** on `lifecycle:end` alone. The lifecycle event used to race ahead of the canonical final text persistence; we keep this invariant on purpose.
+`runTurn` resolves on one of three signals, in priority order:
+
+1. **`chat:state=final`** — normal completion. Canonical terminator.
+2. **`onAbort` callback** — fired from `abortRun`'s `chat.abort` RPC response when the gateway acks `aborted: true`. Race-proof against event/response ordering on the same socket.
+3. **Post-`lifecycle:end` grace** — if `state:final` never follows `end` within `POST_END_FINAL_GRACE_MS` (15s), we settle with whatever stream text we have rather than wait out the 60-min upper-bound timeout. Logs a warning.
+
+Non-'end' terminal lifecycle phases (`error`/`aborted`/`cancelled`/`failed`/`terminated`/`stopped`) reject the promise.
+
+After resolution (non-aborted), `runTurn` does one `chat.history` fetch and slices from the LAST `user` row forward — the slice is the current turn's events. `resolveFromHistorySlice` (in `turnReply.ts`) picks the canonical reply: prefers the `message` tool's `sourceReply.text`, falls back to the most recent assistant text in the slice. This is returned as `authoritativeText`. `chatRunner` prefers it over the streamed buffer.
+
+Aborted turns intentionally skip the history slice — the gateway hasn't appended a fresh assistant row, so a fetch would return stale text from the previous turn.
+
+**Stop-during-`chat.send` race:** abort RPCs that arrive while `chat.send` is in flight (gateway has no run yet → `aborted: false`) record an intent in `pendingAbortIntents`. Once `chat.send` returns with a runId, `runTurn` consumes the intent and re-issues the abort.
 
 ### Session keys
 
@@ -166,7 +178,10 @@ OpenClaw has its own per-agent memory (`MEMORY.md`, `memory/<date>.md` in `~/.op
 - **Asking OpenClaw for AI-generated titles in the same session as the chat.** Pollutes the transcript. We use a throw-away session per title attempt (`chatTitle.ts`).
 - **Sub-tasks running against the chat's agent.** Fact extraction + compaction now always go through `openclaw/default` — keeps the two pipelines consistent and avoids specialised agents underperforming on a plain text-extraction prompt.
 - **Treating `kind: 'analysis'` items as tool calls.** That's reasoning. We emit it as a separate `reasoning` event and the receiver decides whether to forward.
-- **Resolving `runTurn` on `lifecycle:end` alone.** Races the canonical `chat:final` payload. We always wait for the chat event.
+- **Resolving `runTurn` on `lifecycle:end` alone, without grace.** Races the canonical `chat:final` payload. We resolve on `state:final` first; if `end` fires and `final` doesn't follow within `POST_END_FINAL_GRACE_MS`, we settle with the stream buffer + log — never silently hang.
+- **Reading `chat.history` without a turn-scoped slice.** The old `canonicalAssistantText` walked global history backwards to the first `user` row, which leaked across turn boundaries when the current user row wasn't yet committed. Use `sliceFromLastUser` + `resolveFromHistorySlice` from `turnReply.ts`.
+- **Bypassing `gatewayWs.subscribeSession`.** Calling `request('sessions.messages.subscribe', …)` directly skips the `subscribedSessions` bookkeeping, and a WS reconnect mid-turn won't re-subscribe — the turn goes deaf and hangs.
+- **Recording an abort intent when no `runTurn` is active.** Would silently kill the next turn the user starts. `abortRun` only sets the intent when a callback is registered.
 - **Sending content as a string array via OpenAI-compat.** OpenClaw's native protocol takes `chat.send { sessionKey, message: string, idempotencyKey }`. Don't try to mimic OpenAI message arrays.
 - **Hardcoding the bearer token anywhere.** It must be read at runtime via `loadOpenClawConfig()`. Never log it.
 - **Forgetting to re-subscribe on WS reconnect.** Use `gatewayWs.onReconnect(...)` for any global subscription (the per-session ones are re-applied automatically).
