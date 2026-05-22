@@ -900,6 +900,26 @@
   function appendMessage(msg, opts) {
     if (!messagesEl) return null;
     clearEmptyState();
+    // Stopped-by-user marker (system row with finish_reason='aborted')
+    // arrives BEFORE turn-ended, so an empty streaming bubble would still
+    // be on the page with "Finishing…". Yank it now so the system pill
+    // doesn't appear stacked under a stale placeholder for the few ms
+    // until turn-ended's own cleanup runs. The marker itself is then
+    // rendered by the default .msg.system path below — same look as the
+    // existing "Task done: …" notes.
+    if (
+      msg.role === 'system' &&
+      msg.finish_reason === 'aborted' &&
+      currentStreamEl &&
+      currentStreamEl.classList.contains('streaming')
+    ) {
+      const body = currentStreamEl.querySelector('.stream-body, .msg-body');
+      const hasContent = !!(body && body.textContent && body.textContent.trim());
+      if (!hasContent) {
+        currentStreamEl.remove();
+        currentStreamEl = null;
+      }
+    }
     const div = document.createElement('div');
     div.className = 'msg ' + (msg.role || 'system');
     if (msg.id) div.dataset.msgId = String(msg.id);
@@ -2576,9 +2596,34 @@
         if (msg.chatId !== activeChatId) return;
         setStopVisible(false);
         finalizeReasoningBlock();
-        // Belt + suspenders: kill any leftover reload-placeholder that might
-        // still be on the page if events arrived in a weird order.
+        // Tear down a streaming element that nobody finalized — e.g. an
+        // abort with no streamed text (skipPersist on the server → no
+        // `message-appended` to clean it up), or any other edge where the
+        // turn ends without an assistant message. Without this, the
+        // "Finishing…" / "Thinking…" status would sit on the page until
+        // the user reloaded.
+        if (currentStreamEl && currentStreamEl.classList.contains('streaming')) {
+          const body = currentStreamEl.querySelector('.stream-body, .msg-body');
+          const hasContent = !!(body && body.textContent && body.textContent.trim());
+          if (hasContent) {
+            currentStreamEl.classList.remove(
+              'streaming', 'stream-waiting', 'stream-tool', 'stream-generating',
+            );
+            const st = currentStreamEl.querySelector('.stream-status');
+            if (st) { stopStreamStatusDotAnim(st); st.remove(); }
+            body?.classList.remove('stream-body');
+          } else {
+            currentStreamEl.remove();
+          }
+          currentStreamEl = null;
+        }
         clearStreamArtifacts();
+        // Note: the visible "Stopped" indicator is rendered by the
+        // persistent system marker row that arrives via `message-appended`
+        // (see appendMessage). We keep `msg.aborted` in the protocol but
+        // don't render anything ad-hoc here — that would duplicate the
+        // marker for aborted turns and (worse) the duplicate would vanish
+        // on reload while the persisted marker survives.
         // The in-flight item is no longer in waitingItems (shifted out when
         // flushNextQueued started). Just clear the inFlight flag and start
         // the next one if any.

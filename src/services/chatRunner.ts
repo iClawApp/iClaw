@@ -464,13 +464,12 @@ async function runTurnLocked(opts: {
   // after the preamble (see stripAgentSelfActionPreamble for details).
   const finalText = stripAgentSelfActionPreamble(rawFinalText);
 
-  // Aborted with no streamed content → no assistant row to persist
-  // (would be a confusing empty bubble). Still need to fire turn-ended
-  // below so the Stop button disappears and the chat unlocks.
-  const skipPersist = aborted && finalText.trim().length === 0;
-  const assistantMsg = skipPersist
+  // Aborted with no streamed content → skip the assistant row (would be
+  // a confusing empty bubble). The "Stopped" marker below still goes in.
+  const skipAssistant = aborted && finalText.trim().length === 0;
+  const assistantMsg = skipAssistant
     ? null
-    : messages.append(chatId, 'assistant', finalText, null);
+    : messages.append(chatId, 'assistant', finalText, aborted ? 'aborted' : null);
   if (assistantMsg) {
     wsHub.broadcastToChat(chatId, {
       type: 'message-appended',
@@ -478,6 +477,21 @@ async function runTurnLocked(opts: {
       message: assistantMsg,
     });
     syncSidebarUnread(chatId);
+  }
+
+  // Persistent "Stopped by user" marker. Lives in `messages` so it
+  // survives page reload + lands in the iClaw-cloud share payload.
+  // Rendered exactly like the existing "Task done: …" / "Task created:
+  // …" notes — same centred soft-grey pill via `.msg.system`, no
+  // special UI path. `finish_reason='aborted'` is kept for analytics /
+  // future filtering, but the readable content is what the UI shows.
+  if (aborted) {
+    const marker = messages.append(chatId, 'system', 'Stopped by user', 'aborted');
+    wsHub.broadcastToChat(chatId, {
+      type: 'message-appended',
+      chatId,
+      message: marker,
+    });
   }
 
   const chatAfter = chats.get(chatId)!;
@@ -503,10 +517,15 @@ async function runTurnLocked(opts: {
   await titleTask;
 
   // broadcastAll so every tab updates the sidebar dot (not only subscribers).
+  // `aborted` lets the client clean up the streaming element it would
+  // otherwise leave behind (status "Finishing…" never gets replaced when
+  // skipPersist suppresses `message-appended`), and surface a minimal
+  // "Stopped" indicator at the bottom of the thread.
   wsHub.broadcastAll({
     type: 'turn-ended',
     chatId,
     title: chats.get(chatId)?.title ?? '',
+    aborted,
   });
 }
 

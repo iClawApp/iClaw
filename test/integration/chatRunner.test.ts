@@ -425,9 +425,58 @@ describe('sendMessage — authoritativeText resolution', () => {
 
     const { chatId } = await sendMessage({ content: 'instant stop' });
     const rows = messages.listByChat(chatId);
-    // user row only — no empty assistant bubble
-    expect(rows.map((m) => m.role)).toEqual(['user']);
+    // user row + persistent "Stopped by user" marker (no empty assistant bubble)
+    expect(rows.map((m) => m.role)).toEqual(['user', 'system']);
+    const marker = rows.find((m) => m.role === 'system')!;
+    expect(marker.content).toBe('Stopped by user');
+    expect(marker.finish_reason).toBe('aborted');
     // turn-ended still fires so the Stop button hides + chat unlocks
     expect(findBroadcast('turn-ended')).toBeDefined();
+  });
+
+  it('persists assistant + stopped marker when aborted mid-stream', async () => {
+    openclawWsMock.runTurn.mockImplementationOnce(async (params) => {
+      params.onEvent({ type: 'text-delta', text: 'partial...' });
+      params.onEvent({ type: 'text-final', text: 'partial...' });
+      return {
+        runId: 'r-mid',
+        text: 'partial...',
+        aborted: true,
+        authoritativeText: null,
+      };
+    });
+
+    const { chatId } = await sendMessage({ content: 'stop mid-stream' });
+    const rows = messages.listByChat(chatId);
+    expect(rows.map((m) => m.role)).toEqual(['user', 'assistant', 'system']);
+    const assistant = rows.find((m) => m.role === 'assistant')!;
+    expect(assistant.content).toBe('partial...');
+    expect(assistant.finish_reason).toBe('aborted');
+    const marker = rows.find((m) => m.role === 'system')!;
+    expect(marker.finish_reason).toBe('aborted');
+  });
+
+  it('broadcasts turn-ended with aborted=true on abort, false on success', async () => {
+    openclawWsMock.runTurn.mockImplementationOnce(async () => ({
+      runId: 'r-ok',
+      text: 'ok',
+      aborted: false,
+      authoritativeText: null,
+    }));
+    await sendMessage({ content: 'ok' });
+    const okEnd = findBroadcast('turn-ended') as { aborted?: boolean } | undefined;
+    expect(okEnd?.aborted).toBe(false);
+
+    broadcasts.all = [];
+
+    openclawWsMock.runTurn.mockImplementationOnce(async () => ({
+      runId: 'r-abort',
+      text: '',
+      aborted: true,
+      authoritativeText: null,
+    }));
+    await sendMessage({ content: 'stop' });
+    const abortEnd = findBroadcast('turn-ended') as { aborted?: boolean } | undefined;
+    expect(abortEnd?.aborted).toBe(true);
   });
 });

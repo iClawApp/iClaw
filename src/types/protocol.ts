@@ -142,7 +142,7 @@ export type ServerMsg =
       mime: string;
       label?: string;
     }
-  | { type: 'turn-ended'; chatId: number; title: string }
+  | { type: 'turn-ended'; chatId: number; title: string; aborted?: boolean }
   | { type: 'turn-error'; chatId: number; requestId?: string; error: string }
 
   /* ---- projects ---- */
