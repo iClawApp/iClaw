@@ -115,6 +115,22 @@ describe('sendMessage — new chat path', () => {
     expect(chats.get(chatId)!.project_id).toBe(p.id);
   });
 
+  it('promotes draft chat and broadcasts chat-created on first send', async () => {
+    const draft = chats.create('openclaw/default', null, { chatKind: 'draft' });
+    openclawWsMock.runTurn.mockResolvedValueOnce({ runId: 'r', text: 'ok' });
+    broadcasts.all = [];
+
+    const { chatId } = await sendMessage({
+      chatId: draft.id,
+      content: 'hello',
+    });
+
+    expect(chatId).toBe(draft.id);
+    expect(chats.get(chatId)!.chat_kind).toBe('normal');
+    expect(chats.list().some((c) => c.id === chatId)).toBe(true);
+    expect(findBroadcast('chat-created')).toBeDefined();
+  });
+
   it('ignores invalid projectId on new chat creation', async () => {
     openclawWsMock.runTurn.mockResolvedValueOnce({ runId: 'r', text: 'ok' });
     const { chatId } = await sendMessage({

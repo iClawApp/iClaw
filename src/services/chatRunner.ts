@@ -529,6 +529,29 @@ async function runTurnLocked(opts: {
   });
 }
 
+function broadcastChatCreated(chatId: number): void {
+  const created = chats.get(chatId);
+  if (!created) return;
+  const proj = created.project_id ? projects.get(created.project_id) : null;
+  wsHub.broadcastAll({
+    type: 'chat-created',
+    chatId,
+    title: created.title,
+    agent: created.agent,
+    projectId: created.project_id,
+    projectName: proj?.name ?? null,
+    updatedAt: created.updated_at,
+  });
+}
+
+/** Draft composer row → visible sidebar entry on first user message. */
+function promoteDraftChatIfNeeded(chatId: number, subscriber?: WebSocket): boolean {
+  if (!chats.promoteFromDraft(chatId)) return false;
+  if (subscriber) wsHub.subscribe(subscriber, chatId);
+  broadcastChatCreated(chatId);
+  return true;
+}
+
 /**
  * Public entrypoint used by the WS message handler.
  *
@@ -585,18 +608,13 @@ export async function sendMessage(opts: {
     // Subscribe the originating socket BEFORE we emit chat-created or start
     // the turn — otherwise it would miss every event in this turn.
     if (opts.subscriber) wsHub.subscribe(opts.subscriber, chatId);
-    const proj = created.project_id ? projects.get(created.project_id) : null;
-    wsHub.broadcastAll({
-      type: 'chat-created',
-      chatId,
-      title: created.title,
-      agent: created.agent,
-      projectId: created.project_id,
-      projectName: proj?.name ?? null,
-      updatedAt: created.updated_at,
-    });
+    broadcastChatCreated(chatId);
   } else {
-    if (opts.subscriber) wsHub.subscribe(opts.subscriber, chatId);
+    if (chats.isDraft(chatId)) {
+      promoteDraftChatIfNeeded(chatId, opts.subscriber);
+    } else if (opts.subscriber) {
+      wsHub.subscribe(opts.subscriber, chatId);
+    }
     isFirstTurn =
       messages.listByChat(chatId).filter((m) => m.role === 'user').length === 0;
   }

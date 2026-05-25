@@ -82,7 +82,7 @@
     return null;
   }
 
-  /** Picker / use-in-chat need a chat row; inline secrets on draft only need project pick. */
+  /** Picker / use-in-chat need a persisted chat row (draft is ok). */
   function composerSecretContext() {
     if (activeChatId != null) {
       return {
@@ -100,15 +100,71 @@
 
   function composerSecretsEnabled() {
     if (activeChatId != null) return true;
-    // Draft home: chat is created on send; inline [[iclaw:sN]] secrets still work.
     return Boolean(startedOnDraft && draftProjectLocked);
   }
 
   function composerSecretsBlockedMessage() {
+    if (draftChatCreating) return 'Preparing chat…';
     if (startedOnDraft && !draftProjectLocked) {
       return 'Choose a project (or No project) on the home screen first.';
     }
+    if (startedOnDraft && draftProjectLocked && activeChatId == null) {
+      return 'Could not prepare chat. Try choosing the project again.';
+    }
     return 'Open a chat to save secrets.';
+  }
+
+  let draftChatCreating = false;
+
+  /** Adopt a server chat id on the home draft flow (URL + WS subscribe; sidebar optional). */
+  function adoptDraftChat(payload, opts) {
+    const id = Number(payload?.chatId);
+    if (!Number.isFinite(id)) return;
+    activeChatId = id;
+    if (messagesEl) {
+      messagesEl.dataset.chatId = String(id);
+      delete messagesEl.dataset.draft;
+      if (payload.projectId != null && Number.isFinite(Number(payload.projectId))) {
+        messagesEl.dataset.projectId = String(payload.projectId);
+      } else {
+        messagesEl.dataset.projectId = '';
+      }
+    }
+    history.replaceState(null, '', '/chats/' + id);
+    applyTitleForActive(payload.title || 'New chat');
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      wsSend({ type: 'subscribe', chatId: id });
+    }
+    if (opts?.sidebar !== false) {
+      sidebarUpsertChat({
+        id,
+        title: payload.title || 'New chat',
+        agent: payload.agent,
+        projectId: payload.projectId,
+        projectName: payload.projectName,
+        updatedAt: payload.updatedAt,
+      });
+      if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
+    }
+    syncComposerSecretUi();
+  }
+
+  async function ensureDraftChatRow() {
+    if (activeChatId != null) return;
+    const body = { agent: draftAgentSelect?.value || 'openclaw/default' };
+    if (draftChosenProjectId != null && Number.isFinite(draftChosenProjectId)) {
+      body.projectId = draftChosenProjectId;
+    }
+    const res = await fetch('/chats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(t || 'HTTP ' + res.status);
+    }
+    adoptDraftChat(await res.json(), { sidebar: false });
   }
 
   function selectionInsideIclawPlaceholder(text, start, end) {
@@ -234,13 +290,22 @@
     return best;
   }
 
-  function commitDraftFromCard(card) {
-    if (!card || draftProjectLocked) return;
+  async function commitDraftFromCard(card) {
+    if (!card || draftProjectLocked || draftChatCreating) return;
     const rawId = card.getAttribute('data-project-id');
     draftChosenProjectId =
       rawId == null || String(rawId).trim() === '' ? null : Number(rawId);
     if (draftChosenProjectId != null && !Number.isFinite(draftChosenProjectId)) {
       draftChosenProjectId = null;
+    }
+    draftChatCreating = true;
+    try {
+      await ensureDraftChatRow();
+    } catch (err) {
+      alert(err && err.message ? err.message : 'Could not start chat');
+      return;
+    } finally {
+      draftChatCreating = false;
     }
     draftProjectLocked = true;
     if (projectPickEl) projectPickEl.hidden = true;
@@ -258,7 +323,7 @@
     projectPickEl.addEventListener('click', (e) => {
       const card = e.target.closest('.project-pick-card');
       if (!card || draftProjectLocked) return;
-      commitDraftFromCard(card);
+      void commitDraftFromCard(card);
     });
 
     const initSel = (projectPickEl.dataset.initialProjectId || '').trim();
@@ -268,7 +333,7 @@
           ? CSS.escape(initSel)
           : initSel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       const card = projectPickEl.querySelector('.project-pick-card[data-project-id="' + esc + '"]');
-      if (card) queueMicrotask(() => commitDraftFromCard(card));
+      if (card) queueMicrotask(() => void commitDraftFromCard(card));
     }
   }
 
@@ -2364,28 +2429,17 @@
 
       case 'chat-created':
         if (startedOnDraft && activeChatId == null) {
-          // This is our just-created chat — adopt it.
-          activeChatId = msg.chatId;
-          if (messagesEl) {
-            messagesEl.dataset.chatId = String(msg.chatId);
-            delete messagesEl.dataset.draft;
-            if (msg.projectId != null && Number.isFinite(Number(msg.projectId))) {
-              messagesEl.dataset.projectId = String(msg.projectId);
-            } else {
-              messagesEl.dataset.projectId = '';
-            }
-          }
-          history.replaceState(null, '', '/chats/' + msg.chatId);
-          applyTitleForActive(msg.title || 'New chat');
+          adoptDraftChat(msg);
+        } else {
+          sidebarUpsertChat({
+            id: msg.chatId,
+            title: msg.title,
+            agent: msg.agent,
+            projectId: msg.projectId,
+            projectName: msg.projectName,
+            updatedAt: msg.updatedAt,
+          });
         }
-        sidebarUpsertChat({
-          id: msg.chatId,
-          title: msg.title,
-          agent: msg.agent,
-          projectId: msg.projectId,
-          projectName: msg.projectName,
-          updatedAt: msg.updatedAt,
-        });
         if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
         return;
 
@@ -3500,7 +3554,7 @@
     if (!composerSecretPickMenu) return;
     const ctx = composerSecretContext();
     if (!ctx) {
-      alert('Send the first message to open the chat, then use the clip → Secret menu.');
+      alert(composerSecretsBlockedMessage());
       return;
     }
     if (composerAttachMenu) composerAttachMenu.hidden = true;

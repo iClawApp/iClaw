@@ -61,6 +61,31 @@ chatsRouter.get('/search', (req, res) => {
   res.type('application/json').json({ ids });
 });
 
+/**
+ * Create a draft composer chat (hidden from sidebar until the first user message).
+ * Body: `{ agent?: string, projectId?: number | null }`.
+ */
+chatsRouter.post('/', (req, res) => {
+  const agent = String(req.body?.agent ?? '').trim() || DEFAULT_AGENT;
+  let projectId: number | null = null;
+  const rawProject = req.body?.projectId;
+  if (rawProject != null && rawProject !== '') {
+    const n = Number(rawProject);
+    if (Number.isFinite(n) && n > 0 && projects.get(n)) projectId = n;
+  }
+  const chat = chats.create(agent, projectId, { chatKind: 'draft' });
+  const proj = projectId != null ? projects.get(projectId) : null;
+  res.status(201).type('application/json').json({
+    chatId: chat.id,
+    title: chat.title,
+    agent: chat.agent,
+    projectId: chat.project_id,
+    projectName: proj?.name ?? null,
+    updatedAt: chat.updated_at,
+    draft: true,
+  });
+});
+
 /** Pending project-fact suggestions for this chat (JSON). */
 chatsRouter.get('/:id/fact-suggestions', (req, res) => {
   const id = Number(req.params.id);
