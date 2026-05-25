@@ -12,7 +12,11 @@
 import { randomUUID } from 'node:crypto';
 import { gatewayWs, type RawGatewayFrame } from './gatewayWs';
 import { toolActivityLabel, lifecycleActivityLabel } from './toolLabels';
-import { resolveFromHistorySlice, sliceFromLastUser } from './turnReply';
+import {
+  extractAssistantText,
+  resolveFromHistorySlice,
+  sliceFromLastUser,
+} from './turnReply';
 
 // ---------- shapes ---------------------------------------------------------
 
@@ -75,6 +79,15 @@ interface ChatEventPayload {
   };
 }
 
+interface SessionMessagePayload {
+  sessionKey?: string;
+  message?: {
+    role?: string;
+    content?: unknown;
+    text?: string;
+  };
+}
+
 /** Pull a flat string out of OpenAI-style content parts, or pass through. */
 function contentToString(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -87,6 +100,64 @@ function contentToString(content: unknown): string {
 
 function safeString(v: unknown): string | undefined {
   return typeof v === 'string' && v.length > 0 ? v : undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * After `chat:state=final`, OpenClaw may still append the canonical assistant
+ * row and emit `session.message` / a second `final` (webchat post-dispatch).
+ * Wait briefly before settling the turn so we don't persist the lifecycle
+ * stream buffer ("Sent to chat…") instead of the transcript text.
+ */
+const POST_FINAL_CANONICAL_GRACE_MS = 1000;
+
+/**
+ * Gateway `chat.history` rejects limits above 1000 (OpenClaw 2026.5.x).
+ */
+const HISTORY_FETCH_LIMIT = 1000;
+const HISTORY_FETCH_RETRIES = 3;
+const HISTORY_FETCH_RETRY_DELAY_MS = 150;
+
+async function fetchAuthoritativeFromHistory(sessionKey: string): Promise<string | null> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < HISTORY_FETCH_RETRIES; attempt++) {
+    try {
+      const res = await gatewayWs.request<{ messages: HistoryMessage[] }>(
+        'chat.history',
+        { sessionKey, limit: HISTORY_FETCH_LIMIT },
+      );
+      const resolved = resolveFromHistorySlice(sliceFromLastUser(res.messages ?? []));
+      return resolved.trim().length > 0 ? resolved : null;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < HISTORY_FETCH_RETRIES - 1) {
+        await sleep(HISTORY_FETCH_RETRY_DELAY_MS);
+      }
+    }
+  }
+  console.warn(
+    '[openclawWs] chat.history failed after',
+    HISTORY_FETCH_RETRIES,
+    'attempts:',
+    lastErr instanceof Error ? lastErr.message : String(lastErr),
+  );
+  return null;
+}
+
+function pickAuthoritativeReplyText(opts: {
+  fromHistory: string | null;
+  fromTranscript: string | null;
+  fromLastFinal: string;
+}): string | null {
+  if (opts.fromHistory && opts.fromHistory.trim().length > 0) return opts.fromHistory;
+  if (opts.fromTranscript && opts.fromTranscript.trim().length > 0) {
+    return opts.fromTranscript;
+  }
+  if (opts.fromLastFinal.trim().length > 0) return opts.fromLastFinal;
+  return null;
 }
 
 /**
@@ -131,14 +202,6 @@ const pendingAbortIntents = new Set<string>();
  * hang for the full 60-min upper-bound timeout.
  */
 const POST_END_FINAL_GRACE_MS = 15_000;
-
-/**
- * Cap on how many history rows we pull when resolving authoritative text.
- * Comfortably larger than any single turn we've seen (turns with many tool
- * calls top out around 50–80 rows; 2000 covers extreme edge cases too).
- * Higher than this just adds latency without changing the result.
- */
-const HISTORY_FETCH_LIMIT = 2000;
 
 // ---------- public client -------------------------------------------------
 
@@ -340,21 +403,21 @@ export const openclawWs = {
     text: string;
     aborted: boolean;
     /**
-     * Best-effort canonical reply text, sliced from `chat.history` after
-     * `state:final`. Prefers the `message` tool's `sourceReply.text`
-     * (when the agent runs in `message_tool_only` mode), falling back to
-     * the most recent assistant text in the turn's slice. `null` when
-     * resolution was via abort (history wouldn't contain a fresh
-     * assistant row), when the fetch failed, or when nothing usable was
-     * found. Callers should treat `null` as "use streamed `text`".
+     * Canonical user-facing reply. Priority: `chat.history` slice (incl.
+     * message-tool `sourceReply`), then `session.message` transcript row,
+     * then the last `chat:state=final` after a short post-final grace.
+     * `null` on abort or when nothing usable was found.
      */
     authoritativeText: string | null;
   }> {
     let runId: string | null = null;
     let accumulatedText = '';
+    let lastFinalText = '';
+    let transcriptAssistantText: string | null = null;
     let finalEmitted = false;
     let wasAborted = false;
     let endWatchdog: NodeJS.Timeout | null = null;
+    let canonicalSettleTimer: NodeJS.Timeout | null = null;
 
     let resolveTurn!: () => void;
     let rejectTurn!: (err: Error) => void;
@@ -363,11 +426,40 @@ export const openclawWs = {
       rejectTurn = reject;
     });
 
+    const clearCanonicalSettleTimer = (): void => {
+      if (canonicalSettleTimer) {
+        clearTimeout(canonicalSettleTimer);
+        canonicalSettleTimer = null;
+      }
+    };
+
+    const settleTurn = (): void => {
+      if (wasAborted) return;
+      clearCanonicalSettleTimer();
+      const text = lastFinalText || accumulatedText;
+      if (!finalEmitted) {
+        finalEmitted = true;
+        opts.onEvent({ type: 'text-final', text });
+      }
+      resolveTurn();
+    };
+
+    const scheduleCanonicalSettle = (): void => {
+      if (wasAborted) return;
+      clearCanonicalSettleTimer();
+      canonicalSettleTimer = setTimeout(() => {
+        canonicalSettleTimer = null;
+        settleTurn();
+      }, POST_FINAL_CANONICAL_GRACE_MS);
+      canonicalSettleTimer.unref?.();
+    };
+
     // Register an abort callback BEFORE we kick off chat.send so the
     // race window (gateway acks abort before we register) is impossible.
     const onAbort = (): void => {
       if (wasAborted) return;          // idempotent — abort can fire twice
       wasAborted = true;
+      clearCanonicalSettleTimer();
       if (!finalEmitted) {
         finalEmitted = true;
         opts.onEvent({ type: 'text-final', text: accumulatedText });
@@ -432,7 +524,7 @@ export const openclawWs = {
               POST_END_FINAL_GRACE_MS,
               'ms — resolving with buffered stream text',
             );
-            resolveTurn();
+            scheduleCanonicalSettle();
           }, POST_END_FINAL_GRACE_MS);
           endWatchdog.unref?.();
         }
@@ -514,15 +606,26 @@ export const openclawWs = {
       if (payload.state === 'final') {
         const text = contentToString(payload.message?.content) || accumulatedText;
         accumulatedText = text;
-        // Always emit — lifecycle:end no longer resolves the turn, so this is the
-        // primary signal for consumers that need the gateway's final assistant text.
-        opts.onEvent({ type: 'text-final', text });
-        if (!finalEmitted) {
-          finalEmitted = true;
-        }
-        resolveTurn();
+        lastFinalText = text;
+        // OpenClaw may emit an early final (stream buffer) and a later webchat
+        // final with the transcript-built message. Debounce turn settlement.
+        scheduleCanonicalSettle();
         return;
       }
+    };
+
+    const handleSessionMessage = (payload: SessionMessagePayload): void => {
+      if (payload.sessionKey !== opts.sessionKey) return;
+      if (runId === null) return;
+      const role = typeof payload.message?.role === 'string'
+        ? payload.message.role.toLowerCase()
+        : '';
+      if (role !== 'assistant') return;
+      const text =
+        extractAssistantText(payload.message?.content) ||
+        (typeof payload.message?.text === 'string' ? payload.message.text : '');
+      if (text.trim().length > 0) transcriptAssistantText = text;
+      scheduleCanonicalSettle();
     };
 
     const dispatch = (frame: RawGatewayFrame): void => {
@@ -533,6 +636,8 @@ export const openclawWs = {
         handleAgent(payload as AgentEventPayload);
       } else if (eventName === 'chat') {
         handleChat(payload as ChatEventPayload);
+      } else if (eventName === 'session.message') {
+        handleSessionMessage(payload as SessionMessagePayload);
       }
     };
 
@@ -604,6 +709,7 @@ export const openclawWs = {
       }
     } finally {
       if (endWatchdog) clearTimeout(endWatchdog);
+      clearCanonicalSettleTimer();
       off();
       // Unregister the abort callback so a later abort on this sessionKey
       // (e.g. a new turn that re-uses it) doesn't accidentally hit this
@@ -620,28 +726,20 @@ export const openclawWs = {
       pendingAbortIntents.delete(opts.sessionKey);
     }
 
-    // Resolve the canonical, user-facing reply from gateway history.
-    // Skipped on abort: the gateway hasn't appended a fresh assistant row
-    // for an aborted run, so a history fetch would return stale text from
-    // the previous turn.
+    // Canonical reply: transcript/history first, then last `chat:final`, then stream.
     let authoritativeText: string | null = null;
     if (!wasAborted) {
-      try {
-        const history = await openclawWs.getHistory(
-          opts.sessionKey,
-          HISTORY_FETCH_LIMIT,
-        );
-        const slice = sliceFromLastUser(history);
-        const resolved = resolveFromHistorySlice(slice);
-        if (resolved.trim().length > 0) authoritativeText = resolved;
-      } catch {
-        /* fall back to streamed `accumulatedText` */
-      }
+      const fromHistory = await fetchAuthoritativeFromHistory(opts.sessionKey);
+      authoritativeText = pickAuthoritativeReplyText({
+        fromHistory,
+        fromTranscript: transcriptAssistantText,
+        fromLastFinal: lastFinalText || accumulatedText,
+      });
     }
 
     return {
       runId: runId!,
-      text: accumulatedText,
+      text: lastFinalText || accumulatedText,
       aborted: wasAborted,
       authoritativeText,
     };

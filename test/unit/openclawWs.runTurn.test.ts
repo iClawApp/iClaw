@@ -75,17 +75,63 @@ function emitLifecycle(sessionKey: string, runId: string, phase: string): void {
   });
 }
 
+/** Matches `POST_FINAL_CANONICAL_GRACE_MS` in openclawWs.ts */
+const CANONICAL_GRACE_MS = 1000;
+
 beforeEach(() => {
+  vi.useFakeTimers();
   frameListeners = new Set();
   requestImpl = async () => ({});
   subscribeSessionImpl = async () => undefined;
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   frameListeners.clear();
 });
 
+async function settleCanonicalGrace(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(CANONICAL_GRACE_MS);
+}
+
+function emitSessionMessage(sessionKey: string, text: string): void {
+  emit({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      message: { role: 'assistant', content: [{ type: 'text', text }] },
+    },
+  });
+}
+
 describe('runTurn — authoritativeText from chat.history slice', () => {
+  it('requests chat.history with limit within gateway cap (1000)', async () => {
+    const SK = 'agent:test:limit';
+    const RID = 'run-limit';
+    let historyLimit: unknown;
+
+    requestImpl = async (method, params) => {
+      if (method === 'chat.send') return { runId: RID };
+      if (method === 'chat.history') {
+        historyLimit = params.limit;
+        return { messages: [{ role: 'user', content: 'q' }, { role: 'assistant', content: 'ok' }] };
+      }
+      return {};
+    };
+
+    const turnP = openclawWs.runTurn({
+      sessionKey: SK,
+      message: 'q',
+      onEvent: () => undefined,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    emitChatFinal(SK, RID, 'ok');
+    await settleCanonicalGrace();
+    await turnP;
+    expect(historyLimit).toBe(1000);
+  });
+
   it('returns message-tool sourceReply when present in slice', async () => {
     const SK = 'agent:test:s1';
     const RID = 'run-1';
@@ -126,10 +172,65 @@ describe('runTurn — authoritativeText from chat.history slice', () => {
     await Promise.resolve();
     await Promise.resolve();
     emitChatFinal(SK, RID, 'self-action status');
+    await settleCanonicalGrace();
 
     const result = await turnP;
     expect(result.authoritativeText).toBe(authoritative);
     expect(result.aborted).toBe(false);
+  });
+
+  it('prefers later chat:final over early status-note final', async () => {
+    const SK = 'agent:test:two-finals';
+    const RID = 'run-two-finals';
+    const canonical = 'Дивись простіше. У GeeLark три проксі.';
+
+    requestImpl = async (method) => {
+      if (method === 'chat.send') return { runId: RID };
+      if (method === 'chat.history') return { messages: [] };
+      return {};
+    };
+
+    const turnP = openclawWs.runTurn({
+      sessionKey: SK,
+      message: 'q',
+      onEvent: () => undefined,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    emitChatFinal(SK, RID, 'Написав у чат короткий статус.');
+    await vi.advanceTimersByTimeAsync(100);
+    emitChatFinal(SK, RID, canonical);
+    await settleCanonicalGrace();
+
+    const result = await turnP;
+    expect(result.authoritativeText).toBe(canonical);
+    expect(result.text).toBe(canonical);
+  });
+
+  it('uses session.message transcript when history is empty', async () => {
+    const SK = 'agent:test:session-msg';
+    const RID = 'run-session-msg';
+    const canonical = 'Текст з session.message після append.';
+
+    requestImpl = async (method) => {
+      if (method === 'chat.send') return { runId: RID };
+      if (method === 'chat.history') return { messages: [] };
+      return {};
+    };
+
+    const turnP = openclawWs.runTurn({
+      sessionKey: SK,
+      message: 'q',
+      onEvent: () => undefined,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    emitChatFinal(SK, RID, 'статус у стрімі');
+    emitSessionMessage(SK, canonical);
+    await settleCanonicalGrace();
+
+    const result = await turnP;
+    expect(result.authoritativeText).toBe(canonical);
   });
 
   it('skips authoritativeText resolution on abort', async () => {
@@ -166,7 +267,7 @@ describe('runTurn — authoritativeText from chat.history slice', () => {
     expect(historyMock).not.toHaveBeenCalled();
   });
 
-  it('returns null authoritativeText when history fetch fails', async () => {
+  it('falls back to last chat:final when history fetch fails', async () => {
     const SK = 'agent:test:s3';
     const RID = 'run-3';
     requestImpl = async (method) => {
@@ -184,9 +285,12 @@ describe('runTurn — authoritativeText from chat.history slice', () => {
     await Promise.resolve();
     await Promise.resolve();
     emitChatFinal(SK, RID, 'streamed answer');
+    await settleCanonicalGrace();
+    // Post-turn history fetch retries use HISTORY_FETCH_RETRY_DELAY_MS.
+    await vi.runAllTimersAsync();
 
     const result = await turnP;
-    expect(result.authoritativeText).toBeNull();
+    expect(result.authoritativeText).toBe('streamed answer');
     expect(result.text).toBe('streamed answer');
   });
 });
@@ -262,6 +366,7 @@ describe('runTurn — abort intent (stop-during-chat.send race)', () => {
     await Promise.resolve();
     await Promise.resolve();
     emitChatFinal(SK, 'r-fresh', 'normal answer');
+    await settleCanonicalGrace();
 
     const result = await turnP;
     expect(result.aborted).toBe(false);
@@ -291,6 +396,7 @@ describe('runTurn — lifecycle:end watchdog', () => {
     emitLifecycle(SK, RID, 'end');
     // state:final follows almost immediately on a healthy run.
     emitChatFinal(SK, RID, 'final body');
+    await settleCanonicalGrace();
 
     const result = await turnP;
     expect(result.text).toBe('final body');
