@@ -35,7 +35,6 @@ const openclawWsMock = {
   abortRun: vi.fn(async () => undefined),
   runTurn: vi.fn() as ReturnType<typeof vi.fn>,
   resolveExecApproval: vi.fn(async () => undefined),
-  usageCost: vi.fn(async () => ({ totalUsd: 0 })),
   listModels: vi.fn(async () => ({ models: [] })),
   listCommands: vi.fn(async () => ({ commands: [] })),
   patchSession: vi.fn(async () => ({})),

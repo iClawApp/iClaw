@@ -15,7 +15,6 @@ const openclawWsMock = {
   abortRun: vi.fn(async () => undefined),
   runTurn: vi.fn(async () => ({ runId: 'r', text: 'reply' })),
   resolveExecApproval: vi.fn(async () => undefined),
-  usageCost: vi.fn(async () => ({ totalUsd: 0.42 })),
   listModels: vi.fn(async () => ({
     models: [{ id: 'openai/gpt-4o', label: 'GPT-4o' }],
   })),

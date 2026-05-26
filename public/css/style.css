@@ -862,9 +862,6 @@ code {
   cursor: pointer;
 }
 
-/* Today's cost — `.chip .chip--accent` from the primitive owns the look;
-   .cost-chip remains as a JS hook (#cost-chip getElementById). */
-
 /* ---------- Exec approval card ---------- */
 
 .exec-approval-card {

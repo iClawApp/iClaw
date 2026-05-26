@@ -253,11 +253,6 @@ export const openclawWs = {
     await gatewayWs.request('exec.approval.resolve', params);
   },
 
-  /** Get usage cost summary for a date range. */
-  async usageCost(opts: { from?: string; to?: string } = {}): Promise<unknown> {
-    return gatewayWs.request('usage.cost', opts as Record<string, unknown>);
-  },
-
   /** Slash-command catalog for an agent — feeds the `/` autocomplete. */
   async listCommands(opts: { agentId?: string } = {}): Promise<unknown> {
     return gatewayWs.request('commands.list', opts as Record<string, unknown>);

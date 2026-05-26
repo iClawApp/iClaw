@@ -5913,41 +5913,6 @@
   probeResetPolicyAndMaybeShowBanner();
 
   // -------------------------------------------------------------------------
-  // Usage cost chip — polls /api/gateway/usage/today every 30s
-  // -------------------------------------------------------------------------
-  const costChip = document.getElementById('cost-chip');
-  function fmtUsd(n) {
-    if (typeof n !== 'number' || !Number.isFinite(n)) return null;
-    if (n < 0.005) return '$0.00';
-    if (n < 1) return '$' + n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
-    return '$' + n.toFixed(2);
-  }
-  async function refreshCost() {
-    if (!costChip) return;
-    try {
-      const res = await fetch('/api/gateway/usage/today', { headers: { Accept: 'application/json' } });
-      if (!res.ok) {
-        costChip.hidden = true;
-        return;
-      }
-      const data = await res.json();
-      const txt = fmtUsd(data.totalUsd);
-      if (txt == null) {
-        costChip.hidden = true;
-        return;
-      }
-      costChip.textContent = 'Today ' + txt;
-      costChip.hidden = false;
-    } catch {
-      costChip.hidden = true;
-    }
-  }
-  if (costChip) {
-    refreshCost();
-    setInterval(refreshCost, 30_000);
-  }
-
-  // -------------------------------------------------------------------------
   // npm update banner — installed from __ICLAW_VERSION__, latest from registry
   // -------------------------------------------------------------------------
   const NPM_REGISTRY_LATEST =
