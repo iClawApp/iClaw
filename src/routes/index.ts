@@ -3,6 +3,7 @@ import { chats, projectSecrets, projects, tasks } from '../services/store';
 import { openclaw } from '../services/openclaw';
 import { openclawWs } from '../services/openclawWs';
 import { chatStatus } from '../services/chatStatus';
+import { shouldShowSendHint } from '../services/sendHint';
 
 export const indexRouter: Router = Router();
 
@@ -46,5 +47,6 @@ indexRouter.get('/', async (req, res) => {
     defaultAgent: 'openclaw/default',
     openclawBaseUrl: openclaw.baseUrl,
     workingIds: chatStatus.workingIds(),
+    sendHintShow: shouldShowSendHint(),
   });
 });

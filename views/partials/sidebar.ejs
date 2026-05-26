@@ -74,6 +74,21 @@
     </div>
   </div>
 
+  <% if (chats.length > 0) { %>
+    <!-- Discovery hint for the right-click context menu (Share / Rename /
+         Mark unread / Delete). JS gates with localStorage: hides forever
+         on the first contextmenu, throttles to once per day until then. -->
+    <div
+      id="sidebar-hint-pill"
+      class="sidebar-hint-pill"
+      role="status"
+      aria-live="polite"
+      hidden
+    >
+      <span class="sidebar-hint-pill__text">Tip: right-click a chat for options</span>
+    </div>
+  <% } %>
+
   <nav class="chat-list" id="chat-list">
     <% if (chats.length > 0) { %>
       <% chats.forEach(function (c) {
@@ -87,7 +102,6 @@
           data-chat-id="<%= c.id %>"
           data-project-id="<%= c.project_id != null ? c.project_id : '' %>"
           data-updated-at="<%= c.updated_at %>"
-          title="<%= c.title %>"
         >
           <span class="chat-item-avatar-wrap">
           <% if (p) { %>

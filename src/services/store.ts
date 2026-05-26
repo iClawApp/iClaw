@@ -885,6 +885,16 @@ export const scheduledMessages = {
       | ScheduledMessage
       | undefined;
   },
+  /** How many scheduled messages this user has EVER created (monotonic,
+   * survives delete-after-fire). Reads sqlite_sequence directly — the
+   * AUTOINCREMENT counter never goes down. Used by the discovery hint to
+   * decide whether the user has discovered the feature for good. */
+  everCreatedCount(): number {
+    const row = db
+      .prepare("SELECT seq FROM sqlite_sequence WHERE name = 'scheduled_messages'")
+      .get() as { seq: number } | undefined;
+    return row?.seq ?? 0;
+  },
   /** Rows whose `scheduled_at` is now or in the past — what the sweeper fires. */
   listDue(limit = 50): ScheduledMessage[] {
     return db
@@ -1011,6 +1021,15 @@ export const tasks = {
   hasAny(): boolean {
     const row = db.prepare('SELECT 1 AS n FROM tasks LIMIT 1').get() as { n: number } | undefined;
     return row != null;
+  },
+  /** How many tasks this user has EVER created (monotonic, survives row
+   * deletion). Reads sqlite_sequence directly — the AUTOINCREMENT counter
+   * never goes down. Used by the send-button discovery hint. */
+  everCreatedCount(): number {
+    const row = db
+      .prepare("SELECT seq FROM sqlite_sequence WHERE name = 'tasks'")
+      .get() as { seq: number } | undefined;
+    return row?.seq ?? 0;
   },
   statusSignals(): { needsHuman: boolean; running: boolean; needsReview: boolean } {
     const row = db

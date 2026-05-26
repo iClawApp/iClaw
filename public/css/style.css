@@ -1760,6 +1760,72 @@ code {
   transform: none;
 }
 
+/* Send-button discovery pill — floats above the Send button with a tail
+   pointing down. JS gates visibility (once per day until 2 tasks + 3
+   scheduled msgs). Pure presentational; server-side template gates whether
+   it's even in the DOM. */
+.send-hint-pill {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: inline-flex;
+  align-items: center;
+  max-width: 240px;
+  padding: 6px 12px;
+  background: var(--apple-blue);
+  color: var(--apple-blue-fg);
+  border-radius: var(--radius-md, 8px);
+  font-size: 0.82rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md, 0 6px 18px rgba(0, 0, 0, 0.15));
+  z-index: 5;
+  pointer-events: none;
+  animation: send-hint-pill-in 220ms ease-out;
+}
+.send-hint-pill[hidden] { display: none !important; }
+.send-hint-pill::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  top: 100%;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid var(--apple-blue);
+}
+.send-hint-pill__text {
+  flex: 1 1 auto;
+  white-space: normal;
+}
+@keyframes send-hint-pill-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Sidebar discovery pill — teaches the right-click context menu on chat
+   items. Sits under the toolbar, above the chat list. Same visual
+   language as the send-hint pill but block-level (no tail/arrow). */
+.sidebar-hint-pill {
+  display: block;
+  margin: var(--space-2) var(--space-3) var(--space-3);
+  padding: 6px 12px;
+  background: var(--apple-blue);
+  color: var(--apple-blue-fg);
+  border-radius: var(--radius-md, 8px);
+  font-size: 0.82rem;
+  line-height: 1.25;
+  box-shadow: var(--shadow-sm, 0 2px 6px rgba(0, 0, 0, 0.08));
+  pointer-events: none;
+  animation: send-hint-pill-in 220ms ease-out;
+}
+.sidebar-hint-pill[hidden] { display: none !important; }
+.sidebar-hint-pill__text {
+  display: block;
+  white-space: normal;
+}
+
 /* Hint strip: absolute in the composer’s bottom padding — no layout shift,
    and no negative margin that would clip under overflow:hidden on .col-main. */
 .composer-secret-ui {

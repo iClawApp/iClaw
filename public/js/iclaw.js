@@ -1870,7 +1870,6 @@
         '<span class="chat-item-title"></span>';
     }
     if (title != null) {
-      link.title = title;
       const titleEl = link.querySelector('.chat-item-title');
       if (titleEl) titleEl.textContent = title;
     }
@@ -2043,9 +2042,27 @@
     );
   }
 
+  const SIDEBAR_MENU_HOVER_INTENT_MS = 3500;
+  let sidebarChatMenuAutoCloseTimer = null;
+
+  function armSidebarChatMenuAutoClose() {
+    if (sidebarChatMenuAutoCloseTimer != null) clearTimeout(sidebarChatMenuAutoCloseTimer);
+    sidebarChatMenuAutoCloseTimer = setTimeout(() => {
+      sidebarChatMenuAutoCloseTimer = null;
+      closeSidebarChatMenu();
+    }, SIDEBAR_MENU_HOVER_INTENT_MS);
+  }
+  function disarmSidebarChatMenuAutoClose() {
+    if (sidebarChatMenuAutoCloseTimer != null) {
+      clearTimeout(sidebarChatMenuAutoCloseTimer);
+      sidebarChatMenuAutoCloseTimer = null;
+    }
+  }
+
   function closeSidebarChatMenu() {
     sidebarChatMenu.hidden = true;
     sidebarMenuChatId = null;
+    disarmSidebarChatMenuAutoClose();
   }
 
   function openSidebarChatMenu(clientX, clientY, chatId) {
@@ -2062,7 +2079,12 @@
     y = Math.max(pad, Math.min(y, window.innerHeight - mh - pad));
     sidebarChatMenu.style.left = x + 'px';
     sidebarChatMenu.style.top = y + 'px';
+    armSidebarChatMenuAutoClose();
   }
+
+  // Hover intent for the sidebar context menu — mirrors the schedule menu.
+  sidebarChatMenu.addEventListener('mouseenter', disarmSidebarChatMenuAutoClose);
+  sidebarChatMenu.addEventListener('mouseleave', armSidebarChatMenuAutoClose);
 
   document.addEventListener('pointerdown', (e) => {
     if (sidebarChatMenu.hidden) return;
@@ -2108,7 +2130,6 @@
         if (link) {
           const te = link.querySelector('.chat-item-title');
           if (te) te.textContent = nextTitle;
-          link.title = nextTitle;
         }
         if (activeChatId === cid && titleInput) {
           titleInput.value = nextTitle;
@@ -2151,9 +2172,122 @@
       e.preventDefault();
       const id = Number(link.dataset.chatId);
       if (!Number.isFinite(id)) return;
+      markSidebarHintDiscovered(); // user discovered the gesture; never nag again
       openSidebarChatMenu(e.clientX, e.clientY, id);
     });
+
+    // Hover-and-hold parity: cursor parked on a chat-item for 1.5s opens
+    // the same context menu as right-click. Mouseover bubbles, so we use it
+    // for delegation; we de-dupe child movements via the "same target" check.
+    const HOVER_HOLD_MS = 1500;
+    let chatHoverTimer = null;
+    let chatHoverItem = null;
+    chatListNav.addEventListener('mouseover', (e) => {
+      const link = e.target.closest('a.chat-item[data-chat-id]');
+      if (link === chatHoverItem) return; // still on same item (moved to child)
+      if (chatHoverTimer) {
+        clearTimeout(chatHoverTimer);
+        chatHoverTimer = null;
+      }
+      chatHoverItem = link;
+      if (!link) return;
+      const id = Number(link.dataset.chatId);
+      if (!Number.isFinite(id)) return;
+      chatHoverTimer = setTimeout(() => {
+        chatHoverTimer = null;
+        if (chatHoverItem !== link) return; // pointer moved before timer fired
+        const rect = link.getBoundingClientRect();
+        markSidebarHintDiscovered();
+        // Open near the item's right edge so the menu doesn't cover the title.
+        openSidebarChatMenu(rect.right - 12, rect.top + 8, id);
+      }, HOVER_HOLD_MS);
+    });
+    chatListNav.addEventListener('mouseout', (e) => {
+      const link = e.target.closest('a.chat-item[data-chat-id]');
+      if (!link) return;
+      // Cursor moved to a child of the same item — not actually leaving.
+      if (e.relatedTarget && link.contains(e.relatedTarget)) return;
+      if (link !== chatHoverItem) return;
+      if (chatHoverTimer) {
+        clearTimeout(chatHoverTimer);
+        chatHoverTimer = null;
+      }
+      chatHoverItem = null;
+    });
   }
+
+  // -------------------------------------------------------------------------
+  // sidebar right-click discovery pill — paired with the contextmenu handler
+  // above. Pure client gate: once the user right-clicks a chat, the flag
+  // is set and the pill never shows again on this device.
+  // -------------------------------------------------------------------------
+  const SIDEBAR_HINT_DISCOVERED_KEY = 'iclaw-sidebar-hint-discovered';
+  const SIDEBAR_HINT_LAST_SHOWN_KEY = 'iclaw-sidebar-hint-last-shown';
+  function markSidebarHintDiscovered() {
+    try {
+      localStorage.setItem(SIDEBAR_HINT_DISCOVERED_KEY, '1');
+    } catch {
+      // Private mode — best effort; the pill will disappear next time
+      // we successfully store the per-day stamp anyway.
+    }
+    const pill = document.getElementById('sidebar-hint-pill');
+    if (pill && pill.parentNode) pill.parentNode.removeChild(pill);
+  }
+
+  (function setupSidebarHintPill() {
+    const pill = document.getElementById('sidebar-hint-pill');
+    if (!pill) return; // server skipped it (no chats yet)
+
+    let discovered = null;
+    let lastShown = null;
+    try {
+      discovered = localStorage.getItem(SIDEBAR_HINT_DISCOVERED_KEY);
+      lastShown = localStorage.getItem(SIDEBAR_HINT_LAST_SHOWN_KEY);
+    } catch {
+      // ignore
+    }
+    if (discovered === '1') {
+      pill.remove();
+      return;
+    }
+
+    const d = new Date();
+    const todayKey =
+      d.getFullYear() +
+      '-' +
+      String(d.getMonth() + 1).padStart(2, '0') +
+      '-' +
+      String(d.getDate()).padStart(2, '0');
+    if (lastShown === todayKey) {
+      pill.remove();
+      return;
+    }
+
+    try {
+      localStorage.setItem(SIDEBAR_HINT_LAST_SHOWN_KEY, todayKey);
+    } catch {
+      // ignore
+    }
+
+    pill.hidden = false;
+    const hideTimer = setTimeout(() => {
+      if (pill.parentNode) pill.parentNode.removeChild(pill);
+    }, 12_000);
+
+    // Click on any chat (left-click) = user is moving on — dismiss the
+    // pill. We don't set discovered here, because they didn't actually
+    // use the gesture yet.
+    if (chatListNav) {
+      chatListNav.addEventListener(
+        'click',
+        () => {
+          clearTimeout(hideTimer);
+          if (pill.parentNode) pill.parentNode.removeChild(pill);
+        },
+        { once: true },
+      );
+    }
+  })();
 
   const selectionReplyFab = document.createElement('div');
   selectionReplyFab.id = 'msg-selection-reply-fab';
@@ -4334,7 +4468,9 @@
   const scheduleDatetimeInput = document.getElementById('schedule-datetime-input');
   const SCHEDULE_MIN_LEAD_MS = 3 * 60_000;
   const LONG_PRESS_MS = 450;
+  const HOVER_HOLD_MS = 1500;
   let schedulePressTimer = null;
+  let scheduleHoverTimer = null;
   let scheduleMenuJustOpened = false;
   let scheduleMenuAutoCloseTimer = null;
   let editingScheduledId = null;
@@ -4451,6 +4587,8 @@
     times.hidden = !showTimes;
   }
 
+  const MENU_HOVER_INTENT_MS = 3500;
+
   function closeScheduleMenu() {
     if (!scheduleMenu) return;
     showScheduleMenuPanel('main');
@@ -4463,20 +4601,39 @@
     document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
   }
 
+  /** Schedule a 3.5s close. Cleared by mouseenter on the menu; restarted by
+   * mouseleave or any other re-entry into "user away" state. */
+  function armScheduleMenuAutoClose() {
+    if (scheduleMenuAutoCloseTimer != null) clearTimeout(scheduleMenuAutoCloseTimer);
+    scheduleMenuAutoCloseTimer = setTimeout(() => {
+      scheduleMenuAutoCloseTimer = null;
+      closeScheduleMenu();
+    }, MENU_HOVER_INTENT_MS);
+  }
+  function disarmScheduleMenuAutoClose() {
+    if (scheduleMenuAutoCloseTimer != null) {
+      clearTimeout(scheduleMenuAutoCloseTimer);
+      scheduleMenuAutoCloseTimer = null;
+    }
+  }
+
   function openScheduleMenu() {
     if (!scheduleMenu || !composerHasMessageText()) return;
     closeComposerAttachMenus();
     document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
     showScheduleMenuPanel('main');
     scheduleMenu.hidden = false;
-    if (scheduleMenuAutoCloseTimer != null) clearTimeout(scheduleMenuAutoCloseTimer);
-    scheduleMenuAutoCloseTimer = setTimeout(() => {
-      scheduleMenuAutoCloseTimer = null;
-      closeScheduleMenu();
-    }, 10_000);
+    armScheduleMenuAutoClose();
     setTimeout(() => {
       document.addEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
     }, 0);
+  }
+
+  if (scheduleMenu) {
+    // Hover intent — cursor on the menu pauses the auto-close;
+    // leaving the menu restarts the 3.5s countdown.
+    scheduleMenu.addEventListener('mouseenter', disarmScheduleMenuAutoClose);
+    scheduleMenu.addEventListener('mouseleave', armScheduleMenuAutoClose);
   }
 
   function parseScheduledStamp(stamp) {
@@ -4711,6 +4868,25 @@
       if (schedulePressTimer) {
         clearTimeout(schedulePressTimer);
         schedulePressTimer = null;
+      }
+    });
+    // Hover-and-hold on desktop — 1.5s of cursor parked on the button
+    // opens the same schedule menu as long-press. Discoverable for users
+    // who don't think to click-and-hold.
+    sendBtn.addEventListener('mouseenter', () => {
+      if (startedOnDraft || activeChatId == null) return;
+      if (!composerHasMessageText()) return;
+      if (scheduleHoverTimer) clearTimeout(scheduleHoverTimer);
+      scheduleHoverTimer = setTimeout(() => {
+        scheduleHoverTimer = null;
+        if (isScheduleMenuOpen()) return;
+        openScheduleMenu();
+      }, HOVER_HOLD_MS);
+    });
+    sendBtn.addEventListener('mouseleave', () => {
+      if (scheduleHoverTimer) {
+        clearTimeout(scheduleHoverTimer);
+        scheduleHoverTimer = null;
       }
     });
     // Capture-phase click guard — swallows the synthetic click that follows
@@ -5599,6 +5775,63 @@
     });
     refreshScheduledTimes();
   }
+
+  // -------------------------------------------------------------------------
+  // send-button discovery pill — surfaces the long-press menu (scheduled
+  // message / create task) for users who haven't crossed the usage threshold
+  // yet. Server only renders the element when eligible; this block is
+  // responsible for once-per-day throttling and auto-dismiss.
+  // -------------------------------------------------------------------------
+  (function setupSendHintPill() {
+    const pill = document.getElementById('send-hint-pill');
+    if (!pill) return; // server decided not to surface it
+
+    const STORAGE_KEY = 'iclaw-send-hint-last-shown';
+    const AUTO_HIDE_MS = 12_000;
+
+    function todayKey() {
+      const d = new Date();
+      return (
+        d.getFullYear() +
+        '-' +
+        String(d.getMonth() + 1).padStart(2, '0') +
+        '-' +
+        String(d.getDate()).padStart(2, '0')
+      );
+    }
+
+    let lastShown = null;
+    try {
+      lastShown = localStorage.getItem(STORAGE_KEY);
+    } catch {
+      // Private mode / storage disabled — treat as "never shown".
+    }
+    if (lastShown === todayKey()) return; // already shown today
+
+    try {
+      localStorage.setItem(STORAGE_KEY, todayKey());
+    } catch {
+      // ignore — we'll just nag again next page-load in that session
+    }
+
+    let hideTimer = null;
+    function hidePill() {
+      if (hideTimer != null) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+      if (pill.parentNode) pill.parentNode.removeChild(pill);
+    }
+
+    pill.hidden = false;
+    hideTimer = setTimeout(hidePill, AUTO_HIDE_MS);
+
+    // Дрібні сигнали, що юзер зорієнтувався: почав писати або тицьнув send.
+    // Без цього pill «висить» поки таймер не догорить, що відволікає.
+    const input = document.getElementById('composer-input');
+    if (input) input.addEventListener('focus', hidePill, { once: true });
+    if (sendBtn) sendBtn.addEventListener('pointerdown', hidePill, { once: true });
+  })();
 
   // -------------------------------------------------------------------------
   // chat title inline rename (HTTP form fallback for now)
