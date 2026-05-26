@@ -2,6 +2,19 @@
 
 All notable changes to iClaw are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses [Semantic Versioning](https://semver.org/) starting at v0.1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Send-button discovery pill.** Above the Send button, "Did you know? Hold Send for more" surfaces the hidden long-press menu (Scheduled message / Create task). Server gates on an "ever-created" threshold — ≥ 2 tasks AND ≥ 3 scheduled messages, read from `sqlite_sequence` so the metric survives row deletion. Browser throttles to once per day. Auto-dismiss on textarea focus, Send pointerdown, or 12 s timer.
+- **Sidebar discovery pill.** "Tip: right-click a chat for options" under the toolbar. Hides forever after the first contextmenu (or hover-hold) on a chat item; otherwise throttled to once per day.
+- **Hover-hold gestures (1.5 s)** — open the same menus as long-press / right-click without clicking. Cursor parked on the Send button opens the schedule menu; cursor parked on a sidebar chat item opens the context menu.
+- **Hover-intent auto-close (3.5 s)** for both menus. Mouse leaves the menu → 3.5 s timer; returns → timer resets. Replaces the schedule menu's old 10 s blanket timeout.
+
+### Removed
+
+- Native browser tooltip on sidebar chat items (`title="<chat.title>"`). The full title is already visible inline; the tooltip just got in the way of the new hover-hold gesture.
+
 ## [0.1.4] — 2026-05-26
 
 ### Removed
