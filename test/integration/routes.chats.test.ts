@@ -15,7 +15,6 @@ const openclawWsMock = {
   abortRun: vi.fn(async () => undefined),
   runTurn: vi.fn(async () => ({ runId: 'r', text: 'reply' })),
   resolveExecApproval: vi.fn(async () => undefined),
-  usageCost: vi.fn(async () => ({ totalUsd: 0.42 })),
   listModels: vi.fn(async () => ({
     models: [{ id: 'openai/gpt-4o', label: 'GPT-4o' }],
   })),
@@ -80,6 +79,33 @@ afterEach(() => {
   resetTestDb();
   openclawWsMock.deleteSession.mockClear();
   openclawWsMock.patchSession.mockClear();
+});
+
+describe('POST /chats', () => {
+  it('creates a draft chat hidden from list()', async () => {
+    const p = projects.create('DraftProj');
+    const res = await request(app)
+      .post('/chats')
+      .set('content-type', 'application/json')
+      .send({ agent: 'openclaw/default', projectId: p.id });
+    expect(res.status).toBe(201);
+    expect(res.body.draft).toBe(true);
+    expect(res.body.chatId).toBeGreaterThan(0);
+    const row = chats.get(res.body.chatId)!;
+    expect(row.chat_kind).toBe('draft');
+    expect(row.project_id).toBe(p.id);
+    expect(chats.list().some((c) => c.id === row.id)).toBe(false);
+  });
+
+  it('creates orphan draft with null project', async () => {
+    const res = await request(app)
+      .post('/chats')
+      .set('content-type', 'application/json')
+      .send({ agent: 'openclaw/code' });
+    expect(res.status).toBe(201);
+    expect(chats.get(res.body.chatId)!.chat_kind).toBe('draft');
+    expect(chats.get(res.body.chatId)!.project_id).toBeNull();
+  });
 });
 
 describe('GET /chats/search', () => {

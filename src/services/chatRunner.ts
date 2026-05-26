@@ -79,7 +79,7 @@ async function ensureSession(chatId: number): Promise<string> {
  * agent's freeform output and the `tools.message.send` payload get merged
  * by the gateway into a single assistant row. The freeform half is the
  * agent's own narration about what it sent — looks like
- * "Надіслав у чат рекомендацію..." / "Sent X in chat." / "Отправил..." —
+ * "Sent X to chat…" — in Ukrainian ("Надіслав у чат…"), Russian ("Отправил…"), or English —
  * and clutters the user-visible reply.
  *
  * This heuristic strips that opening narration when:
@@ -443,7 +443,7 @@ async function runTurnLocked(opts: {
   //      or when the slice was empty.
   //   2. `gatewayAccumulated` — what we collected from `chat:state=delta`.
   //      Right answer for plain freeform turns; on message-tool turns this
-  //      is the agent's self-action status note (e.g. "Надіслав у чат…")
+  //      is the agent's self-action status note (e.g. "Sent to chat…")
   //      so it's a fallback, not the preferred source.
   //   3. `assistantText` — our own buffer, last-resort when the gateway
   //      stream gave us nothing (rare).
@@ -458,7 +458,7 @@ async function runTurnLocked(opts: {
         ? gatewayAccumulated
         : assistantText;
 
-  // Strip the "Надіслав у чат…" / "Sent in chat…" self-narration preamble
+  // Strip the "Sent to chat…" self-narration preamble
   // that OpenClaw emits when `agents.defaults.visibleReplies` is set to
   // "message_tool". Conservative — only fires when there's a real reply
   // after the preamble (see stripAgentSelfActionPreamble for details).
@@ -529,6 +529,29 @@ async function runTurnLocked(opts: {
   });
 }
 
+function broadcastChatCreated(chatId: number): void {
+  const created = chats.get(chatId);
+  if (!created) return;
+  const proj = created.project_id ? projects.get(created.project_id) : null;
+  wsHub.broadcastAll({
+    type: 'chat-created',
+    chatId,
+    title: created.title,
+    agent: created.agent,
+    projectId: created.project_id,
+    projectName: proj?.name ?? null,
+    updatedAt: created.updated_at,
+  });
+}
+
+/** Draft composer row → visible sidebar entry on first user message. */
+function promoteDraftChatIfNeeded(chatId: number, subscriber?: WebSocket): boolean {
+  if (!chats.promoteFromDraft(chatId)) return false;
+  if (subscriber) wsHub.subscribe(subscriber, chatId);
+  broadcastChatCreated(chatId);
+  return true;
+}
+
 /**
  * Public entrypoint used by the WS message handler.
  *
@@ -585,18 +608,13 @@ export async function sendMessage(opts: {
     // Subscribe the originating socket BEFORE we emit chat-created or start
     // the turn — otherwise it would miss every event in this turn.
     if (opts.subscriber) wsHub.subscribe(opts.subscriber, chatId);
-    const proj = created.project_id ? projects.get(created.project_id) : null;
-    wsHub.broadcastAll({
-      type: 'chat-created',
-      chatId,
-      title: created.title,
-      agent: created.agent,
-      projectId: created.project_id,
-      projectName: proj?.name ?? null,
-      updatedAt: created.updated_at,
-    });
+    broadcastChatCreated(chatId);
   } else {
-    if (opts.subscriber) wsHub.subscribe(opts.subscriber, chatId);
+    if (chats.isDraft(chatId)) {
+      promoteDraftChatIfNeeded(chatId, opts.subscriber);
+    } else if (opts.subscriber) {
+      wsHub.subscribe(opts.subscriber, chatId);
+    }
     isFirstTurn =
       messages.listByChat(chatId).filter((m) => m.role === 'user').length === 0;
   }

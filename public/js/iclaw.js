@@ -82,7 +82,7 @@
     return null;
   }
 
-  /** Picker / use-in-chat need a chat row; inline secrets on draft only need project pick. */
+  /** Picker / use-in-chat need a persisted chat row (draft is ok). */
   function composerSecretContext() {
     if (activeChatId != null) {
       return {
@@ -100,15 +100,71 @@
 
   function composerSecretsEnabled() {
     if (activeChatId != null) return true;
-    // Draft home: chat is created on send; inline [[iclaw:sN]] secrets still work.
     return Boolean(startedOnDraft && draftProjectLocked);
   }
 
   function composerSecretsBlockedMessage() {
+    if (draftChatCreating) return 'Preparing chat…';
     if (startedOnDraft && !draftProjectLocked) {
       return 'Choose a project (or No project) on the home screen first.';
     }
+    if (startedOnDraft && draftProjectLocked && activeChatId == null) {
+      return 'Could not prepare chat. Try choosing the project again.';
+    }
     return 'Open a chat to save secrets.';
+  }
+
+  let draftChatCreating = false;
+
+  /** Adopt a server chat id on the home draft flow (URL + WS subscribe; sidebar optional). */
+  function adoptDraftChat(payload, opts) {
+    const id = Number(payload?.chatId);
+    if (!Number.isFinite(id)) return;
+    activeChatId = id;
+    if (messagesEl) {
+      messagesEl.dataset.chatId = String(id);
+      delete messagesEl.dataset.draft;
+      if (payload.projectId != null && Number.isFinite(Number(payload.projectId))) {
+        messagesEl.dataset.projectId = String(payload.projectId);
+      } else {
+        messagesEl.dataset.projectId = '';
+      }
+    }
+    history.replaceState(null, '', '/chats/' + id);
+    applyTitleForActive(payload.title || 'New chat');
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      wsSend({ type: 'subscribe', chatId: id });
+    }
+    if (opts?.sidebar !== false) {
+      sidebarUpsertChat({
+        id,
+        title: payload.title || 'New chat',
+        agent: payload.agent,
+        projectId: payload.projectId,
+        projectName: payload.projectName,
+        updatedAt: payload.updatedAt,
+      });
+      if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
+    }
+    syncComposerSecretUi();
+  }
+
+  async function ensureDraftChatRow() {
+    if (activeChatId != null) return;
+    const body = { agent: draftAgentSelect?.value || 'openclaw/default' };
+    if (draftChosenProjectId != null && Number.isFinite(draftChosenProjectId)) {
+      body.projectId = draftChosenProjectId;
+    }
+    const res = await fetch('/chats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(t || 'HTTP ' + res.status);
+    }
+    adoptDraftChat(await res.json(), { sidebar: false });
   }
 
   function selectionInsideIclawPlaceholder(text, start, end) {
@@ -234,13 +290,22 @@
     return best;
   }
 
-  function commitDraftFromCard(card) {
-    if (!card || draftProjectLocked) return;
+  async function commitDraftFromCard(card) {
+    if (!card || draftProjectLocked || draftChatCreating) return;
     const rawId = card.getAttribute('data-project-id');
     draftChosenProjectId =
       rawId == null || String(rawId).trim() === '' ? null : Number(rawId);
     if (draftChosenProjectId != null && !Number.isFinite(draftChosenProjectId)) {
       draftChosenProjectId = null;
+    }
+    draftChatCreating = true;
+    try {
+      await ensureDraftChatRow();
+    } catch (err) {
+      alert(err && err.message ? err.message : 'Could not start chat');
+      return;
+    } finally {
+      draftChatCreating = false;
     }
     draftProjectLocked = true;
     if (projectPickEl) projectPickEl.hidden = true;
@@ -258,7 +323,7 @@
     projectPickEl.addEventListener('click', (e) => {
       const card = e.target.closest('.project-pick-card');
       if (!card || draftProjectLocked) return;
-      commitDraftFromCard(card);
+      void commitDraftFromCard(card);
     });
 
     const initSel = (projectPickEl.dataset.initialProjectId || '').trim();
@@ -268,7 +333,7 @@
           ? CSS.escape(initSel)
           : initSel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       const card = projectPickEl.querySelector('.project-pick-card[data-project-id="' + esc + '"]');
-      if (card) queueMicrotask(() => commitDraftFromCard(card));
+      if (card) queueMicrotask(() => void commitDraftFromCard(card));
     }
   }
 
@@ -1414,12 +1479,12 @@
       '<div class="scheduled-item-actions">' +
       '<button type="button" class="queue-item-promote scheduled-item-send-now btn btn--icon btn--ghost" data-queue-id="' +
       esc +
-      '" aria-label="Перервати й надіслати це" title="Перервати поточну відповідь і надіслати це повідомлення">' +
+      '" aria-label="Interrupt and send this" title="Interrupt current reply and send this message">' +
       COMPOSER_PENDING_SEND_SVG +
       '</button>' +
       '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-queue-id="' +
       esc +
-      '" aria-label="Прибрати з черги" title="Прибрати з черги">×</button>' +
+      '" aria-label="Remove from queue" title="Remove from queue">×</button>' +
       '</div>'
     );
   }
@@ -1436,7 +1501,7 @@
       row.innerHTML = composerPendingRowInnerHtml({
         kind: 'queue',
         metaIcon: '⏳',
-        metaText: 'У черзі #' + (idx + 1),
+        metaText: 'In queue #' + (idx + 1),
         content: item.content,
         actionsHtml: queueItemActionsHtml(rowId),
       });
@@ -2364,28 +2429,17 @@
 
       case 'chat-created':
         if (startedOnDraft && activeChatId == null) {
-          // This is our just-created chat — adopt it.
-          activeChatId = msg.chatId;
-          if (messagesEl) {
-            messagesEl.dataset.chatId = String(msg.chatId);
-            delete messagesEl.dataset.draft;
-            if (msg.projectId != null && Number.isFinite(Number(msg.projectId))) {
-              messagesEl.dataset.projectId = String(msg.projectId);
-            } else {
-              messagesEl.dataset.projectId = '';
-            }
-          }
-          history.replaceState(null, '', '/chats/' + msg.chatId);
-          applyTitleForActive(msg.title || 'New chat');
+          adoptDraftChat(msg);
+        } else {
+          sidebarUpsertChat({
+            id: msg.chatId,
+            title: msg.title,
+            agent: msg.agent,
+            projectId: msg.projectId,
+            projectName: msg.projectName,
+            updatedAt: msg.updatedAt,
+          });
         }
-        sidebarUpsertChat({
-          id: msg.chatId,
-          title: msg.title,
-          agent: msg.agent,
-          projectId: msg.projectId,
-          projectName: msg.projectName,
-          updatedAt: msg.updatedAt,
-        });
         if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
         return;
 
@@ -3500,7 +3554,7 @@
     if (!composerSecretPickMenu) return;
     const ctx = composerSecretContext();
     if (!ctx) {
-      alert('Send the first message to open the chat, then use the clip → Secret menu.');
+      alert(composerSecretsBlockedMessage());
       return;
     }
     if (composerAttachMenu) composerAttachMenu.hidden = true;
@@ -4471,17 +4525,17 @@
       '<div class="scheduled-item-actions">' +
       '<button type="button" class="scheduled-item-send-now btn btn--icon btn--ghost" data-scheduled-id="' +
       esc +
-      '" aria-label="Надіслати зараз" title="Надіслати зараз">' +
+      '" aria-label="Send now" title="Send now">' +
       COMPOSER_PENDING_SEND_SVG +
       '</button>' +
       '<button type="button" class="scheduled-item-edit btn btn--icon btn--ghost" data-scheduled-id="' +
       esc +
-      '" aria-label="Редагувати" title="Редагувати">' +
+      '" aria-label="Edit" title="Edit">' +
       COMPOSER_PENDING_EDIT_SVG +
       '</button>' +
       '<button type="button" class="scheduled-item-cancel btn btn--icon btn--ghost" data-scheduled-id="' +
       esc +
-      '" aria-label="Скасувати" title="Скасувати">×</button>' +
+      '" aria-label="Cancel" title="Cancel">×</button>' +
       '</div>'
     );
   }
@@ -4544,7 +4598,7 @@
     const content = (opts && opts.content) || input.value.trim();
     if (!content) return;
     if (!isScheduleWhenAllowed(when)) {
-      alert('Оберіть час не раніше ніж за 3 хвилини від зараз.');
+      alert('Please pick a time at least 3 minutes from now.');
       return;
     }
     const sid = (opts && opts.scheduledId) || editingScheduledId;
@@ -4575,7 +4629,7 @@
         closeScheduleMenu();
         closeSchedulePicker();
       } catch (err) {
-        alert('Не вдалося запланувати: ' + (err instanceof Error ? err.message : err));
+        alert('Failed to schedule: ' + (err instanceof Error ? err.message : err));
       }
       return;
     }
@@ -4595,7 +4649,7 @@
       closeScheduleMenu();
       closeSchedulePicker();
     } catch (err) {
-      alert('Не вдалося оновити: ' + (err instanceof Error ? err.message : err));
+      alert('Failed to update: ' + (err instanceof Error ? err.message : err));
     }
   }
 
@@ -4609,7 +4663,7 @@
       );
       if (!res.ok) throw new Error(await res.text());
     } catch (err) {
-      alert('Не вдалося надіслати: ' + (err instanceof Error ? err.message : err));
+      alert('Failed to send: ' + (err instanceof Error ? err.message : err));
     }
   }
 
@@ -4686,11 +4740,11 @@
     schedulePickerConfirm.addEventListener('click', () => {
       const when = readSchedulePickerValue();
       if (!when) {
-        alert('Оберіть дату й час.');
+        alert('Please pick a date and time.');
         return;
       }
       if (!isScheduleWhenAllowed(when)) {
-        alert('Оберіть час не раніше ніж за 3 хвилини від зараз.');
+        alert('Please pick a time at least 3 minutes from now.');
         return;
       }
       if (schedulePickerOnConfirm) {
@@ -4817,7 +4871,7 @@
     let html = '<div class="iclaw-inline-banner__actions">';
     if (showDismiss) {
       html +=
-        '<button type="button" class="iclaw-inline-banner-dismiss task-create-banner-dismiss" aria-label="Закрити">' +
+        '<button type="button" class="iclaw-inline-banner-dismiss task-create-banner-dismiss" aria-label="Dismiss">' +
         ICLAW_BANNER_COUNTDOWN_RING_SVG +
         '<span class="iclaw-inline-banner-dismiss-glyph" aria-hidden="true">✕</span></button>';
     }
@@ -4827,7 +4881,7 @@
       (openSpinner ? ' aria-busy="true"' : '') +
       '>' +
       (openSpinner ? '<span class="iclaw-inline-banner__btn-spinner" aria-hidden="true"></span> ' : '') +
-      'Відкрити</button></div>';
+      'Open</button></div>';
     return html;
   }
 
@@ -4911,10 +4965,10 @@
     el.setAttribute('role', 'status');
     el.innerHTML =
       '<div class="iclaw-inline-banner__main">' +
-      '<p class="iclaw-inline-banner__lead">Задача «' +
+      '<p class="iclaw-inline-banner__lead">Task "' +
       safeTitle +
-      '» створюється…</p>' +
-      '<p class="iclaw-inline-banner__detail muted">План і контекст готуються у фоні - можна продовжувати чат</p>' +
+      '" is being created…</p>' +
+      '<p class="iclaw-inline-banner__detail muted">Plan and context are being prepared in the background — you can continue chatting</p>' +
       '</div>' +
       buildTaskBannerActionsHtml({ openDisabled: true, openSpinner: true, showDismiss: false });
     host.prepend(el);
@@ -5031,10 +5085,10 @@
     row.el.classList.add('is-ready', 'iclaw-inline-banner--success');
     const lead = row.el.querySelector('.iclaw-inline-banner__lead');
     if (lead) {
-      lead.textContent = 'Задача «' + title + '» готова';
+      lead.textContent = 'Task "' + title + '" is ready';
     }
     const detail = row.el.querySelector('.iclaw-inline-banner__detail');
-    if (detail) detail.textContent = 'План збережено — можна переглянути та запустити агента.';
+    if (detail) detail.textContent = 'Plan saved — you can review it and start the agent.';
     const actions = row.el.querySelector('.iclaw-inline-banner__actions');
     if (actions) {
       actions.outerHTML = buildTaskBannerActionsHtml({
@@ -5050,7 +5104,7 @@
   function taskCreateErrorMessage(err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/failed to fetch/i.test(msg)) {
-      return 'Звʼязок перервалось (перехід на іншу сторінку або мережа). Оновіть чат — задача могла вже створитись.';
+      return 'Connection lost (page navigation or network). Refresh the chat — the task may have already been created.';
     }
     return msg;
   }
@@ -5078,9 +5132,9 @@
     el.setAttribute('role', 'status');
     el.innerHTML =
       '<div class="iclaw-inline-banner__main">' +
-      '<p class="iclaw-inline-banner__lead">Не вдалося створити задачу «' +
+      '<p class="iclaw-inline-banner__lead">Failed to create task "' +
       safeTitle +
-      '»</p>' +
+      '"</p>' +
       '<p class="iclaw-inline-banner__detail">' +
       escapeHtml(msg) +
       '</p>' +
@@ -5119,7 +5173,7 @@
     row.el.classList.add('is-error', 'iclaw-inline-banner--error');
     const lead = row.el.querySelector('.iclaw-inline-banner__lead');
     if (lead) {
-      lead.textContent = 'Не вдалося створити задачу «' + title + '»';
+      lead.textContent = 'Failed to create task "' + title + '"';
     }
     const detail = row.el.querySelector('.iclaw-inline-banner__detail');
     if (detail) {
@@ -5159,7 +5213,7 @@
    * status === 'ready' only, which broke whenever the task skipped through
    * ready quickly (autorun, server-side autorun on fast-plan, WS race where the
    * 'ready' event arrived before the client subscribed). See iClaw bug report
-   * "Задача ... створюється…" stuck for 30 min. */
+   * "Task … is being created…" stuck for 30 min. */
   function isTaskMaterialised(status) {
     return typeof status === 'string' && status !== '' && status !== 'planning';
   }
@@ -5374,7 +5428,7 @@
         showTaskCreatingBanner(rec.pendingId, rec.title, rec);
         markTaskCreateBannerReady(rec.pendingId, rec.taskId, rec.title);
       } else if (rec.status === 'error') {
-        showTaskCreateBannerError(rec.pendingId, rec.title, rec.error || 'Помилка', rec);
+        showTaskCreateBannerError(rec.pendingId, rec.title, rec.error || 'Error', rec);
       }
     }
   }
@@ -5857,41 +5911,6 @@
   });
   // Fire probe once on load. Don't block anything else.
   probeResetPolicyAndMaybeShowBanner();
-
-  // -------------------------------------------------------------------------
-  // Usage cost chip — polls /api/gateway/usage/today every 30s
-  // -------------------------------------------------------------------------
-  const costChip = document.getElementById('cost-chip');
-  function fmtUsd(n) {
-    if (typeof n !== 'number' || !Number.isFinite(n)) return null;
-    if (n < 0.005) return '$0.00';
-    if (n < 1) return '$' + n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
-    return '$' + n.toFixed(2);
-  }
-  async function refreshCost() {
-    if (!costChip) return;
-    try {
-      const res = await fetch('/api/gateway/usage/today', { headers: { Accept: 'application/json' } });
-      if (!res.ok) {
-        costChip.hidden = true;
-        return;
-      }
-      const data = await res.json();
-      const txt = fmtUsd(data.totalUsd);
-      if (txt == null) {
-        costChip.hidden = true;
-        return;
-      }
-      costChip.textContent = 'Today ' + txt;
-      costChip.hidden = false;
-    } catch {
-      costChip.hidden = true;
-    }
-  }
-  if (costChip) {
-    refreshCost();
-    setInterval(refreshCost, 30_000);
-  }
 
   // -------------------------------------------------------------------------
   // npm update banner — installed from __ICLAW_VERSION__, latest from registry
@@ -6701,8 +6720,8 @@
 
     await refreshGlobalTasksBoard();
     showBoardFlashBanner({
-      lead: 'Задачу «' + title + '» запущено',
-      detail: 'Агент працює у фоні. Статус оновлюється на дошці.',
+      lead: 'Task "' + title + '" started',
+      detail: 'Agent is running in the background. Status updates on the board.',
       variant: 'success',
       dismissMs: 12000,
     });
@@ -6718,8 +6737,8 @@
         const status = data.task && data.task.status;
         if (status === 'needs_human') {
           showBoardFlashBanner({
-            lead: 'Потрібна ваша відповідь',
-            detail: 'Задачу «' + title + '» відкрийте в колонці Your turn.',
+            lead: 'Your input is needed',
+            detail: 'Open task "' + title + '" in the Your turn column.',
             variant: 'info',
             dismissMs: 15000,
           });
@@ -6728,7 +6747,7 @@
       .catch(async (err) => {
         await refreshGlobalTasksBoard();
         showBoardFlashBanner({
-          lead: 'Не вдалося запустити агента',
+          lead: 'Failed to start agent',
           detail: err instanceof Error ? err.message : String(err),
           variant: 'error',
           dismissMs: 15000,
@@ -6754,8 +6773,8 @@
 
     await refreshGlobalTasksBoard();
     showBoardFlashBanner({
-      lead: 'Задачу «' + title + '» перезапущено',
-      detail: 'Агент продовжує з останнього кроку. Статус оновиться на дошці.',
+      lead: 'Task "' + title + '" restarted',
+      detail: 'Agent continues from the last step. Status will update on the board.',
       variant: 'success',
       dismissMs: 12000,
     });
@@ -6771,8 +6790,8 @@
         const status = data.task && data.task.status;
         if (status === 'needs_human') {
           showBoardFlashBanner({
-            lead: 'Потрібна ваша відповідь',
-            detail: 'Задачу «' + title + '» відкрийте в колонці Your turn.',
+            lead: 'Your input is needed',
+            detail: 'Open task "' + title + '" in the Your turn column.',
             variant: 'info',
             dismissMs: 15000,
           });
@@ -6781,7 +6800,7 @@
       .catch(async (err) => {
         await refreshGlobalTasksBoard();
         showBoardFlashBanner({
-          lead: 'Не вдалося перезапустити',
+          lead: 'Failed to restart',
           detail: err instanceof Error ? err.message : String(err),
           variant: 'error',
           dismissMs: 15000,
@@ -6808,8 +6827,8 @@
 
     await refreshGlobalTasksBoard();
     showBoardFlashBanner({
-      lead: 'Відповідь надіслана — агент продовжує «' + title + '»',
-      detail: 'Статус оновлюється на дошці.',
+      lead: 'Response sent — agent continues "' + title + '"',
+      detail: 'Status updates on the board.',
       variant: 'success',
       dismissMs: 12000,
     });
@@ -6826,29 +6845,29 @@
         const status = data.task && data.task.status;
         if (status === 'needs_human') {
           showBoardFlashBanner({
-            lead: 'Потрібна ваша відповідь',
-            detail: 'Задачу «' + title + '» відкрийте в колонці Your turn.',
+            lead: 'Your input is needed',
+            detail: 'Open task "' + title + '" in the Your turn column.',
             variant: 'info',
             dismissMs: 15000,
           });
         } else if (status === 'needs_review') {
           showBoardFlashBanner({
-            lead: 'Задачу «' + title + '» готово до перевірки',
-            detail: 'Відкрийте її в колонці Review.',
+            lead: 'Task "' + title + '" ready for review',
+            detail: 'Open it in the Review column.',
             variant: 'success',
             dismissMs: 12000,
           });
         } else if (status === 'done') {
           showBoardFlashBanner({
-            lead: 'Задачу «' + title + '» завершено',
-            detail: 'Картка на дошці в колонці Done.',
+            lead: 'Task "' + title + '" completed',
+            detail: 'Card is on the board in the Done column.',
             variant: 'success',
             dismissMs: 12000,
           });
         } else if (status === 'failed') {
           showBoardFlashBanner({
-            lead: 'Задачу «' + title + '» не вдалося продовжити',
-            detail: 'Перевірте задачу на дошці або відкрийте її знову.',
+            lead: 'Task "' + title + '" could not be continued',
+            detail: 'Check the task on the board or open it again.',
             variant: 'error',
             dismissMs: 15000,
           });
@@ -6857,7 +6876,7 @@
       .catch(async (err) => {
         await refreshGlobalTasksBoard();
         showBoardFlashBanner({
-          lead: 'Не вдалося продовжити задачу',
+          lead: 'Failed to continue task',
           detail: err instanceof Error ? err.message : String(err),
           variant: 'error',
           dismissMs: 15000,
@@ -7502,7 +7521,7 @@
         };
         appendAskBubble(
           'assistant',
-          'Знімок контексту зроблено. Питай що завгодно про цю задачу — це не впливає на план і виконання.',
+          'Context snapshot taken. Ask anything about this task — it does not affect the plan or execution.',
         );
         input?.focus();
       } catch (err) {
@@ -7788,7 +7807,7 @@
       deleteBtn.addEventListener('click', async () => {
         if (
           !window.confirm(
-            'Видалити цю задачу? Цю дію не можна скасувати.',
+            'Delete this task? This action cannot be undone.',
           )
         ) {
           return;

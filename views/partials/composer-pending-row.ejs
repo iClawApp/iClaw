@@ -30,8 +30,8 @@
         type="button"
         class="scheduled-item-send-now btn btn--icon btn--ghost"
         data-scheduled-id="<%= rowId %>"
-        aria-label="Надіслати зараз"
-        title="Надіслати зараз"
+        aria-label="Send now"
+        title="Send now"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 19V5M5 12l7-7 7 7"/>
@@ -41,8 +41,8 @@
         type="button"
         class="scheduled-item-edit btn btn--icon btn--ghost"
         data-scheduled-id="<%= rowId %>"
-        aria-label="Редагувати"
-        title="Редагувати"
+        aria-label="Edit"
+        title="Edit"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 20h9"/>
@@ -53,16 +53,16 @@
         type="button"
         class="scheduled-item-cancel btn btn--icon btn--ghost"
         data-scheduled-id="<%= rowId %>"
-        aria-label="Скасувати"
-        title="Скасувати"
+        aria-label="Cancel"
+        title="Cancel"
       >×</button>
     <% } else { %>
       <button
         type="button"
         class="queue-item-promote scheduled-item-send-now btn btn--icon btn--ghost"
         data-queue-id="<%= rowId %>"
-        aria-label="Перервати й надіслати це"
-        title="Перервати поточну відповідь і надіслати це повідомлення"
+        aria-label="Interrupt and send this"
+        title="Interrupt current reply and send this message"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 19V5M5 12l7-7 7 7"/>
@@ -72,8 +72,8 @@
         type="button"
         class="scheduled-item-cancel btn btn--icon btn--ghost"
         data-queue-id="<%= rowId %>"
-        aria-label="Прибрати з черги"
-        title="Прибрати з черги"
+        aria-label="Remove from queue"
+        title="Remove from queue"
       >×</button>
     <% } %>
   </div>

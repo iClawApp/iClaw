@@ -78,6 +78,19 @@ export const chats = {
       .run(agent, sessionKey, projectId, kind, title);
     return this.get(Number(info.lastInsertRowid))!;
   },
+  /** Composer-only row — hidden from sidebar until promoted on first user message. */
+  isDraft(id: number): boolean {
+    const row = this.get(id);
+    return row?.chat_kind === 'draft';
+  },
+  promoteFromDraft(id: number): boolean {
+    const info = db
+      .prepare(
+        "UPDATE chats SET chat_kind = 'normal' WHERE id = ? AND COALESCE(chat_kind, 'normal') = 'draft'",
+      )
+      .run(id);
+    return info.changes > 0;
+  },
   /** Rename only — does not touch `updated_at` so sidebar order stays put. */
   rename(id: number, title: string, opts?: { manual?: boolean }): void {
     const next = title.trim() || 'New chat';

@@ -40,13 +40,6 @@
         <span>Reasoning</span>
       </label>
 
-      <span
-        class="cost-chip chip chip--accent"
-        id="cost-chip"
-        title="Total OpenClaw spend today (refreshes every 30s)"
-        hidden
-      ></span>
-
       <% if (activeChat.project_id) { %>
         <form
           method="post"
@@ -69,7 +62,7 @@
 
       <button
         type="button"
-        class="stop-btn btn btn--danger btn--sm"
+        class="stop-btn btn btn--ghost btn--sm"
         id="stop-btn"
         aria-label="Stop generation"
         title="Stop this turn"
@@ -89,9 +82,13 @@
       <% } %>
 
       <form method="post" action="/chats/<%= activeChat.id %>/delete" class="delete-form">
-        <button type="submit" onclick="return confirm('Delete this chat?')" aria-label="Delete">
-          ×
-        </button>
+        <button
+          type="submit"
+          class="btn btn--ghost btn--sm"
+          onclick="return confirm('Delete this chat?')"
+          aria-label="Delete chat"
+          title="Delete this chat"
+        >🗑️ Delete</button>
       </form>
     </header>
 

@@ -1,6 +1,6 @@
 /**
  * /api/gateway/* — thin proxies for OpenClaw RPCs that the UI needs.
- * Verifies shape normalisation, error → 502, and the usage.cost cache.
+ * Verifies shape normalisation and error → 502.
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
@@ -14,7 +14,6 @@ const openclawWsMock = {
   abortRun: vi.fn(async () => undefined),
   runTurn: vi.fn(async () => ({ runId: '', text: '' })),
   resolveExecApproval: vi.fn(async () => undefined),
-  usageCost: vi.fn(async () => ({ totalUsd: 1.23 })),
   listModels: vi.fn(async () => ({ models: [] })),
   listCommands: vi.fn(async () => ({ commands: [] })),
   patchSession: vi.fn(async () => ({})),
@@ -50,7 +49,6 @@ const app = createApp();
 beforeAll(() => resetTestDb());
 afterEach(() => {
   resetTestDb();
-  openclawWsMock.usageCost.mockClear();
   openclawWsMock.listCommands.mockClear();
 });
 
@@ -96,29 +94,3 @@ describe('GET /api/gateway/commands', () => {
   });
 });
 
-describe('GET /api/gateway/usage/today', () => {
-  it('returns totalUsd with raw payload, caches for the TTL window', async () => {
-    openclawWsMock.usageCost.mockResolvedValueOnce({ totalUsd: 0.42 });
-    const first = await request(app).get('/api/gateway/usage/today');
-    expect(first.status).toBe(200);
-    expect(first.body.totalUsd).toBe(0.42);
-    // Second call should hit the cache, NOT the mock
-    const cached = await request(app).get('/api/gateway/usage/today');
-    expect(cached.body.totalUsd).toBe(0.42);
-    expect(openclawWsMock.usageCost).toHaveBeenCalledTimes(1);
-  });
-
-  it('502s on gateway error with null total', async () => {
-    // Force the cache to miss — call enough times that any cached value is stale.
-    // (Simpler: import fresh app via resetModules; but cache TTL is 30s so a
-    // fresh test file would have a clean slate. Within this file the previous
-    // test populated it, so we test the failure path BEFORE the cache existed
-    // in real life. For deterministic coverage here, we just verify the path
-    // returns sensible shape.)
-    openclawWsMock.usageCost.mockRejectedValueOnce(new Error('boom'));
-    // bypass: this run might hit cache — just check the shape we expect:
-    const res = await request(app).get('/api/gateway/usage/today');
-    expect([200, 502]).toContain(res.status);
-    expect('totalUsd' in res.body).toBe(true);
-  });
-});

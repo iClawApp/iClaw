@@ -66,7 +66,7 @@ export interface ProjectSecret {
   created_at: string;
 }
 
-export type ChatKind = 'normal' | 'task_execution';
+export type ChatKind = 'normal' | 'draft' | 'task_execution';
 
 export type TaskStatus =
   | 'planning'

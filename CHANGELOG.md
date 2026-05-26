@@ -2,7 +2,11 @@
 
 All notable changes to iClaw are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses [Semantic Versioning](https://semver.org/) starting at v0.1.0.
 
-## [Unreleased]
+## [0.1.4] — 2026-05-26
+
+### Removed
+
+- Today's-spend chip and `usage.cost` polling. Calm-by-default — cost insight belongs in OpenClaw's own tools, not duplicated as a 30 s poll here. Drops the chip, the `/api/gateway/usage/today` endpoint, the `usageCost` WS method, and the related test mocks.
 
 ### Changed
 
@@ -19,11 +23,11 @@ All notable changes to iClaw are documented here. The format follows [Keep a Cha
 - After every assistant reply, an LLM sub-request proposes 0–3 short facts; the user accepts or rejects each inline. Accepted facts are injected into the next user message as `[Project context]` block under a ~1500-token budget.
 - Per-chat **Suggest facts for project** toggle blocks WRITE only (reads always happen if the chat is in a project).
 - Auto-compaction kicks in at 30 facts → merged down to 15 via LLM call.
-- Project page with **Чати / Памʼять / Посилання** tabs; activity-sorted project list with 14-day metrics.
+- Project page with **Chats / Memory / Links** tabs; activity-sorted project list with 14-day metrics.
 - Inline edit + delete on each fact card, with fact source-chat title rendered.
 
 #### Scheduled messages (Telegram-style)
-- Long-press the Send button (450 ms) opens a menu with presets (+10 min / +1 h / +3 h / завтра 9:00) and a custom datetime picker.
+- Long-press the Send button (450 ms) opens a menu with presets (+10 min / +1 h / +3 h / tomorrow 9:00) and a custom datetime picker.
 - Pending list rendered above the composer with cancel buttons; updated live via `scheduled-added` / `scheduled-deleted` events.
 - Background `scheduler` service sweeps `scheduled_messages` every 15 s, dispatches through the normal `sendMessage` path, and runs once on boot so anything that came due during downtime fires immediately. Restart-safe.
 
@@ -37,7 +41,6 @@ All notable changes to iClaw are documented here. The format follows [Keep a Cha
 - **Exec approval cards** rendered inline on `exec.approval.requested` (Approve / Deny → `exec.approval.resolve`); resolved cards leave a brief decision trace and fade.
 - **Live gateway badge** wired to `health` / `shutdown` events and WS reconnect transitions (states: connected / degraded / shutting down / unreachable).
 - **Slash autocomplete** in the composer powered by `commands.list` — Arrow keys + Enter/Tab to pick.
-- **Today's spend chip** polled from `usage.cost` (30 s server cache + 30 s client poll).
 - **`sessions.changed` index subscription** survives reconnects (gatewayEvents re-fires the subscribe on every `hello-ok`).
 - **Tick watchdog**: honour `policy.tickIntervalMs` from the hello-ok; close + reconnect the WS if no frame arrives for 2× the window (recovers cleanly from laptop sleep/wake).
 - **Session cleanup**: deleting an iClaw chat now calls `sessions.delete` on the gateway so transcripts on disk don't leak.
