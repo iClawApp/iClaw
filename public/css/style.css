@@ -3428,6 +3428,51 @@ code {
 .draft-body:not(.is-picking) .draft-pick-stage {
   display: none;
 }
+
+/* Gateway/agents-load failure notice — shown above the project picker so the
+ * screen stays usable and the real error (and the baseUrl we tried) is visible
+ * instead of a dead-end "Start OpenClaw" message. */
+.draft-agents-error {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto 24px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  text-align: left;
+}
+.draft-agents-error__title {
+  margin: 0 0 6px;
+  font-weight: 600;
+  color: var(--warn);
+}
+.draft-agents-error__hint {
+  margin: 0 0 12px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.draft-agents-error__detail {
+  margin: 0 0 12px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+.draft-agents-error__detail-label {
+  display: inline-block;
+  margin-right: 6px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  opacity: 0.8;
+}
+.draft-agents-error__detail code {
+  font-size: 0.78rem;
+}
+.draft-agents-error__retry {
+  margin: 0;
+}
 .draft-composer-wrap {
   flex-shrink: 0;
 }

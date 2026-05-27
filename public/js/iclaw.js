@@ -3303,8 +3303,11 @@
 
   function applyGatewayStatus(status, detail) {
     const badge = document.getElementById('gateway-badge');
-    const offline =
-      status === 'down' || status === 'degraded' || status === 'shutdown';
+    // "degraded" (gateway answered /health but the WS RPC can't get through)
+    // gets its own in-page banner on the home/projects pages, so the sidebar
+    // "Start OpenClaw" banner is reserved for a genuinely-offline gateway —
+    // there's nothing to "start" when it's already running.
+    const offline = status === 'down' || status === 'shutdown';
     setGatewayOfflineBannerVisible(offline);
 
     if (!badge) return;
@@ -3314,7 +3317,7 @@
       badge.textContent = 'OpenClaw: connected';
     } else if (status === 'degraded') {
       badge.classList.add('degraded');
-      badge.textContent = 'OpenClaw: degraded';
+      badge.textContent = 'OpenClaw: unreachable';
     } else if (status === 'shutdown') {
       badge.classList.add('shutdown');
       badge.textContent = 'OpenClaw: shutting down';
@@ -3328,10 +3331,9 @@
 
   (function initGatewayOfflineBanner() {
     const badge = document.getElementById('gateway-badge');
-    if (
-      badge &&
-      (badge.classList.contains('down') || badge.classList.contains('degraded'))
-    ) {
+    // Only a genuinely-offline gateway shows the sidebar "Start OpenClaw" banner.
+    // "degraded" is handled by the in-page banner instead.
+    if (badge && badge.classList.contains('down')) {
       setGatewayOfflineBannerVisible(true);
       return;
     }

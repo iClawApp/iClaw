@@ -5,6 +5,10 @@
 
   <main class="col col-main projects-hub-page">
     <div class="projects-hub-inner">
+      <% if (typeof agentsError !== 'undefined' && agentsError) { %>
+      <%- include('partials/gatewayError', { agentsError, gatewayUp, openclawBaseUrl }) %>
+      <% } %>
+
       <header class="projects-hub-head">
         <h1 class="projects-hub-title">Projects</h1>
         <p class="projects-hub-intro muted">
