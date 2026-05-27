@@ -1920,12 +1920,166 @@
     } else {
       dot.classList.remove('working');
     }
+    scheduleFaviconUpdate();
   }
   function setUnreadDot(id, on) {
     const dot = statusDot(id);
     if (!dot) return;
     if (on) dot.classList.add('unread');
     else dot.classList.remove('unread');
+    scheduleFaviconUpdate();
+  }
+
+  // -------------------------------------------------------------------------
+  // Dynamic favicon — rounded (Apple-ish) + aggregate status dots.
+  //
+  // The favicon is a *derived view* of the sidebar status dots already in the
+  // DOM, so there's no parallel state to keep in sync. We only repaint when
+  // the computed verdict actually changes (debounced), so steady-state =
+  // zero work. Dots are static (never animated) — animating a favicon would
+  // re-encode a PNG every frame, which is the one thing that actually costs.
+  // -------------------------------------------------------------------------
+  const FAVICON_DEBOUNCE_MS = 200;
+  const FAVICON_SIZE = 64; // render large; the browser downscales to 16/32
+  let faviconBaseImg = null;
+  let faviconBaseReady = false;
+  let faviconLastVerdict = null;
+  let faviconDebounceTimer = null;
+  let faviconLinkEl = null;
+
+  function faviconColor(name) {
+    // Read live CSS tokens so dark theme is respected; hardcoded fallbacks
+    // are the light-theme values.
+    const read = (v, fallback) => {
+      try {
+        const got = getComputedStyle(document.documentElement)
+          .getPropertyValue(v)
+          .trim();
+        return got || fallback;
+      } catch {
+        return fallback;
+      }
+    };
+    if (name === 'orange') return '#ff9500';
+    if (name === 'blue') return read('--md-link', '#2962ff');
+    if (name === 'green') return read('--ok', '#16a34a');
+    return '#888';
+  }
+
+  function ensureFaviconLink() {
+    if (faviconLinkEl) return faviconLinkEl;
+    // Drop the static PNG/ICO icon links so the browser doesn't prefer them
+    // over our canvas one. apple-touch-icon is left alone (iOS rounds it).
+    document
+      .querySelectorAll('link[rel~="icon"]')
+      .forEach((el) => el.parentNode && el.parentNode.removeChild(el));
+    faviconLinkEl = document.createElement('link');
+    faviconLinkEl.rel = 'icon';
+    faviconLinkEl.id = 'iclaw-dynamic-favicon';
+    document.head.appendChild(faviconLinkEl);
+    return faviconLinkEl;
+  }
+
+  /** Read the sidebar DOM → ordered, de-duped color list (max 2). */
+  function computeFaviconVerdict() {
+    const has = (sel) => document.querySelector(sel) != null;
+    const working =
+      has('.chat-list .status-dot.working') ||
+      has('.sidebar-tasks-dots .status-dot.working');
+    const unread = has('.chat-list .status-dot.unread');
+    const needsHuman = has('.sidebar-tasks-dots .status-dot.task-human');
+    const review = has('.sidebar-tasks-dots .status-dot.task-review');
+    const colors = [];
+    if (needsHuman) colors.push('orange'); // most urgent
+    if (unread || review) colors.push('blue');
+    if (working) colors.push('green');
+    return colors.slice(0, 2); // cap at 2 — 3 dots turn to mush at 16px
+  }
+
+  function roundedClip(ctx, s) {
+    const r = s * 0.28; // squircle-ish corner
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(0, 0, s, s, r);
+    } else {
+      ctx.moveTo(r, 0);
+      ctx.arcTo(s, 0, s, s, r);
+      ctx.arcTo(s, s, 0, s, r);
+      ctx.arcTo(0, s, 0, 0, r);
+      ctx.arcTo(0, 0, s, 0, r);
+    }
+    ctx.closePath();
+  }
+
+  function drawFavicon(colors) {
+    if (!faviconBaseReady) return;
+    const s = FAVICON_SIZE;
+    const canvas = document.createElement('canvas');
+    canvas.width = s;
+    canvas.height = s;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Base icon, clipped to the rounded shape.
+    ctx.save();
+    roundedClip(ctx, s);
+    ctx.clip();
+    ctx.drawImage(faviconBaseImg, 0, 0, s, s);
+    ctx.restore();
+
+    // Status dots in the bottom-right, drawn right→left so the highest
+    // priority (colors[0]) sits closest to the corner. Each gets a light
+    // ring so it reads on any base color.
+    const dotR = s * 0.17;
+    const ring = Math.max(1.5, s * 0.045);
+    const gap = dotR * 0.7;
+    let cx = s - dotR - ring;
+    const cy = s - dotR - ring;
+    for (const color of colors) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, dotR + ring, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+      ctx.fillStyle = faviconColor(color);
+      ctx.fill();
+      cx -= dotR * 2 + gap;
+    }
+
+    try {
+      ensureFaviconLink().href = canvas.toDataURL('image/png');
+    } catch {
+      /* canvas tainted / unsupported — leave the static favicon */
+    }
+  }
+
+  function scheduleFaviconUpdate() {
+    if (faviconDebounceTimer != null) clearTimeout(faviconDebounceTimer);
+    faviconDebounceTimer = setTimeout(() => {
+      faviconDebounceTimer = null;
+      const colors = computeFaviconVerdict();
+      const key = colors.join(',');
+      if (key === faviconLastVerdict) return; // verdict unchanged → no repaint
+      faviconLastVerdict = key;
+      drawFavicon(colors);
+    }, FAVICON_DEBOUNCE_MS);
+  }
+
+  function initDynamicFavicon() {
+    if (!document.head) return;
+    ensureFaviconLink();
+    const img = new Image();
+    img.onload = () => {
+      faviconBaseImg = img;
+      faviconBaseReady = true;
+      faviconLastVerdict = null; // force the first paint (rounding even when idle)
+      scheduleFaviconUpdate();
+    };
+    img.onerror = () => {
+      /* no base image — keep whatever the browser already has */
+    };
+    img.src = '/icon-192.png';
   }
 
   let searchMatchSet = null;
@@ -5180,6 +5334,7 @@
     link.querySelector('.sidebar-tasks-dots')?.remove();
     const html = renderTasksNavDotsHtml(signals);
     if (html) link.insertAdjacentHTML('beforeend', html);
+    scheduleFaviconUpdate();
   }
 
   async function refreshTasksNavSignals() {
@@ -8112,6 +8267,7 @@
   initProjectPageTabs();
   initTasksBoardPage();
   initTaskDetailPage();
+  initDynamicFavicon();
   if (document.getElementById('sidebar-tasks-link')) void refreshTasksNavSignals();
   hydrateTaskApproveRunFlash();
   hydrateTaskResumeFlash();

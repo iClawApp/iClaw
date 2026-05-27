@@ -10,6 +10,7 @@ All notable changes to iClaw are documented here. The format follows [Keep a Cha
 - **Sidebar discovery pill.** "Tip: right-click a chat for options" under the toolbar. Hides forever after the first contextmenu (or hover-hold) on a chat item; otherwise throttled to once per day.
 - **Hover-hold gestures (1.5 s)** — open the same menus as long-press / right-click without clicking. Cursor parked on the Send button opens the schedule menu; cursor parked on a sidebar chat item opens the context menu.
 - **Hover-intent auto-close (3.5 s)** for both menus. Mouse leaves the menu → 3.5 s timer; returns → timer resets. Replaces the schedule menu's old 10 s blanket timeout.
+- **Dynamic favicon.** The browser tab icon is now canvas-rendered with Apple-style rounded corners, and carries up to two status dots aggregated across all chats/tasks: 🟠 needs-human, 🔵 chat ready / task-review, 🟢 working (priority orange → blue → green). It's a derived view of the sidebar status dots — repainted only when the verdict actually changes (debounced), never animated, so steady-state cost is zero.
 
 ### Removed
 
