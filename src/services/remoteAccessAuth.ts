@@ -186,7 +186,7 @@ function renderLoginPage(opts: {
 }): string {
   const safeNext = (opts.next ?? '/').replace(/"/g, '');
   const errorBlock = opts.errorMessage
-    ? `<div class="err">${opts.errorMessage}</div>`
+    ? `<div class="err" role="alert">${opts.errorMessage}</div>`
     : '';
   return `<!doctype html>
 <html lang="en">
@@ -194,41 +194,247 @@ function renderLoginPage(opts: {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>iClaw — Remote Access</title>
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-         margin: 0; min-height: 100vh; display: grid; place-items: center;
-         background: #0e1116; color: #e6e8eb; }
-  form { background: #161a22; padding: 32px 28px; border-radius: 12px;
-         max-width: 360px; width: 92%; box-shadow: 0 8px 32px rgba(0,0,0,.35);
-         border: 1px solid #232936; }
-  h1 { font-size: 18px; margin: 0 0 6px; }
-  p { margin: 0 0 18px; color: #95a0b0; font-size: 13px; line-height: 1.4; }
-  label { display: block; font-size: 12px; color: #95a0b0; margin: 0 0 6px; }
-  input[type=password] { width: 100%; padding: 10px 12px; border-radius: 8px;
-         border: 1px solid #2a3140; background: #0e1116; color: #e6e8eb;
-         font-size: 14px; box-sizing: border-box; }
-  input[type=password]:focus { outline: 2px solid #3b82f6; outline-offset: -1px; }
-  button { margin-top: 16px; width: 100%; padding: 10px 14px; border-radius: 8px;
-         border: 0; background: #3b82f6; color: #fff; font-weight: 600;
-         font-size: 14px; cursor: pointer; }
-  button:hover { background: #2563eb; }
-  .err { background: #3b1216; color: #f6a8a8; border: 1px solid #5b1d22;
-         padding: 8px 10px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
-  .foot { margin-top: 16px; color: #6b7585; font-size: 11px; text-align: center; }
+  :root {
+    color-scheme: light dark;
+    --bg: #0b0e13;
+    --surface: #141821;
+    --surface-2: #1b202c;
+    --border: #232936;
+    --border-strong: #2c3343;
+    --text: #e6e8eb;
+    --muted: #8a94a5;
+    --muted-2: #6b7585;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --accent-ring: rgba(59,130,246,0.20);
+    --danger-bg: #3b1216;
+    --danger-fg: #f6a8a8;
+    --danger-border: #5b1d22;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background:
+      radial-gradient(1200px 600px at 50% -200px, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%),
+      var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  .header {
+    padding: 22px 28px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .header-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+    padding: 4px 6px;
+    border-radius: 8px;
+    transition: background 0.12s ease;
+  }
+  .header-brand:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+  .header-logo {
+    width: 22px; height: 22px;
+    border-radius: 5px;
+    display: block;
+  }
+
+  /* ── Main card ──────────────────────────────────────────── */
+  .main {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    padding: 0 24px 24px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px 36px 32px;
+    max-width: 400px;
+    width: 100%;
+    box-shadow:
+      0 1px 0 color-mix(in srgb, #fff 4%, transparent) inset,
+      0 24px 60px rgba(0,0,0,0.45),
+      0 2px 6px rgba(0,0,0,0.2);
+  }
+  .card-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: color-mix(in srgb, var(--accent) 90%, var(--text));
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  .card-eyebrow-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+  .card-title {
+    margin: 0 0 6px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+  .card-desc {
+    margin: 0 0 26px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .err {
+    background: var(--danger-bg);
+    color: var(--danger-fg);
+    border: 1px solid var(--danger-border);
+    padding: 10px 12px;
+    border-radius: 9px;
+    font-size: 13px;
+    line-height: 1.4;
+    margin-bottom: 18px;
+  }
+
+  .field-label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin: 0 0 7px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  .input {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  }
+  .input:hover { border-color: color-mix(in srgb, var(--border-strong) 100%, var(--text) 5%); }
+  .input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-ring);
+  }
+
+  .submit {
+    margin-top: 22px;
+    width: 100%;
+    padding: 12px 16px;
+    border-radius: 10px;
+    border: 0;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: -0.005em;
+    cursor: pointer;
+    transition: background 0.12s ease, transform 0.08s ease;
+  }
+  .submit:hover { background: var(--accent-hover); }
+  .submit:active { transform: scale(0.985); }
+  .submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .card-foot {
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    color: var(--muted-2);
+    font-size: 11.5px;
+    line-height: 1.55;
+    text-align: center;
+  }
+
+  /* ── Footer ─────────────────────────────────────────────── */
+  .footer {
+    text-align: center;
+    padding: 22px 24px 28px;
+    color: var(--muted-2);
+    font-size: 11.5px;
+    line-height: 1.6;
+  }
+  .footer a {
+    color: var(--muted);
+    text-decoration: none;
+    transition: color 0.12s ease;
+  }
+  .footer a:hover { color: var(--text); }
+
+  @media (max-width: 480px) {
+    .header { padding: 18px 20px; }
+    .card { padding: 32px 24px 24px; border-radius: 14px; }
+    .card-title { font-size: 20px; }
+  }
 </style>
 </head>
 <body>
-<form method="POST" action="${LOGIN_PATH}" autocomplete="off">
-  <h1>iClaw Remote Access</h1>
-  <p>Enter the passphrase shown on the host machine to continue.</p>
-  ${errorBlock}
-  <label for="p">Passphrase</label>
-  <input id="p" name="passphrase" type="password" autocomplete="current-password" required autofocus />
-  <input type="hidden" name="next" value="${safeNext}" />
-  <button type="submit">Continue</button>
-  <div class="foot">This page is served by your local iClaw, not the relay.</div>
-</form>
+<header class="header">
+  <a class="header-brand" href="https://iclaw.digital" target="_blank" rel="noopener noreferrer">
+    <img class="header-logo" src="/favicon.ico" alt="" aria-hidden="true" />
+    <span>iClaw</span>
+  </a>
+</header>
+
+<main class="main">
+  <form method="POST" action="${LOGIN_PATH}" autocomplete="off" class="card">
+    <span class="card-eyebrow">
+      <span class="card-eyebrow-dot" aria-hidden="true"></span>
+      Remote Access
+    </span>
+    <h1 class="card-title">Enter the passphrase</h1>
+    <p class="card-desc">
+      The passphrase is displayed on the host machine that started this tunnel.
+    </p>
+
+    ${errorBlock}
+
+    <label class="field-label" for="p">Passphrase</label>
+    <input id="p" class="input" name="passphrase" type="password"
+           autocomplete="current-password" required autofocus
+           spellcheck="false" autocapitalize="none" />
+    <input type="hidden" name="next" value="${safeNext}" />
+
+    <button class="submit" type="submit">Continue</button>
+
+    <div class="card-foot">
+      This page is served by your local iClaw — not the relay.
+    </div>
+  </form>
+</main>
+
+<footer class="footer">
+  Powered by
+  <a href="https://iclaw.digital" target="_blank" rel="noopener noreferrer">iclaw.digital</a>
+</footer>
 </body>
 </html>`;
 }
