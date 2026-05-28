@@ -538,34 +538,33 @@ code {
   display: block;
 }
 
-/* Settings (gear) button — sibling to the search toggle, but never hidden
-   when search is open. Same hit-target + visual language. */
+/* Settings (gear) button — small icon-only entry to /settings, sits left
+   of "New chat". Sibling to the search toggle but smaller and never
+   hidden when search is open. */
 .sidebar-settings-btn {
   flex: 0 0 auto;
-  width: 38px;
-  min-width: 38px;
-  height: 38px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  align-self: center;
   margin: 0;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--sidebar-bg));
-  border-radius: 10px;
+  border: 0;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   text-decoration: none;
   transition:
-    background 0.15s ease,
-    color 0.15s ease,
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+    background 0.12s ease,
+    color 0.12s ease;
 }
 .sidebar-settings-btn:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--hover) 55%, transparent);
-  border-color: color-mix(in srgb, var(--border) 90%, var(--sidebar-bg));
 }
 .sidebar-settings-btn:focus-visible {
   outline: none;
@@ -573,12 +572,11 @@ code {
 }
 .sidebar-settings-btn.active {
   color: var(--text);
-  background: color-mix(in srgb, var(--hover) 70%, transparent);
-  border-color: color-mix(in srgb, var(--border) 90%, var(--sidebar-bg));
+  background: color-mix(in srgb, var(--hover) 60%, transparent);
 }
 .sidebar-settings-btn svg {
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   display: block;
 }
 
