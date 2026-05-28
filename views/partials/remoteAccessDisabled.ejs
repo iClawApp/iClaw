@@ -1,0 +1,22 @@
+<form class="ra-form" id="ra-enable-form" onsubmit="return false">
+  <fieldset>
+    <legend>How long should this tunnel stay open?</legend>
+    <div class="ra-duration-options">
+      <% allowedDurationsMs.forEach(function (ms, i) {
+        var label =
+          ms === 30 * 60000      ? '30 minutes' :
+          ms === 12 * 60 * 60000 ? '12 hours'   :
+          ms === 7 * 86400000    ? '7 days'     :
+          ms === 30 * 86400000   ? '30 days'    : (ms + 'ms');
+      %>
+      <label class="ra-duration-option">
+        <input type="radio" name="durationMs" value="<%= ms %>"<%= i === 1 ? ' checked' : '' %> />
+        <span><%= label %></span>
+      </label>
+      <% }); %>
+    </div>
+  </fieldset>
+  <div>
+    <button type="submit" class="btn btn--primary" id="ra-enable-btn">Enable Remote Access</button>
+  </div>
+</form>

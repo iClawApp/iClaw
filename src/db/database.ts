@@ -185,6 +185,20 @@ CREATE TABLE IF NOT EXISTS task_ask_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_task_ask_sessions_task ON task_ask_sessions(task_id);
 
+-- Remote-access state. Singleton (id = 1) — only one tunnel per iClaw at a
+-- time. Persisted so a tunnel enabled with e.g. 30-day duration survives
+-- iClaw restarts. Passphrase is stored plaintext on the assumption that
+-- this DB lives on the user's local machine and isn't synced elsewhere.
+CREATE TABLE IF NOT EXISTS remote_access_state (
+  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  enabled     INTEGER NOT NULL DEFAULT 0,
+  passphrase  TEXT,
+  duration_ms INTEGER,
+  started_at  INTEGER,
+  expires_at  INTEGER,
+  updated_at  INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+);
+
 -- Robustness: any new message bumps the parent chat's updated_at so sidebar
 -- sorting is always correct even if a caller forgets the manual chats.touch().
 CREATE TRIGGER IF NOT EXISTS trg_chats_touch_on_message

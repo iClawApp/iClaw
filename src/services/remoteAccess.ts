@@ -1,20 +1,22 @@
 /**
  * Remote Access client.
  *
- * When enabled, iClaw opens an outbound WebSocket to a relay
- * (`ICLAW_RELAY_URL`). The relay allocates a temporary subdomain and
- * forwards public HTTP requests back to us as `req` frames; we replay them
- * against the local Express server over loopback and stream the response
- * back as a `res` frame.
+ * iClaw opens an outbound WebSocket to a relay; the relay allocates a
+ * temporary subdomain and forwards public HTTP requests + WebSocket
+ * upgrades back to us, which we replay against the local Express server.
  *
- * No auth / encryption layer yet — that lands in follow-up work
- * (invite-token, SPAKE2 password handshake, device keypairs).
+ * Two activation paths:
  *
- * Activation:
- *   ICLAW_REMOTE_ACCESS=1
- *   ICLAW_RELAY_URL=ws://127.0.0.1:4100/tunnel    (or wss://… in production)
+ *   1. UI (preferred): the Settings page POSTs to /api/remote-access/start
+ *      with a chosen `durationMs` (30 min / 12 h / 7 d / 30 d). State is
+ *      persisted to SQLite and auto-resumed on iClaw restart; the tunnel
+ *      auto-stops when `expires_at` hits.
  *
- * Both vars must be set; otherwise `start()` is a no-op.
+ *   2. Legacy env: `ICLAW_REMOTE_ACCESS=1` + `ICLAW_RELAY_URL=ws(s)://…`.
+ *      Infinite duration, no persistence. Useful for headless dev.
+ *
+ * Auth/encryption beyond the password gate (SPAKE2, device keypairs) lands
+ * in follow-up work.
  */
 
 import http from 'node:http';
@@ -30,6 +32,10 @@ import {
   TUNNELED_HEADER,
   TUNNELED_VALUE,
 } from './remoteAccessAuth';
+import {
+  remoteAccessState,
+  type RemoteAccessPersistedState,
+} from './remoteAccessState';
 
 /* ---------------------------------------------------------------- frames -- */
 
@@ -127,11 +133,30 @@ interface StartOptions {
   localPort: number;
 }
 
+/**
+ * Allowed tunnel durations exposed to the UI (in milliseconds). The API
+ * rejects anything outside this list. Order matches the UI radio buttons.
+ */
+export const ALLOWED_DURATIONS_MS: readonly number[] = Object.freeze([
+  30 * 60_000,                  // 30 minutes
+  12 * 60 * 60_000,             // 12 hours
+  7 * 24 * 60 * 60_000,         // 7 days
+  30 * 24 * 60 * 60_000,        // 30 days
+]);
+
 let ws: WebSocket | null = null;
 let stopped = false;
 let reconnectAttempt = 0;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let opts: StartOptions | null = null;
+
+/* --- session-scoped state surfaced via getStatus() / the Settings page ---- */
+let currentPassphrase: string | null = null;
+let currentUrl: string | null = null;
+let currentStartedAt: number | null = null;
+let currentDurationMs: number | null = null; // null = no expiry (legacy env path)
+let currentExpiresAt: number | null = null;
+let expiryTimer: NodeJS.Timeout | null = null;
 
 /**
  * Open loopback WS streams, keyed by relay-side stream id. Bridges a
@@ -179,6 +204,7 @@ function connect(): void {
     if (!frame || typeof (frame as { t?: unknown }).t !== 'string') return;
 
     if (frame.t === 'hello') {
+      currentUrl = frame.publicUrl;
       console.log(`[remote-access] tunnel ready → ${frame.publicUrl}`);
       return;
     }
@@ -417,7 +443,71 @@ function handleWsOpen(relayWs: WebSocket, frame: WsOpenFrame): void {
 
 /* ----------------------------------------------------------- public api -- */
 
+function logPassphraseBanner(passphrase: string, label: string): void {
+  console.log(`[remote-access] ${label}`);
+  console.log('[remote-access] ');
+  console.log(`[remote-access]   passphrase:  ${passphrase}`);
+  console.log('[remote-access]   share this with anyone you want to let in');
+  console.log('[remote-access] ');
+}
+
+function scheduleExpiry(when: number): void {
+  if (expiryTimer) {
+    clearTimeout(expiryTimer);
+    expiryTimer = null;
+  }
+  const delta = when - Date.now();
+  if (delta <= 0) {
+    // Already expired — stop immediately on next tick to avoid recursion.
+    setTimeout(() => remoteAccess.stopNow(), 0);
+    return;
+  }
+  expiryTimer = setTimeout(() => {
+    expiryTimer = null;
+    console.log('[remote-access] duration elapsed — stopping');
+    remoteAccess.stopNow();
+  }, delta);
+  expiryTimer.unref();
+}
+
+function resetSessionState(): void {
+  currentPassphrase = null;
+  currentUrl = null;
+  currentStartedAt = null;
+  currentDurationMs = null;
+  currentExpiresAt = null;
+}
+
+function closeSocket(): void {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (ws) {
+    try {
+      ws.close();
+    } catch {
+      // ignore
+    }
+    ws = null;
+  }
+}
+
+export interface RemoteAccessStatus {
+  enabled: boolean;
+  url: string | null;
+  passphrase: string | null;
+  startedAt: number | null;
+  durationMs: number | null;
+  expiresAt: number | null;
+}
+
 export const remoteAccess = {
+  /**
+   * Legacy env-driven activation. No expiry, no persistence — the env vars
+   * are the only source of truth, and stopping is via process restart or
+   * the UI Disable button.
+   */
   start(o: StartOptions): void {
     if (opts) {
       console.warn('[remote-access] already started, ignoring');
@@ -427,41 +517,161 @@ export const remoteAccess = {
     stopped = false;
     reconnectAttempt = 0;
 
-    // Fresh passphrase per remote-access session. Surfaced to the operator
-    // via the iClaw process log; never sent to the relay (only POSTed by
-    // the user through the tunnel and verified by us on the loopback side).
     const passphrase = generatePassphrase();
+    currentPassphrase = passphrase;
+    currentStartedAt = Date.now();
+    currentDurationMs = null;
+    currentExpiresAt = null;
     enableGate(passphrase);
-    console.log(`[remote-access] enabling, relay=${o.relayUrl} local=${o.localHost}:${o.localPort}`);
-    console.log('[remote-access] ');
-    console.log(`[remote-access]   passphrase:  ${passphrase}`);
-    console.log('[remote-access]   share this with anyone you want to let in');
-    console.log('[remote-access] ');
+    console.log(`[remote-access] enabling (env), relay=${o.relayUrl} local=${o.localHost}:${o.localPort}`);
+    logPassphraseBanner(passphrase, 'enabling (no expiry)');
     connect();
   },
 
+  /**
+   * UI-driven activation with a bounded duration. Persists to SQLite so
+   * the tunnel survives an iClaw restart, and auto-stops when expiresAt
+   * is reached. If a tunnel is already up, it's torn down first so the
+   * caller can pick a new passphrase / duration cleanly.
+   */
+  startWithDuration(durationMs: number, o: StartOptions): void {
+    if (!ALLOWED_DURATIONS_MS.includes(durationMs)) {
+      throw new Error(`invalid duration: ${durationMs}`);
+    }
+    if (currentPassphrase) {
+      // Tear down whatever was running so the new tunnel starts clean.
+      closeSocket();
+      disableGate();
+      resetSessionState();
+    }
+    opts = o;
+    stopped = false;
+    reconnectAttempt = 0;
+
+    const passphrase = generatePassphrase();
+    const now = Date.now();
+    currentPassphrase = passphrase;
+    currentStartedAt = now;
+    currentDurationMs = durationMs;
+    currentExpiresAt = now + durationMs;
+    enableGate(passphrase);
+
+    remoteAccessState.save({
+      enabled: true,
+      passphrase,
+      durationMs,
+      startedAt: now,
+      expiresAt: currentExpiresAt,
+    });
+    scheduleExpiry(currentExpiresAt);
+
+    console.log(
+      `[remote-access] enabling (UI), relay=${o.relayUrl} local=${o.localHost}:${o.localPort} duration=${Math.round(durationMs / 60_000)}min`,
+    );
+    logPassphraseBanner(passphrase, `enabling for ${Math.round(durationMs / 60_000)} minutes`);
+    connect();
+  },
+
+  /**
+   * Bring a previously persisted tunnel back up on startup. If `expiresAt`
+   * is already in the past, the persisted row is cleared and we stay
+   * stopped.
+   */
+  resume(persisted: RemoteAccessPersistedState, o: StartOptions): void {
+    const now = Date.now();
+    if (persisted.expiresAt <= now) {
+      remoteAccessState.clear();
+      return;
+    }
+    opts = o;
+    stopped = false;
+    reconnectAttempt = 0;
+
+    currentPassphrase = persisted.passphrase;
+    currentStartedAt = persisted.startedAt;
+    currentDurationMs = persisted.durationMs;
+    currentExpiresAt = persisted.expiresAt;
+    enableGate(persisted.passphrase);
+    scheduleExpiry(persisted.expiresAt);
+
+    const remainingMin = Math.max(1, Math.round((persisted.expiresAt - now) / 60_000));
+    console.log(
+      `[remote-access] resuming (UI), relay=${o.relayUrl} local=${o.localHost}:${o.localPort} remaining=${remainingMin}min`,
+    );
+    logPassphraseBanner(persisted.passphrase, `resumed, ~${remainingMin} minutes remaining`);
+    connect();
+  },
+
+  /**
+   * Process-shutdown stop: close the socket + drop the gate, but DO NOT
+   * touch persisted state — we want to auto-resume on next startup.
+   */
   stop(): void {
     stopped = true;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    if (ws) {
-      try {
-        ws.close();
-      } catch {
-        // ignore
-      }
-      ws = null;
+    closeSocket();
+    if (expiryTimer) {
+      clearTimeout(expiryTimer);
+      expiryTimer = null;
     }
     opts = null;
     disableGate();
+    // Intentionally keep currentPassphrase etc. so any in-flight log lines
+    // still make sense; the process is about to exit anyway.
+  },
+
+  /**
+   * User-triggered "Disable" — fully tear down and forget. Clears the
+   * persisted row so we don't resume on next startup.
+   */
+  stopNow(): void {
+    stopped = true;
+    closeSocket();
+    if (expiryTimer) {
+      clearTimeout(expiryTimer);
+      expiryTimer = null;
+    }
+    opts = null;
+    resetSessionState();
+    disableGate();
+    remoteAccessState.clear();
+    console.log('[remote-access] disabled');
   },
 
   isEnabled(): boolean {
-    return opts !== null && !stopped;
+    return currentPassphrase !== null && !stopped;
+  },
+
+  getStatus(): RemoteAccessStatus {
+    return {
+      enabled: this.isEnabled(),
+      url: currentUrl,
+      passphrase: currentPassphrase,
+      startedAt: currentStartedAt,
+      durationMs: currentDurationMs,
+      expiresAt: currentExpiresAt,
+    };
   },
 };
+
+/**
+ * Default relay URL for UI-driven activation. The env var still wins if
+ * set (so deploys can point at a different relay); otherwise we fall back
+ * to the dev default so the feature "just works" out of the box on a
+ * developer machine running `iclaw-relay` locally.
+ */
+export function getRelayUrl(): string {
+  const envUrl = process.env.ICLAW_RELAY_URL;
+  if (envUrl) {
+    try {
+      const u = new URL(envUrl);
+      if (u.protocol === 'ws:' || u.protocol === 'wss:') return envUrl;
+      console.warn(`[remote-access] ignoring ICLAW_RELAY_URL with bad protocol: ${u.protocol}`);
+    } catch {
+      console.warn(`[remote-access] ignoring ICLAW_RELAY_URL — not a valid URL: ${envUrl}`);
+    }
+  }
+  return 'ws://127.0.0.1:4100/tunnel';
+}
 
 /**
  * Read activation flags from env. Returns null if remote access is not

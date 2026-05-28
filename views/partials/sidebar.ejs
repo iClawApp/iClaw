@@ -49,6 +49,10 @@
         href="/projects"
         class="sidebar-projects-btn<%= typeof activeProjectsList !== 'undefined' && activeProjectsList ? ' active' : '' %>"
       >Projects</a>
+      <a
+        href="/remote-access"
+        class="sidebar-projects-btn<%= typeof activeRemoteAccess !== 'undefined' && activeRemoteAccess ? ' active' : '' %>"
+      >Remote access</a>
       <% if (typeof hasAnyTasks !== 'undefined' && hasAnyTasks) {
         const _taskSignals = typeof taskStatusSignals !== 'undefined' ? taskStatusSignals : {};
         const _taskDotHuman = _taskSignals.needsHuman;

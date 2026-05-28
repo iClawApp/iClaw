@@ -1,0 +1,286 @@
+<%- include('partials/head', { title: 'Remote Access — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main remote-access-page">
+    <div class="remote-access-inner">
+      <header class="remote-access-head">
+        <h1 class="remote-access-title">Remote Access</h1>
+        <p class="remote-access-intro muted">
+          Open a temporary URL so you can use this iClaw from another device, or share it with someone.
+          The tunnel auto-closes after the duration you pick. Disable any time to revoke access immediately.
+        </p>
+      </header>
+
+      <div id="ra-section" class="card ra-card">
+        <% if (status.enabled) { %>
+          <%- include('partials/remoteAccessEnabled', { status }) %>
+        <% } else { %>
+          <%- include('partials/remoteAccessDisabled', { allowedDurationsMs }) %>
+        <% } %>
+      </div>
+
+      <p class="muted ra-fineprint">
+        The passphrase is the only thing protecting your iClaw from anyone who finds the URL.
+        Share both, or use a private channel. Sessions on connected devices last 24h.
+      </p>
+    </div>
+  </main>
+</div>
+
+<style>
+.remote-access-page { padding: var(--space-6) var(--space-6); overflow-y: auto; }
+.remote-access-inner { max-width: 720px; margin: 0 auto; }
+.remote-access-head { margin: var(--space-4) 0 var(--space-6); }
+.remote-access-title { font-size: 22px; font-weight: 600; margin: 0 0 var(--space-2); }
+.remote-access-intro { max-width: 560px; line-height: 1.5; }
+
+.ra-card { padding: var(--space-6); }
+.ra-fineprint { margin-top: var(--space-4); font-size: var(--text-xs); }
+
+.ra-form { display: grid; gap: var(--space-5); }
+.ra-form fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+.ra-form legend { font-size: var(--text-sm); font-weight: 600; padding: 0; }
+.ra-duration-options { display: grid; gap: var(--space-2); grid-template-columns: 1fr 1fr; }
+.ra-duration-option {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border, #2a3140);
+  border-radius: var(--radius-md);
+  cursor: pointer; font-size: var(--text-sm);
+  transition: border-color .15s, background .15s;
+}
+.ra-duration-option:hover { border-color: color-mix(in srgb, var(--accent, #3b82f6) 50%, var(--border, #2a3140)); }
+.ra-duration-option input[type="radio"]:checked + span { color: var(--accent, #3b82f6); font-weight: 600; }
+.ra-duration-option:has(input[type="radio"]:checked) {
+  border-color: var(--accent, #3b82f6);
+  background: color-mix(in srgb, var(--accent, #3b82f6) 10%, transparent);
+}
+
+.ra-status-row { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-5); }
+.ra-status-row .chip { font-weight: 600; }
+
+.ra-field { display: grid; gap: var(--space-2); margin-bottom: var(--space-4); }
+.ra-field-label { font-size: var(--text-xs); font-weight: 600; color: var(--muted, #95a0b0); text-transform: uppercase; letter-spacing: 0.04em; }
+.ra-field-value-row { display: flex; gap: var(--space-2); align-items: center; }
+.ra-field-value {
+  flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-sm);
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in srgb, var(--fg, #e6e8eb) 6%, transparent);
+  border: 1px solid var(--border, #2a3140);
+  border-radius: var(--radius-md);
+  word-break: break-all;
+  user-select: all;
+}
+.ra-field-link { color: var(--accent, #3b82f6); text-decoration: none; }
+.ra-field-link:hover { text-decoration: underline; }
+
+.ra-meta { display: flex; gap: var(--space-4); margin: var(--space-4) 0; font-size: var(--text-sm); color: var(--muted, #95a0b0); flex-wrap: wrap; }
+.ra-meta strong { color: var(--fg, #e6e8eb); font-weight: 500; }
+
+.ra-actions { display: flex; gap: var(--space-3); margin-top: var(--space-5); }
+.ra-connecting { padding: var(--space-3) 0; color: var(--muted, #95a0b0); font-size: var(--text-sm); }
+.ra-connecting::before { content: "⟳"; display: inline-block; margin-right: 6px; animation: ra-spin 1.4s linear infinite; }
+@keyframes ra-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+</style>
+
+<script>
+(function () {
+  const section = document.getElementById('ra-section');
+  if (!section) return;
+
+  function fmtDuration(ms) {
+    if (!ms || ms <= 0) return '—';
+    const sec = Math.floor(ms / 1000);
+    const min = Math.floor(sec / 60);
+    const hr = Math.floor(min / 60);
+    const day = Math.floor(hr / 24);
+    if (day >= 1) return day + 'd ' + (hr % 24) + 'h';
+    if (hr >= 1) return hr + 'h ' + (min % 60) + 'm';
+    if (min >= 1) return min + 'm ' + (sec % 60) + 's';
+    return sec + 's';
+  }
+
+  async function copyToClipboard(text, btn) {
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) { console.warn('clipboard write failed', e); return; }
+    if (!btn) return;
+    const orig = btn.textContent;
+    btn.textContent = 'Copied';
+    btn.disabled = true;
+    setTimeout(function () { btn.textContent = orig; btn.disabled = false; }, 1200);
+  }
+
+  // Delegate clicks for copy buttons.
+  section.addEventListener('click', function (e) {
+    const t = e.target;
+    if (!(t instanceof HTMLElement)) return;
+    if (t.hasAttribute('data-copy')) {
+      const sel = t.getAttribute('data-copy');
+      const el = sel ? document.querySelector(sel) : null;
+      if (el && el.textContent) copyToClipboard(el.textContent.trim(), t);
+    }
+  });
+
+  function renderDisabled(allowed) {
+    const radios = (allowed || [30 * 60000, 12 * 60 * 60000, 7 * 86400000, 30 * 86400000])
+      .map(function (ms, i) {
+        const label = ms === 30 * 60000 ? '30 minutes'
+          : ms === 12 * 60 * 60000 ? '12 hours'
+          : ms === 7 * 86400000 ? '7 days'
+          : ms === 30 * 86400000 ? '30 days'
+          : fmtDuration(ms);
+        return '<label class="ra-duration-option"><input type="radio" name="durationMs" value="' + ms + '"' + (i === 1 ? ' checked' : '') + ' /><span>' + label + '</span></label>';
+      }).join('');
+    section.innerHTML =
+      '<form class="ra-form" id="ra-enable-form" onsubmit="return false">' +
+      '  <fieldset>' +
+      '    <legend>How long should this tunnel stay open?</legend>' +
+      '    <div class="ra-duration-options">' + radios + '</div>' +
+      '  </fieldset>' +
+      '  <div><button type="submit" class="btn btn--primary" id="ra-enable-btn">Enable Remote Access</button></div>' +
+      '</form>';
+    document.getElementById('ra-enable-form').addEventListener('submit', onEnable);
+  }
+
+  function renderEnabled(status) {
+    const url = status.url;
+    const passphrase = status.passphrase || '';
+    const remainingMs = status.expiresAt ? Math.max(0, status.expiresAt - Date.now()) : null;
+    const urlBlock = url
+      ? '<div class="ra-field-value-row">' +
+        '  <a class="ra-field-value ra-field-link" id="ra-url" href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>' +
+        '  <button type="button" class="btn btn--ghost btn--sm" data-copy="#ra-url">Copy</button>' +
+        '</div>'
+      : '<div class="ra-connecting">Connecting to relay…</div>';
+    const meta = remainingMs !== null
+      ? '<div class="ra-meta"><div>Expires in <strong id="ra-remaining">' + fmtDuration(remainingMs) + '</strong></div></div>'
+      : '<div class="ra-meta"><div>No expiry (env-driven)</div></div>';
+
+    section.innerHTML =
+      '<div class="ra-status-row">' +
+      '  <span class="chip chip--ok">● Enabled</span>' +
+      '</div>' +
+      '<div class="ra-field">' +
+      '  <label class="ra-field-label">Public URL</label>' +
+      '  ' + urlBlock +
+      '</div>' +
+      '<div class="ra-field">' +
+      '  <label class="ra-field-label">Passphrase</label>' +
+      '  <div class="ra-field-value-row">' +
+      '    <code class="ra-field-value" id="ra-passphrase">' + (passphrase || '—') + '</code>' +
+      '    <button type="button" class="btn btn--ghost btn--sm" data-copy="#ra-passphrase">Copy</button>' +
+      '  </div>' +
+      '</div>' +
+      meta +
+      '<div class="ra-actions">' +
+      '  <button type="button" class="btn btn--danger" id="ra-disable-btn">Disable Remote Access</button>' +
+      '</div>';
+    document.getElementById('ra-disable-btn').addEventListener('click', onDisable);
+  }
+
+  async function onEnable(e) {
+    e.preventDefault();
+    const form = document.getElementById('ra-enable-form');
+    const btn = document.getElementById('ra-enable-btn');
+    const checked = form.querySelector('input[name="durationMs"]:checked');
+    if (!checked) return;
+    const durationMs = Number(checked.value);
+    btn.disabled = true;
+    btn.textContent = 'Enabling…';
+    try {
+      const res = await fetch('/api/remote-access/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ durationMs }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(function () { return { error: 'failed' }; });
+        alert('Failed to enable: ' + (err.error || res.status));
+        btn.disabled = false;
+        btn.textContent = 'Enable Remote Access';
+        return;
+      }
+      const status = await res.json();
+      renderEnabled(status);
+      poll();
+    } catch (e) {
+      alert('Failed to enable: ' + e.message);
+      btn.disabled = false;
+      btn.textContent = 'Enable Remote Access';
+    }
+  }
+
+  async function onDisable() {
+    if (!confirm('Disable Remote Access now? Anyone currently connected will be cut off.')) return;
+    const btn = document.getElementById('ra-disable-btn');
+    btn.disabled = true;
+    btn.textContent = 'Disabling…';
+    try {
+      const res = await fetch('/api/remote-access/stop', { method: 'POST' });
+      if (!res.ok) { alert('Failed to disable'); return; }
+      const status = await fetchStatus();
+      renderFromStatus(status);
+    } catch (e) {
+      alert('Failed to disable: ' + e.message);
+    }
+  }
+
+  async function fetchStatus() {
+    const res = await fetch('/api/remote-access/status');
+    return res.ok ? res.json() : null;
+  }
+
+  function renderFromStatus(status) {
+    if (!status) return;
+    if (status.enabled) renderEnabled(status);
+    else renderDisabled(status.allowedDurationsMs);
+  }
+
+  let pollTimer = null;
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(poll, 1500);
+  }
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+  async function poll() {
+    if (document.hidden) return;
+    const status = await fetchStatus();
+    if (!status) return;
+    if (status.enabled) {
+      // Update remaining inline if both pieces are rendered, else full re-render.
+      const remainingEl = document.getElementById('ra-remaining');
+      const urlEl = document.getElementById('ra-url');
+      const needsRerender = !urlEl && status.url;
+      if (needsRerender) {
+        renderEnabled(status);
+      } else if (remainingEl && status.expiresAt) {
+        remainingEl.textContent = fmtDuration(Math.max(0, status.expiresAt - Date.now()));
+      }
+    } else {
+      // Was enabled, now isn't — re-render the form.
+      const formEl = document.getElementById('ra-enable-form');
+      if (!formEl) renderDisabled(status.allowedDurationsMs);
+    }
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) stopPolling();
+    else startPolling();
+  });
+
+  // Wire initial event handlers based on what the server already rendered.
+  const initialDisableBtn = document.getElementById('ra-disable-btn');
+  if (initialDisableBtn) initialDisableBtn.addEventListener('click', onDisable);
+  const initialEnableForm = document.getElementById('ra-enable-form');
+  if (initialEnableForm) initialEnableForm.addEventListener('submit', onEnable);
+
+  startPolling();
+})();
+</script>
+
+<%- include('partials/foot') %>

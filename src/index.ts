@@ -5,7 +5,13 @@ import { attachWsServer } from './routes/ws';
 import { openclaw } from './services/openclaw';
 import { scheduler } from './services/scheduler';
 import { gatewayEvents } from './services/gatewayEvents';
-import { remoteAccess, readRemoteAccessEnv } from './services/remoteAccess';
+import {
+  remoteAccess,
+  readRemoteAccessEnv,
+  getRelayUrl,
+} from './services/remoteAccess';
+import { remoteAccessState } from './services/remoteAccessState';
+import { setBoundLocalAddress } from './services/localAddress';
 import {
   findAvailablePort,
   attachCliBrowserControls,
@@ -142,16 +148,29 @@ async function main(): Promise<void> {
     );
   }
 
-  // Remote Access: opt-in via env flags. The auth/encryption layers land in
-  // follow-up work; right now this is a raw byte-forwarding tunnel intended
-  // for local end-to-end testing only.
-  const ra = readRemoteAccessEnv();
-  if (ra) {
-    remoteAccess.start({
-      relayUrl: ra.relayUrl,
+  // Remote Access wiring. The API/UI layer can start/stop the tunnel at
+  // any time after this point, so we register the bound address first.
+  setBoundLocalAddress({ host, port });
+
+  // Auto-resume any tunnel that was active when iClaw last shut down,
+  // provided its duration hasn't elapsed.
+  const persisted = remoteAccessState.get();
+  if (persisted && persisted.expiresAt > Date.now()) {
+    remoteAccess.resume(persisted, {
+      relayUrl: getRelayUrl(),
       localHost: host,
       localPort: port,
     });
+  } else {
+    // Legacy env fallback — only kicks in when no persisted state exists.
+    const ra = readRemoteAccessEnv();
+    if (ra) {
+      remoteAccess.start({
+        relayUrl: ra.relayUrl,
+        localHost: host,
+        localPort: port,
+      });
+    }
   }
 }
 
