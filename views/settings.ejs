@@ -37,41 +37,80 @@
               </label>
               <% }); %>
             </div>
-            <button type="submit" class="btn btn--primary btn--sm" id="ra-new-btn">Create tunnel</button>
+            <button type="submit" class="btn btn--primary btn--sm ra-create-btn" id="ra-new-btn">
+              <svg class="ra-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              <span>New tunnel</span>
+            </button>
           </form>
         </div>
 
         <!-- List of active tunnels -->
         <div id="ra-list" class="ra-list">
           <% if (tunnels.length === 0) { %>
-            <p class="ra-empty muted">No active tunnels.</p>
+            <div class="ra-empty">
+              <svg class="ra-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              </svg>
+              <p class="ra-empty-text">No active tunnels.</p>
+              <p class="ra-empty-hint muted">Create one above to start sharing access.</p>
+            </div>
           <% } else { %>
             <% tunnels.forEach(function (t) { %>
-              <div class="card ra-tunnel-card" data-tunnel-id="<%= t.id %>">
+              <div class="card card--accent ra-tunnel-card" data-tunnel-id="<%= t.id %>">
                 <div class="ra-tunnel-head">
-                  <span class="chip chip--ok">Enabled</span>
-                  <span class="ra-tunnel-id muted">#<%= t.id.slice(2, 8) %></span>
-                  <span class="ra-remaining muted" data-role="remaining" data-expires-at="<%= t.expiresAt %>">…</span>
+                  <span class="chip chip--ok">
+                    <span class="ra-pulse-dot" aria-hidden="true"></span>
+                    Live
+                  </span>
+                  <span class="ra-remaining" data-role="remaining" data-expires-at="<%= t.expiresAt %>">…</span>
                 </div>
 
-                <div class="ra-row">
-                  <div class="ra-row-label">URL</div>
+                <div class="ra-hero">
+                  <div class="ra-hero-label">Public URL</div>
                   <% if (t.url) { %>
-                    <a class="ra-row-value ra-row-link" data-role="url" href="<%= t.url %>" target="_blank" rel="noopener noreferrer"><%= t.url %></a>
-                    <button type="button" class="btn btn--ghost btn--sm" data-copy="url">Copy</button>
+                    <div class="ra-hero-value-row">
+                      <a class="ra-hero-url" data-role="url" href="<%= t.url %>" target="_blank" rel="noopener noreferrer">
+                        <span class="ra-hero-url-text"><%= t.url %></span>
+                        <svg class="ra-extlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                          <polyline points="15 3 21 3 21 9"/>
+                          <line x1="10" y1="14" x2="21" y2="3"/>
+                        </svg>
+                      </a>
+                      <button type="button" class="ra-copy-icon-btn" data-copy="url" aria-label="Copy URL" title="Copy URL">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>
+                      </button>
+                    </div>
                   <% } else { %>
-                    <span class="ra-row-value ra-connecting muted" data-role="url-pending">Connecting…</span>
+                    <div class="ra-hero-connecting" data-role="url-pending">
+                      <span class="ra-spinner" aria-hidden="true"></span>
+                      Connecting to relay…
+                    </div>
                   <% } %>
                 </div>
 
-                <div class="ra-row">
-                  <div class="ra-row-label">Passphrase</div>
-                  <code class="ra-row-value ra-row-mono" data-role="passphrase"><%= t.passphrase %></code>
-                  <button type="button" class="btn btn--ghost btn--sm" data-copy="passphrase">Copy</button>
+                <div class="ra-pass">
+                  <div class="ra-pass-label">Passphrase</div>
+                  <code class="ra-pass-value" data-role="passphrase"><%= t.passphrase %></code>
+                  <button type="button" class="ra-copy-icon-btn" data-copy="passphrase" aria-label="Copy passphrase" title="Copy passphrase">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                  </button>
                 </div>
 
                 <div class="ra-card-foot">
-                  <button type="button" class="btn btn--danger btn--sm" data-action="delete">Disable</button>
+                  <button type="button" class="btn btn--ghost btn--sm ra-disable-btn" data-action="delete">
+                    Disable tunnel
+                  </button>
                 </div>
               </div>
             <% }); %>
@@ -89,10 +128,10 @@
 </div>
 
 <style>
-/* ───────────── Page shell — mirrors projects-hub-page conventions ───────────── */
+/* ───────────── Page shell ───────────── */
 .settings-page {
   width: 100%;
-  max-width: 32rem;
+  max-width: 36rem;
   margin: 0 auto;
   box-sizing: border-box;
   padding: var(--space-9) var(--space-6) var(--space-10);
@@ -125,18 +164,18 @@
   font-size: var(--text-sm);
   line-height: 1.55;
   color: var(--muted);
-  max-width: 26rem;
+  max-width: 28rem;
 }
 .settings-fineprint {
   margin: var(--space-4) 0 0;
   font-size: var(--text-xs);
   line-height: 1.55;
-  max-width: 26rem;
+  max-width: 28rem;
 }
 
 /* ───────────── Create-tunnel form ───────────── */
 .settings-create-wrap {
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   margin: 0 0 var(--space-4);
   border-left-width: 1px;
 }
@@ -155,7 +194,7 @@
 }
 .ra-duration-option {
   flex: 1;
-  min-width: 80px;
+  min-width: 72px;
 }
 .ra-duration-option input[type="radio"] {
   position: absolute;
@@ -164,7 +203,7 @@
 }
 .ra-duration-option span {
   display: block;
-  padding: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
@@ -177,85 +216,221 @@
 .ra-duration-option:hover span { color: var(--text); }
 .ra-duration-option:has(input[type="radio"]:checked) span {
   color: var(--text);
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  font-weight: 500;
+}
+.ra-create-btn {
+  gap: var(--space-2);
+}
+.ra-btn-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
 }
 
 /* ───────────── Tunnel list ───────────── */
 .ra-list { display: flex; flex-direction: column; gap: var(--space-3); }
 .ra-empty {
   text-align: center;
-  padding: var(--space-6) 0;
-  margin: 0;
-  font-size: var(--text-sm);
+  padding: var(--space-9) var(--space-4);
+  border: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--muted);
 }
+.ra-empty-icon {
+  width: 28px;
+  height: 28px;
+  display: block;
+  margin: 0 auto var(--space-3);
+  color: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+.ra-empty-text { margin: 0 0 var(--space-1); font-size: var(--text-sm); color: var(--text); font-weight: 500; }
+.ra-empty-hint { margin: 0; font-size: var(--text-xs); }
 
-.ra-tunnel-card { padding: var(--space-4) var(--space-5); }
+/* ───────────── Tunnel card ───────────── */
+.ra-tunnel-card {
+  padding: var(--space-4) var(--space-5);
+  transition: border-color 0.15s ease;
+}
 .ra-tunnel-head {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   margin: 0 0 var(--space-4);
 }
-.ra-tunnel-id {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--text-xs);
+.ra-tunnel-head .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-2);
+}
+.ra-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 0 currentColor;
+  animation: ra-pulse 2s ease-in-out infinite;
+}
+@keyframes ra-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 40%, transparent); }
+  50%      { box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 0%, transparent); }
 }
 .ra-remaining {
   margin-left: auto;
   font-size: var(--text-xs);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
 
-.ra-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) 0;
-  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-}
-.ra-row:first-of-type { border-top: 0; padding-top: 0; }
-.ra-row-label {
-  flex: 0 0 6rem;
+/* Hero URL block */
+.ra-hero { margin: 0 0 var(--space-3); }
+.ra-hero-label,
+.ra-pass-label {
   font-size: var(--text-xs);
   color: var(--muted);
   font-weight: 500;
+  margin: 0 0 var(--space-2);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
-.ra-row-value {
+.ra-hero-value-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+.ra-hero-url {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   flex: 1;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-sm);
+  text-decoration: none;
+  user-select: all;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.ra-hero-url:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.ra-hero-url-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ra-extlink-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--text) 50%, transparent);
+}
+.ra-hero-url:hover .ra-extlink-icon { color: var(--md-link, var(--accent)); }
+
+.ra-hero-connecting {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in srgb, var(--muted) 8%, var(--surface));
+  border: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-style: italic;
+}
+.ra-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--muted) 30%, transparent);
+  border-top-color: var(--muted);
+  animation: ra-spin 0.9s linear infinite;
+}
+@keyframes ra-spin { to { transform: rotate(360deg); } }
+
+/* Passphrase row */
+.ra-pass {
+  display: grid;
+  grid-template-columns: 6rem 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0 0;
+}
+.ra-pass-label { margin: 0; }
+.ra-pass-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--text-sm);
   color: var(--text);
-  word-break: break-all;
   user-select: all;
-  min-width: 0;
+  word-break: break-all;
+  letter-spacing: 0.01em;
 }
-.ra-row-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.ra-row-link { color: var(--md-link, var(--accent)); text-decoration: none; }
-.ra-row-link:hover { text-decoration: underline; }
-.ra-connecting { font-style: italic; }
-.ra-connecting::before {
-  content: "⟳";
-  display: inline-block;
-  margin-right: 6px;
-  animation: ra-spin 1.4s linear infinite;
-}
-@keyframes ra-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
+/* Copy icon button */
+.ra-copy-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.ra-copy-icon-btn svg { width: 14px; height: 14px; display: block; }
+.ra-copy-icon-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-color: color-mix(in srgb, var(--border) 50%, transparent);
+}
+.ra-copy-icon-btn.is-copied {
+  color: var(--ok, #2ea043);
+  background: color-mix(in srgb, var(--ok, #2ea043) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ok, #2ea043) 30%, transparent);
+}
+.ra-copy-icon-btn:disabled { cursor: default; }
+
+/* Disable button (kept ghost — destructive emphasis only on hover) */
 .ra-card-foot {
   display: flex;
   justify-content: flex-end;
   padding-top: var(--space-3);
-  margin-top: var(--space-2);
-  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  margin-top: var(--space-3);
+  border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.ra-disable-btn {
+  color: var(--muted);
+}
+.ra-disable-btn:hover:not(:disabled) {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 @media (max-width: 520px) {
   .settings-page { padding: var(--space-7) var(--space-4) var(--space-8); }
   .ra-form { flex-direction: column; align-items: stretch; }
-  .ra-row { flex-wrap: wrap; }
-  .ra-row-label { flex-basis: 100%; }
+  .ra-create-btn { justify-content: center; }
+  .ra-pass {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+  }
+  .ra-pass-label { font-size: var(--text-xs); }
 }
 </style>
 
@@ -271,59 +446,79 @@
     const min = Math.floor(sec / 60);
     const hr  = Math.floor(min / 60);
     const day = Math.floor(hr / 24);
-    if (day >= 1) return day + 'd ' + (hr % 24) + 'h';
-    if (hr  >= 1) return hr  + 'h ' + (min % 60) + 'm';
-    if (min >= 1) return min + 'm ' + (sec % 60) + 's';
-    return sec + 's';
+    if (day >= 1) return day + 'd ' + (hr % 24) + 'h left';
+    if (hr  >= 1) return hr  + 'h ' + (min % 60) + 'm left';
+    if (min >= 1) return min + 'm ' + (sec % 60) + 's left';
+    return sec + 's left';
   }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
       return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '"' ? '&quot;' : '&#39;';
     });
   }
+
+  const COPY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  const CHECK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+
   async function copy(text, btn) {
     try { await navigator.clipboard.writeText(text); }
     catch (e) { console.warn('clipboard write failed', e); return; }
     if (!btn) return;
-    const orig = btn.textContent;
-    btn.textContent = 'Copied';
+    const origHtml = btn.innerHTML;
+    btn.innerHTML = CHECK_ICON_SVG;
+    btn.classList.add('is-copied');
     btn.disabled = true;
-    setTimeout(function () { btn.textContent = orig; btn.disabled = false; }, 1100);
+    setTimeout(function () {
+      btn.innerHTML = origHtml;
+      btn.classList.remove('is-copied');
+      btn.disabled = false;
+    }, 1200);
   }
 
   function renderCard(t) {
-    const idShort = t.id.slice(2, 8);
     const urlBlock = t.url
-      ? '<a class="ra-row-value ra-row-link" data-role="url" href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t.url) + '</a>' +
-        '<button type="button" class="btn btn--ghost btn--sm" data-copy="url">Copy</button>'
-      : '<span class="ra-row-value ra-connecting muted" data-role="url-pending">Connecting…</span>';
+      ? '<div class="ra-hero-value-row">' +
+        '  <a class="ra-hero-url" data-role="url" href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer">' +
+        '    <span class="ra-hero-url-text">' + escapeHtml(t.url) + '</span>' +
+        '    <svg class="ra-extlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>' +
+        '  </a>' +
+        '  <button type="button" class="ra-copy-icon-btn" data-copy="url" aria-label="Copy URL" title="Copy URL">' + COPY_ICON_SVG + '</button>' +
+        '</div>'
+      : '<div class="ra-hero-connecting" data-role="url-pending"><span class="ra-spinner" aria-hidden="true"></span>Connecting to relay…</div>';
 
-    return '<div class="card ra-tunnel-card" data-tunnel-id="' + escapeHtml(t.id) + '">' +
+    return '<div class="card card--accent ra-tunnel-card" data-tunnel-id="' + escapeHtml(t.id) + '">' +
       '  <div class="ra-tunnel-head">' +
-      '    <span class="chip chip--ok">Enabled</span>' +
-      '    <span class="ra-tunnel-id muted">#' + escapeHtml(idShort) + '</span>' +
-      '    <span class="ra-remaining muted" data-role="remaining" data-expires-at="' + t.expiresAt + '">' + fmtRemaining(t.expiresAt - Date.now()) + '</span>' +
+      '    <span class="chip chip--ok"><span class="ra-pulse-dot" aria-hidden="true"></span>Live</span>' +
+      '    <span class="ra-remaining" data-role="remaining" data-expires-at="' + t.expiresAt + '">' + fmtRemaining(t.expiresAt - Date.now()) + '</span>' +
       '  </div>' +
-      '  <div class="ra-row">' +
-      '    <div class="ra-row-label">URL</div>' +
+      '  <div class="ra-hero">' +
+      '    <div class="ra-hero-label">Public URL</div>' +
       '    ' + urlBlock +
       '  </div>' +
-      '  <div class="ra-row">' +
-      '    <div class="ra-row-label">Passphrase</div>' +
-      '    <code class="ra-row-value ra-row-mono" data-role="passphrase">' + escapeHtml(t.passphrase) + '</code>' +
-      '    <button type="button" class="btn btn--ghost btn--sm" data-copy="passphrase">Copy</button>' +
+      '  <div class="ra-pass">' +
+      '    <div class="ra-pass-label">Passphrase</div>' +
+      '    <code class="ra-pass-value" data-role="passphrase">' + escapeHtml(t.passphrase) + '</code>' +
+      '    <button type="button" class="ra-copy-icon-btn" data-copy="passphrase" aria-label="Copy passphrase" title="Copy passphrase">' + COPY_ICON_SVG + '</button>' +
       '  </div>' +
       '  <div class="ra-card-foot">' +
-      '    <button type="button" class="btn btn--danger btn--sm" data-action="delete">Disable</button>' +
+      '    <button type="button" class="btn btn--ghost btn--sm ra-disable-btn" data-action="delete">Disable tunnel</button>' +
       '  </div>' +
       '</div>';
   }
 
+  function emptyState() {
+    return '<div class="ra-empty">' +
+      '  <svg class="ra-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>' +
+      '    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>' +
+      '  </svg>' +
+      '  <p class="ra-empty-text">No active tunnels.</p>' +
+      '  <p class="ra-empty-hint muted">Create one above to start sharing access.</p>' +
+      '</div>';
+  }
+
   function renderList(tunnels) {
-    if (!tunnels || tunnels.length === 0) {
-      list.innerHTML = '<p class="ra-empty muted">No active tunnels.</p>';
-      return;
-    }
+    if (!tunnels || tunnels.length === 0) { list.innerHTML = emptyState(); return; }
     list.innerHTML = tunnels.map(renderCard).join('');
   }
 
@@ -355,7 +550,7 @@
   setInterval(tickRemaining, 1000);
 
   list.addEventListener('click', async function (e) {
-    const t = e.target;
+    const t = e.target instanceof Element ? e.target.closest('[data-copy], [data-action]') : null;
     if (!(t instanceof HTMLElement)) return;
 
     if (t.hasAttribute('data-copy')) {
@@ -400,8 +595,8 @@
     if (!checked) return;
     const durationMs = Number(checked.value);
     btn.disabled = true;
-    const orig = btn.textContent;
-    btn.textContent = 'Creating…';
+    const origHtml = btn.innerHTML;
+    btn.innerHTML = '<span>Creating…</span>';
     try {
       const res = await fetch('/api/remote-access/tunnels', {
         method: 'POST',
@@ -418,7 +613,7 @@
       alert('Failed to create: ' + e3.message);
     } finally {
       btn.disabled = false;
-      btn.textContent = orig;
+      btn.innerHTML = origHtml;
     }
   });
 
