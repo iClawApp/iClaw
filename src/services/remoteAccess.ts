@@ -617,8 +617,11 @@ export const remoteAccess = {
   },
 
   list(): TunnelStatus[] {
+    // Sort by time-until-expiry ascending: tunnels closest to expiring
+    // rise to the top so the most-time-sensitive ones are the most
+    // visible. Steady within a given duration (preserves create order).
     return Array.from(tunnels.values())
-      .sort((a, b) => a.createdAt - b.createdAt)
+      .sort((a, b) => a.expiresAt - b.expiresAt || a.createdAt - b.createdAt)
       .map(toStatus);
   },
 
