@@ -153,10 +153,12 @@ async function main(): Promise<void> {
 }
 
 /**
- * Default relay URL for UI-driven activation. Env override wins (so
- * deploys can point at a different relay); otherwise we fall back to the
- * dev default so the feature "just works" out of the box when an
- * iclaw-relay is running locally.
+ * Default relay URL for UI-driven activation.
+ *
+ * Production default points at the public relay so Remote Access works
+ * out of the box on a fresh install — no terminal, no second process.
+ * Override with `ICLAW_RELAY_URL=ws://127.0.0.1:4100/tunnel` for local
+ * dev against a relay running on the same machine.
  */
 function resolveRelayUrl(): string {
   const envUrl = process.env.ICLAW_RELAY_URL;
@@ -169,7 +171,7 @@ function resolveRelayUrl(): string {
       console.warn(`[remote-access] ignoring ICLAW_RELAY_URL — not a valid URL: ${envUrl}`);
     }
   }
-  return 'ws://127.0.0.1:4100/tunnel';
+  return 'wss://relay.iclaw.digital/tunnel';
 }
 
 void main().catch((err) => {
