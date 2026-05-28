@@ -5,6 +5,7 @@ import { attachWsServer } from './routes/ws';
 import { openclaw } from './services/openclaw';
 import { scheduler } from './services/scheduler';
 import { gatewayEvents } from './services/gatewayEvents';
+import { remoteAccess, readRemoteAccessEnv } from './services/remoteAccess';
 import {
   findAvailablePort,
   attachCliBrowserControls,
@@ -40,6 +41,7 @@ function gracefulShutdown(
   }
   removeLockFileIfOwned();
   scheduler.stop();
+  remoteAccess.stop();
 
   const exitCode = signal === 'SIGINT' ? 130 : 0;
   let exiting = false;
@@ -138,6 +140,18 @@ async function main(): Promise<void> {
       openclaw.hasToken,
       openclaw.tokenSource,
     );
+  }
+
+  // Remote Access: opt-in via env flags. The auth/encryption layers land in
+  // follow-up work; right now this is a raw byte-forwarding tunnel intended
+  // for local end-to-end testing only.
+  const ra = readRemoteAccessEnv();
+  if (ra) {
+    remoteAccess.start({
+      relayUrl: ra.relayUrl,
+      localHost: host,
+      localPort: port,
+    });
   }
 }
 
