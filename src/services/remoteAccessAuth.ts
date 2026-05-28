@@ -339,6 +339,20 @@ export function stripInternalHeaders(headers: Record<string, string>): Record<st
 export const TUNNELED_HEADER = 'x-iclaw-tunneled';
 export const TUNNELED_VALUE = '1';
 
+/**
+ * Standalone session check for code paths that don't run through Express
+ * middleware (notably the WS-upgrade forwarder in `remoteAccess.ts`).
+ * Returns true only when the gate is enabled AND the supplied cookie
+ * header contains a valid session id. When the gate is disabled this
+ * returns false: tunneled traffic shouldn't exist without an active gate,
+ * and refusing here is the safer default.
+ */
+export function isValidTunnelSession(cookieHeader: string | undefined): boolean {
+  if (!currentPassphrase) return false;
+  const cookies = parseCookies(cookieHeader);
+  return isValidSession(cookies[SESSION_COOKIE]);
+}
+
 /* ---------------------------------------------------- test-only helpers -- */
 
 export const __internal = {

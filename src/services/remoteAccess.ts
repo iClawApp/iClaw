@@ -25,6 +25,7 @@ import {
   enableGate,
   disableGate,
   generatePassphrase,
+  isValidTunnelSession,
   stripInternalHeaders,
   TUNNELED_HEADER,
   TUNNELED_VALUE,
@@ -62,7 +63,37 @@ interface ErrFrame {
   message: string;
 }
 
-type Frame = HelloFrame | ReqFrame | ResFrame | ErrFrame | { t: 'ping' } | { t: 'pong' };
+interface WsOpenFrame {
+  t: 'ws-open';
+  id: string;
+  path: string;
+  headers: Record<string, string>;
+}
+
+interface WsDataFrame {
+  t: 'ws-data';
+  id: string;
+  binary: boolean;
+  data: string;
+}
+
+interface WsCloseFrame {
+  t: 'ws-close';
+  id: string;
+  code?: number;
+  reason?: string;
+}
+
+type Frame =
+  | HelloFrame
+  | ReqFrame
+  | ResFrame
+  | ErrFrame
+  | WsOpenFrame
+  | WsDataFrame
+  | WsCloseFrame
+  | { t: 'ping' }
+  | { t: 'pong' };
 
 const HOP_BY_HOP = new Set([
   'connection',
@@ -102,6 +133,20 @@ let reconnectAttempt = 0;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let opts: StartOptions | null = null;
 
+/**
+ * Open loopback WS streams, keyed by relay-side stream id. Bridges a
+ * public-side WebSocket (in the browser) to the local iClaw `/ws` server.
+ *
+ * Each entry carries a `pending` queue so that `ws-data` frames arriving
+ * while the loopback handshake is still in progress are flushed on
+ * `open` instead of being silently dropped.
+ */
+interface StreamState {
+  ws: WebSocket;
+  pending: { data: string; binary: boolean }[];
+}
+const streams = new Map<string, StreamState>();
+
 function scheduleReconnect(): void {
   if (stopped) return;
   reconnectAttempt += 1;
@@ -139,6 +184,38 @@ function connect(): void {
     }
     if (frame.t === 'req') {
       void handleReq(socket, frame);
+      return;
+    }
+    if (frame.t === 'ws-open') {
+      handleWsOpen(socket, frame);
+      return;
+    }
+    if (frame.t === 'ws-data') {
+      const s = streams.get(frame.id);
+      if (!s) return;
+      if (s.ws.readyState === WebSocket.OPEN) {
+        try {
+          s.ws.send(Buffer.from(frame.data, 'base64'), { binary: frame.binary });
+        } catch {
+          // peer probably closed mid-write
+        }
+      } else if (s.ws.readyState === WebSocket.CONNECTING) {
+        // Loopback handshake still in flight; buffer until 'open' fires.
+        s.pending.push({ data: frame.data, binary: frame.binary });
+      }
+      // CLOSING / CLOSED — silently drop.
+      return;
+    }
+    if (frame.t === 'ws-close') {
+      const s = streams.get(frame.id);
+      if (s) {
+        streams.delete(frame.id);
+        try {
+          s.ws.close(frame.code, frame.reason);
+        } catch {
+          // ignore
+        }
+      }
       return;
     }
     if (frame.t === 'ping') {
@@ -227,6 +304,115 @@ function sendErr(socket: WebSocket, id: string | undefined, message: string): vo
   if (socket.readyState !== WebSocket.OPEN) return;
   const errFrame: ErrFrame = { t: 'err', id, message };
   socket.send(JSON.stringify(errFrame));
+}
+
+function sendStreamClose(
+  socket: WebSocket,
+  id: string,
+  code?: number,
+  reason?: string,
+): void {
+  if (socket.readyState !== WebSocket.OPEN) return;
+  const f: WsCloseFrame = { t: 'ws-close', id, code, reason };
+  try {
+    socket.send(JSON.stringify(f));
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Open a loopback WebSocket connection to the local iClaw `/ws` (or
+ * wherever the public client asked for) and bridge messages both ways
+ * with the relay-side public WS via `ws-data` frames.
+ *
+ * Authentication: relay forwards the upgrade headers including any Cookie
+ * the browser had. We require a valid `iclaw_ra` session before opening
+ * the loopback — relay sees the cookie bytes pass through, but the gate
+ * runs here, end-to-end of the local iClaw.
+ */
+function handleWsOpen(relayWs: WebSocket, frame: WsOpenFrame): void {
+  if (!opts) {
+    sendStreamClose(relayWs, frame.id, 1011, 'remote-access not initialised');
+    return;
+  }
+
+  // Strip any forged x-iclaw-* headers from the public side (defence in
+  // depth with the relay-side strip).
+  const safeHeaders = stripInternalHeaders(frame.headers);
+
+  if (!isValidTunnelSession(safeHeaders.cookie)) {
+    // 4401 is in the application range; clients can distinguish from 1008.
+    sendStreamClose(relayWs, frame.id, 4401, 'unauthorized');
+    return;
+  }
+
+  const url = `ws://${opts.localHost}:${opts.localPort}${frame.path}`;
+  let local: WebSocket;
+  try {
+    local = new WebSocket(url, {
+      headers: {
+        ...safeHeaders,
+        host: `${opts.localHost}:${opts.localPort}`,
+        [TUNNELED_HEADER]: TUNNELED_VALUE,
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'failed to open loopback ws';
+    sendStreamClose(relayWs, frame.id, 1011, message);
+    return;
+  }
+  const state: StreamState = { ws: local, pending: [] };
+  streams.set(frame.id, state);
+
+  local.on('open', () => {
+    // Flush any frames that arrived during the loopback handshake.
+    for (const m of state.pending) {
+      if (local.readyState !== WebSocket.OPEN) break;
+      try {
+        local.send(Buffer.from(m.data, 'base64'), { binary: m.binary });
+      } catch {
+        // ignore
+      }
+    }
+    state.pending.length = 0;
+  });
+
+  local.on('message', (data, isBinary) => {
+    const buf = Buffer.isBuffer(data)
+      ? data
+      : Array.isArray(data)
+        ? Buffer.concat(data)
+        : Buffer.from(data as ArrayBuffer);
+    const f: WsDataFrame = {
+      t: 'ws-data',
+      id: frame.id,
+      binary: !!isBinary,
+      data: buf.toString('base64'),
+    };
+    if (relayWs.readyState === WebSocket.OPEN) {
+      try {
+        relayWs.send(JSON.stringify(f));
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+  local.on('close', (code, reason) => {
+    if (!streams.delete(frame.id)) return; // already closed-out by inbound ws-close
+    sendStreamClose(
+      relayWs,
+      frame.id,
+      code,
+      reason && reason.length ? reason.toString('utf8') : undefined,
+    );
+  });
+
+  local.on('error', (err) => {
+    console.warn(`[remote-access] local ws error: ${err.message}`);
+    // 'close' fires next and handles the frame.
+  });
 }
 
 /* ----------------------------------------------------------- public api -- */
