@@ -41,9 +41,11 @@ remoteAccessApiRouter.post('/tunnels', (req, res) => {
   }
 
   const labelRaw = req.body?.label;
-  const label = typeof labelRaw === 'string' && labelRaw.trim().length > 0
-    ? labelRaw.trim().slice(0, 64)
-    : null;
+  if (typeof labelRaw !== 'string' || !labelRaw.trim()) {
+    res.status(400).json({ error: 'label is required' });
+    return;
+  }
+  const label = labelRaw.trim().slice(0, 64);
 
   try {
     const status = remoteAccess.createTunnel(durationMs, label);
