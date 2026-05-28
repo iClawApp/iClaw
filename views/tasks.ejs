@@ -5,7 +5,8 @@
 
   <main class="col col-main task-page task-page--board">
     <div class="task-shell">
-      <header class="task-board-header">
+      <header class="task-board-header page-toolbar">
+        <%- include('partials/mobile-nav-toggle') %>
         <h1 class="task-board-title">Tasks</h1>
         <div class="task-project-filter">
           <select id="task-project-filter" class="task-project-filter-select" aria-label="Filter tasks by project">

@@ -85,9 +85,12 @@
 
   <main class="col col-main task-page" data-task-id="<%= task.id %>">
     <div class="task-shell">
-      <a href="/tasks" class="task-back">
-        <span class="task-back-chevron" aria-hidden="true">‹</span> Tasks
-      </a>
+      <div class="page-toolbar page-toolbar--task">
+        <%- include('partials/mobile-nav-toggle') %>
+        <a href="/tasks" class="task-back">
+          <span class="task-back-chevron" aria-hidden="true">‹</span> Tasks
+        </a>
+      </div>
 
       <header class="task-large-header">
         <div class="task-large-header-row">
