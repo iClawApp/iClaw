@@ -14,11 +14,18 @@
         <header class="settings-section-head">
           <div class="settings-section-head-row">
             <div class="settings-section-head-text">
-              <h2 class="settings-section-title">Remote Access</h2>
+              <h2 class="settings-section-title">
+                <svg class="settings-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="2" y1="12" x2="22" y2="12"/>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                </svg>
+                Remote Access
+              </h2>
               <p class="settings-section-desc">
-                Open a temporary URL so you can use this iClaw from another
-                device, or share access with someone. Each tunnel has its own
-                passphrase and expiry.
+                Get a link to open iClaw on your phone, another computer, or
+                with someone you trust. Each link has its own password and
+                stops working when the time runs out
               </p>
             </div>
             <button type="button" class="btn btn--primary btn--sm ra-new-btn" id="ra-open-modal">
@@ -26,7 +33,7 @@
                 <line x1="12" y1="5" x2="12" y2="19"/>
                 <line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
-              <span>New tunnel</span>
+              <span>Share</span>
             </button>
           </div>
         </header>
@@ -40,35 +47,57 @@
                 <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
               </svg>
               <p class="ra-empty-text">No active tunnels.</p>
-              <p class="ra-empty-hint">Click <strong>New tunnel</strong> to share access from another device.</p>
+              <p class="ra-empty-hint">Create a temporary link to use iClaw from another device.</p>
+              <button type="button" class="btn btn--primary btn--sm ra-empty-cta" data-action="open-modal">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="12" y1="5" x2="12" y2="19"/>
+                  <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <span>Share</span>
+              </button>
             </div>
           <% } else { %>
-            <% tunnels.forEach(function (t) { %>
-              <div class="ra-tunnel-card" data-tunnel-id="<%= t.id %>">
+            <% tunnels.forEach(function (t) {
+              var tunnelTitle = t.label || 'Remote tunnel';
+              var passMask = '•'.repeat(Math.max(t.passphrase.length, 8));
+              var urlHost = '', urlPath = '';
+              if (t.url) {
+                try {
+                  var u = new URL(t.url);
+                  urlHost = u.host;
+                  urlPath = u.pathname + u.search + u.hash;
+                } catch (e) {
+                  urlHost = t.url;
+                }
+              }
+            %>
+              <div
+                class="ra-tunnel-card"
+                data-tunnel-id="<%= t.id %>"
+                data-expires-at="<%= t.expiresAt %>"
+              >
                 <div class="ra-tunnel-head">
-                  <span class="ra-status">
-                    <span class="ra-status-dot" aria-hidden="true"></span>
-                    <span class="ra-status-text">Live</span>
-                  </span>
-                  <% if (t.label) { %>
-                    <span class="ra-tunnel-label"><%= t.label %></span>
-                  <% } %>
-                  <span class="ra-remaining" data-role="remaining" data-expires-at="<%= t.expiresAt %>">…</span>
+                  <div class="ra-tunnel-title-row">
+                    <h3 class="ra-tunnel-name"><%= tunnelTitle %></h3>
+                    <span class="ra-remaining" data-role="remaining">…</span>
+                  </div>
                 </div>
 
                 <div class="ra-field">
                   <div class="ra-field-label">URL</div>
                   <% if (t.url) { %>
                     <div class="ra-field-value-row">
-                      <a class="ra-url" data-role="url" href="<%= t.url %>" target="_blank" rel="noopener noreferrer">
-                        <span class="ra-url-text"><%= t.url %></span>
+                      <a class="ra-url" data-role="url" href="<%= t.url %>" target="_blank" rel="noopener noreferrer" title="<%= t.url %>">
+                        <span class="ra-url-display">
+                          <span class="ra-url-host"><%= urlHost %></span><% if (urlPath) { %><span class="ra-url-path"><%= urlPath %></span><% } %>
+                        </span>
                         <svg class="ra-extlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                           <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
                           <polyline points="15 3 21 3 21 9"/>
                           <line x1="10" y1="14" x2="21" y2="3"/>
                         </svg>
                       </a>
-                      <button type="button" class="ra-copy-btn" data-copy="url" aria-label="Copy URL" title="Copy URL">
+                      <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="url" aria-label="Copy URL" title="Copy URL">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                           <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -86,8 +115,8 @@
                 <div class="ra-field">
                   <div class="ra-field-label">Passphrase</div>
                   <div class="ra-field-value-row">
-                    <code class="ra-passphrase" data-role="passphrase"><%= t.passphrase %></code>
-                    <button type="button" class="ra-copy-btn" data-copy="passphrase" aria-label="Copy passphrase" title="Copy passphrase">
+                    <code class="ra-passphrase is-masked" data-role="passphrase" data-secret="<%= t.passphrase %>" tabindex="0" role="button" aria-label="Show passphrase"><%= passMask %></code>
+                    <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="passphrase" aria-label="Copy passphrase" title="Copy passphrase">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -97,18 +126,12 @@
                 </div>
 
                 <div class="ra-card-foot">
-                  <button type="button" class="ra-disable-link" data-action="delete">Disable</button>
+                  <button type="button" class="btn btn--ghost btn--sm btn--danger" data-action="delete">Disable</button>
                 </div>
               </div>
             <% }); %>
           <% } %>
         </div>
-
-        <p class="settings-fineprint">
-          The passphrase is the only protection between your iClaw and anyone
-          who finds the URL. Share both, or send the link through a private
-          channel.
-        </p>
       </section>
     </div>
   </main>
@@ -119,7 +142,7 @@
   <form method="dialog" class="ra-modal-form" id="ra-modal-form">
     <header class="ra-modal-head">
       <div class="ra-modal-head-text">
-        <h3 class="ra-modal-title" id="ra-modal-title">New tunnel</h3>
+        <h3 class="ra-modal-title" id="ra-modal-title">Share</h3>
         <p class="ra-modal-subtitle">Generates a temporary URL and passphrase for someone to reach this iClaw.</p>
       </div>
       <button type="button" class="ra-modal-x" id="ra-modal-cancel" aria-label="Close">
@@ -178,7 +201,7 @@
 
     <footer class="ra-modal-foot">
       <button type="button" class="btn btn--ghost btn--sm" id="ra-modal-cancel2">Cancel</button>
-      <button type="submit" class="btn btn--primary btn--sm" id="ra-modal-submit">Create tunnel</button>
+      <button type="submit" class="btn btn--primary btn--sm" id="ra-modal-submit">Share</button>
     </footer>
   </form>
 </dialog>
@@ -187,7 +210,7 @@
 /* ───────────── Page shell ───────────── */
 .settings-page {
   width: 100%;
-  max-width: 36rem;
+  max-width: 42rem;
   margin: 0 auto;
   box-sizing: border-box;
   padding: var(--space-9) var(--space-6) var(--space-10);
@@ -215,11 +238,20 @@
 }
 .settings-section-head-text { flex: 1; min-width: 0; }
 .settings-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   margin: 0 0 var(--space-2);
   font-size: 1.05rem;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text);
+}
+.settings-section-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--muted) 70%, var(--text));
 }
 .settings-section-desc {
   margin: 0;
@@ -227,13 +259,6 @@
   line-height: 1.55;
   color: var(--muted);
   max-width: 26rem;
-}
-.settings-fineprint {
-  margin: var(--space-4) 0 0;
-  font-size: var(--text-xs);
-  line-height: 1.55;
-  color: var(--muted);
-  max-width: 28rem;
 }
 .ra-new-btn {
   flex-shrink: 0;
@@ -257,40 +282,25 @@
 }
 
 .ra-tunnel-head {
+  margin: 0 0 var(--space-5);
+}
+.ra-tunnel-title-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
-  margin: 0 0 var(--space-4);
-  flex-wrap: wrap;
+  margin: 0 0 var(--space-3);
 }
-.ra-status {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--ok, #2ea043);
-  font-weight: 500;
-}
-.ra-status-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: ra-pulse 2.2s ease-in-out infinite;
-}
-@keyframes ra-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 50%, transparent); }
-  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 0%, transparent); }
-}
-.ra-tunnel-label {
+.ra-tunnel-name {
+  margin: 0;
   font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: -0.015em;
   color: var(--text);
-  font-weight: 500;
-  letter-spacing: -0.005em;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 14rem;
 }
 .ra-remaining {
   margin-left: auto;
@@ -298,6 +308,7 @@
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
+  flex-shrink: 0;
 }
 
 /* Field rows */
@@ -311,37 +322,43 @@
 }
 .ra-field-value-row {
   display: flex;
-  align-items: stretch;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .ra-url {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   flex: 1;
   min-width: 0;
-  padding: var(--space-3) var(--space-4);
-  background: color-mix(in srgb, var(--text) 3%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: var(--radius-md);
-  color: var(--text);
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--md-link, var(--accent));
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--text-sm);
   text-decoration: none;
   user-select: all;
-  transition: background 0.12s ease, border-color 0.12s ease;
 }
 .ra-url:hover {
-  background: color-mix(in srgb, var(--text) 6%, transparent);
-  border-color: color-mix(in srgb, var(--border) 100%, transparent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
-.ra-url-text {
+.ra-url-display {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ra-url-host {
+  font-weight: 600;
+  color: inherit;
+}
+.ra-url-path {
+  color: color-mix(in srgb, currentColor 72%, transparent);
+  font-weight: 400;
 }
 .ra-extlink-icon {
   width: 13px;
@@ -355,10 +372,6 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  background: color-mix(in srgb, var(--text) 2%, transparent);
-  border: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: var(--radius-md);
   font-size: var(--text-sm);
   color: var(--muted);
   font-style: italic;
@@ -375,64 +388,62 @@
 .ra-passphrase {
   flex: 1;
   min-width: 0;
-  padding: var(--space-3) var(--space-4);
-  background: color-mix(in srgb, var(--text) 3%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: var(--radius-md);
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--text-sm);
   color: var(--text);
-  user-select: all;
   word-break: break-all;
   letter-spacing: 0.01em;
+  cursor: pointer;
+}
+.ra-passphrase.is-masked {
+  user-select: none;
+  color: var(--muted);
+  letter-spacing: 0.12em;
+}
+.ra-passphrase:not(.is-masked) { user-select: all; }
+.ra-passphrase:focus-visible {
+  outline: none;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--focus-ring);
 }
 
 /* Copy buttons */
 .ra-copy-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
   flex-shrink: 0;
-  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+  --_btn-pad-y: 0;
+  --_btn-pad-x: 0;
+  --_btn-border: transparent;
+  --_btn-bg: transparent;
+  width: 28px;
+  height: 28px;
+  opacity: 0.55;
+}
+.ra-field-value-row:hover .ra-copy-btn,
+.ra-copy-btn:hover,
+.ra-copy-btn:focus-visible {
+  opacity: 1;
 }
 .ra-copy-btn svg { width: 14px; height: 14px; display: block; }
-.ra-copy-btn:hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-}
 .ra-copy-btn.is-copied {
   color: var(--ok, #2ea043);
-  border-color: color-mix(in srgb, var(--ok, #2ea043) 30%, transparent);
-  background: color-mix(in srgb, var(--ok, #2ea043) 10%, transparent);
+  --_btn-border: color-mix(in srgb, var(--ok, #2ea043) 35%, var(--border));
+  --_btn-bg: color-mix(in srgb, var(--ok, #2ea043) 10%, transparent);
 }
-.ra-copy-btn:disabled { cursor: default; }
 
 /* Card foot */
 .ra-card-foot {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  margin-top: var(--space-3);
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
 }
-.ra-disable-link {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  padding: var(--space-1) 0;
-  color: var(--muted);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  cursor: pointer;
-  transition: color 0.12s ease;
-}
-.ra-disable-link:hover { color: var(--danger); }
-.ra-disable-link:disabled { color: var(--muted); cursor: default; }
 
 /* ───────────── Empty state ───────────── */
 .ra-empty {
@@ -454,8 +465,17 @@
   color: var(--text);
   font-weight: 500;
 }
-.ra-empty-hint { margin: 0; font-size: var(--text-xs); }
-.ra-empty-hint strong { color: var(--text); font-weight: 500; }
+.ra-empty-hint {
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-xs);
+  max-width: 16rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+.ra-empty-cta {
+  gap: var(--space-2);
+}
+.ra-empty-cta svg { width: 14px; height: 14px; display: block; }
 
 /* ───────────── Modal ───────────── */
 .ra-modal {
@@ -644,7 +664,7 @@
   .settings-section-head-row { flex-direction: column; align-items: stretch; }
   .ra-new-btn { justify-content: center; }
   .ra-duration-options { grid-template-columns: 1fr 1fr; }
-  .ra-tunnel-head { row-gap: var(--space-2); }
+  .ra-tunnel-title-row { flex-wrap: wrap; }
 }
 </style>
 
@@ -667,10 +687,13 @@
     const min = Math.floor(sec / 60);
     const hr  = Math.floor(min / 60);
     const day = Math.floor(hr / 24);
-    if (day >= 1) return day + 'd ' + (hr % 24) + 'h left';
-    if (hr  >= 1) return hr  + 'h ' + (min % 60) + 'm left';
-    if (min >= 1) return min + 'm ' + (sec % 60) + 's left';
-    return sec + 's left';
+
+    if (ms < 60_000) return sec + 's left';
+    if (ms < 3 * 60_000) return min + 'm ' + (sec % 60) + 's left';
+    if (ms < 60 * 60_000) return min + 'm left';
+    if (ms < 24 * 60 * 60_000) return hr + 'h left';
+    if (day < 2) return day + 'd ' + (hr % 24) + 'h left';
+    return day + 'd left';
   }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -680,7 +703,44 @@
   const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   const CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
   const EXT_ICON = '<svg class="ra-extlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+  function passMask(secret) {
+    const n = String(secret || '').length;
+    return '•'.repeat(Math.max(n, 8));
+  }
+  function togglePassphraseEl(el) {
+    const secret = el.getAttribute('data-secret') || '';
+    if (el.classList.contains('is-masked')) {
+      el.classList.remove('is-masked');
+      el.textContent = secret;
+      el.setAttribute('aria-label', 'Hide passphrase');
+    } else {
+      el.classList.add('is-masked');
+      el.textContent = passMask(secret);
+      el.setAttribute('aria-label', 'Show passphrase');
+    }
+  }
+  function passPhraseField(secret) {
+    const esc = escapeHtml(secret);
+    const mask = passMask(secret);
+    return '<code class="ra-passphrase is-masked" data-role="passphrase" data-secret="' + esc + '" tabindex="0" role="button" aria-label="Show passphrase">' + mask + '</code>' +
+      '<button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="passphrase" aria-label="Copy passphrase" title="Copy passphrase">' + COPY_ICON + '</button>';
+  }
 
+  function splitUrl(url) {
+    try {
+      const u = new URL(url);
+      const path = u.pathname + u.search + u.hash;
+      return {
+        host: u.host,
+        path: path === '/' ? '' : path,
+        display:
+          '<span class="ra-url-host">' + escapeHtml(u.host) + '</span>' +
+          (path && path !== '/' ? '<span class="ra-url-path">' + escapeHtml(path) + '</span>' : ''),
+      };
+    } catch (e) {
+      return { host: url, path: '', display: escapeHtml(url) };
+    }
+  }
   async function copy(text, btn) {
     try { await navigator.clipboard.writeText(text); }
     catch (e) { console.warn('clipboard write failed', e); return; }
@@ -698,25 +758,26 @@
 
   /* ─── render ─── */
   function renderCard(t) {
+    const now = Date.now();
+    const title = t.label ? escapeHtml(t.label) : 'Remote tunnel';
+    const urlParts = t.url ? splitUrl(t.url) : null;
+
     const urlBlock = t.url
       ? '<div class="ra-field-value-row">' +
-        '  <a class="ra-url" data-role="url" href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer">' +
-        '    <span class="ra-url-text">' + escapeHtml(t.url) + '</span>' +
+        '  <a class="ra-url" data-role="url" href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(t.url) + '">' +
+        '    <span class="ra-url-display">' + urlParts.display + '</span>' +
         '    ' + EXT_ICON +
         '  </a>' +
-        '  <button type="button" class="ra-copy-btn" data-copy="url" aria-label="Copy URL" title="Copy URL">' + COPY_ICON + '</button>' +
+        '  <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="url" aria-label="Copy URL" title="Copy URL">' + COPY_ICON + '</button>' +
         '</div>'
       : '<div class="ra-connecting" data-role="url-pending"><span class="ra-spinner" aria-hidden="true"></span><span>Connecting…</span></div>';
 
-    const labelChip = t.label
-      ? '<span class="ra-tunnel-label">' + escapeHtml(t.label) + '</span>'
-      : '';
-
-    return '<div class="ra-tunnel-card" data-tunnel-id="' + escapeHtml(t.id) + '">' +
+    return '<div class="ra-tunnel-card" data-tunnel-id="' + escapeHtml(t.id) + '" data-expires-at="' + t.expiresAt + '">' +
       '  <div class="ra-tunnel-head">' +
-      '    <span class="ra-status"><span class="ra-status-dot" aria-hidden="true"></span><span class="ra-status-text">Live</span></span>' +
-      '    ' + labelChip +
-      '    <span class="ra-remaining" data-role="remaining" data-expires-at="' + t.expiresAt + '">' + fmtRemaining(t.expiresAt - Date.now()) + '</span>' +
+      '    <div class="ra-tunnel-title-row">' +
+      '      <h3 class="ra-tunnel-name">' + title + '</h3>' +
+      '      <span class="ra-remaining" data-role="remaining">' + fmtRemaining(t.expiresAt - now) + '</span>' +
+      '    </div>' +
       '  </div>' +
       '  <div class="ra-field">' +
       '    <div class="ra-field-label">URL</div>' +
@@ -724,13 +785,10 @@
       '  </div>' +
       '  <div class="ra-field">' +
       '    <div class="ra-field-label">Passphrase</div>' +
-      '    <div class="ra-field-value-row">' +
-      '      <code class="ra-passphrase" data-role="passphrase">' + escapeHtml(t.passphrase) + '</code>' +
-      '      <button type="button" class="ra-copy-btn" data-copy="passphrase" aria-label="Copy passphrase" title="Copy passphrase">' + COPY_ICON + '</button>' +
-      '    </div>' +
+      '    <div class="ra-field-value-row">' + passPhraseField(t.passphrase) + '</div>' +
       '  </div>' +
       '  <div class="ra-card-foot">' +
-      '    <button type="button" class="ra-disable-link" data-action="delete">Disable</button>' +
+      '    <button type="button" class="btn btn--ghost btn--sm btn--danger" data-action="delete">Disable</button>' +
       '  </div>' +
       '</div>';
   }
@@ -742,7 +800,11 @@
       '    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>' +
       '  </svg>' +
       '  <p class="ra-empty-text">No active tunnels.</p>' +
-      '  <p class="ra-empty-hint">Click <strong>New tunnel</strong> to share access from another device.</p>' +
+      '  <p class="ra-empty-hint">Create a temporary link to use iClaw from another device.</p>' +
+      '  <button type="button" class="btn btn--primary btn--sm ra-empty-cta" data-action="open-modal">' +
+      '    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>' +
+      '    <span>Share</span>' +
+      '  </button>' +
       '</div>';
   }
 
@@ -753,10 +815,12 @@
 
   function tickRemaining() {
     const now = Date.now();
-    list.querySelectorAll('[data-role="remaining"]').forEach(function (el) {
-      const at = Number(el.getAttribute('data-expires-at'));
-      if (!at) return;
-      el.textContent = fmtRemaining(at - now);
+    list.querySelectorAll('.ra-tunnel-card').forEach(function (card) {
+      const expires = Number(card.getAttribute('data-expires-at'));
+      const remainingEl = card.querySelector('[data-role="remaining"]');
+      if (remainingEl && expires) {
+        remainingEl.textContent = fmtRemaining(expires - now);
+      }
     });
   }
 
@@ -779,16 +843,46 @@
   setInterval(tickRemaining, 1000);
 
   /* ─── list interactions ─── */
+  list.addEventListener('keydown', function (e) {
+    const el = e.target;
+    if (
+      el instanceof HTMLElement &&
+      el.matches('[data-role="passphrase"]') &&
+      (e.key === 'Enter' || e.key === ' ')
+    ) {
+      e.preventDefault();
+      togglePassphraseEl(el);
+    }
+  });
+
   list.addEventListener('click', async function (e) {
-    const t = e.target instanceof Element ? e.target.closest('[data-copy], [data-action]') : null;
+    const target = e.target instanceof Element ? e.target : null;
+    const passEl = target && target.closest('[data-role="passphrase"]');
+    if (passEl instanceof HTMLElement) {
+      togglePassphraseEl(passEl);
+      return;
+    }
+
+    const t = target ? target.closest('[data-copy], [data-action]') : null;
     if (!(t instanceof HTMLElement)) return;
+
+    if (t.getAttribute('data-action') === 'open-modal') {
+      openModal();
+      return;
+    }
 
     if (t.hasAttribute('data-copy')) {
       const role = t.getAttribute('data-copy');
       const card = t.closest('[data-tunnel-id]');
       if (!card) return;
       const valueEl = card.querySelector('[data-role="' + role + '"]');
-      if (valueEl) copy((valueEl.textContent || '').trim(), t);
+      if (role === 'url' && valueEl) {
+        copy((valueEl.getAttribute('href') || '').trim(), t);
+      } else if (role === 'passphrase' && valueEl) {
+        copy((valueEl.getAttribute('data-secret') || '').trim(), t);
+      } else if (valueEl) {
+        copy((valueEl.textContent || '').trim(), t);
+      }
       return;
     }
 
@@ -879,6 +973,7 @@
   });
 
   startPolling();
+  tickRemaining();
 })();
 </script>
 
