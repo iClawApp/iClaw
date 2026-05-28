@@ -797,7 +797,13 @@
       '</div>';
   }
 
+  /** Snapshot used for adaptive poll scheduling (url + expiry). */
+  let lastTunnels = <%- JSON.stringify(tunnels.map(function (t) {
+    return { id: t.id, url: t.url || null, expiresAt: t.expiresAt };
+  })) %>;
+
   function renderList(tunnels) {
+    lastTunnels = tunnels && tunnels.length ? tunnels : [];
     if (!tunnels || tunnels.length === 0) {
       list.innerHTML = emptyState();
       stopPolling();
@@ -809,30 +815,63 @@
 
   function tickRemaining() {
     const now = Date.now();
-    let anyExpired = false;
     list.querySelectorAll('.ra-tunnel-card').forEach(function (card) {
       const expires = Number(card.getAttribute('data-expires-at'));
       const remainingEl = card.querySelector('[data-role="remaining"]');
       if (remainingEl && expires) {
-        if (expires - now <= 0) anyExpired = true;
         remainingEl.textContent = fmtRemaining(expires - now);
       }
     });
-    if (anyExpired) scheduleExpiryRefresh();
   }
 
-  /* ─── polling: fast while Connecting, slow when stable ─── */
+  /* ─── adaptive polling (setTimeout chain + nextPollIn) ─── */
   const POLL_FAST_MS = 1500;
-  const POLL_SLOW_MS = 60000;
+  const POLL_SLOW_MS = 60_000;
+  const POLL_EXPIRY_GRACE_MS = 500;
+  const POLL_SOON_MS = 60_000;
+  const POLL_SANITY_MAX_MS = 5 * 60_000;
+  const POLL_BACKOFF_BASE_MS = 1000;
+  const POLL_BACKOFF_MAX_MS = 30_000;
 
   let pollTimer = null;
-  let expiryRefreshTimer = null;
+  let pollFailStreak = 0;
 
-  function listHasTunnels() {
-    return list.querySelector('.ra-tunnel-card') !== null;
+  function nextPollIn(tunnels) {
+    if (!tunnels || tunnels.length === 0) return Infinity;
+
+    const now = Date.now();
+    let anyPending = false;
+    let minRemaining = Infinity;
+
+    for (let i = 0; i < tunnels.length; i++) {
+      const t = tunnels[i];
+      if (!t.url) anyPending = true;
+      const rem = Number(t.expiresAt) - now;
+      if (rem < minRemaining) minRemaining = rem;
+    }
+
+    let delay;
+    if (anyPending) {
+      delay = POLL_FAST_MS;
+    } else if (minRemaining <= 0) {
+      delay = POLL_EXPIRY_GRACE_MS;
+    } else if (minRemaining < POLL_SOON_MS) {
+      delay = minRemaining + POLL_EXPIRY_GRACE_MS;
+    } else {
+      delay = POLL_SLOW_MS;
+    }
+
+    return Math.min(delay, POLL_SANITY_MAX_MS);
   }
-  function listHasPendingUrl() {
-    return list.querySelector('[data-role="url-pending"]') !== null;
+
+  function pollDelayWithBackoff() {
+    const base = nextPollIn(lastTunnels);
+    if (base === Infinity || pollFailStreak === 0) return base;
+    const backoff = Math.min(
+      POLL_BACKOFF_BASE_MS * Math.pow(2, pollFailStreak - 1),
+      POLL_BACKOFF_MAX_MS,
+    );
+    return Math.max(base, backoff);
   }
 
   async function fetchStatus() {
@@ -843,34 +882,34 @@
   }
 
   function stopPolling() {
-    if (pollTimer) {
-      clearInterval(pollTimer);
+    if (pollTimer !== null) {
+      clearTimeout(pollTimer);
       pollTimer = null;
     }
   }
 
   function schedulePolling() {
     stopPolling();
-    if (document.hidden || !listHasTunnels()) return;
-    const interval = listHasPendingUrl() ? POLL_FAST_MS : POLL_SLOW_MS;
-    pollTimer = setInterval(refresh, interval);
-  }
+    if (document.hidden || lastTunnels.length === 0) return;
 
-  function scheduleExpiryRefresh() {
-    if (expiryRefreshTimer) return;
-    expiryRefreshTimer = setTimeout(function () {
-      expiryRefreshTimer = null;
+    const delay = pollDelayWithBackoff();
+    if (!Number.isFinite(delay)) return;
+
+    pollTimer = setTimeout(function () {
+      pollTimer = null;
       refresh();
-    }, 500);
+    }, delay);
   }
 
   async function refresh() {
     if (document.hidden) return;
     const data = await fetchStatus();
     if (!data) {
+      pollFailStreak++;
       schedulePolling();
       return;
     }
+    pollFailStreak = 0;
     if (data.unchanged) {
       schedulePolling();
       return;
@@ -1009,12 +1048,12 @@
       stopPolling();
       return;
     }
-    if (listHasTunnels()) {
+    if (lastTunnels.length > 0) {
       refresh();
     }
   });
 
-  if (<%= tunnels.length %> > 0) schedulePolling();
+  if (lastTunnels.length > 0) schedulePolling();
   tickRemaining();
 })();
 </script>
