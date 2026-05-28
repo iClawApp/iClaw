@@ -185,10 +185,28 @@ CREATE TABLE IF NOT EXISTS task_ask_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_task_ask_sessions_task ON task_ask_sessions(task_id);
 
--- Remote-access state. Singleton (id = 1) — only one tunnel per iClaw at a
--- time. Persisted so a tunnel enabled with e.g. 30-day duration survives
--- iClaw restarts. Passphrase is stored plaintext on the assumption that
--- this DB lives on the user's local machine and isn't synced elsewhere.
+-- Remote-access tunnels. A user can have multiple active tunnels with
+-- independent durations / passphrases / connected sessions. Deleting one
+-- never affects another. Persisted so tunnels survive iClaw restarts.
+--
+-- Passphrase is stored plaintext on the assumption that this DB lives on
+-- the user's local machine and isn't synced elsewhere.
+CREATE TABLE IF NOT EXISTS remote_access_tunnels (
+  id          TEXT PRIMARY KEY,           -- opaque short id (t-xxxxxx)
+  label       TEXT,                       -- optional user-facing label
+  passphrase  TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  started_at  INTEGER NOT NULL,
+  expires_at  INTEGER NOT NULL,
+  created_at  INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_remote_access_tunnels_expires
+  ON remote_access_tunnels(expires_at);
+
+-- Legacy singleton table from the previous schema. Kept as a dead table
+-- so dev DBs upgrading in place don't have to rebuild — DROP-on-startup
+-- is a follow-up clean-up once everyone has migrated.
 CREATE TABLE IF NOT EXISTS remote_access_state (
   id          INTEGER PRIMARY KEY CHECK (id = 1),
   enabled     INTEGER NOT NULL DEFAULT 0,

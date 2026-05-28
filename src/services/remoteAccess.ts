@@ -1,22 +1,22 @@
 /**
- * Remote Access client.
+ * Remote Access runtime — multi-tunnel.
  *
- * iClaw opens an outbound WebSocket to a relay; the relay allocates a
- * temporary subdomain and forwards public HTTP requests + WebSocket
- * upgrades back to us, which we replay against the local Express server.
+ * Each Remote Access tunnel is an independent unit: its own outbound WS
+ * to the relay, its own subdomain, passphrase, expiry timer, and per-stream
+ * loopback connections. Deleting one tunnel never affects another.
  *
- * Two activation paths:
+ * Persisted state lives in {@link ./remoteAccessState.ts}; this module
+ * mirrors it into in-memory {@link RuntimeTunnel} records that own the
+ * actual WS plumbing.
  *
- *   1. UI (preferred): the Settings page POSTs to /api/remote-access/start
- *      with a chosen `durationMs` (30 min / 12 h / 7 d / 30 d). State is
- *      persisted to SQLite and auto-resumed on iClaw restart; the tunnel
- *      auto-stops when `expires_at` hits.
+ * Activation paths:
+ *   - UI: POST /api/remote-access/tunnels with a duration from the fixed
+ *     list. Each call creates a new tunnel.
+ *   - On iClaw startup: resumeAll() rehydrates every persisted tunnel
+ *     whose `expiresAt` is still in the future.
  *
- *   2. Legacy env: `ICLAW_REMOTE_ACCESS=1` + `ICLAW_RELAY_URL=ws(s)://…`.
- *      Infinite duration, no persistence. Useful for headless dev.
- *
- * Auth/encryption beyond the password gate (SPAKE2, device keypairs) lands
- * in follow-up work.
+ * No env-driven path any more — the legacy `ICLAW_REMOTE_ACCESS=1` flag
+ * was singleton-only and didn't fit the multi-tunnel model.
  */
 
 import http from 'node:http';
@@ -26,15 +26,18 @@ import { WebSocket } from 'ws';
 import {
   enableGate,
   disableGate,
+  disableAllGates,
   generatePassphrase,
   isValidTunnelSession,
   stripInternalHeaders,
   TUNNELED_HEADER,
   TUNNELED_VALUE,
+  TUNNEL_ID_HEADER,
 } from './remoteAccessAuth';
 import {
+  generateTunnelId,
   remoteAccessState,
-  type RemoteAccessPersistedState,
+  type PersistedTunnel,
 } from './remoteAccessState';
 
 /* ---------------------------------------------------------------- frames -- */
@@ -114,7 +117,11 @@ const HOP_BY_HOP = new Set([
   'content-length',
 ]);
 
-function stripHopByHop(headers: http.IncomingHttpHeaders | Record<string, string | string[] | undefined>): Record<string, string> {
+function stripHopByHop(
+  headers:
+    | http.IncomingHttpHeaders
+    | Record<string, string | string[] | undefined>,
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(headers)) {
     if (v === undefined) continue;
@@ -125,72 +132,121 @@ function stripHopByHop(headers: http.IncomingHttpHeaders | Record<string, string
   return out;
 }
 
-/* ----------------------------------------------------------------- state -- */
+/* --------------------------------------------------------------- limits -- */
 
-interface StartOptions {
-  relayUrl: string;
-  localHost: string;
-  localPort: number;
-}
-
-/**
- * Allowed tunnel durations exposed to the UI (in milliseconds). The API
- * rejects anything outside this list. Order matches the UI radio buttons.
- */
 export const ALLOWED_DURATIONS_MS: readonly number[] = Object.freeze([
-  30 * 60_000,                  // 30 minutes
-  12 * 60 * 60_000,             // 12 hours
-  7 * 24 * 60 * 60_000,         // 7 days
-  30 * 24 * 60 * 60_000,        // 30 days
+  30 * 60_000,
+  12 * 60 * 60_000,
+  7 * 24 * 60 * 60_000,
+  30 * 24 * 60 * 60_000,
 ]);
 
-let ws: WebSocket | null = null;
-let stopped = false;
-let reconnectAttempt = 0;
-let reconnectTimer: NodeJS.Timeout | null = null;
-let opts: StartOptions | null = null;
+/* ------------------------------------------------------------- runtime -- */
 
-/* --- session-scoped state surfaced via getStatus() / the Settings page ---- */
-let currentPassphrase: string | null = null;
-let currentUrl: string | null = null;
-let currentStartedAt: number | null = null;
-let currentDurationMs: number | null = null; // null = no expiry (legacy env path)
-let currentExpiresAt: number | null = null;
-let expiryTimer: NodeJS.Timeout | null = null;
-
-/**
- * Open loopback WS streams, keyed by relay-side stream id. Bridges a
- * public-side WebSocket (in the browser) to the local iClaw `/ws` server.
- *
- * Each entry carries a `pending` queue so that `ws-data` frames arriving
- * while the loopback handshake is still in progress are flushed on
- * `open` instead of being silently dropped.
- */
 interface StreamState {
   ws: WebSocket;
   pending: { data: string; binary: boolean }[];
 }
-const streams = new Map<string, StreamState>();
 
-function scheduleReconnect(): void {
-  if (stopped) return;
-  reconnectAttempt += 1;
-  const delay = Math.min(30_000, 500 * 2 ** Math.min(reconnectAttempt, 6));
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    connect();
+interface RuntimeTunnel {
+  id: string;
+  label: string | null;
+  passphrase: string;
+  durationMs: number;
+  startedAt: number;
+  expiresAt: number;
+  createdAt: number;
+
+  ws: WebSocket | null;
+  stopped: boolean;
+  reconnectAttempt: number;
+  reconnectTimer: NodeJS.Timeout | null;
+  expiryTimer: NodeJS.Timeout | null;
+  currentUrl: string | null;
+  streams: Map<string, StreamState>;
+}
+
+let bound: { relayUrl: string; localHost: string; localPort: number } | null = null;
+const tunnels = new Map<string, RuntimeTunnel>();
+
+export interface TunnelStatus {
+  id: string;
+  label: string | null;
+  url: string | null;
+  passphrase: string;
+  startedAt: number;
+  durationMs: number;
+  expiresAt: number;
+}
+
+function toStatus(rt: RuntimeTunnel): TunnelStatus {
+  return {
+    id: rt.id,
+    label: rt.label,
+    url: rt.currentUrl,
+    passphrase: rt.passphrase,
+    startedAt: rt.startedAt,
+    durationMs: rt.durationMs,
+    expiresAt: rt.expiresAt,
+  };
+}
+
+function makeRuntime(p: PersistedTunnel): RuntimeTunnel {
+  return {
+    id: p.id,
+    label: p.label,
+    passphrase: p.passphrase,
+    durationMs: p.durationMs,
+    startedAt: p.startedAt,
+    expiresAt: p.expiresAt,
+    createdAt: p.createdAt,
+    ws: null,
+    stopped: false,
+    reconnectAttempt: 0,
+    reconnectTimer: null,
+    expiryTimer: null,
+    currentUrl: null,
+    streams: new Map(),
+  };
+}
+
+function scheduleExpiry(rt: RuntimeTunnel): void {
+  if (rt.expiryTimer) {
+    clearTimeout(rt.expiryTimer);
+    rt.expiryTimer = null;
+  }
+  const delta = rt.expiresAt - Date.now();
+  if (delta <= 0) {
+    setTimeout(() => deleteTunnel(rt.id), 0);
+    return;
+  }
+  rt.expiryTimer = setTimeout(() => {
+    rt.expiryTimer = null;
+    console.log(`[remote-access:${rt.id}] duration elapsed — stopping`);
+    deleteTunnel(rt.id);
+  }, delta);
+  rt.expiryTimer.unref();
+}
+
+function scheduleReconnect(rt: RuntimeTunnel): void {
+  if (rt.stopped) return;
+  rt.reconnectAttempt += 1;
+  const delay = Math.min(30_000, 500 * 2 ** Math.min(rt.reconnectAttempt, 6));
+  rt.reconnectTimer = setTimeout(() => {
+    rt.reconnectTimer = null;
+    connect(rt);
   }, delay);
 }
 
-function connect(): void {
-  if (!opts || stopped) return;
+function connect(rt: RuntimeTunnel): void {
+  if (!bound || rt.stopped) return;
 
-  const socket = new WebSocket(opts.relayUrl);
-  ws = socket;
+  const socket = new WebSocket(bound.relayUrl);
+  rt.ws = socket;
 
   socket.on('open', () => {
-    reconnectAttempt = 0;
-    console.log('[remote-access] connected to relay');
+    rt.reconnectAttempt = 0;
+    console.log(`[remote-access:${rt.id}] connected to relay`);
   });
 
   socket.on('message', (data) => {
@@ -204,20 +260,20 @@ function connect(): void {
     if (!frame || typeof (frame as { t?: unknown }).t !== 'string') return;
 
     if (frame.t === 'hello') {
-      currentUrl = frame.publicUrl;
-      console.log(`[remote-access] tunnel ready → ${frame.publicUrl}`);
+      rt.currentUrl = frame.publicUrl;
+      console.log(`[remote-access:${rt.id}] tunnel ready → ${frame.publicUrl}`);
       return;
     }
     if (frame.t === 'req') {
-      void handleReq(socket, frame);
+      void handleReq(rt, socket, frame);
       return;
     }
     if (frame.t === 'ws-open') {
-      handleWsOpen(socket, frame);
+      handleWsOpen(rt, socket, frame);
       return;
     }
     if (frame.t === 'ws-data') {
-      const s = streams.get(frame.id);
+      const s = rt.streams.get(frame.id);
       if (!s) return;
       if (s.ws.readyState === WebSocket.OPEN) {
         try {
@@ -226,16 +282,14 @@ function connect(): void {
           // peer probably closed mid-write
         }
       } else if (s.ws.readyState === WebSocket.CONNECTING) {
-        // Loopback handshake still in flight; buffer until 'open' fires.
         s.pending.push({ data: frame.data, binary: frame.binary });
       }
-      // CLOSING / CLOSED — silently drop.
       return;
     }
     if (frame.t === 'ws-close') {
-      const s = streams.get(frame.id);
+      const s = rt.streams.get(frame.id);
       if (s) {
-        streams.delete(frame.id);
+        rt.streams.delete(frame.id);
         try {
           s.ws.close(frame.code, frame.reason);
         } catch {
@@ -248,46 +302,44 @@ function connect(): void {
       socket.send(JSON.stringify({ t: 'pong' }));
       return;
     }
-    // pong / err / unknown — ignore.
   });
 
   socket.on('close', () => {
-    ws = null;
-    if (!stopped) {
-      console.warn('[remote-access] disconnected, will retry');
-      scheduleReconnect();
+    rt.ws = null;
+    if (!rt.stopped) {
+      console.warn(`[remote-access:${rt.id}] disconnected, will retry`);
+      scheduleReconnect(rt);
     }
   });
 
   socket.on('error', (err) => {
-    console.warn(`[remote-access] ws error: ${err.message}`);
-    // 'close' will fire next and handle reconnect.
+    console.warn(`[remote-access:${rt.id}] ws error: ${err.message}`);
   });
 }
 
-function handleReq(socket: WebSocket, frame: ReqFrame): Promise<void> {
+function handleReq(
+  rt: RuntimeTunnel,
+  socket: WebSocket,
+  frame: ReqFrame,
+): Promise<void> {
   return new Promise<void>((resolve) => {
-    if (!opts) {
+    if (!bound) {
       sendErr(socket, frame.id, 'remote-access not initialised');
       return resolve();
     }
 
-    // Defence-in-depth: never let a public client pre-set the internal
-    // `x-iclaw-tunneled` header on its way through the relay — strip it from
-    // the incoming frame headers before we replay the request locally. We
-    // then inject the header ourselves so the auth middleware can identify
-    // genuinely tunneled traffic.
     const safeHeaders = stripInternalHeaders(frame.headers);
 
     const reqOpts: http.RequestOptions = {
-      host: opts.localHost,
-      port: opts.localPort,
+      host: bound.localHost,
+      port: bound.localPort,
       method: frame.method,
       path: frame.path,
       headers: {
         ...safeHeaders,
-        host: `${opts.localHost}:${opts.localPort}`,
+        host: `${bound.localHost}:${bound.localPort}`,
         [TUNNELED_HEADER]: TUNNELED_VALUE,
+        [TUNNEL_ID_HEADER]: rt.id,
       },
     };
 
@@ -347,40 +399,32 @@ function sendStreamClose(
   }
 }
 
-/**
- * Open a loopback WebSocket connection to the local iClaw `/ws` (or
- * wherever the public client asked for) and bridge messages both ways
- * with the relay-side public WS via `ws-data` frames.
- *
- * Authentication: relay forwards the upgrade headers including any Cookie
- * the browser had. We require a valid `iclaw_ra` session before opening
- * the loopback — relay sees the cookie bytes pass through, but the gate
- * runs here, end-to-end of the local iClaw.
- */
-function handleWsOpen(relayWs: WebSocket, frame: WsOpenFrame): void {
-  if (!opts) {
+function handleWsOpen(
+  rt: RuntimeTunnel,
+  relayWs: WebSocket,
+  frame: WsOpenFrame,
+): void {
+  if (!bound) {
     sendStreamClose(relayWs, frame.id, 1011, 'remote-access not initialised');
     return;
   }
 
-  // Strip any forged x-iclaw-* headers from the public side (defence in
-  // depth with the relay-side strip).
   const safeHeaders = stripInternalHeaders(frame.headers);
 
-  if (!isValidTunnelSession(safeHeaders.cookie)) {
-    // 4401 is in the application range; clients can distinguish from 1008.
+  if (!isValidTunnelSession(rt.id, safeHeaders.cookie)) {
     sendStreamClose(relayWs, frame.id, 4401, 'unauthorized');
     return;
   }
 
-  const url = `ws://${opts.localHost}:${opts.localPort}${frame.path}`;
+  const url = `ws://${bound.localHost}:${bound.localPort}${frame.path}`;
   let local: WebSocket;
   try {
     local = new WebSocket(url, {
       headers: {
         ...safeHeaders,
-        host: `${opts.localHost}:${opts.localPort}`,
+        host: `${bound.localHost}:${bound.localPort}`,
         [TUNNELED_HEADER]: TUNNELED_VALUE,
+        [TUNNEL_ID_HEADER]: rt.id,
       },
     });
   } catch (err) {
@@ -389,10 +433,9 @@ function handleWsOpen(relayWs: WebSocket, frame: WsOpenFrame): void {
     return;
   }
   const state: StreamState = { ws: local, pending: [] };
-  streams.set(frame.id, state);
+  rt.streams.set(frame.id, state);
 
   local.on('open', () => {
-    // Flush any frames that arrived during the loopback handshake.
     for (const m of state.pending) {
       if (local.readyState !== WebSocket.OPEN) break;
       try {
@@ -426,7 +469,7 @@ function handleWsOpen(relayWs: WebSocket, frame: WsOpenFrame): void {
   });
 
   local.on('close', (code, reason) => {
-    if (!streams.delete(frame.id)) return; // already closed-out by inbound ws-close
+    if (!rt.streams.delete(frame.id)) return;
     sendStreamClose(
       relayWs,
       frame.id,
@@ -436,267 +479,150 @@ function handleWsOpen(relayWs: WebSocket, frame: WsOpenFrame): void {
   });
 
   local.on('error', (err) => {
-    console.warn(`[remote-access] local ws error: ${err.message}`);
-    // 'close' fires next and handles the frame.
+    console.warn(`[remote-access:${rt.id}] local ws error: ${err.message}`);
   });
 }
 
 /* ----------------------------------------------------------- public api -- */
 
-function logPassphraseBanner(passphrase: string, label: string): void {
-  console.log(`[remote-access] ${label}`);
-  console.log('[remote-access] ');
-  console.log(`[remote-access]   passphrase:  ${passphrase}`);
-  console.log('[remote-access]   share this with anyone you want to let in');
-  console.log('[remote-access] ');
-}
-
-function scheduleExpiry(when: number): void {
-  if (expiryTimer) {
-    clearTimeout(expiryTimer);
-    expiryTimer = null;
+function closeRuntime(rt: RuntimeTunnel): void {
+  rt.stopped = true;
+  if (rt.reconnectTimer) {
+    clearTimeout(rt.reconnectTimer);
+    rt.reconnectTimer = null;
   }
-  const delta = when - Date.now();
-  if (delta <= 0) {
-    // Already expired — stop immediately on next tick to avoid recursion.
-    setTimeout(() => remoteAccess.stopNow(), 0);
-    return;
+  if (rt.expiryTimer) {
+    clearTimeout(rt.expiryTimer);
+    rt.expiryTimer = null;
   }
-  expiryTimer = setTimeout(() => {
-    expiryTimer = null;
-    console.log('[remote-access] duration elapsed — stopping');
-    remoteAccess.stopNow();
-  }, delta);
-  expiryTimer.unref();
-}
-
-function resetSessionState(): void {
-  currentPassphrase = null;
-  currentUrl = null;
-  currentStartedAt = null;
-  currentDurationMs = null;
-  currentExpiresAt = null;
-}
-
-function closeSocket(): void {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  if (ws) {
+  if (rt.ws) {
     try {
-      ws.close();
+      rt.ws.close();
     } catch {
       // ignore
     }
-    ws = null;
+    rt.ws = null;
   }
+  for (const s of rt.streams.values()) {
+    try {
+      s.ws.close();
+    } catch {
+      // ignore
+    }
+  }
+  rt.streams.clear();
 }
 
-export interface RemoteAccessStatus {
-  enabled: boolean;
-  url: string | null;
-  passphrase: string | null;
-  startedAt: number | null;
-  durationMs: number | null;
-  expiresAt: number | null;
+function deleteTunnel(id: string): void {
+  const rt = tunnels.get(id);
+  if (!rt) return;
+  closeRuntime(rt);
+  tunnels.delete(id);
+  disableGate(id);
+  remoteAccessState.delete(id);
+  console.log(`[remote-access:${id}] deleted`);
 }
 
 export const remoteAccess = {
-  /**
-   * Legacy env-driven activation. No expiry, no persistence — the env vars
-   * are the only source of truth, and stopping is via process restart or
-   * the UI Disable button.
-   */
-  start(o: StartOptions): void {
-    if (opts) {
-      console.warn('[remote-access] already started, ignoring');
-      return;
-    }
-    opts = o;
-    stopped = false;
-    reconnectAttempt = 0;
-
-    const passphrase = generatePassphrase();
-    currentPassphrase = passphrase;
-    currentStartedAt = Date.now();
-    currentDurationMs = null;
-    currentExpiresAt = null;
-    enableGate(passphrase);
-    console.log(`[remote-access] enabling (env), relay=${o.relayUrl} local=${o.localHost}:${o.localPort}`);
-    logPassphraseBanner(passphrase, 'enabling (no expiry)');
-    connect();
+  configure(opts: { relayUrl: string; localHost: string; localPort: number }): void {
+    bound = opts;
   },
 
   /**
-   * UI-driven activation with a bounded duration. Persists to SQLite so
-   * the tunnel survives an iClaw restart, and auto-stops when expiresAt
-   * is reached. If a tunnel is already up, it's torn down first so the
-   * caller can pick a new passphrase / duration cleanly.
+   * Create + start a fresh tunnel with the given duration. Returns the
+   * new tunnel's status. URL will be null until the relay's `hello`
+   * frame arrives (typically <1s after this returns).
    */
-  startWithDuration(durationMs: number, o: StartOptions): void {
+  createTunnel(durationMs: number, label?: string | null): TunnelStatus {
     if (!ALLOWED_DURATIONS_MS.includes(durationMs)) {
       throw new Error(`invalid duration: ${durationMs}`);
     }
-    if (currentPassphrase) {
-      // Tear down whatever was running so the new tunnel starts clean.
-      closeSocket();
-      disableGate();
-      resetSessionState();
+    if (!bound) {
+      throw new Error('remote-access not configured');
     }
-    opts = o;
-    stopped = false;
-    reconnectAttempt = 0;
 
+    const id = generateTunnelId();
     const passphrase = generatePassphrase();
     const now = Date.now();
-    currentPassphrase = passphrase;
-    currentStartedAt = now;
-    currentDurationMs = durationMs;
-    currentExpiresAt = now + durationMs;
-    enableGate(passphrase);
-
-    remoteAccessState.save({
-      enabled: true,
+    const persisted: PersistedTunnel = {
+      id,
+      label: label ?? null,
       passphrase,
       durationMs,
       startedAt: now,
-      expiresAt: currentExpiresAt,
-    });
-    scheduleExpiry(currentExpiresAt);
+      expiresAt: now + durationMs,
+      createdAt: now,
+    };
+    remoteAccessState.save(persisted);
+
+    const rt = makeRuntime(persisted);
+    tunnels.set(id, rt);
+    enableGate(id, passphrase);
+    scheduleExpiry(rt);
 
     console.log(
-      `[remote-access] enabling (UI), relay=${o.relayUrl} local=${o.localHost}:${o.localPort} duration=${Math.round(durationMs / 60_000)}min`,
+      `[remote-access:${id}] creating, relay=${bound.relayUrl} duration=${Math.round(durationMs / 60_000)}min`,
     );
-    logPassphraseBanner(passphrase, `enabling for ${Math.round(durationMs / 60_000)} minutes`);
-    connect();
+    console.log(`[remote-access:${id}]   passphrase: ${passphrase}`);
+    connect(rt);
+
+    return toStatus(rt);
   },
 
-  /**
-   * Bring a previously persisted tunnel back up on startup. If `expiresAt`
-   * is already in the past, the persisted row is cleared and we stay
-   * stopped.
-   */
-  resume(persisted: RemoteAccessPersistedState, o: StartOptions): void {
-    const now = Date.now();
-    if (persisted.expiresAt <= now) {
-      remoteAccessState.clear();
+  /** User-triggered "Disable" for one tunnel. */
+  deleteTunnel(id: string): boolean {
+    if (!tunnels.has(id)) return false;
+    deleteTunnel(id);
+    return true;
+  },
+
+  /** Re-attach every persisted tunnel whose `expires_at` is still in the future. */
+  resumeAll(): void {
+    if (!bound) {
+      console.warn('[remote-access] resumeAll called before configure');
       return;
     }
-    opts = o;
-    stopped = false;
-    reconnectAttempt = 0;
-
-    currentPassphrase = persisted.passphrase;
-    currentStartedAt = persisted.startedAt;
-    currentDurationMs = persisted.durationMs;
-    currentExpiresAt = persisted.expiresAt;
-    enableGate(persisted.passphrase);
-    scheduleExpiry(persisted.expiresAt);
-
-    const remainingMin = Math.max(1, Math.round((persisted.expiresAt - now) / 60_000));
-    console.log(
-      `[remote-access] resuming (UI), relay=${o.relayUrl} local=${o.localHost}:${o.localPort} remaining=${remainingMin}min`,
-    );
-    logPassphraseBanner(persisted.passphrase, `resumed, ~${remainingMin} minutes remaining`);
-    connect();
+    const now = Date.now();
+    for (const p of remoteAccessState.list()) {
+      if (p.expiresAt <= now) {
+        remoteAccessState.delete(p.id);
+        continue;
+      }
+      const rt = makeRuntime(p);
+      tunnels.set(p.id, rt);
+      enableGate(p.id, p.passphrase);
+      scheduleExpiry(rt);
+      console.log(
+        `[remote-access:${p.id}] resuming, remaining=${Math.max(1, Math.round((p.expiresAt - now) / 60_000))}min`,
+      );
+      connect(rt);
+    }
   },
 
   /**
-   * Process-shutdown stop: close the socket + drop the gate, but DO NOT
+   * Process-shutdown stop: close all sockets + drop gates, but DO NOT
    * touch persisted state — we want to auto-resume on next startup.
    */
-  stop(): void {
-    stopped = true;
-    closeSocket();
-    if (expiryTimer) {
-      clearTimeout(expiryTimer);
-      expiryTimer = null;
+  shutdown(): void {
+    for (const rt of tunnels.values()) {
+      closeRuntime(rt);
     }
-    opts = null;
-    disableGate();
-    // Intentionally keep currentPassphrase etc. so any in-flight log lines
-    // still make sense; the process is about to exit anyway.
+    tunnels.clear();
+    disableAllGates();
   },
 
-  /**
-   * User-triggered "Disable" — fully tear down and forget. Clears the
-   * persisted row so we don't resume on next startup.
-   */
-  stopNow(): void {
-    stopped = true;
-    closeSocket();
-    if (expiryTimer) {
-      clearTimeout(expiryTimer);
-      expiryTimer = null;
-    }
-    opts = null;
-    resetSessionState();
-    disableGate();
-    remoteAccessState.clear();
-    console.log('[remote-access] disabled');
+  getStatus(id: string): TunnelStatus | null {
+    const rt = tunnels.get(id);
+    return rt ? toStatus(rt) : null;
   },
 
-  isEnabled(): boolean {
-    return currentPassphrase !== null && !stopped;
+  list(): TunnelStatus[] {
+    return Array.from(tunnels.values())
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map(toStatus);
   },
 
-  getStatus(): RemoteAccessStatus {
-    return {
-      enabled: this.isEnabled(),
-      url: currentUrl,
-      passphrase: currentPassphrase,
-      startedAt: currentStartedAt,
-      durationMs: currentDurationMs,
-      expiresAt: currentExpiresAt,
-    };
+  isAnyEnabled(): boolean {
+    return tunnels.size > 0;
   },
 };
-
-/**
- * Default relay URL for UI-driven activation. The env var still wins if
- * set (so deploys can point at a different relay); otherwise we fall back
- * to the dev default so the feature "just works" out of the box on a
- * developer machine running `iclaw-relay` locally.
- */
-export function getRelayUrl(): string {
-  const envUrl = process.env.ICLAW_RELAY_URL;
-  if (envUrl) {
-    try {
-      const u = new URL(envUrl);
-      if (u.protocol === 'ws:' || u.protocol === 'wss:') return envUrl;
-      console.warn(`[remote-access] ignoring ICLAW_RELAY_URL with bad protocol: ${u.protocol}`);
-    } catch {
-      console.warn(`[remote-access] ignoring ICLAW_RELAY_URL — not a valid URL: ${envUrl}`);
-    }
-  }
-  return 'ws://127.0.0.1:4100/tunnel';
-}
-
-/**
- * Read activation flags from env. Returns null if remote access is not
- * requested. Validates the relay URL eagerly so misconfiguration is loud.
- */
-export function readRemoteAccessEnv(): { relayUrl: string } | null {
-  const flag = process.env.ICLAW_REMOTE_ACCESS;
-  if (flag !== '1' && flag !== 'true') return null;
-
-  const relayUrl = process.env.ICLAW_RELAY_URL;
-  if (!relayUrl) {
-    console.warn('[remote-access] ICLAW_REMOTE_ACCESS is set but ICLAW_RELAY_URL is missing — skipping');
-    return null;
-  }
-
-  try {
-    const u = new URL(relayUrl);
-    if (u.protocol !== 'ws:' && u.protocol !== 'wss:') {
-      console.warn(`[remote-access] ICLAW_RELAY_URL must use ws:// or wss:// (got ${u.protocol}) — skipping`);
-      return null;
-    }
-  } catch {
-    console.warn(`[remote-access] ICLAW_RELAY_URL is not a valid URL (${relayUrl}) — skipping`);
-    return null;
-  }
-
-  return { relayUrl };
-}

@@ -1,28 +1,20 @@
 /**
- * Password gate for tunneled (remote-access) requests.
+ * Per-tunnel password gate.
+ *
+ * Each Remote Access tunnel has its own passphrase, its own session
+ * store, and is enforced independently. Cookies are subdomain-scoped by
+ * the browser, so two open tunnels on `a.iclaw.digital` and
+ * `b.iclaw.digital` already isolate their cookies at the browser layer;
+ * we additionally verify on the server that a session id presented
+ * against tunnel X actually belongs to tunnel X (defence in depth
+ * against a hand-crafted cross-tunnel cookie replay).
  *
  * Threat model (v0.1):
- * - Relay is honest-forwarder; it sees TLS-terminated bytes but we never
- *   send the passphrase to it. The login POST is forwarded *through* the
- *   relay as ordinary HTTP body, so the relay does technically see those
- *   bytes — full E2E (relay never sees the password) lands later with
- *   SPAKE2. For now we accept "relay can read the password if malicious"
- *   in exchange for shippable simplicity.
- * - Direct localhost users (127.0.0.1) bypass the gate entirely; only
- *   requests that arrive via the tunnel are challenged.
+ * - Relay is honest-forwarder; it sees the passphrase as plain bytes
+ *   during the login POST. Full E2E (relay never sees password) lands
+ *   later with SPAKE2/OPAQUE.
+ * - Direct localhost users (no `x-iclaw-tunneled: 1`) bypass the gate.
  * - In-memory session store; iClaw restart invalidates every session.
- *
- * Mechanism:
- * - On enable(), a fresh diceware-style passphrase is generated and shown
- *   in the iClaw process log.
- * - `remoteAccess.ts` injects `x-iclaw-tunneled: 1` on every loopback
- *   request so the middleware can distinguish "came via tunnel" from
- *   "direct localhost".
- * - Without a valid `iclaw_ra` cookie, tunneled requests get a tiny inline
- *   login HTML.
- * - POST /__ra/login validates the passphrase (constant-time compare),
- *   mints a random 256-bit session id, sets the cookie, and redirects to
- *   the page the user originally asked for.
  */
 
 import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
@@ -30,9 +22,6 @@ import type { Request, RequestHandler } from 'express';
 
 /* ------------------------------------------------------------ passphrase -- */
 
-// ~80 short, unambiguous words. Entropy: 80^4 ≈ 41M ≈ 25 bits, plus a
-// 3-digit suffix (~10 bits) → ~35 bits. Brute-force online is infeasible
-// once login rate-limiting kicks in.
 const WORDS = [
   'amber', 'apple', 'arrow', 'aspen', 'autumn', 'banjo', 'basil', 'beach',
   'birch', 'blaze', 'bloom', 'bramble', 'breeze', 'brook', 'cabin', 'cedar',
@@ -61,45 +50,48 @@ export function generatePassphrase(): string {
   return `${words.join('-')}-${digits}`;
 }
 
-/* --------------------------------------------------------- session store -- */
+/* ---------------------------------------------------------- multi-tunnel -- */
 
 const SESSION_COOKIE = 'iclaw_ra';
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 const LOGIN_PATH = '/__ra/login';
 
+/** tunnelId → passphrase. Only enabled tunnels are present. */
+const passphrases = new Map<string, string>();
+
 interface SessionRecord {
+  tunnelId: string;
   expiresAt: number;
 }
-
-let currentPassphrase: string | null = null;
+/** sessionId → { tunnelId, expiresAt }. */
 const sessions = new Map<string, SessionRecord>();
-let sweepTimer: NodeJS.Timeout | null = null;
 
+let sweepTimer: NodeJS.Timeout | null = null;
 function sweepExpired(): void {
   const now = Date.now();
   for (const [id, rec] of sessions) {
     if (rec.expiresAt <= now) sessions.delete(id);
   }
 }
-
-function startSweeperIfNeeded(): void {
+function ensureSweeper(): void {
   if (sweepTimer) return;
   sweepTimer = setInterval(sweepExpired, 5 * 60 * 1000);
   sweepTimer.unref();
 }
 
-function mintSession(): string {
+function mintSession(tunnelId: string): string {
   const id = randomBytes(32).toString('base64url');
-  sessions.set(id, { expiresAt: Date.now() + SESSION_TTL_MS });
+  sessions.set(id, { tunnelId, expiresAt: Date.now() + SESSION_TTL_MS });
   return id;
 }
 
-function isValidSession(id: string | undefined): boolean {
-  if (!id) return false;
-  const rec = sessions.get(id);
+function isValidSession(sessionId: string | undefined, tunnelId: string): boolean {
+  if (!sessionId) return false;
+  const rec = sessions.get(sessionId);
   if (!rec) return false;
+  if (rec.tunnelId !== tunnelId) return false;
   if (rec.expiresAt <= Date.now()) {
-    sessions.delete(id);
+    sessions.delete(sessionId);
     return false;
   }
   return true;
@@ -107,17 +99,15 @@ function isValidSession(id: string | undefined): boolean {
 
 /* ------------------------------------------------------------ rate-limit -- */
 
-// Tiny in-memory IP rate limiter for /__ra/login. Online-only brute force
-// against a 35-bit phrase is infeasible at this rate.
 const LOGIN_MAX_ATTEMPTS_PER_WINDOW = 10;
 const LOGIN_WINDOW_MS = 5 * 60 * 1000;
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 
-function checkRateLimit(ip: string): { ok: boolean; retryAfterSec: number } {
+function checkRateLimit(key: string): { ok: boolean; retryAfterSec: number } {
   const now = Date.now();
-  const entry = loginAttempts.get(ip);
+  const entry = loginAttempts.get(key);
   if (!entry || entry.resetAt <= now) {
-    loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
     return { ok: true, retryAfterSec: 0 };
   }
   if (entry.count >= LOGIN_MAX_ATTEMPTS_PER_WINDOW) {
@@ -129,20 +119,27 @@ function checkRateLimit(ip: string): { ok: boolean; retryAfterSec: number } {
 
 /* ----------------------------------------------------------- public api -- */
 
-export function enableGate(passphrase: string): void {
-  currentPassphrase = passphrase;
-  sessions.clear();
-  startSweeperIfNeeded();
+export function enableGate(tunnelId: string, passphrase: string): void {
+  passphrases.set(tunnelId, passphrase);
+  ensureSweeper();
 }
 
-export function disableGate(): void {
-  currentPassphrase = null;
+export function disableGate(tunnelId: string): void {
+  passphrases.delete(tunnelId);
+  // Drop any sessions tied to this tunnel.
+  for (const [sid, rec] of sessions) {
+    if (rec.tunnelId === tunnelId) sessions.delete(sid);
+  }
+}
+
+export function disableAllGates(): void {
+  passphrases.clear();
   sessions.clear();
   loginAttempts.clear();
 }
 
-export function isGateEnabled(): boolean {
-  return currentPassphrase !== null;
+export function isGateEnabled(tunnelId: string): boolean {
+  return passphrases.has(tunnelId);
 }
 
 /* ------------------------------------------------------- helpers / parsing -- */
@@ -160,16 +157,20 @@ function parseCookies(header: string | undefined): Record<string, string> {
   return out;
 }
 
+function getTunnelId(req: Request): string | null {
+  const h = req.headers[TUNNEL_ID_HEADER];
+  if (typeof h === 'string' && h.length > 0) return h;
+  return null;
+}
+
 function isTunneled(req: Request): boolean {
-  return req.headers['x-iclaw-tunneled'] === '1';
+  return req.headers[TUNNELED_HEADER] === TUNNELED_VALUE;
 }
 
 function constantTimeEquals(a: string, b: string): boolean {
   const ab = Buffer.from(a, 'utf8');
   const bb = Buffer.from(b, 'utf8');
   if (ab.length !== bb.length) {
-    // Still do a compare against a same-length buffer to avoid timing leak
-    // on length; result intentionally discarded.
     const padding = Buffer.alloc(ab.length);
     timingSafeEqual(ab, padding);
     return false;
@@ -182,7 +183,6 @@ function constantTimeEquals(a: string, b: string): boolean {
 function renderLoginPage(opts: {
   errorMessage?: string;
   next?: string;
-  status: 200 | 401;
 }): string {
   const safeNext = (opts.next ?? '/').replace(/"/g, '');
   const errorBlock = opts.errorMessage
@@ -236,40 +236,44 @@ function renderLoginPage(opts: {
 /* ----------------------------------------------------------- middleware -- */
 
 export const remoteAccessAuthMiddleware: RequestHandler = (req, res, next) => {
-  // Gate is off → never interfere.
-  if (!currentPassphrase) return next();
-
   // Direct localhost / non-tunneled → never interfere.
   if (!isTunneled(req)) return next();
 
-  // POST /__ra/login is handled by a separate route below; let it through.
+  const tunnelId = getTunnelId(req);
+  if (!tunnelId || !isGateEnabled(tunnelId)) {
+    // Tunneled request claiming to belong to an unknown tunnel — refuse
+    // hard. Should be impossible in normal flow since the loopback
+    // injects both headers itself, but be loud if it ever happens.
+    res.status(404).type('text/plain').send('tunnel not found');
+    return;
+  }
+
+  // POST /__ra/login is handled by a separate route; let it through.
   if (req.method === 'POST' && req.path === LOGIN_PATH) return next();
 
   const cookies = parseCookies(req.headers.cookie);
-  if (isValidSession(cookies[SESSION_COOKIE])) return next();
+  if (isValidSession(cookies[SESSION_COOKIE], tunnelId)) return next();
 
-  // No / invalid session — serve the login page in place of whatever was requested.
   const nextUrl = req.originalUrl && req.originalUrl !== LOGIN_PATH ? req.originalUrl : '/';
   res
     .status(401)
     .type('html')
-    .send(renderLoginPage({ next: nextUrl, status: 401 }));
+    .send(renderLoginPage({ next: nextUrl }));
 };
 
-/**
- * POST /__ra/login handler. Mounted by app.ts. Reads the urlencoded form
- * body (express.urlencoded is already on the iClaw app), validates the
- * passphrase, mints a session and redirects.
- */
 export const remoteAccessLoginHandler: RequestHandler = (req, res) => {
-  if (!currentPassphrase) {
-    // Gate isn't enabled — pretend it doesn't exist.
+  const tunnelId = getTunnelId(req);
+  const expected = tunnelId ? passphrases.get(tunnelId) : undefined;
+  if (!tunnelId || !expected) {
     res.status(404).type('text/plain').send('not found');
     return;
   }
 
+  // Rate-limit per (ip, tunnelId) so a flood against one tunnel doesn't
+  // burn another tunnel's budget on the same IP.
   const ip = (req.ip ?? 'unknown').toString();
-  const limit = checkRateLimit(ip);
+  const limitKey = `${ip}|${tunnelId}`;
+  const limit = checkRateLimit(limitKey);
   if (!limit.ok) {
     res.setHeader('Retry-After', String(limit.retryAfterSec));
     res
@@ -279,14 +283,13 @@ export const remoteAccessLoginHandler: RequestHandler = (req, res) => {
         renderLoginPage({
           errorMessage: `Too many attempts. Try again in ${limit.retryAfterSec}s.`,
           next: typeof req.body?.next === 'string' ? req.body.next : '/',
-          status: 401,
         }),
       );
     return;
   }
 
   const submitted = typeof req.body?.passphrase === 'string' ? req.body.passphrase : '';
-  if (!constantTimeEquals(submitted, currentPassphrase)) {
+  if (!constantTimeEquals(submitted, expected)) {
     res
       .status(401)
       .type('html')
@@ -294,13 +297,12 @@ export const remoteAccessLoginHandler: RequestHandler = (req, res) => {
         renderLoginPage({
           errorMessage: 'Wrong passphrase.',
           next: typeof req.body?.next === 'string' ? req.body.next : '/',
-          status: 401,
         }),
       );
     return;
   }
 
-  const sessionId = mintSession();
+  const sessionId = mintSession(tunnelId);
   const isHttps = (req.headers['x-forwarded-proto'] ?? '').toString().toLowerCase() === 'https';
   const cookieParts = [
     `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}`,
@@ -312,20 +314,21 @@ export const remoteAccessLoginHandler: RequestHandler = (req, res) => {
   if (isHttps) cookieParts.push('Secure');
   res.setHeader('Set-Cookie', cookieParts.join('; '));
 
-  const next = typeof req.body?.next === 'string' && req.body.next.startsWith('/')
+  const nextUrl = typeof req.body?.next === 'string' && req.body.next.startsWith('/')
     ? req.body.next
     : '/';
-  res.redirect(303, next);
+  res.redirect(303, nextUrl);
 };
 
 /* ----------------------------------------------------- header sanitation -- */
 
 /**
  * Header names that must NEVER come from a public client through the
- * tunnel — they're meant to be set only by our own loopback. Stripped on
- * the iClaw side as well as the relay side, for defence in depth.
+ * tunnel — they're meant to be set only by the iClaw loopback forwarder.
+ * The relay also strips every `x-iclaw-*`; this is defence in depth on
+ * the iClaw side.
  */
-export const INTERNAL_TUNNEL_HEADER_NAMES = ['x-iclaw-tunneled'];
+export const INTERNAL_TUNNEL_HEADER_NAMES = ['x-iclaw-tunneled', 'x-iclaw-tunnel-id'];
 
 export function stripInternalHeaders(headers: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -338,27 +341,19 @@ export function stripInternalHeaders(headers: Record<string, string>): Record<st
 
 export const TUNNELED_HEADER = 'x-iclaw-tunneled';
 export const TUNNELED_VALUE = '1';
+export const TUNNEL_ID_HEADER = 'x-iclaw-tunnel-id';
 
 /**
  * Standalone session check for code paths that don't run through Express
  * middleware (notably the WS-upgrade forwarder in `remoteAccess.ts`).
- * Returns true only when the gate is enabled AND the supplied cookie
- * header contains a valid session id. When the gate is disabled this
- * returns false: tunneled traffic shouldn't exist without an active gate,
- * and refusing here is the safer default.
+ * Returns true only when the supplied tunnelId has an enabled gate AND
+ * the cookie carries a valid session id bound to THAT tunnel.
  */
-export function isValidTunnelSession(cookieHeader: string | undefined): boolean {
-  if (!currentPassphrase) return false;
+export function isValidTunnelSession(
+  tunnelId: string,
+  cookieHeader: string | undefined,
+): boolean {
+  if (!passphrases.has(tunnelId)) return false;
   const cookies = parseCookies(cookieHeader);
-  return isValidSession(cookies[SESSION_COOKIE]);
+  return isValidSession(cookies[SESSION_COOKIE], tunnelId);
 }
-
-/* ---------------------------------------------------- test-only helpers -- */
-
-export const __internal = {
-  loginPath: LOGIN_PATH,
-  cookieName: SESSION_COOKIE,
-  renderLoginPage,
-  isValidSession,
-  parseCookies,
-};

@@ -1,38 +1,35 @@
 /**
- * JSON API for the Settings → Remote Access page.
+ * JSON API for the Settings → Remote Access page (multi-tunnel).
  *
- *   POST /api/remote-access/start   { durationMs }  → status
- *   POST /api/remote-access/stop                    → { ok: true }
- *   GET  /api/remote-access/status                  → status
+ *   GET    /api/remote-access/tunnels        — list active tunnels + allowed durations
+ *   POST   /api/remote-access/tunnels        — { durationMs, label? } → new tunnel
+ *   DELETE /api/remote-access/tunnels/:id    — disable + delete one tunnel
  *
- * `localHost` / `localPort` are not part of the API surface — the iClaw
- * process knows where it's bound (set via remoteAccess.start* from
- * index.ts on startup) and reuses those for every loopback request.
+ * The legacy `/start` and `/stop` singleton endpoints are gone; the UI now
+ * works against the collection.
  */
 
 import { Router } from 'express';
 import {
   remoteAccess,
   ALLOWED_DURATIONS_MS,
-  getRelayUrl,
-  type RemoteAccessStatus,
+  type TunnelStatus,
 } from '../services/remoteAccess';
-import { getBoundLocalAddress } from '../services/localAddress';
 
 export const remoteAccessApiRouter = Router();
 
-function jsonStatus(): RemoteAccessStatus & { allowedDurationsMs: readonly number[] } {
-  return {
-    ...remoteAccess.getStatus(),
-    allowedDurationsMs: ALLOWED_DURATIONS_MS,
-  };
+function envelope(tunnels: TunnelStatus[]): {
+  tunnels: TunnelStatus[];
+  allowedDurationsMs: readonly number[];
+} {
+  return { tunnels, allowedDurationsMs: ALLOWED_DURATIONS_MS };
 }
 
-remoteAccessApiRouter.get('/status', (_req, res) => {
-  res.json(jsonStatus());
+remoteAccessApiRouter.get('/tunnels', (_req, res) => {
+  res.json(envelope(remoteAccess.list()));
 });
 
-remoteAccessApiRouter.post('/start', (req, res) => {
+remoteAccessApiRouter.post('/tunnels', (req, res) => {
   const raw = req.body?.durationMs;
   const durationMs = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isFinite(durationMs) || !ALLOWED_DURATIONS_MS.includes(durationMs)) {
@@ -43,27 +40,29 @@ remoteAccessApiRouter.post('/start', (req, res) => {
     return;
   }
 
-  const bound = getBoundLocalAddress();
-  if (!bound) {
-    res.status(503).json({ error: 'iClaw server not bound yet — try again in a moment' });
-    return;
-  }
+  const labelRaw = req.body?.label;
+  const label = typeof labelRaw === 'string' && labelRaw.trim().length > 0
+    ? labelRaw.trim().slice(0, 64)
+    : null;
 
   try {
-    remoteAccess.startWithDuration(durationMs, {
-      relayUrl: getRelayUrl(),
-      localHost: bound.host,
-      localPort: bound.port,
-    });
+    const status = remoteAccess.createTunnel(durationMs, label);
+    res.status(201).json(status);
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : 'failed to start' });
-    return;
+    res.status(500).json({ error: err instanceof Error ? err.message : 'failed to create' });
   }
-
-  res.json(jsonStatus());
 });
 
-remoteAccessApiRouter.post('/stop', (_req, res) => {
-  remoteAccess.stopNow();
+remoteAccessApiRouter.delete('/tunnels/:id', (req, res) => {
+  const id = req.params.id;
+  if (!id || typeof id !== 'string') {
+    res.status(400).json({ error: 'id required' });
+    return;
+  }
+  const ok = remoteAccess.deleteTunnel(id);
+  if (!ok) {
+    res.status(404).json({ error: 'tunnel not found' });
+    return;
+  }
   res.json({ ok: true });
 });

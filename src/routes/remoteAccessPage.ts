@@ -1,10 +1,9 @@
 /**
  * GET /remote-access — Settings page for the Remote Access feature.
  *
- * Server-renders a snapshot of `remoteAccess.getStatus()`. The page
- * then polls /api/remote-access/status every 1.5s while the user is
- * looking at it so the URL/passphrase appear without a manual reload
- * once the tunnel handshake completes.
+ * Server-renders the current list of tunnels. The page polls the JSON
+ * API every 1.5s while open so newly-created tunnels' URLs appear and
+ * countdowns tick down without manual refresh.
  */
 
 import { Router } from 'express';
@@ -19,7 +18,7 @@ export const remoteAccessPageRouter = Router();
 remoteAccessPageRouter.get('/remote-access', (_req, res) => {
   res.render('remote-access', {
     title: 'Remote Access — iClaw',
-    // Sidebar locals (same as projects page).
+    // Sidebar locals.
     chats: chats.list(),
     workingIds: chatStatus.workingIds(),
     allProjects: projects.list(),
@@ -32,7 +31,7 @@ remoteAccessPageRouter.get('/remote-access', (_req, res) => {
     activeRemoteAccess: true,
     openclawBaseUrl: openclaw.baseUrl,
     // Page-specific.
-    status: remoteAccess.getStatus(),
+    tunnels: remoteAccess.list(),
     allowedDurationsMs: ALLOWED_DURATIONS_MS,
   });
 });

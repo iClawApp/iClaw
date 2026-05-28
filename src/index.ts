@@ -5,12 +5,7 @@ import { attachWsServer } from './routes/ws';
 import { openclaw } from './services/openclaw';
 import { scheduler } from './services/scheduler';
 import { gatewayEvents } from './services/gatewayEvents';
-import {
-  remoteAccess,
-  readRemoteAccessEnv,
-  getRelayUrl,
-} from './services/remoteAccess';
-import { remoteAccessState } from './services/remoteAccessState';
+import { remoteAccess } from './services/remoteAccess';
 import { setBoundLocalAddress } from './services/localAddress';
 import {
   findAvailablePort,
@@ -47,7 +42,7 @@ function gracefulShutdown(
   }
   removeLockFileIfOwned();
   scheduler.stop();
-  remoteAccess.stop();
+  remoteAccess.shutdown();
 
   const exitCode = signal === 'SIGINT' ? 130 : 0;
   let exiting = false;
@@ -148,30 +143,33 @@ async function main(): Promise<void> {
     );
   }
 
-  // Remote Access wiring. The API/UI layer can start/stop the tunnel at
-  // any time after this point, so we register the bound address first.
+  // Remote Access wiring. configure() locks in the relay URL + bound
+  // address; resumeAll() reattaches any persisted tunnels that haven't
+  // expired. Both are safe no-ops when there's nothing to do.
   setBoundLocalAddress({ host, port });
+  const relayUrl = resolveRelayUrl();
+  remoteAccess.configure({ relayUrl, localHost: host, localPort: port });
+  remoteAccess.resumeAll();
+}
 
-  // Auto-resume any tunnel that was active when iClaw last shut down,
-  // provided its duration hasn't elapsed.
-  const persisted = remoteAccessState.get();
-  if (persisted && persisted.expiresAt > Date.now()) {
-    remoteAccess.resume(persisted, {
-      relayUrl: getRelayUrl(),
-      localHost: host,
-      localPort: port,
-    });
-  } else {
-    // Legacy env fallback — only kicks in when no persisted state exists.
-    const ra = readRemoteAccessEnv();
-    if (ra) {
-      remoteAccess.start({
-        relayUrl: ra.relayUrl,
-        localHost: host,
-        localPort: port,
-      });
+/**
+ * Default relay URL for UI-driven activation. Env override wins (so
+ * deploys can point at a different relay); otherwise we fall back to the
+ * dev default so the feature "just works" out of the box when an
+ * iclaw-relay is running locally.
+ */
+function resolveRelayUrl(): string {
+  const envUrl = process.env.ICLAW_RELAY_URL;
+  if (envUrl) {
+    try {
+      const u = new URL(envUrl);
+      if (u.protocol === 'ws:' || u.protocol === 'wss:') return envUrl;
+      console.warn(`[remote-access] ignoring ICLAW_RELAY_URL with bad protocol: ${u.protocol}`);
+    } catch {
+      console.warn(`[remote-access] ignoring ICLAW_RELAY_URL — not a valid URL: ${envUrl}`);
     }
   }
+  return 'ws://127.0.0.1:4100/tunnel';
 }
 
 void main().catch((err) => {
