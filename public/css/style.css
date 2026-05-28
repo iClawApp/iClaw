@@ -538,6 +538,48 @@ code {
   display: block;
 }
 
+/* Settings (gear) button — small icon-only entry to /settings, sits left
+   of "New chat". Sibling to the search toggle but smaller and never
+   hidden when search is open. */
+.sidebar-settings-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  align-self: center;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.sidebar-settings-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--hover) 55%, transparent);
+}
+.sidebar-settings-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-link) 35%, transparent);
+}
+.sidebar-settings-btn.active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--hover) 60%, transparent);
+}
+.sidebar-settings-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
 .sidebar-search-field-wrap {
   display: none;
   flex: 1;
@@ -6452,4 +6494,136 @@ a.project-tab.project-tab--tasks:hover {
   .create-task-modal__field select:focus {
     box-shadow: none;
   }
+}
+
+/* =============================================================================
+ * Remote Access gate — tunneled passphrase login (standalone page)
+ * =========================================================================== */
+
+.ra-gate-page {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ra-gate-header {
+  padding: var(--space-8) var(--space-9);
+}
+
+.ra-gate-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.ra-gate-logo {
+  display: block;
+  border-radius: var(--radius-sm);
+}
+
+.ra-gate-main {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 0 var(--space-9) var(--space-10);
+}
+
+.ra-gate-card {
+  width: 100%;
+  max-width: 22rem;
+  margin: 0;
+}
+
+.ra-gate-title {
+  margin: 0 0 var(--space-2);
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.ra-gate-lead {
+  margin: 0 0 var(--space-7);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.ra-gate-error {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--down-soft-border);
+  background: var(--down-soft-bg);
+  color: var(--danger);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+
+.ra-gate-group {
+  margin-bottom: var(--space-6);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--text) 5%, var(--surface));
+  overflow: clip;
+}
+
+.ra-gate-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 44px;
+  padding: 0 var(--space-5);
+  cursor: text;
+}
+
+.ra-gate-row-label {
+  flex: 0 0 auto;
+  font-size: var(--text-sm);
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.ra-gate-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-4) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: right;
+}
+
+.ra-gate-input:focus {
+  outline: none;
+}
+
+.ra-gate-submit {
+  width: 100%;
+  --_btn-pad-y: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.ra-gate-note {
+  margin: var(--space-6) 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  text-align: center;
+  color: var(--muted);
+}
+
+@media (max-width: 480px) {
+  .ra-gate-header { padding: var(--space-7) var(--space-6); }
+  .ra-gate-main { padding: 0 var(--space-6) var(--space-9); }
 }

@@ -5,6 +5,8 @@ import { attachWsServer } from './routes/ws';
 import { openclaw } from './services/openclaw';
 import { scheduler } from './services/scheduler';
 import { gatewayEvents } from './services/gatewayEvents';
+import { remoteAccess } from './services/remoteAccess';
+import { setBoundLocalAddress } from './services/localAddress';
 import {
   findAvailablePort,
   attachCliBrowserControls,
@@ -40,6 +42,7 @@ function gracefulShutdown(
   }
   removeLockFileIfOwned();
   scheduler.stop();
+  remoteAccess.shutdown();
 
   const exitCode = signal === 'SIGINT' ? 130 : 0;
   let exiting = false;
@@ -139,6 +142,36 @@ async function main(): Promise<void> {
       openclaw.tokenSource,
     );
   }
+
+  // Remote Access wiring. configure() locks in the relay URL + bound
+  // address; resumeAll() reattaches any persisted tunnels that haven't
+  // expired. Both are safe no-ops when there's nothing to do.
+  setBoundLocalAddress({ host, port });
+  const relayUrl = resolveRelayUrl();
+  remoteAccess.configure({ relayUrl, localHost: host, localPort: port });
+  remoteAccess.resumeAll();
+}
+
+/**
+ * Default relay URL for UI-driven activation.
+ *
+ * Production default points at the public relay so Remote Access works
+ * out of the box on a fresh install — no terminal, no second process.
+ * Override with `ICLAW_RELAY_URL=ws://127.0.0.1:4100/tunnel` for local
+ * dev against a relay running on the same machine.
+ */
+function resolveRelayUrl(): string {
+  const envUrl = process.env.ICLAW_RELAY_URL;
+  if (envUrl) {
+    try {
+      const u = new URL(envUrl);
+      if (u.protocol === 'ws:' || u.protocol === 'wss:') return envUrl;
+      console.warn(`[remote-access] ignoring ICLAW_RELAY_URL with bad protocol: ${u.protocol}`);
+    } catch {
+      console.warn(`[remote-access] ignoring ICLAW_RELAY_URL — not a valid URL: ${envUrl}`);
+    }
+  }
+  return 'wss://relay.iclaw.digital/tunnel';
 }
 
 void main().catch((err) => {

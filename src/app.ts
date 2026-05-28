@@ -11,6 +11,12 @@ import { gatewayRouter } from './routes/gateway';
 import { updateRouter } from './routes/update';
 import { tasksRouter } from './routes/tasks';
 import { projects } from './services/store';
+import {
+  remoteAccessAuthMiddleware,
+  remoteAccessLoginHandler,
+} from './services/remoteAccessAuth';
+import { remoteAccessApiRouter } from './routes/remoteAccessApi';
+import { settingsRouter } from './routes/settings';
 
 import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
 import { resolveUploadsRoot } from './paths';
@@ -58,6 +64,14 @@ export function createApp(): express.Express {
 
   app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
+
+  // Remote-access password gate. No-op for direct localhost requests; blocks
+  // tunneled requests (those carrying `x-iclaw-tunneled: 1`, set only by our
+  // own remoteAccess loopback) until the user submits the passphrase on the
+  // inline login page. Mounted BEFORE static so assets are gated too.
+  app.use(remoteAccessAuthMiddleware);
+  app.post('/__ra/login', remoteAccessLoginHandler);
+
   app.use(
     express.static(
       resolveProjectDir(['public', 'css', 'style.css'], '../public'),
@@ -75,9 +89,11 @@ export function createApp(): express.Express {
   app.use('/chats', chatsRouter);
   app.use('/projects', projectsRouter);
   app.use('/tasks', tasksRouter);
+  app.use('/', settingsRouter);
   app.use('/api/agents', agentsRouter);
   app.use('/api/gateway', gatewayRouter);
   app.use('/api/update', updateRouter);
+  app.use('/api/remote-access', remoteAccessApiRouter);
   app.use('/media', mediaRouter);
 
   app.use(
