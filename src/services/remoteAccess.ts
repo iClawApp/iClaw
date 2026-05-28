@@ -21,6 +21,15 @@ import http from 'node:http';
 import { URL } from 'node:url';
 import { WebSocket } from 'ws';
 
+import {
+  enableGate,
+  disableGate,
+  generatePassphrase,
+  stripInternalHeaders,
+  TUNNELED_HEADER,
+  TUNNELED_VALUE,
+} from './remoteAccessAuth';
+
 /* ---------------------------------------------------------------- frames -- */
 
 interface HelloFrame {
@@ -160,14 +169,22 @@ function handleReq(socket: WebSocket, frame: ReqFrame): Promise<void> {
       return resolve();
     }
 
+    // Defence-in-depth: never let a public client pre-set the internal
+    // `x-iclaw-tunneled` header on its way through the relay — strip it from
+    // the incoming frame headers before we replay the request locally. We
+    // then inject the header ourselves so the auth middleware can identify
+    // genuinely tunneled traffic.
+    const safeHeaders = stripInternalHeaders(frame.headers);
+
     const reqOpts: http.RequestOptions = {
       host: opts.localHost,
       port: opts.localPort,
       method: frame.method,
       path: frame.path,
       headers: {
-        ...frame.headers,
+        ...safeHeaders,
         host: `${opts.localHost}:${opts.localPort}`,
+        [TUNNELED_HEADER]: TUNNELED_VALUE,
       },
     };
 
@@ -223,7 +240,17 @@ export const remoteAccess = {
     opts = o;
     stopped = false;
     reconnectAttempt = 0;
+
+    // Fresh passphrase per remote-access session. Surfaced to the operator
+    // via the iClaw process log; never sent to the relay (only POSTed by
+    // the user through the tunnel and verified by us on the loopback side).
+    const passphrase = generatePassphrase();
+    enableGate(passphrase);
     console.log(`[remote-access] enabling, relay=${o.relayUrl} local=${o.localHost}:${o.localPort}`);
+    console.log('[remote-access] ');
+    console.log(`[remote-access]   passphrase:  ${passphrase}`);
+    console.log('[remote-access]   share this with anyone you want to let in');
+    console.log('[remote-access] ');
     connect();
   },
 
@@ -242,6 +269,7 @@ export const remoteAccess = {
       ws = null;
     }
     opts = null;
+    disableGate();
   },
 
   isEnabled(): boolean {
