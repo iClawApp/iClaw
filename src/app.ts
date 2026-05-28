@@ -16,7 +16,7 @@ import {
   remoteAccessLoginHandler,
 } from './services/remoteAccessAuth';
 import { remoteAccessApiRouter } from './routes/remoteAccessApi';
-import { remoteAccessPageRouter } from './routes/remoteAccessPage';
+import { settingsRouter } from './routes/settings';
 
 import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
 import { resolveUploadsRoot } from './paths';
@@ -89,7 +89,7 @@ export function createApp(): express.Express {
   app.use('/chats', chatsRouter);
   app.use('/projects', projectsRouter);
   app.use('/tasks', tasksRouter);
-  app.use('/', remoteAccessPageRouter);
+  app.use('/', settingsRouter);
   app.use('/api/agents', agentsRouter);
   app.use('/api/gateway', gatewayRouter);
   app.use('/api/update', updateRouter);

@@ -538,6 +538,50 @@ code {
   display: block;
 }
 
+/* Settings (gear) button — sibling to the search toggle, but never hidden
+   when search is open. Same hit-target + visual language. */
+.sidebar-settings-btn {
+  flex: 0 0 auto;
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--sidebar-bg));
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.sidebar-settings-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--hover) 55%, transparent);
+  border-color: color-mix(in srgb, var(--border) 90%, var(--sidebar-bg));
+}
+.sidebar-settings-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-link) 35%, transparent);
+}
+.sidebar-settings-btn.active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--hover) 70%, transparent);
+  border-color: color-mix(in srgb, var(--border) 90%, var(--sidebar-bg));
+}
+.sidebar-settings-btn svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
 .sidebar-search-field-wrap {
   display: none;
   flex: 1;

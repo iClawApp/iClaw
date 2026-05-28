@@ -1,9 +1,9 @@
 /**
- * GET /remote-access — Settings page for the Remote Access feature.
+ * GET /settings — Settings page.
  *
- * Server-renders the current list of tunnels. The page polls the JSON
- * API every 1.5s while open so newly-created tunnels' URLs appear and
- * countdowns tick down without manual refresh.
+ * For now the only section is Remote Access, but the page is built as a
+ * sectioned scaffold so future settings can land alongside without a
+ * separate URL.
  */
 
 import { Router } from 'express';
@@ -13,11 +13,11 @@ import { chatStatus } from '../services/chatStatus';
 import { openclaw } from '../services/openclaw';
 import { remoteAccess, ALLOWED_DURATIONS_MS } from '../services/remoteAccess';
 
-export const remoteAccessPageRouter = Router();
+export const settingsRouter = Router();
 
-remoteAccessPageRouter.get('/remote-access', (_req, res) => {
-  res.render('remote-access', {
-    title: 'Remote Access — iClaw',
+settingsRouter.get('/settings', (_req, res) => {
+  res.render('settings', {
+    title: 'Settings — iClaw',
     // Sidebar locals.
     chats: chats.list(),
     workingIds: chatStatus.workingIds(),
@@ -28,7 +28,7 @@ remoteAccessPageRouter.get('/remote-access', (_req, res) => {
     activeProject: null,
     activeProjectsList: false,
     activeTasksList: false,
-    activeRemoteAccess: true,
+    activeSettings: true,
     openclawBaseUrl: openclaw.baseUrl,
     // Page-specific.
     tunnels: remoteAccess.list(),

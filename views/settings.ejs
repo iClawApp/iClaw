@@ -1,0 +1,497 @@
+<%- include('partials/head', { title: 'Settings — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main settings-page">
+    <div class="settings-inner">
+      <h1 class="settings-title">Settings</h1>
+
+      <!-- ─────────── Remote Access ─────────── -->
+      <section class="settings-section" id="settings-remote-access">
+        <header class="settings-section-head">
+          <h2 class="settings-section-title">Remote Access</h2>
+          <p class="settings-section-desc">
+            Open a temporary URL so you can use this iClaw from another device,
+            or share access with someone. Each tunnel has its own passphrase and
+            expiry — disabling one never affects another.
+          </p>
+        </header>
+
+        <!-- Create new tunnel -->
+        <div class="settings-card settings-new-card">
+          <form class="ra-form" id="ra-new-form" onsubmit="return false">
+            <div class="ra-duration-options" role="radiogroup" aria-label="Duration">
+              <% allowedDurationsMs.forEach(function (ms, i) {
+                var label =
+                  ms === 30 * 60000      ? '30 min' :
+                  ms === 12 * 60 * 60000 ? '12 hours' :
+                  ms === 7 * 86400000    ? '7 days' :
+                  ms === 30 * 86400000   ? '30 days' : (ms + 'ms');
+              %>
+              <label class="ra-duration-option">
+                <input type="radio" name="durationMs" value="<%= ms %>"<%= i === 1 ? ' checked' : '' %> />
+                <span><%= label %></span>
+              </label>
+              <% }); %>
+            </div>
+            <button type="submit" class="ra-primary-btn" id="ra-new-btn">Create tunnel</button>
+          </form>
+        </div>
+
+        <!-- List of active tunnels -->
+        <div id="ra-list" class="ra-list">
+          <% if (tunnels.length === 0) { %>
+            <p class="ra-empty">No active tunnels.</p>
+          <% } else { %>
+            <% tunnels.forEach(function (t) { %>
+              <div class="settings-card ra-tunnel-card" data-tunnel-id="<%= t.id %>">
+                <div class="ra-tunnel-head">
+                  <span class="ra-dot" aria-hidden="true"></span>
+                  <span class="ra-tunnel-id">#<%= t.id.slice(2, 8) %></span>
+                  <span class="ra-remaining" data-role="remaining" data-expires-at="<%= t.expiresAt %>">…</span>
+                </div>
+
+                <div class="ra-row">
+                  <div class="ra-row-label">URL</div>
+                  <% if (t.url) { %>
+                    <a class="ra-row-value ra-row-link" data-role="url" href="<%= t.url %>" target="_blank" rel="noopener noreferrer"><%= t.url %></a>
+                    <button type="button" class="ra-copy-btn" data-copy="url" aria-label="Copy URL">Copy</button>
+                  <% } else { %>
+                    <span class="ra-row-value ra-connecting" data-role="url-pending">Connecting…</span>
+                  <% } %>
+                </div>
+
+                <div class="ra-row">
+                  <div class="ra-row-label">Passphrase</div>
+                  <code class="ra-row-value ra-row-mono" data-role="passphrase"><%= t.passphrase %></code>
+                  <button type="button" class="ra-copy-btn" data-copy="passphrase" aria-label="Copy passphrase">Copy</button>
+                </div>
+
+                <div class="ra-card-foot">
+                  <button type="button" class="ra-destructive-btn" data-action="delete">Disable</button>
+                </div>
+              </div>
+            <% }); %>
+          <% } %>
+        </div>
+
+        <p class="settings-fineprint">
+          The passphrase is the only protection between your iClaw and anyone who finds the URL.
+          Share both, or send the link through a private channel.
+        </p>
+      </section>
+    </div>
+  </main>
+</div>
+
+<style>
+/* ───────────────────────── Page shell ───────────────────────── */
+.settings-page {
+  padding: 56px 32px 80px;
+  overflow-y: auto;
+  background: var(--bg, #0e1116);
+}
+.settings-inner {
+  max-width: 640px;
+  margin: 0 auto;
+}
+.settings-title {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  margin: 0 0 56px;
+  color: var(--fg, #e6e8eb);
+}
+
+/* ───────────────────────── Sections ───────────────────────── */
+.settings-section { margin: 0 0 56px; }
+.settings-section-head { margin: 0 0 16px; padding: 0 4px; }
+.settings-section-title {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 6px;
+  color: var(--fg, #e6e8eb);
+}
+.settings-section-desc {
+  color: var(--muted, #95a0b0);
+  font-size: 13.5px;
+  line-height: 1.55;
+  margin: 0;
+  max-width: 540px;
+}
+.settings-fineprint {
+  color: var(--muted, #95a0b0);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 16px 4px 0;
+  max-width: 540px;
+}
+
+/* ───────────────────────── Cards ───────────────────────── */
+.settings-card {
+  background: color-mix(in srgb, var(--fg, #e6e8eb) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg, #e6e8eb) 8%, transparent);
+  border-radius: 14px;
+  padding: 18px 20px;
+  margin: 0 0 12px;
+}
+.settings-new-card { padding: 16px 18px; }
+.ra-list { display: flex; flex-direction: column; gap: 12px; }
+.ra-empty {
+  text-align: center;
+  color: var(--muted, #95a0b0);
+  font-size: 13px;
+  padding: 28px 0;
+  margin: 0;
+}
+
+/* ───────────────────────── New-tunnel form ───────────────────────── */
+.ra-form {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ra-duration-options {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--fg, #e6e8eb) 8%, transparent);
+  border-radius: 10px;
+  flex: 1;
+  min-width: 280px;
+}
+.ra-duration-option {
+  flex: 1;
+  text-align: center;
+}
+.ra-duration-option input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.ra-duration-option span {
+  display: block;
+  padding: 7px 6px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted, #95a0b0);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+  user-select: none;
+}
+.ra-duration-option:has(input[type="radio"]:checked) span {
+  background: var(--bg, #0e1116);
+  color: var(--fg, #e6e8eb);
+  box-shadow: 0 1px 2px rgba(0,0,0,.15);
+}
+.ra-duration-option:hover span { color: var(--fg, #e6e8eb); }
+
+/* ───────────────────────── Buttons ───────────────────────── */
+.ra-primary-btn {
+  appearance: none;
+  border: 0;
+  background: #0a7aff;          /* iOS blue */
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 9px 20px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background .12s, transform .08s;
+  white-space: nowrap;
+}
+.ra-primary-btn:hover { background: #0866d6; }
+.ra-primary-btn:active { transform: scale(0.97); }
+.ra-primary-btn:disabled { background: #4a5260; cursor: default; }
+
+.ra-destructive-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: #ff453a;               /* iOS red */
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.ra-destructive-btn:hover { color: #ff675e; }
+.ra-destructive-btn:disabled { color: #5b3a3a; cursor: default; }
+
+.ra-copy-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--muted, #95a0b0);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color .12s, background .12s;
+}
+.ra-copy-btn:hover {
+  color: var(--fg, #e6e8eb);
+  background: color-mix(in srgb, var(--fg, #e6e8eb) 6%, transparent);
+}
+.ra-copy-btn:disabled { color: var(--muted, #95a0b0); cursor: default; }
+
+/* ───────────────────────── Tunnel card ───────────────────────── */
+.ra-tunnel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.ra-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #30d158;          /* iOS green */
+  box-shadow: 0 0 0 3px color-mix(in srgb, #30d158 18%, transparent);
+}
+.ra-tunnel-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--muted, #95a0b0);
+  letter-spacing: 0.02em;
+}
+.ra-remaining {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted, #95a0b0);
+  font-variant-numeric: tabular-nums;
+}
+
+.ra-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid color-mix(in srgb, var(--fg, #e6e8eb) 6%, transparent);
+}
+.ra-row:first-of-type { border-top: 0; padding-top: 4px; }
+.ra-row-label {
+  flex: 0 0 84px;
+  font-size: 12.5px;
+  color: var(--muted, #95a0b0);
+  font-weight: 500;
+}
+.ra-row-value {
+  flex: 1;
+  font-size: 13px;
+  color: var(--fg, #e6e8eb);
+  word-break: break-all;
+  user-select: all;
+  min-width: 0;
+}
+.ra-row-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+.ra-row-link {
+  color: #0a7aff;
+  text-decoration: none;
+}
+.ra-row-link:hover { text-decoration: underline; }
+.ra-connecting { color: var(--muted, #95a0b0); font-style: italic; }
+.ra-connecting::before {
+  content: "⟳";
+  display: inline-block;
+  margin-right: 6px;
+  animation: ra-spin 1.4s linear infinite;
+}
+@keyframes ra-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+.ra-card-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 10px;
+  margin-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--fg, #e6e8eb) 6%, transparent);
+}
+
+@media (max-width: 520px) {
+  .settings-page { padding: 32px 16px 64px; }
+  .settings-title { font-size: 28px; margin-bottom: 36px; }
+  .ra-form { flex-direction: column; align-items: stretch; }
+  .ra-primary-btn { width: 100%; }
+  .ra-row { flex-wrap: wrap; }
+  .ra-row-label { flex-basis: 100%; }
+}
+</style>
+
+<script>
+(function () {
+  const list = document.getElementById('ra-list');
+  const newForm = document.getElementById('ra-new-form');
+  if (!list || !newForm) return;
+
+  function fmtRemaining(ms) {
+    if (!ms || ms <= 0) return 'expired';
+    const sec = Math.floor(ms / 1000);
+    const min = Math.floor(sec / 60);
+    const hr  = Math.floor(min / 60);
+    const day = Math.floor(hr / 24);
+    if (day >= 1) return day + 'd ' + (hr % 24) + 'h';
+    if (hr  >= 1) return hr  + 'h ' + (min % 60) + 'm';
+    if (min >= 1) return min + 'm ' + (sec % 60) + 's';
+    return sec + 's';
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '"' ? '&quot;' : '&#39;';
+    });
+  }
+  async function copy(text, btn) {
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) { console.warn('clipboard write failed', e); return; }
+    if (!btn) return;
+    const orig = btn.textContent;
+    btn.textContent = 'Copied';
+    btn.disabled = true;
+    setTimeout(function () { btn.textContent = orig; btn.disabled = false; }, 1100);
+  }
+
+  function renderCard(t) {
+    const idShort = t.id.slice(2, 8);
+    const urlBlock = t.url
+      ? '<a class="ra-row-value ra-row-link" data-role="url" href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t.url) + '</a>' +
+        '<button type="button" class="ra-copy-btn" data-copy="url" aria-label="Copy URL">Copy</button>'
+      : '<span class="ra-row-value ra-connecting" data-role="url-pending">Connecting…</span>';
+
+    return '<div class="settings-card ra-tunnel-card" data-tunnel-id="' + escapeHtml(t.id) + '">' +
+      '  <div class="ra-tunnel-head">' +
+      '    <span class="ra-dot" aria-hidden="true"></span>' +
+      '    <span class="ra-tunnel-id">#' + escapeHtml(idShort) + '</span>' +
+      '    <span class="ra-remaining" data-role="remaining" data-expires-at="' + t.expiresAt + '">' + fmtRemaining(t.expiresAt - Date.now()) + '</span>' +
+      '  </div>' +
+      '  <div class="ra-row">' +
+      '    <div class="ra-row-label">URL</div>' +
+      '    ' + urlBlock +
+      '  </div>' +
+      '  <div class="ra-row">' +
+      '    <div class="ra-row-label">Passphrase</div>' +
+      '    <code class="ra-row-value ra-row-mono" data-role="passphrase">' + escapeHtml(t.passphrase) + '</code>' +
+      '    <button type="button" class="ra-copy-btn" data-copy="passphrase" aria-label="Copy passphrase">Copy</button>' +
+      '  </div>' +
+      '  <div class="ra-card-foot">' +
+      '    <button type="button" class="ra-destructive-btn" data-action="delete">Disable</button>' +
+      '  </div>' +
+      '</div>';
+  }
+
+  function renderList(tunnels) {
+    if (!tunnels || tunnels.length === 0) {
+      list.innerHTML = '<p class="ra-empty">No active tunnels.</p>';
+      return;
+    }
+    list.innerHTML = tunnels.map(renderCard).join('');
+  }
+
+  function tickRemaining() {
+    const now = Date.now();
+    list.querySelectorAll('[data-role="remaining"]').forEach(function (el) {
+      const at = Number(el.getAttribute('data-expires-at'));
+      if (!at) return;
+      el.textContent = fmtRemaining(at - now);
+    });
+  }
+
+  async function fetchStatus() {
+    const res = await fetch('/api/remote-access/tunnels');
+    if (!res.ok) return null;
+    return res.json();
+  }
+
+  let pollTimer = null;
+  function startPolling() { if (!pollTimer) pollTimer = setInterval(poll, 1500); }
+  function stopPolling()  { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+  async function poll() {
+    if (document.hidden) return;
+    const data = await fetchStatus();
+    if (!data) return;
+    renderList(data.tunnels);
+    tickRemaining();
+  }
+  setInterval(tickRemaining, 1000);
+
+  list.addEventListener('click', async function (e) {
+    const t = e.target;
+    if (!(t instanceof HTMLElement)) return;
+
+    if (t.hasAttribute('data-copy')) {
+      const role = t.getAttribute('data-copy');
+      const card = t.closest('[data-tunnel-id]');
+      if (!card) return;
+      const valueEl = card.querySelector('[data-role="' + role + '"]');
+      if (valueEl) copy((valueEl.textContent || '').trim(), t);
+      return;
+    }
+
+    if (t.getAttribute('data-action') === 'delete') {
+      const card = t.closest('[data-tunnel-id]');
+      if (!card) return;
+      const id = card.getAttribute('data-tunnel-id');
+      if (!id) return;
+      if (!confirm('Disable this tunnel? Anyone currently connected through it will be cut off.')) return;
+      t.disabled = true;
+      t.textContent = 'Disabling…';
+      try {
+        const res = await fetch('/api/remote-access/tunnels/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!res.ok) {
+          alert('Failed to disable');
+          t.disabled = false;
+          t.textContent = 'Disable';
+          return;
+        }
+        await poll();
+      } catch (e2) {
+        alert('Failed to disable: ' + e2.message);
+        t.disabled = false;
+        t.textContent = 'Disable';
+      }
+    }
+  });
+
+  newForm.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const btn = document.getElementById('ra-new-btn');
+    const checked = newForm.querySelector('input[name="durationMs"]:checked');
+    if (!checked) return;
+    const durationMs = Number(checked.value);
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = 'Creating…';
+    try {
+      const res = await fetch('/api/remote-access/tunnels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ durationMs }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(function () { return { error: 'failed' }; });
+        alert('Failed to create: ' + (err.error || res.status));
+      } else {
+        await poll();
+      }
+    } catch (e3) {
+      alert('Failed to create: ' + e3.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) stopPolling();
+    else startPolling();
+  });
+
+  startPolling();
+})();
+</script>
+
+<%- include('partials/foot') %>
