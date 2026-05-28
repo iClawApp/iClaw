@@ -20,10 +20,9 @@
  *    whose `expiresAt` is still in the future, and re-registers them
  *    with the relay as soon as the shared WS comes up.
  *
- * Subdomains are NOT stable across relay reconnects in v1 — each
- * re-register mints a fresh subdomain. The passphrase and tunnelId
- * stay the same, so device sessions keep working semantically; only
- * the URL changes.
+ * Subdomains are stable across short relay disconnects: the relay
+ * reserves tunnelId → subdomain for ~10 min and restores the same URL
+ * on re-register. tunnelId and passphrase always live in iClaw SQLite.
  */
 
 import http from 'node:http';
@@ -193,6 +192,48 @@ let ws: WebSocket | null = null;
 let stopped = false;
 let reconnectAttempt = 0;
 let reconnectTimer: NodeJS.Timeout | null = null;
+
+/** WS-protocol keep-alive — Cloudflare closes idle WS after ~100s. */
+const KEEP_ALIVE_MS = 30_000;
+let wsPingTimer: NodeJS.Timeout | null = null;
+let wsAlive = true;
+
+function clearWsKeepAlive(): void {
+  if (wsPingTimer) {
+    clearInterval(wsPingTimer);
+    wsPingTimer = null;
+  }
+  wsAlive = true;
+}
+
+function startWsKeepAlive(socket: WebSocket): void {
+  clearWsKeepAlive();
+  wsAlive = true;
+  socket.on('pong', () => {
+    wsAlive = true;
+  });
+  wsPingTimer = setInterval(() => {
+    if (ws !== socket || socket.readyState !== WebSocket.OPEN) {
+      clearWsKeepAlive();
+      return;
+    }
+    if (!wsAlive) {
+      try {
+        socket.terminate();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    wsAlive = false;
+    try {
+      socket.ping();
+    } catch {
+      // ignore
+    }
+  }, KEEP_ALIVE_MS);
+  wsPingTimer.unref();
+}
 
 /** Active tunnels keyed by tunnelId. URL is null when relay not yet replied. */
 const tunnels = new Map<string, RuntimeTunnel>();
@@ -481,11 +522,10 @@ function connect(): void {
 
   socket.on('open', () => {
     reconnectAttempt = 0;
+    startWsKeepAlive(socket);
     console.log(`[remote-access] connected to relay (${bound!.relayUrl})`);
-    // Re-register every active tunnel. Clear any stale URL first so the
-    // UI doesn't show the old subdomain while we wait for the new one.
+    // Re-register every active tunnel (relay restores the same subdomain).
     for (const rt of tunnels.values()) {
-      rt.currentUrl = null;
       registerOverWire(rt);
     }
   });
@@ -529,11 +569,9 @@ function connect(): void {
   });
 
   socket.on('close', () => {
+    if (ws !== socket) return;
+    clearWsKeepAlive();
     ws = null;
-    // Mark all tunnels as URL-pending until the relay re-assigns subdomains.
-    for (const rt of tunnels.values()) {
-      rt.currentUrl = null;
-    }
     if (!stopped) {
       console.warn('[remote-access] disconnected, will retry');
       scheduleReconnect();
@@ -670,6 +708,7 @@ export const remoteAccess = {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+    clearWsKeepAlive();
     if (ws) {
       try {
         ws.close();
