@@ -1,22 +1,29 @@
 /**
- * Remote Access runtime — multi-tunnel.
+ * Remote Access runtime — single multiplexed WS.
  *
- * Each Remote Access tunnel is an independent unit: its own outbound WS
- * to the relay, its own subdomain, passphrase, expiry timer, and per-stream
- * loopback connections. Deleting one tunnel never affects another.
+ * One persistent WebSocket lives between this iClaw process and the
+ * relay. All Remote Access tunnels are multiplexed inside it: each
+ * `register-tunnel` message asks the relay to mint a subdomain for a
+ * given tunnelId, and every subsequent frame (req / ws-* / etc.) carries
+ * that tunnelId so we can route to the right local tunnel.
  *
- * Persisted state lives in {@link ./remoteAccessState.ts}; this module
- * mirrors it into in-memory {@link RuntimeTunnel} records that own the
- * actual WS plumbing.
+ * Why one WS instead of one-per-tunnel:
+ *  - 4 tunnels no longer mean 4 reconnect storms when the relay restarts.
+ *  - Rate-limiting on the relay can target "new tunnel creations" instead
+ *    of "new connections", so reconnects no longer count.
+ *  - It's how every real tunnel service (ngrok, Cloudflare Tunnel,
+ *    Tailscale) does it.
  *
  * Activation paths:
- *   - UI: POST /api/remote-access/tunnels with a duration from the fixed
- *     list. Each call creates a new tunnel.
- *   - On iClaw startup: resumeAll() rehydrates every persisted tunnel
- *     whose `expiresAt` is still in the future.
+ *  - UI: POST /api/remote-access/tunnels → createTunnel().
+ *  - On iClaw startup: resumeAll() rehydrates every persisted tunnel
+ *    whose `expiresAt` is still in the future, and re-registers them
+ *    with the relay as soon as the shared WS comes up.
  *
- * No env-driven path any more — the legacy `ICLAW_REMOTE_ACCESS=1` flag
- * was singleton-only and didn't fit the multi-tunnel model.
+ * Subdomains are NOT stable across relay reconnects in v1 — each
+ * re-register mints a fresh subdomain. The passphrase and tunnelId
+ * stay the same, so device sessions keep working semantically; only
+ * the URL changes.
  */
 
 import http from 'node:http';
@@ -42,59 +49,78 @@ import {
 
 /* ---------------------------------------------------------------- frames -- */
 
-interface HelloFrame {
-  t: 'hello';
+interface RegisterTunnelFrame {
+  t: 'register-tunnel';
+  tunnelId: string;
+  label?: string | null;
+}
+interface UnregisterTunnelFrame {
+  t: 'unregister-tunnel';
+  tunnelId: string;
+}
+interface TunnelRegisteredFrame {
+  t: 'tunnel-registered';
+  tunnelId: string;
   subdomain: string;
   baseDomain: string;
   publicUrl: string;
 }
-
+interface TunnelRejectedFrame {
+  t: 'tunnel-rejected';
+  tunnelId: string;
+  reason: string;
+  retryAfterSec?: number;
+}
 interface ReqFrame {
   t: 'req';
+  tunnelId: string;
   id: string;
   method: string;
   path: string;
   headers: Record<string, string>;
   body: string;
 }
-
 interface ResFrame {
   t: 'res';
+  tunnelId: string;
   id: string;
   status: number;
   headers: Record<string, string>;
   body: string;
 }
-
 interface ErrFrame {
   t: 'err';
+  tunnelId: string;
   id?: string;
   message: string;
 }
-
 interface WsOpenFrame {
   t: 'ws-open';
+  tunnelId: string;
   id: string;
   path: string;
   headers: Record<string, string>;
 }
-
 interface WsDataFrame {
   t: 'ws-data';
+  tunnelId: string;
   id: string;
   binary: boolean;
   data: string;
 }
-
 interface WsCloseFrame {
   t: 'ws-close';
+  tunnelId: string;
   id: string;
   code?: number;
   reason?: string;
 }
 
 type Frame =
-  | HelloFrame
+  | RegisterTunnelFrame
+  | UnregisterTunnelFrame
+  | TunnelRegisteredFrame
+  | TunnelRejectedFrame
   | ReqFrame
   | ResFrame
   | ErrFrame
@@ -116,11 +142,8 @@ const HOP_BY_HOP = new Set([
   'host',
   'content-length',
 ]);
-
 function stripHopByHop(
-  headers:
-    | http.IncomingHttpHeaders
-    | Record<string, string | string[] | undefined>,
+  headers: http.IncomingHttpHeaders | Record<string, string | string[] | undefined>,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(headers)) {
@@ -149,24 +172,29 @@ interface StreamState {
 }
 
 interface RuntimeTunnel {
-  id: string;
+  id: string;                  // tunnelId, stable across reconnects
   label: string | null;
   passphrase: string;
   durationMs: number;
   startedAt: number;
   expiresAt: number;
   createdAt: number;
-
-  ws: WebSocket | null;
-  stopped: boolean;
-  reconnectAttempt: number;
-  reconnectTimer: NodeJS.Timeout | null;
-  expiryTimer: NodeJS.Timeout | null;
+  /** Set when tunnel-registered arrives; cleared on disconnect. */
   currentUrl: string | null;
+  expiryTimer: NodeJS.Timeout | null;
+  /** Loopback WS streams (per public ws-open). */
   streams: Map<string, StreamState>;
 }
 
 let bound: { relayUrl: string; localHost: string; localPort: number } | null = null;
+
+/** The shared iClaw → relay WebSocket. Null when not connected. */
+let ws: WebSocket | null = null;
+let stopped = false;
+let reconnectAttempt = 0;
+let reconnectTimer: NodeJS.Timeout | null = null;
+
+/** Active tunnels keyed by tunnelId. URL is null when relay not yet replied. */
 const tunnels = new Map<string, RuntimeTunnel>();
 
 export interface TunnelStatus {
@@ -200,12 +228,8 @@ function makeRuntime(p: PersistedTunnel): RuntimeTunnel {
     startedAt: p.startedAt,
     expiresAt: p.expiresAt,
     createdAt: p.createdAt,
-    ws: null,
-    stopped: false,
-    reconnectAttempt: 0,
-    reconnectTimer: null,
-    expiryTimer: null,
     currentUrl: null,
+    expiryTimer: null,
     streams: new Map(),
   };
 }
@@ -217,119 +241,58 @@ function scheduleExpiry(rt: RuntimeTunnel): void {
   }
   const delta = rt.expiresAt - Date.now();
   if (delta <= 0) {
-    setTimeout(() => deleteTunnel(rt.id), 0);
+    setTimeout(() => removeTunnelLocal(rt.id), 0);
     return;
   }
   rt.expiryTimer = setTimeout(() => {
     rt.expiryTimer = null;
-    console.log(`[remote-access:${rt.id}] duration elapsed — stopping`);
-    deleteTunnel(rt.id);
+    console.log(`[remote-access:${rt.id}] duration elapsed`);
+    deleteTunnelImpl(rt.id);
   }, delta);
   rt.expiryTimer.unref();
 }
 
-function scheduleReconnect(rt: RuntimeTunnel): void {
-  if (rt.stopped) return;
-  rt.reconnectAttempt += 1;
-  const delay = Math.min(30_000, 500 * 2 ** Math.min(rt.reconnectAttempt, 6));
-  rt.reconnectTimer = setTimeout(() => {
-    rt.reconnectTimer = null;
-    connect(rt);
-  }, delay);
+function safeSend(frame: Frame): boolean {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  try {
+    ws.send(JSON.stringify(frame));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function connect(rt: RuntimeTunnel): void {
-  if (!bound || rt.stopped) return;
-
-  const socket = new WebSocket(bound.relayUrl);
-  rt.ws = socket;
-
-  socket.on('open', () => {
-    rt.reconnectAttempt = 0;
-    console.log(`[remote-access:${rt.id}] connected to relay`);
-  });
-
-  socket.on('message', (data) => {
-    const raw = typeof data === 'string' ? data : data.toString('utf8');
-    let frame: Frame | null = null;
-    try {
-      frame = JSON.parse(raw) as Frame;
-    } catch {
-      return;
-    }
-    if (!frame || typeof (frame as { t?: unknown }).t !== 'string') return;
-
-    if (frame.t === 'hello') {
-      rt.currentUrl = frame.publicUrl;
-      console.log(`[remote-access:${rt.id}] tunnel ready → ${frame.publicUrl}`);
-      return;
-    }
-    if (frame.t === 'req') {
-      void handleReq(rt, socket, frame);
-      return;
-    }
-    if (frame.t === 'ws-open') {
-      handleWsOpen(rt, socket, frame);
-      return;
-    }
-    if (frame.t === 'ws-data') {
-      const s = rt.streams.get(frame.id);
-      if (!s) return;
-      if (s.ws.readyState === WebSocket.OPEN) {
-        try {
-          s.ws.send(Buffer.from(frame.data, 'base64'), { binary: frame.binary });
-        } catch {
-          // peer probably closed mid-write
-        }
-      } else if (s.ws.readyState === WebSocket.CONNECTING) {
-        s.pending.push({ data: frame.data, binary: frame.binary });
-      }
-      return;
-    }
-    if (frame.t === 'ws-close') {
-      const s = rt.streams.get(frame.id);
-      if (s) {
-        rt.streams.delete(frame.id);
-        try {
-          s.ws.close(frame.code, frame.reason);
-        } catch {
-          // ignore
-        }
-      }
-      return;
-    }
-    if (frame.t === 'ping') {
-      socket.send(JSON.stringify({ t: 'pong' }));
-      return;
-    }
-  });
-
-  socket.on('close', () => {
-    rt.ws = null;
-    if (!rt.stopped) {
-      console.warn(`[remote-access:${rt.id}] disconnected, will retry`);
-      scheduleReconnect(rt);
-    }
-  });
-
-  socket.on('error', (err) => {
-    console.warn(`[remote-access:${rt.id}] ws error: ${err.message}`);
-  });
+function registerOverWire(rt: RuntimeTunnel): void {
+  safeSend({ t: 'register-tunnel', tunnelId: rt.id, label: rt.label });
 }
 
-function handleReq(
-  rt: RuntimeTunnel,
-  socket: WebSocket,
-  frame: ReqFrame,
-): Promise<void> {
-  return new Promise<void>((resolve) => {
+function unregisterOverWire(tunnelId: string): void {
+  safeSend({ t: 'unregister-tunnel', tunnelId });
+}
+
+/* -------------------------------------------------------- frame handlers -- */
+
+function handleTunnelRegistered(f: TunnelRegisteredFrame): void {
+  const rt = tunnels.get(f.tunnelId);
+  if (!rt) return;
+  rt.currentUrl = f.publicUrl;
+  console.log(`[remote-access:${rt.id}] tunnel ready → ${f.publicUrl}`);
+}
+
+function handleTunnelRejected(f: TunnelRejectedFrame): void {
+  console.warn(
+    `[remote-access:${f.tunnelId}] rejected by relay: ${f.reason}` +
+      (f.retryAfterSec ? ` (retry in ${f.retryAfterSec}s)` : ''),
+  );
+}
+
+function handleReq(socket: WebSocket, frame: ReqFrame): void {
+  void (async () => {
     if (!bound) {
-      sendErr(socket, frame.id, 'remote-access not initialised');
-      return resolve();
+      sendErr(socket, frame.tunnelId, frame.id, 'remote-access not initialised');
+      return;
     }
-
     const safeHeaders = stripInternalHeaders(frame.headers);
-
     const reqOpts: http.RequestOptions = {
       host: bound.localHost,
       port: bound.localPort,
@@ -339,80 +302,64 @@ function handleReq(
         ...safeHeaders,
         host: `${bound.localHost}:${bound.localPort}`,
         [TUNNELED_HEADER]: TUNNELED_VALUE,
-        [TUNNEL_ID_HEADER]: rt.id,
+        [TUNNEL_ID_HEADER]: frame.tunnelId,
       },
     };
 
-    const lr = http.request(reqOpts, (resp) => {
-      const chunks: Buffer[] = [];
-      resp.on('data', (c: Buffer) => chunks.push(c));
-      resp.on('end', () => {
-        const body = Buffer.concat(chunks);
-        const out: ResFrame = {
-          t: 'res',
-          id: frame.id,
-          status: resp.statusCode ?? 502,
-          headers: stripHopByHop(resp.headers),
-          body: body.length > 0 ? body.toString('base64') : '',
-        };
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify(out));
-        }
+    await new Promise<void>((resolve) => {
+      const lr = http.request(reqOpts, (resp) => {
+        const chunks: Buffer[] = [];
+        resp.on('data', (c: Buffer) => chunks.push(c));
+        resp.on('end', () => {
+          const body = Buffer.concat(chunks);
+          const out: ResFrame = {
+            t: 'res',
+            tunnelId: frame.tunnelId,
+            id: frame.id,
+            status: resp.statusCode ?? 502,
+            headers: stripHopByHop(resp.headers),
+            body: body.length > 0 ? body.toString('base64') : '',
+          };
+          safeSend(out);
+          resolve();
+        });
+        resp.on('error', (err) => {
+          sendErr(socket, frame.tunnelId, frame.id, err.message);
+          resolve();
+        });
+      });
+      lr.on('error', (err) => {
+        sendErr(socket, frame.tunnelId, frame.id, err.message);
         resolve();
       });
-      resp.on('error', (err) => {
-        sendErr(socket, frame.id, err.message);
-        resolve();
-      });
+      if (frame.body) {
+        lr.write(Buffer.from(frame.body, 'base64'));
+      }
+      lr.end();
     });
-
-    lr.on('error', (err) => {
-      sendErr(socket, frame.id, err.message);
-      resolve();
-    });
-
-    if (frame.body) {
-      lr.write(Buffer.from(frame.body, 'base64'));
-    }
-    lr.end();
-  });
+  })();
 }
 
-function sendErr(socket: WebSocket, id: string | undefined, message: string): void {
-  if (socket.readyState !== WebSocket.OPEN) return;
-  const errFrame: ErrFrame = { t: 'err', id, message };
-  socket.send(JSON.stringify(errFrame));
+function sendErr(_socket: WebSocket, tunnelId: string, id: string | undefined, message: string): void {
+  const f: ErrFrame = { t: 'err', tunnelId, message };
+  if (id) f.id = id;
+  safeSend(f);
 }
 
-function sendStreamClose(
-  socket: WebSocket,
-  id: string,
-  code?: number,
-  reason?: string,
-): void {
-  if (socket.readyState !== WebSocket.OPEN) return;
-  const f: WsCloseFrame = { t: 'ws-close', id, code, reason };
-  try {
-    socket.send(JSON.stringify(f));
-  } catch {
-    // ignore
-  }
-}
-
-function handleWsOpen(
-  rt: RuntimeTunnel,
-  relayWs: WebSocket,
-  frame: WsOpenFrame,
-): void {
+function handleWsOpen(frame: WsOpenFrame): void {
   if (!bound) {
-    sendStreamClose(relayWs, frame.id, 1011, 'remote-access not initialised');
+    sendStreamClose(frame.tunnelId, frame.id, 1011, 'remote-access not initialised');
+    return;
+  }
+  const rt = tunnels.get(frame.tunnelId);
+  if (!rt) {
+    sendStreamClose(frame.tunnelId, frame.id, 1011, 'unknown tunnel');
     return;
   }
 
   const safeHeaders = stripInternalHeaders(frame.headers);
-
   if (!isValidTunnelSession(rt.id, safeHeaders.cookie)) {
-    sendStreamClose(relayWs, frame.id, 4401, 'unauthorized');
+    sendStreamClose(frame.tunnelId, frame.id, 4401, 'unauthorized');
     return;
   }
 
@@ -429,7 +376,7 @@ function handleWsOpen(
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'failed to open loopback ws';
-    sendStreamClose(relayWs, frame.id, 1011, message);
+    sendStreamClose(frame.tunnelId, frame.id, 1011, message);
     return;
   }
   const state: StreamState = { ws: local, pending: [] };
@@ -455,23 +402,18 @@ function handleWsOpen(
         : Buffer.from(data as ArrayBuffer);
     const f: WsDataFrame = {
       t: 'ws-data',
+      tunnelId: frame.tunnelId,
       id: frame.id,
       binary: !!isBinary,
       data: buf.toString('base64'),
     };
-    if (relayWs.readyState === WebSocket.OPEN) {
-      try {
-        relayWs.send(JSON.stringify(f));
-      } catch {
-        // ignore
-      }
-    }
+    safeSend(f);
   });
 
   local.on('close', (code, reason) => {
     if (!rt.streams.delete(frame.id)) return;
     sendStreamClose(
-      relayWs,
+      frame.tunnelId,
       frame.id,
       code,
       reason && reason.length ? reason.toString('utf8') : undefined,
@@ -483,25 +425,141 @@ function handleWsOpen(
   });
 }
 
-/* ----------------------------------------------------------- public api -- */
+function sendStreamClose(tunnelId: string, id: string, code?: number, reason?: string): void {
+  const f: WsCloseFrame = { t: 'ws-close', tunnelId, id };
+  if (code !== undefined) f.code = code;
+  if (reason !== undefined) f.reason = reason;
+  safeSend(f);
+}
 
-function closeRuntime(rt: RuntimeTunnel): void {
-  rt.stopped = true;
-  if (rt.reconnectTimer) {
-    clearTimeout(rt.reconnectTimer);
-    rt.reconnectTimer = null;
-  }
-  if (rt.expiryTimer) {
-    clearTimeout(rt.expiryTimer);
-    rt.expiryTimer = null;
-  }
-  if (rt.ws) {
+function handleWsData(frame: WsDataFrame): void {
+  const rt = tunnels.get(frame.tunnelId);
+  if (!rt) return;
+  const s = rt.streams.get(frame.id);
+  if (!s) return;
+  if (s.ws.readyState === WebSocket.OPEN) {
     try {
-      rt.ws.close();
+      s.ws.send(Buffer.from(frame.data, 'base64'), { binary: frame.binary });
     } catch {
       // ignore
     }
-    rt.ws = null;
+  } else if (s.ws.readyState === WebSocket.CONNECTING) {
+    s.pending.push({ data: frame.data, binary: frame.binary });
+  }
+}
+
+function handleWsCloseInbound(frame: WsCloseFrame): void {
+  const rt = tunnels.get(frame.tunnelId);
+  if (!rt) return;
+  const s = rt.streams.get(frame.id);
+  if (!s) return;
+  rt.streams.delete(frame.id);
+  try {
+    s.ws.close(frame.code, frame.reason);
+  } catch {
+    // ignore
+  }
+}
+
+/* ------------------------------------------------------------- connect -- */
+
+function scheduleReconnect(): void {
+  if (stopped) return;
+  reconnectAttempt += 1;
+  const delay = Math.min(30_000, 500 * 2 ** Math.min(reconnectAttempt, 6));
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, delay);
+}
+
+function connect(): void {
+  if (!bound || stopped) return;
+
+  const socket = new WebSocket(bound.relayUrl);
+  ws = socket;
+
+  socket.on('open', () => {
+    reconnectAttempt = 0;
+    console.log(`[remote-access] connected to relay (${bound!.relayUrl})`);
+    // Re-register every active tunnel. Clear any stale URL first so the
+    // UI doesn't show the old subdomain while we wait for the new one.
+    for (const rt of tunnels.values()) {
+      rt.currentUrl = null;
+      registerOverWire(rt);
+    }
+  });
+
+  socket.on('message', (data) => {
+    const raw = typeof data === 'string' ? data : data.toString('utf8');
+    let frame: Frame | null = null;
+    try {
+      frame = JSON.parse(raw) as Frame;
+    } catch {
+      return;
+    }
+    if (!frame || typeof (frame as { t?: unknown }).t !== 'string') return;
+
+    switch (frame.t) {
+      case 'tunnel-registered':
+        handleTunnelRegistered(frame);
+        return;
+      case 'tunnel-rejected':
+        handleTunnelRejected(frame);
+        return;
+      case 'req':
+        handleReq(socket, frame);
+        return;
+      case 'ws-open':
+        handleWsOpen(frame);
+        return;
+      case 'ws-data':
+        handleWsData(frame);
+        return;
+      case 'ws-close':
+        handleWsCloseInbound(frame);
+        return;
+      case 'ping':
+        safeSend({ t: 'pong' });
+        return;
+      // pong / register / unregister / res / err — relay shouldn't send these to us.
+      default:
+        return;
+    }
+  });
+
+  socket.on('close', () => {
+    ws = null;
+    // Mark all tunnels as URL-pending until the relay re-assigns subdomains.
+    for (const rt of tunnels.values()) {
+      rt.currentUrl = null;
+    }
+    if (!stopped) {
+      console.warn('[remote-access] disconnected, will retry');
+      scheduleReconnect();
+    }
+  });
+
+  socket.on('error', (err) => {
+    console.warn(`[remote-access] ws error: ${err.message}`);
+  });
+}
+
+function ensureConnection(): void {
+  if (!bound || stopped) return;
+  if (ws && ws.readyState !== WebSocket.CLOSED) return;
+  connect();
+}
+
+/* ------------------------------------------------------------- internals -- */
+
+/** Remove tunnel from in-memory map + clean up its streams + expiry timer. */
+function removeTunnelLocal(tunnelId: string): void {
+  const rt = tunnels.get(tunnelId);
+  if (!rt) return;
+  if (rt.expiryTimer) {
+    clearTimeout(rt.expiryTimer);
+    rt.expiryTimer = null;
   }
   for (const s of rt.streams.values()) {
     try {
@@ -511,28 +569,29 @@ function closeRuntime(rt: RuntimeTunnel): void {
     }
   }
   rt.streams.clear();
+  tunnels.delete(tunnelId);
+  disableGate(tunnelId);
 }
 
-function deleteTunnel(id: string): void {
-  const rt = tunnels.get(id);
-  if (!rt) return;
-  closeRuntime(rt);
-  tunnels.delete(id);
-  disableGate(id);
-  remoteAccessState.delete(id);
-  console.log(`[remote-access:${id}] deleted`);
+/** Disable a tunnel — local cleanup + tell relay + remove from persistence. */
+function deleteTunnelImpl(tunnelId: string): boolean {
+  const rt = tunnels.get(tunnelId);
+  if (!rt) return false;
+  unregisterOverWire(tunnelId);
+  removeTunnelLocal(tunnelId);
+  remoteAccessState.delete(tunnelId);
+  console.log(`[remote-access:${tunnelId}] disabled`);
+  return true;
 }
+
+/* ----------------------------------------------------------- public api -- */
 
 export const remoteAccess = {
   configure(opts: { relayUrl: string; localHost: string; localPort: number }): void {
     bound = opts;
   },
 
-  /**
-   * Create + start a fresh tunnel with the given duration. Returns the
-   * new tunnel's status. URL will be null until the relay's `hello`
-   * frame arrives (typically <1s after this returns).
-   */
+  /** UI-driven activation with a bounded duration. */
   createTunnel(durationMs: number, label?: string | null): TunnelStatus {
     if (!ALLOWED_DURATIONS_MS.includes(durationMs)) {
       throw new Error(`invalid duration: ${durationMs}`);
@@ -540,7 +599,6 @@ export const remoteAccess = {
     if (!bound) {
       throw new Error('remote-access not configured');
     }
-
     const id = generateTunnelId();
     const passphrase = generatePassphrase();
     const now = Date.now();
@@ -561,51 +619,78 @@ export const remoteAccess = {
     scheduleExpiry(rt);
 
     console.log(
-      `[remote-access:${id}] creating, relay=${bound.relayUrl} duration=${Math.round(durationMs / 60_000)}min`,
+      `[remote-access:${id}] creating, duration=${Math.round(durationMs / 60_000)}min` +
+        (label ? ` label="${label}"` : ''),
     );
-    console.log(`[remote-access:${id}]   passphrase: ${passphrase}`);
-    connect(rt);
+
+    // Ensure WS is up; either send register now or it'll fire on 'open'.
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      registerOverWire(rt);
+    } else {
+      ensureConnection();
+    }
 
     return toStatus(rt);
   },
 
-  /** User-triggered "Disable" for one tunnel. */
   deleteTunnel(id: string): boolean {
     if (!tunnels.has(id)) return false;
-    deleteTunnel(id);
-    return true;
+    return deleteTunnelImpl(id);
   },
 
-  /** Re-attach every persisted tunnel whose `expires_at` is still in the future. */
+  /** Re-attach persisted tunnels on startup. */
   resumeAll(): void {
     if (!bound) {
       console.warn('[remote-access] resumeAll called before configure');
       return;
     }
     const now = Date.now();
+    let resumed = 0;
     for (const p of remoteAccessState.list()) {
       if (p.expiresAt <= now) {
         remoteAccessState.delete(p.id);
         continue;
       }
       const rt = makeRuntime(p);
-      tunnels.set(p.id, rt);
+      tunnels.set(rt.id, rt);
       enableGate(p.id, p.passphrase);
       scheduleExpiry(rt);
-      console.log(
-        `[remote-access:${p.id}] resuming, remaining=${Math.max(1, Math.round((p.expiresAt - now) / 60_000))}min`,
-      );
-      connect(rt);
+      resumed += 1;
+    }
+    if (resumed > 0) {
+      console.log(`[remote-access] resuming ${resumed} tunnel(s)`);
+      ensureConnection();
     }
   },
 
-  /**
-   * Process-shutdown stop: close all sockets + drop gates, but DO NOT
-   * touch persisted state — we want to auto-resume on next startup.
-   */
+  /** Process-shutdown stop. Drops WS + gates but keeps persisted state. */
   shutdown(): void {
+    stopped = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (ws) {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+      ws = null;
+    }
     for (const rt of tunnels.values()) {
-      closeRuntime(rt);
+      if (rt.expiryTimer) {
+        clearTimeout(rt.expiryTimer);
+        rt.expiryTimer = null;
+      }
+      for (const s of rt.streams.values()) {
+        try {
+          s.ws.close();
+        } catch {
+          // ignore
+        }
+      }
+      rt.streams.clear();
     }
     tunnels.clear();
     disableAllGates();
@@ -617,9 +702,7 @@ export const remoteAccess = {
   },
 
   list(): TunnelStatus[] {
-    // Sort by time-until-expiry ascending: tunnels closest to expiring
-    // rise to the top so the most-time-sensitive ones are the most
-    // visible. Steady within a given duration (preserves create order).
+    // Sort: less remaining time on top, then by creation order.
     return Array.from(tunnels.values())
       .sort((a, b) => a.expiresAt - b.expiresAt || a.createdAt - b.createdAt)
       .map(toStatus);
