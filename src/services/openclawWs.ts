@@ -193,16 +193,6 @@ const pendingAborts = new Map<string, Set<() => void>>();
  */
 const pendingAbortIntents = new Set<string>();
 
-/**
- * Hard ceiling on how long we wait for `chat:state=final` after the
- * gateway already fired `lifecycle:end`. The two events normally arrive
- * within milliseconds of each other; if `state:final` is genuinely lost
- * (network blip across reconnect, gateway-side bug, certain agent
- * configurations), we fall back on the buffered stream text rather than
- * hang for the full 60-min upper-bound timeout.
- */
-const POST_END_FINAL_GRACE_MS = 15_000;
-
 // ---------- public client -------------------------------------------------
 
 export const openclawWs = {
@@ -367,9 +357,10 @@ export const openclawWs = {
   /**
    * Send a user message and stream the resulting events.
    *
-   * Resolves on `chat:state=final` (normal completion) or when an abort
-   * fired via `abortRun` triggers our `onAbort` callback. Non-'end'
-   * terminal lifecycle phases (`error`, `failed`, …) reject the promise.
+   * Resolves shortly after `lifecycle:end` (the canonical run terminator,
+   * which fires once every tool round-trip is done) or when an abort fired
+   * via `abortRun` triggers our `onAbort` callback. Non-'end' terminal
+   * lifecycle phases (`error`, `failed`, …) reject the promise.
    * The returned `aborted` flag tells the caller whether resolution came
    * from a user-initiated abort (so it can skip canonical-history reads,
    * fact extraction, etc.).
@@ -411,7 +402,7 @@ export const openclawWs = {
     let transcriptAssistantText: string | null = null;
     let finalEmitted = false;
     let wasAborted = false;
-    let endWatchdog: NodeJS.Timeout | null = null;
+    let endSeen = false;
     let canonicalSettleTimer: NodeJS.Timeout | null = null;
 
     let resolveTurn!: () => void;
@@ -482,20 +473,24 @@ export const openclawWs = {
       if (stream === 'lifecycle') {
         const phase = safeString(data.phase) ?? 'unknown';
         opts.onEvent({ type: 'lifecycle', phase, label: lifecycleActivityLabel(phase) });
-        // Non-'end' terminal phases (error/aborted/cancelled/failed/...)
-        // arrive only on agent-level failures, never as part of a normal
-        // run. Reject so the caller surfaces them. For `phase === 'end'`
-        // we DO NOT resolve here directly — gateway also emits
-        // `chat:state=final` for successful completion which is the
-        // canonical terminator (resolves there). On a `chat.abort`, the
-        // abort RPC's response handler in `abortRun` calls our `onAbort`
-        // callback, which is race-proof against event/response ordering.
+        // `lifecycle:end` is the ONE canonical run terminator. It fires
+        // exactly once, after every tool round-trip is done, on success AND
+        // after a `chat.abort`. We settle the turn from here, with a short
+        // grace so any trailing canonical `chat:state=final` / `session.message`
+        // rows the gateway appends right after `end` land first.
         //
-        // BUT: occasionally `state:final` never arrives after `end` —
-        // network blip across reconnect, certain agent configs, gateway
-        // bug. Arm a short grace timer so we don't hang for the full 60-
-        // minute upper-bound timeout. If `state:final` does arrive later,
-        // its `resolveTurn()` is a no-op on an already-settled promise.
+        // Why NOT settle on `chat:state=final` / `session.message`? In the
+        // native (non-codex) agent loop the gateway commits EACH assistant
+        // segment — including the preamble that precedes a tool_use — as its
+        // own transcript row, emitting an intermediate `final` /
+        // `session.message` BEFORE the tools run. Settling on those truncates
+        // the turn to just the preamble (the bug this fixes). They now only
+        // capture text; the real settle waits for `end`.
+        //
+        // Non-'end' terminal phases (error/aborted/cancelled/failed/...)
+        // arrive only on agent-level failures — reject so the caller surfaces
+        // them. On a user `chat.abort`, the abort RPC's response handler in
+        // `abortRun` fires our `onAbort` callback (race-proof vs. event order).
         const TERMINAL_FAILURES = new Set([
           'error', 'aborted', 'cancelled',
           'failed', 'terminated', 'stopped',
@@ -508,20 +503,13 @@ export const openclawWs = {
           rejectTurn(new Error(`agent run ${phase}`));
           return;
         }
-        if (phase === 'end' && !endWatchdog) {
-          endWatchdog = setTimeout(() => {
-            if (finalEmitted) return;
-            // state:final didn't arrive — settle with what we have.
-            finalEmitted = true;
-            opts.onEvent({ type: 'text-final', text: accumulatedText });
-            console.warn(
-              '[openclawWs] lifecycle:end without chat:state=final after',
-              POST_END_FINAL_GRACE_MS,
-              'ms — resolving with buffered stream text',
-            );
-            scheduleCanonicalSettle();
-          }, POST_END_FINAL_GRACE_MS);
-          endWatchdog.unref?.();
+        if (phase === 'end' && !endSeen) {
+          endSeen = true;
+          // Trailing `final` / `session.message` (handled below) re-arm this
+          // grace as they arrive, so we settle ~1s after the LAST of them with
+          // the full transcript in place. If none follow, we settle on the
+          // text we already buffered.
+          scheduleCanonicalSettle();
         }
         return;
       }
@@ -602,9 +590,12 @@ export const openclawWs = {
         const text = contentToString(payload.message?.content) || accumulatedText;
         accumulatedText = text;
         lastFinalText = text;
-        // OpenClaw may emit an early final (stream buffer) and a later webchat
-        // final with the transcript-built message. Debounce turn settlement.
-        scheduleCanonicalSettle();
+        // Capture the text, but settle only once `lifecycle:end` has fired.
+        // Pre-`end`, a `final` is just one assistant segment of a native tool
+        // loop (the preamble before a tool_use) — settling here truncates the
+        // turn to that preamble. Post-`end`, this is the canonical final, so
+        // re-arm the short grace to settle with it in place.
+        if (endSeen) scheduleCanonicalSettle();
         return;
       }
     };
@@ -620,7 +611,10 @@ export const openclawWs = {
         extractAssistantText(payload.message?.content) ||
         (typeof payload.message?.text === 'string' ? payload.message.text : '');
       if (text.trim().length > 0) transcriptAssistantText = text;
-      scheduleCanonicalSettle();
+      // Same gating as `chat:state=final`: intermediate assistant transcript
+      // rows (one per segment in the native tool loop) must NOT settle the
+      // turn — only capture text. The canonical terminator is `lifecycle:end`.
+      if (endSeen) scheduleCanonicalSettle();
     };
 
     const dispatch = (frame: RawGatewayFrame): void => {
@@ -703,7 +697,6 @@ export const openclawWs = {
         clearTimeout(timeout);
       }
     } finally {
-      if (endWatchdog) clearTimeout(endWatchdog);
       clearCanonicalSettleTimer();
       off();
       // Unregister the abort callback so a later abort on this sessionKey
