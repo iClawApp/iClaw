@@ -25,8 +25,8 @@
               </h2>
               <p class="settings-section-desc">
                 Get a link to open iClaw on your phone, another computer, or
-                with someone you trust. Each link has its own password and
-                stops working when the time runs out
+                with someone you trust. Each link has its own passphrase and
+                stops working when the time runs out.
               </p>
             </div>
             <button type="button" class="btn btn--primary btn--sm ra-new-btn" id="ra-open-modal">
@@ -38,6 +38,20 @@
             </button>
           </div>
         </header>
+
+        <div class="ra-security-panel" role="note">
+          <p class="ra-security-badge ra-security-badge--e2e">Remote Access E2E alpha</p>
+          <ul class="ra-security-list">
+            <li>Traffic is encrypted between your browser and local iClaw.</li>
+            <li>The relay only forwards encrypted frames (not your passphrase, cookies, or chat).</li>
+            <li>OPAQUE login keeps the passphrase off the wire.</li>
+            <li>Alpha — not externally audited. Relay still sees subdomain, timing, sizes, and E2E endpoints.</li>
+          </ul>
+          <p class="ra-security-foot">
+            Device sessions let trusted browsers reconnect without re-entering the passphrase.
+            See <code>docs/REMOTE_ACCESS.md</code> in the iClaw repo for setup (local vs always-on host).
+          </p>
+        </div>
 
         <!-- List of active tunnels -->
         <div id="ra-list" class="ra-list">
@@ -91,12 +105,13 @@
                           <line x1="10" y1="14" x2="21" y2="3"/>
                         </svg>
                       </a>
-                      <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="url" aria-label="Copy URL" title="Copy URL">
+                      <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="url" aria-label="Copy access link" title="Copy access link">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                           <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                         </svg>
                       </button>
+                      <button type="button" class="btn btn--ghost btn--sm" data-action="regenerate-access" title="Invalidate old links and mint a new access token">New access link</button>
                     </div>
                   <% } else { %>
                     <div class="ra-connecting" data-role="url-pending">
@@ -116,6 +131,13 @@
                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                       </svg>
                     </button>
+                  </div>
+                </div>
+
+                <div class="ra-field ra-devices-field" data-role="devices-wrap" data-tunnel-id="<%= t.id %>">
+                  <div class="ra-field-label">Connected devices</div>
+                  <div class="ra-devices-list" data-role="devices-list">
+                    <span class="ra-devices-muted">Loading…</span>
                   </div>
                 </div>
               </div>
@@ -423,6 +445,39 @@
   --_btn-bg: color-mix(in srgb, var(--ok, #2ea043) 10%, transparent);
 }
 
+/* ───────────── Security panel ───────────── */
+.ra-security-panel {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-elevated, var(--bg)) 92%, transparent);
+}
+.ra-security-badge {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.ra-security-badge--e2e { color: var(--ok, #2ea043); }
+.ra-security-badge--legacy { color: var(--muted); }
+.ra-security-list {
+  margin: 0 0 var(--space-3);
+  padding-left: 1.2rem;
+  font-size: var(--text-sm);
+  color: var(--text);
+  line-height: 1.45;
+}
+.ra-security-list li { margin-bottom: 0.35rem; }
+.ra-security-foot {
+  margin: 0;
+  font-size: var(--text-xs, 0.8125rem);
+  color: var(--muted);
+  line-height: 1.4;
+}
+.ra-security-foot code {
+  font-size: 0.92em;
+}
+
 /* ───────────── Empty state ───────────── */
 .ra-empty {
   text-align: center;
@@ -442,6 +497,39 @@
   font-size: var(--text-sm);
   color: var(--text);
   font-weight: 500;
+}
+
+.ra-devices-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ra-device-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text) 4%, var(--surface));
+  font-size: var(--text-sm);
+}
+.ra-device-row.is-revoked { opacity: 0.55; }
+.ra-device-meta { flex: 1; min-width: 0; }
+.ra-device-name {
+  font-weight: 500;
+  color: var(--text);
+  word-break: break-word;
+}
+.ra-device-sub {
+  margin-top: 2px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.ra-devices-muted {
+  font-size: var(--text-sm);
+  color: var(--muted);
 }
 
 /* ───────────── Modal ───────────── */
@@ -765,7 +853,8 @@
         '    <span class="ra-url-display">' + urlParts.display + '</span>' +
         '    ' + EXT_ICON +
         '  </a>' +
-        '  <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="url" aria-label="Copy URL" title="Copy URL">' + COPY_ICON + '</button>' +
+        '  <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="url" aria-label="Copy access link" title="Copy access link">' + COPY_ICON + '</button>' +
+        '  <button type="button" class="btn btn--ghost btn--sm" data-action="regenerate-access" title="Invalidate old links">New access link</button>' +
         '</div>'
       : '<div class="ra-connecting" data-role="url-pending"><span class="ra-spinner" aria-hidden="true"></span><span>Connecting…</span></div>';
 
@@ -785,7 +874,82 @@
       '    <div class="ra-field-label">Passphrase</div>' +
       '    <div class="ra-field-value-row">' + passPhraseField(t.passphrase) + '</div>' +
       '  </div>' +
+      '  <div class="ra-field ra-devices-field" data-role="devices-wrap" data-tunnel-id="' + escapeHtml(t.id) + '">' +
+      '    <div class="ra-field-label">Connected devices</div>' +
+      '    <div class="ra-devices-list" data-role="devices-list"><span class="ra-devices-muted">Loading…</span></div>' +
+      '  </div>' +
       '</div>';
+  }
+
+  function fmtDeviceSeen(ts) {
+    if (!ts) return '—';
+    try {
+      return new Date(ts).toLocaleString();
+    } catch (e) {
+      return '—';
+    }
+  }
+
+  function renderDeviceRow(d) {
+    var label = d.name || (d.userAgent ? d.userAgent.slice(0, 56) : 'Unknown device');
+    var revoked = d.revokedAt != null;
+    var revokeBtn = revoked
+      ? ''
+      : '<button type="button" class="btn btn--ghost btn--sm btn--danger" data-action="revoke-device" data-device-id="' +
+        escapeHtml(d.id) +
+        '">Revoke</button>';
+    return (
+      '<div class="ra-device-row' +
+      (revoked ? ' is-revoked' : '') +
+      '" data-device-id="' +
+      escapeHtml(d.id) +
+      '">' +
+      '  <div class="ra-device-meta">' +
+      '    <div class="ra-device-name">' +
+      escapeHtml(label) +
+      (revoked ? ' (revoked)' : '') +
+      '</div>' +
+      '    <div class="ra-device-sub">Last seen ' +
+      escapeHtml(fmtDeviceSeen(d.lastSeenAt)) +
+      '</div>' +
+      '  </div>' +
+      revokeBtn +
+      '</div>'
+    );
+  }
+
+  async function loadDevicesForWrap(wrap) {
+    var tunnelId = wrap.getAttribute('data-tunnel-id');
+    var listEl = wrap.querySelector('[data-role="devices-list"]');
+    if (!tunnelId || !listEl) return;
+    try {
+      var res = await fetch(
+        '/api/remote-access/tunnels/' + encodeURIComponent(tunnelId) + '/devices',
+      );
+      if (!res.ok) {
+        listEl.innerHTML = '<span class="ra-devices-muted">Could not load devices</span>';
+        return;
+      }
+      var data = await res.json();
+      var devices = data.devices || [];
+      var active = devices.filter(function (d) {
+        return d.revokedAt == null;
+      });
+      if (active.length === 0 && devices.length === 0) {
+        listEl.innerHTML =
+          '<span class="ra-devices-muted">No trusted devices yet — they appear after someone logs in from a browser</span>';
+        return;
+      }
+      listEl.innerHTML = devices.map(renderDeviceRow).join('');
+    } catch (e) {
+      listEl.innerHTML = '<span class="ra-devices-muted">Could not load devices</span>';
+    }
+  }
+
+  function loadAllDevices() {
+    list.querySelectorAll('[data-role="devices-wrap"]').forEach(function (wrap) {
+      void loadDevicesForWrap(wrap);
+    });
   }
 
   function emptyState() {
@@ -811,6 +975,7 @@
       return;
     }
     list.innerHTML = tunnels.map(renderCard).join('');
+    loadAllDevices();
     schedulePolling();
   }
 
@@ -960,6 +1125,69 @@
       return;
     }
 
+    if (t.getAttribute('data-action') === 'revoke-device') {
+      const wrap = t.closest('[data-role="devices-wrap"]');
+      const tunnelId = wrap ? wrap.getAttribute('data-tunnel-id') : null;
+      const deviceId = t.getAttribute('data-device-id');
+      if (!tunnelId || !deviceId) return;
+      if (!confirm('Revoke this device? It will need the passphrase to sign in again.')) return;
+      t.disabled = true;
+      try {
+        const res = await fetch(
+          '/api/remote-access/tunnels/' +
+            encodeURIComponent(tunnelId) +
+            '/devices/' +
+            encodeURIComponent(deviceId),
+          { method: 'DELETE' },
+        );
+        if (!res.ok) {
+          alert('Failed to revoke device');
+          t.disabled = false;
+          return;
+        }
+        if (wrap) await loadDevicesForWrap(wrap);
+      } catch (eRev) {
+        alert('Failed to revoke: ' + eRev.message);
+        t.disabled = false;
+      }
+      return;
+    }
+
+    if (t.getAttribute('data-action') === 'regenerate-access') {
+      const card = t.closest('[data-tunnel-id]');
+      if (!card) return;
+      const id = card.getAttribute('data-tunnel-id');
+      if (!id) return;
+      if (
+        !confirm(
+          'Generate a new access link? Anyone with the old URL or relay cookie will need the new link.',
+        )
+      ) {
+        return;
+      }
+      t.disabled = true;
+      const orig = t.textContent;
+      t.textContent = 'Updating…';
+      try {
+        const res = await fetch(
+          '/api/remote-access/tunnels/' + encodeURIComponent(id) + '/regenerate-access',
+          { method: 'POST' },
+        );
+        if (!res.ok) {
+          alert('Failed to regenerate access link');
+          t.disabled = false;
+          t.textContent = orig;
+          return;
+        }
+        await refresh();
+      } catch (eReg) {
+        alert('Failed: ' + eReg.message);
+        t.disabled = false;
+        t.textContent = orig;
+      }
+      return;
+    }
+
     if (t.getAttribute('data-action') === 'delete') {
       const card = t.closest('[data-tunnel-id]');
       if (!card) return;
@@ -1054,7 +1282,10 @@
     }
   });
 
-  if (lastTunnels.length > 0) schedulePolling();
+  if (lastTunnels.length > 0) {
+    schedulePolling();
+    loadAllDevices();
+  }
   tickRemaining();
 })();
 </script>

@@ -204,6 +204,21 @@ CREATE TABLE IF NOT EXISTS remote_access_tunnels (
 CREATE INDEX IF NOT EXISTS idx_remote_access_tunnels_expires
   ON remote_access_tunnels(expires_at);
 
+-- Trusted browsers that completed passphrase login once (Ed25519 keypair).
+CREATE TABLE IF NOT EXISTS remote_access_devices (
+  id          TEXT PRIMARY KEY,
+  tunnel_id   TEXT NOT NULL REFERENCES remote_access_tunnels(id) ON DELETE CASCADE,
+  name        TEXT,
+  user_agent  TEXT,
+  public_key  TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  revoked_at  INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_remote_access_devices_tunnel
+  ON remote_access_devices(tunnel_id);
+
 -- Legacy singleton table from the previous schema. Kept as a dead table
 -- so dev DBs upgrading in place don't have to rebuild — DROP-on-startup
 -- is a follow-up clean-up once everyone has migrated.
@@ -243,6 +258,8 @@ function ensureColumn(table: string, column: string, ddl: string): void {
 }
 ensureColumn('messages', 'attachments', 'TEXT');
 ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
+ensureColumn('remote_access_tunnels', 'access_token', 'TEXT');
+ensureColumn('remote_access_tunnels', 'opaque_registration_record', 'TEXT');
 
 /** Older DBs created project_secrets.project_id as NOT NULL; orphan chat secrets need NULL. */
 function migrateProjectSecretsNullableProjectId(): void {

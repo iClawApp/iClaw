@@ -11,6 +11,15 @@
   <link rel="stylesheet" href="/css/style.css" />
   <link rel="stylesheet" href="/css/highlight-github.min.css" media="(prefers-color-scheme: light), (prefers-color-scheme: no-preference)" />
   <link rel="stylesheet" href="/css/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)" />
+  <% if (typeof raE2eEnabled !== 'undefined' && raE2eEnabled) { %>
+  <meta name="iclaw-ra-e2e" content="true" />
+  <meta name="iclaw-ra-tunnel-id" content="<%= typeof raTunnelId !== 'undefined' ? raTunnelId : '' %>" />
+  <script type="module">
+    window.__iclawRaE2eBoot = import('/js/ra-e2e-transport.mjs').then(function (m) {
+      return m.installRaE2eTransport();
+    });
+  </script>
+  <% } %>
   <script>
     window.__ICLAW_VERSION__ = <%- JSON.stringify(typeof iclawVersion !== 'undefined' ? iclawVersion : '0.0.0') %>;
     window.__ICLAW_PROJECT_LOGO_EMOJIS__ = <%- JSON.stringify(projectLogoEmojis || []) %>;

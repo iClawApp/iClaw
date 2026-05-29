@@ -8298,5 +8298,22 @@
       messagesEl.removeAttribute('data-defer-paint');
     });
   }
-  connectWs();
+  function bootConnectWs() {
+    connectWs();
+  }
+  if (window.__iclawRaE2eBoot && typeof window.__iclawRaE2eBoot.then === 'function') {
+    window.__iclawRaE2eBoot
+      .then(function (ok) {
+        if (!ok) {
+          console.warn('[iclaw] E2E transport not active — encrypted remote access unavailable');
+        }
+        bootConnectWs();
+      })
+      .catch(function (err) {
+        console.error('[iclaw] E2E transport install failed', err);
+        bootConnectWs();
+      });
+  } else {
+    bootConnectWs();
+  }
 })();

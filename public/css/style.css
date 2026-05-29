@@ -6604,6 +6604,10 @@ a.project-tab.project-tab--tasks:hover {
   margin: 0;
 }
 
+.ra-gate-loading {
+  text-align: center;
+}
+
 .ra-gate-title {
   margin: 0 0 var(--space-2);
   font-size: 1.35rem;

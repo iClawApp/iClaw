@@ -31,9 +31,16 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "prepack": "npm run build"
+    "test:ra-smoke": "vitest run test/unit/remoteAccessE2eSmoke.test.ts",
+    "smoke:ra-manual": "node scripts/ra-e2e-smoke.mjs",
+    "scan:relay-capture": "node scripts/ra-relay-capture-scan.mjs",
+    "postinstall": "node scripts/copy-opaque-vendor.mjs",
+    "prepack": "node scripts/copy-opaque-vendor.mjs && node scripts/verify-vendor-assets.mjs && npm run build",
+    "verify:vendor": "node scripts/verify-vendor-assets.mjs"
   },
   "dependencies": {
+    "@noble/hashes": "^2.2.0",
+    "@serenity-kit/opaque": "^1.1.0",
     "better-sqlite3": "^11.3.0",
     "dotenv": "^16.4.5",
     "ejs": "^3.1.10",

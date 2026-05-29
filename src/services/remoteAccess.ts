@@ -43,8 +43,26 @@ import {
 import {
   generateTunnelId,
   remoteAccessState,
+  ensureAccessToken,
   type PersistedTunnel,
 } from './remoteAccessState';
+import {
+  closeE2eWsBridge,
+  E2E_HTTP_PATH,
+  E2E_WS_PATH,
+  handleE2eHttpFrame,
+  handleE2eWsData,
+  handleE2eWsOpen,
+  isE2ePlaintextExemptPath,
+  type E2eWsBridge,
+} from './remoteAccessE2eTransport';
+import { ensureOpaqueRegistrationForTunnel } from './remoteAccessOpaque';
+import {
+  ACCESS_QUERY_PARAM,
+  buildPublicAccessUrl,
+  hashAccessToken,
+  generateAccessToken,
+} from './remoteAccessToken';
 
 /* ---------------------------------------------------------------- frames -- */
 
@@ -52,6 +70,7 @@ interface RegisterTunnelFrame {
   t: 'register-tunnel';
   tunnelId: string;
   label?: string | null;
+  tokenHash: string;
 }
 interface UnregisterTunnelFrame {
   t: 'unregister-tunnel';
@@ -174,15 +193,19 @@ interface RuntimeTunnel {
   id: string;                  // tunnelId, stable across reconnects
   label: string | null;
   passphrase: string;
+  /** Relay gate secret — never sent to relay, only SHA-256 hash. */
+  accessToken: string;
   durationMs: number;
   startedAt: number;
   expiresAt: number;
   createdAt: number;
-  /** Set when tunnel-registered arrives; cleared on disconnect. */
+  /** Full URL with ?access= when tunnel-registered arrives. */
   currentUrl: string | null;
   expiryTimer: NodeJS.Timeout | null;
   /** Loopback WS streams (per public ws-open). */
   streams: Map<string, StreamState>;
+  /** E2E encrypted WS bridges (path /__ra/e2e/ws). */
+  e2eWsBridges: Map<string, E2eWsBridge>;
 }
 
 let bound: { relayUrl: string; localHost: string; localPort: number } | null = null;
@@ -261,17 +284,20 @@ function toStatus(rt: RuntimeTunnel): TunnelStatus {
 }
 
 function makeRuntime(p: PersistedTunnel): RuntimeTunnel {
+  const withToken = ensureAccessToken(p);
   return {
-    id: p.id,
-    label: p.label,
-    passphrase: p.passphrase,
-    durationMs: p.durationMs,
-    startedAt: p.startedAt,
-    expiresAt: p.expiresAt,
-    createdAt: p.createdAt,
+    id: withToken.id,
+    label: withToken.label,
+    passphrase: withToken.passphrase,
+    accessToken: withToken.accessToken,
+    durationMs: withToken.durationMs,
+    startedAt: withToken.startedAt,
+    expiresAt: withToken.expiresAt,
+    createdAt: withToken.createdAt,
     currentUrl: null,
     expiryTimer: null,
     streams: new Map(),
+    e2eWsBridges: new Map(),
   };
 }
 
@@ -304,7 +330,12 @@ function safeSend(frame: Frame): boolean {
 }
 
 function registerOverWire(rt: RuntimeTunnel): void {
-  safeSend({ t: 'register-tunnel', tunnelId: rt.id, label: rt.label });
+  safeSend({
+    t: 'register-tunnel',
+    tunnelId: rt.id,
+    label: rt.label,
+    tokenHash: hashAccessToken(rt.accessToken),
+  });
 }
 
 function unregisterOverWire(tunnelId: string): void {
@@ -316,7 +347,7 @@ function unregisterOverWire(tunnelId: string): void {
 function handleTunnelRegistered(f: TunnelRegisteredFrame): void {
   const rt = tunnels.get(f.tunnelId);
   if (!rt) return;
-  rt.currentUrl = f.publicUrl;
+  rt.currentUrl = buildPublicAccessUrl(f.publicUrl, rt.accessToken);
   console.log(`[remote-access:${rt.id}] tunnel ready → ${f.publicUrl}`);
 }
 
@@ -327,12 +358,64 @@ function handleTunnelRejected(f: TunnelRejectedFrame): void {
   );
 }
 
+function sendE2eRequiredRes(tunnelId: string, reqId: string): void {
+  const body = JSON.stringify({
+    error: 'E2E transport required — use encrypted /__ra/e2e/http',
+  });
+  const out: ResFrame = {
+    t: 'res',
+    tunnelId,
+    id: reqId,
+    status: 426,
+    headers: { 'content-type': 'application/json' },
+    body: Buffer.from(body, 'utf8').toString('base64'),
+  };
+  safeSend(out);
+}
+
 function handleReq(socket: WebSocket, frame: ReqFrame): void {
   void (async () => {
     if (!bound) {
       sendErr(socket, frame.tunnelId, frame.id, 'remote-access not initialised');
       return;
     }
+
+    const pathOnly = frame.path.split('?')[0] ?? frame.path;
+
+    if (pathOnly === E2E_HTTP_PATH) {
+      const bodyRaw = frame.body ? Buffer.from(frame.body, 'base64').toString('utf8') : '';
+      try {
+        const result = await handleE2eHttpFrame({
+          tunnelId: frame.tunnelId,
+          bodyRaw,
+          localHost: bound.localHost,
+          localPort: bound.localPort,
+        });
+        const out: ResFrame = {
+          t: 'res',
+          tunnelId: frame.tunnelId,
+          id: frame.id,
+          status: result.status,
+          headers: { 'content-type': 'application/json' },
+          body: Buffer.from(result.body, 'utf8').toString('base64'),
+        };
+        safeSend(out);
+      } catch (err) {
+        sendErr(
+          socket,
+          frame.tunnelId,
+          frame.id,
+          err instanceof Error ? err.message : 'E2E http failed',
+        );
+      }
+      return;
+    }
+
+    if (!isE2ePlaintextExemptPath(pathOnly)) {
+      sendE2eRequiredRes(frame.tunnelId, frame.id);
+      return;
+    }
+
     const safeHeaders = stripInternalHeaders(frame.headers);
     const reqOpts: http.RequestOptions = {
       host: bound.localHost,
@@ -398,72 +481,14 @@ function handleWsOpen(frame: WsOpenFrame): void {
     return;
   }
 
-  const safeHeaders = stripInternalHeaders(frame.headers);
-  if (!isValidTunnelSession(rt.id, safeHeaders.cookie)) {
-    sendStreamClose(frame.tunnelId, frame.id, 4401, 'unauthorized');
+  const pathOnly = frame.path.split('?')[0] ?? frame.path;
+
+  if (pathOnly === E2E_WS_PATH) {
+    handleE2eWsOpen(frame.tunnelId, frame.id, rt.e2eWsBridges);
     return;
   }
 
-  const url = `ws://${bound.localHost}:${bound.localPort}${frame.path}`;
-  let local: WebSocket;
-  try {
-    local = new WebSocket(url, {
-      headers: {
-        ...safeHeaders,
-        host: `${bound.localHost}:${bound.localPort}`,
-        [TUNNELED_HEADER]: TUNNELED_VALUE,
-        [TUNNEL_ID_HEADER]: rt.id,
-      },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'failed to open loopback ws';
-    sendStreamClose(frame.tunnelId, frame.id, 1011, message);
-    return;
-  }
-  const state: StreamState = { ws: local, pending: [] };
-  rt.streams.set(frame.id, state);
-
-  local.on('open', () => {
-    for (const m of state.pending) {
-      if (local.readyState !== WebSocket.OPEN) break;
-      try {
-        local.send(Buffer.from(m.data, 'base64'), { binary: m.binary });
-      } catch {
-        // ignore
-      }
-    }
-    state.pending.length = 0;
-  });
-
-  local.on('message', (data, isBinary) => {
-    const buf = Buffer.isBuffer(data)
-      ? data
-      : Array.isArray(data)
-        ? Buffer.concat(data)
-        : Buffer.from(data as ArrayBuffer);
-    const f: WsDataFrame = {
-      t: 'ws-data',
-      tunnelId: frame.tunnelId,
-      id: frame.id,
-      binary: !!isBinary,
-      data: buf.toString('base64'),
-    };
-    safeSend(f);
-  });
-
-  local.on('close', (code, reason) => {
-    if (!rt.streams.delete(frame.id)) return;
-    sendStreamClose(
-      frame.tunnelId,
-      frame.id,
-      code,
-      reason && reason.length ? reason.toString('utf8') : undefined,
-    );
-  });
-
-  local.on('error', (err) => {
-    console.warn(`[remote-access:${rt.id}] local ws error: ${err.message}`);
-  });
+  sendStreamClose(frame.tunnelId, frame.id, 4406, 'encrypted WebSocket required — use /__ra/e2e/ws');
 }
 
 function sendStreamClose(tunnelId: string, id: string, code?: number, reason?: string): void {
@@ -476,6 +501,31 @@ function sendStreamClose(tunnelId: string, id: string, code?: number, reason?: s
 function handleWsData(frame: WsDataFrame): void {
   const rt = tunnels.get(frame.tunnelId);
   if (!rt) return;
+
+  const e2eBridge = rt.e2eWsBridges.get(frame.id);
+  if (e2eBridge && bound) {
+    const dataRaw = Buffer.from(frame.data, 'base64').toString('utf8');
+    handleE2eWsData({
+      tunnelId: frame.tunnelId,
+      streamId: frame.id,
+      dataRaw,
+      bridges: rt.e2eWsBridges,
+      localHost: bound.localHost,
+      localPort: bound.localPort,
+      sendPublic: (wire) => {
+        const f: WsDataFrame = {
+          t: 'ws-data',
+          tunnelId: frame.tunnelId,
+          id: frame.id,
+          binary: false,
+          data: Buffer.from(wire, 'utf8').toString('base64'),
+        };
+        safeSend(f);
+      },
+    });
+    return;
+  }
+
   const s = rt.streams.get(frame.id);
   if (!s) return;
   if (s.ws.readyState === WebSocket.OPEN) {
@@ -492,6 +542,14 @@ function handleWsData(frame: WsDataFrame): void {
 function handleWsCloseInbound(frame: WsCloseFrame): void {
   const rt = tunnels.get(frame.tunnelId);
   if (!rt) return;
+
+  const e2eBridge = rt.e2eWsBridges.get(frame.id);
+  if (e2eBridge) {
+    closeE2eWsBridge(e2eBridge);
+    rt.e2eWsBridges.delete(frame.id);
+    return;
+  }
+
   const s = rt.streams.get(frame.id);
   if (!s) return;
   rt.streams.delete(frame.id);
@@ -607,6 +665,10 @@ function removeTunnelLocal(tunnelId: string): void {
     }
   }
   rt.streams.clear();
+  for (const b of rt.e2eWsBridges.values()) {
+    closeE2eWsBridge(b);
+  }
+  rt.e2eWsBridges.clear();
   tunnels.delete(tunnelId);
   disableGate(tunnelId);
 }
@@ -622,6 +684,18 @@ function deleteTunnelImpl(tunnelId: string): boolean {
   return true;
 }
 
+async function bootstrapOpaqueForActiveTunnels(): Promise<void> {
+  for (const p of remoteAccessState.list()) {
+    try {
+      await ensureOpaqueRegistrationForTunnel(p.id, p.passphrase);
+    } catch (err) {
+      console.warn(
+        `[remote-access:${p.id}] OPAQUE bootstrap failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+}
+
 /* ----------------------------------------------------------- public api -- */
 
 export const remoteAccess = {
@@ -630,7 +704,7 @@ export const remoteAccess = {
   },
 
   /** UI-driven activation with a bounded duration. */
-  createTunnel(durationMs: number, label?: string | null): TunnelStatus {
+  async createTunnel(durationMs: number, label?: string | null): Promise<TunnelStatus> {
     if (!ALLOWED_DURATIONS_MS.includes(durationMs)) {
       throw new Error(`invalid duration: ${durationMs}`);
     }
@@ -644,12 +718,15 @@ export const remoteAccess = {
       id,
       label: label ?? null,
       passphrase,
+      accessToken: generateAccessToken(),
       durationMs,
       startedAt: now,
       expiresAt: now + durationMs,
       createdAt: now,
     };
     remoteAccessState.save(persisted);
+
+    await ensureOpaqueRegistrationForTunnel(id, passphrase);
 
     const rt = makeRuntime(persisted);
     tunnels.set(id, rt);
@@ -676,6 +753,37 @@ export const remoteAccess = {
     return deleteTunnelImpl(id);
   },
 
+  /**
+   * Mint a new relay access token and URL. Invalidates previous ?access= links
+   * and relay access cookies for this tunnel.
+   */
+  regenerateAccessToken(id: string): TunnelStatus | null {
+    const rt = tunnels.get(id);
+    const persisted = remoteAccessState.get(id);
+    if (!rt || !persisted) return null;
+
+    const newToken = generateAccessToken();
+    persisted.accessToken = newToken;
+    remoteAccessState.save(persisted);
+    rt.accessToken = newToken;
+
+    if (rt.currentUrl) {
+      try {
+        const u = new URL(rt.currentUrl);
+        u.searchParams.delete(ACCESS_QUERY_PARAM);
+        const base = u.pathname + u.search + u.hash;
+        rt.currentUrl = buildPublicAccessUrl(`${u.origin}${base || '/'}`, newToken);
+      } catch {
+        // keep URL null until next tunnel-registered
+        rt.currentUrl = null;
+      }
+    }
+
+    registerOverWire(rt);
+    console.log(`[remote-access:${id}] access link regenerated`);
+    return toStatus(rt);
+  },
+
   /** Re-attach persisted tunnels on startup. */
   resumeAll(): void {
     if (!bound) {
@@ -684,7 +792,7 @@ export const remoteAccess = {
     }
     const now = Date.now();
     let resumed = 0;
-    for (const p of remoteAccessState.list()) {
+    for (const p of remoteAccessState.list().map(ensureAccessToken)) {
       if (p.expiresAt <= now) {
         remoteAccessState.delete(p.id);
         continue;
@@ -698,6 +806,7 @@ export const remoteAccess = {
     if (resumed > 0) {
       console.log(`[remote-access] resuming ${resumed} tunnel(s)`);
       ensureConnection();
+      void bootstrapOpaqueForActiveTunnels();
     }
   },
 
@@ -730,6 +839,10 @@ export const remoteAccess = {
         }
       }
       rt.streams.clear();
+      for (const b of rt.e2eWsBridges.values()) {
+        closeE2eWsBridge(b);
+      }
+      rt.e2eWsBridges.clear();
     }
     tunnels.clear();
     disableAllGates();

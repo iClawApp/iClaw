@@ -6,4 +6,7 @@ data/
 .env.local
 .DS_Store
 *.log
+*.tgz
 .claude
+public/js/vendor/opaque/
+public/js/vendor/noble/

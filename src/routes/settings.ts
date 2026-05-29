@@ -12,7 +12,6 @@ import { chats, projects, tasks } from '../services/store';
 import { chatStatus } from '../services/chatStatus';
 import { openclaw } from '../services/openclaw';
 import { remoteAccess, ALLOWED_DURATIONS_MS } from '../services/remoteAccess';
-
 export const settingsRouter = Router();
 
 settingsRouter.get('/settings', (_req, res) => {

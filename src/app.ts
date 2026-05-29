@@ -14,7 +14,19 @@ import { projects } from './services/store';
 import {
   remoteAccessAuthMiddleware,
   remoteAccessLoginHandler,
+  getTunnelIdFromRequest,
+  isTunneledRequest,
 } from './services/remoteAccessAuth';
+import { remoteAccessE2eBootstrapHandler } from './routes/remoteAccessE2e';
+import {
+  remoteAccessDeviceChallengeHandler,
+  remoteAccessDeviceVerifyHandler,
+  remoteAccessDeviceRegisterHandler,
+} from './services/remoteAccessDeviceAuth';
+import {
+  remoteAccessOpaqueLoginStartHandler,
+  remoteAccessOpaqueLoginFinishHandler,
+} from './services/remoteAccessOpaqueAuth';
 import { remoteAccessApiRouter } from './routes/remoteAccessApi';
 import { settingsRouter } from './routes/settings';
 
@@ -65,12 +77,29 @@ export function createApp(): express.Express {
   app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
 
+  app.use((req, res, next) => {
+    if (isTunneledRequest(req)) {
+      const tunnelId = getTunnelIdFromRequest(req);
+      if (tunnelId) {
+        res.locals.raE2eEnabled = true;
+        res.locals.raTunnelId = tunnelId;
+      }
+    }
+    next();
+  });
+
   // Remote-access password gate. No-op for direct localhost requests; blocks
   // tunneled requests (those carrying `x-iclaw-tunneled: 1`, set only by our
   // own remoteAccess loopback) until the user submits the passphrase on the
   // inline login page. Mounted BEFORE static so assets are gated too.
   app.use(remoteAccessAuthMiddleware);
   app.post('/__ra/login', remoteAccessLoginHandler);
+  app.post('/__ra/opaque/login/start', remoteAccessOpaqueLoginStartHandler);
+  app.post('/__ra/opaque/login/finish', remoteAccessOpaqueLoginFinishHandler);
+  app.post('/__ra/device/challenge', remoteAccessDeviceChallengeHandler);
+  app.post('/__ra/device/verify', remoteAccessDeviceVerifyHandler);
+  app.post('/__ra/device/register', remoteAccessDeviceRegisterHandler);
+  app.get('/__ra/e2e/bootstrap', remoteAccessE2eBootstrapHandler);
 
   app.use(
     express.static(

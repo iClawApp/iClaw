@@ -36,6 +36,22 @@ Hit **Share** in any chat to get an encrypted link. The chat is encrypted in you
 
 Powered by [iClaw-cloud](https://github.com/iClawApp/iClaw-cloud) — defaults to `https://app.iclaw.digital`.
 
+## Remote Access (alpha)
+
+Open the iClaw UI from another device through an **iclaw-relay** tunnel (Settings → Remote Access).
+
+**Security model (summary):**
+
+- **Relay access token** — blocks visitors who only guess the subdomain.
+- **OPAQUE login** — passphrase is not sent in plaintext over the tunnel.
+- **Encrypted HTTP/WebSocket** (E2E alpha) — payloads are encrypted between the browser and **local** iClaw; the relay forwards encrypted frames only.
+- **Device sessions** — trusted browsers can reconnect without retyping the passphrase.
+- **Alpha** — not externally audited. The relay still sees metadata (subdomain, timing, sizes, E2E endpoint paths).
+
+Two setups: **local mode** (iClaw + OpenClaw on the same laptop) and **host mode** (always-on machine, browse from phone/laptop). See [docs/REMOTE_ACCESS.md](../docs/REMOTE_ACCESS.md).
+
+Env on the iClaw host: `ICLAW_RELAY_URL` and `OPAQUE_SERVER_SETUP` (required when Remote Access is enabled).
+
 ---
 
 ## For developers
@@ -51,7 +67,13 @@ cd iClaw && npm install && npm run dev
 | Gateway | http://127.0.0.1:18789 (`OPENCLAW_BASE_URL`) |
 
 Optional env vars: [.env.example](.env.example).  
-Architecture + coding rules: [AGENTS.md](AGENTS.md).
+Architecture + coding rules: [AGENTS.md](AGENTS.md).  
+Remote Access alpha: [docs/REMOTE_ACCESS.md](../docs/REMOTE_ACCESS.md), smoke [docs/REMOTE_ACCESS_SMOKE.md](../docs/REMOTE_ACCESS_SMOKE.md).
+
+```bash
+npm run test:ra-smoke          # E2E adversarial smoke (vitest)
+npm run scan:relay-capture -- frames.ndjson   # scan relay frame capture
+```
 
 ## Star history
 

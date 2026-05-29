@@ -13,11 +13,14 @@
 
 import { randomBytes } from 'node:crypto';
 import { db } from '../db/database';
+import { generateAccessToken } from './remoteAccessToken';
 
 export interface PersistedTunnel {
   id: string;
   label: string | null;
   passphrase: string;
+  /** Plaintext relay access token — local DB only; relay stores hash only. */
+  accessToken: string;
   durationMs: number;
   startedAt: number;
   expiresAt: number;
@@ -28,6 +31,7 @@ interface Row {
   id: string;
   label: string | null;
   passphrase: string;
+  access_token: string | null;
   duration_ms: number;
   started_at: number;
   expires_at: number;
@@ -42,14 +46,15 @@ const GET_STMT = db.prepare<[string], Row>(
 );
 const INSERT_STMT = db.prepare(`
   INSERT INTO remote_access_tunnels
-    (id, label, passphrase, duration_ms, started_at, expires_at, created_at)
+    (id, label, passphrase, access_token, duration_ms, started_at, expires_at, created_at)
   VALUES
-    (@id, @label, @passphrase, @duration_ms, @started_at, @expires_at, @created_at)
+    (@id, @label, @passphrase, @access_token, @duration_ms, @started_at, @expires_at, @created_at)
 `);
 const UPDATE_STMT = db.prepare(`
   UPDATE remote_access_tunnels
      SET label = @label,
          passphrase = @passphrase,
+         access_token = @access_token,
          duration_ms = @duration_ms,
          started_at = @started_at,
          expires_at = @expires_at
@@ -63,11 +68,20 @@ function rowToTunnel(row: Row): PersistedTunnel {
     id: row.id,
     label: row.label,
     passphrase: row.passphrase,
+    accessToken: row.access_token ?? '',
     durationMs: row.duration_ms,
     startedAt: row.started_at,
     expiresAt: row.expires_at,
     createdAt: row.created_at,
   };
+}
+
+/** Backfill access_token for tunnels created before the relay gate. */
+export function ensureAccessToken(p: PersistedTunnel): PersistedTunnel {
+  if (p.accessToken) return p;
+  const updated = { ...p, accessToken: generateAccessToken() };
+  remoteAccessState.save(updated);
+  return updated;
 }
 
 export function generateTunnelId(): string {
@@ -76,12 +90,12 @@ export function generateTunnelId(): string {
 
 export const remoteAccessState = {
   list(): PersistedTunnel[] {
-    return LIST_STMT.all().map(rowToTunnel);
+    return LIST_STMT.all().map(rowToTunnel).map(ensureAccessToken);
   },
 
   get(id: string): PersistedTunnel | null {
     const row = GET_STMT.get(id);
-    return row ? rowToTunnel(row) : null;
+    return row ? ensureAccessToken(rowToTunnel(row)) : null;
   },
 
   save(t: PersistedTunnel): void {
@@ -90,6 +104,7 @@ export const remoteAccessState = {
       id: t.id,
       label: t.label,
       passphrase: t.passphrase,
+      access_token: t.accessToken,
       duration_ms: t.durationMs,
       started_at: t.startedAt,
       expires_at: t.expiresAt,

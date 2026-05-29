@@ -9,16 +9,23 @@
  * against tunnel X actually belongs to tunnel X (defence in depth
  * against a hand-crafted cross-tunnel cookie replay).
  *
- * Threat model (v0.1):
- * - Relay is honest-forwarder; it sees the passphrase as plain bytes
- *   during the login POST. Full E2E (relay never sees password) lands
- *   later with SPAKE2/OPAQUE.
- * - Direct localhost users (no `x-iclaw-tunneled: 1`) bypass the gate.
- * - In-memory session store; iClaw restart invalidates every session.
+ * Threat model:
+ * - Tunneled Remote Access: OPAQUE login + encrypted HTTP/WS (E2E alpha); relay sees envelopes/metadata only.
+ * - Direct localhost users (no `x-iclaw-tunneled: 1`) bypass the gate; plain POST /__ra/login is localhost-only.
+ * - In-memory session store; iClaw restart invalidates cookie sessions, but
+ *   trusted devices (SQLite + browser keypair) survive iClaw restart.
  */
 
 import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import type { Request, RequestHandler } from 'express';
+import type { Request, RequestHandler, Response } from 'express';
+
+import { remoteAccessDevices } from './remoteAccessDevices';
+import { isValidDevicePublicKey } from './remoteAccessDeviceCrypto';
+import { clearE2eTransportForTunnel } from './remoteAccessE2eSession';
+import {
+  E2E_LOGIN_REQUIRED_MSG,
+  isOpaqueLoginPath,
+} from './remoteAccessOpaqueAuth';
 
 /* ------------------------------------------------------------ passphrase -- */
 
@@ -52,8 +59,8 @@ export function generatePassphrase(): string {
 
 /* ---------------------------------------------------------- multi-tunnel -- */
 
-const SESSION_COOKIE = 'iclaw_ra';
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+export const SESSION_COOKIE = 'iclaw_ra';
+export const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 const LOGIN_PATH = '/__ra/login';
 
 /** Static assets needed to render the gate page before the user is authenticated. */
@@ -63,6 +70,14 @@ const GATE_PUBLIC_ASSETS = new Set([
   '/favicon-16x16.png',
   '/favicon-32x32.png',
   '/apple-touch-icon.png',
+  '/js/ra-device-auth.js',
+  '/js/ra-gate-opaque.mjs',
+  '/js/ra-e2e-transport.mjs',
+  '/js/ra-e2e-crypto.mjs',
+  '/js/vendor/opaque/index.js',
+  '/js/vendor/noble/hkdf.js',
+  '/js/vendor/noble/sha2.js',
+  '/js/vendor/noble/utils.js',
 ]);
 
 function isGatePublicAsset(path: string): boolean {
@@ -100,10 +115,25 @@ function ensureSweeper(): void {
   sweepTimer.unref();
 }
 
-function mintSession(tunnelId: string): string {
+export function mintSession(tunnelId: string): string {
   const id = randomBytes(32).toString('base64url');
   sessions.set(id, { tunnelId, expiresAt: Date.now() + SESSION_TTL_MS });
   return id;
+}
+
+export function attachSessionCookie(res: Response, tunnelId: string, req: Request): string {
+  const sessionId = mintSession(tunnelId);
+  const isHttps = (req.headers['x-forwarded-proto'] ?? '').toString().toLowerCase() === 'https';
+  const cookieParts = [
+    `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}`,
+    'Path=/',
+    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
+    'HttpOnly',
+    'SameSite=Lax',
+  ];
+  if (isHttps) cookieParts.push('Secure');
+  res.setHeader('Set-Cookie', cookieParts.join('; '));
+  return sessionId;
 }
 
 function isValidSession(sessionId: string | undefined, tunnelId: string): boolean {
@@ -151,6 +181,8 @@ export function disableGate(tunnelId: string): void {
   for (const [sid, rec] of sessions) {
     if (rec.tunnelId === tunnelId) sessions.delete(sid);
   }
+  clearE2eTransportForTunnel(tunnelId);
+  remoteAccessDevices.deleteAllForTunnel(tunnelId);
 }
 
 export function disableAllGates(): void {
@@ -165,7 +197,7 @@ export function isGateEnabled(tunnelId: string): boolean {
 
 /* ------------------------------------------------------- helpers / parsing -- */
 
-function parseCookies(header: string | undefined): Record<string, string> {
+export function parseCookieHeader(header: string | undefined): Record<string, string> {
   if (!header) return {};
   const out: Record<string, string> = {};
   for (const part of header.split(';')) {
@@ -178,14 +210,28 @@ function parseCookies(header: string | undefined): Record<string, string> {
   return out;
 }
 
-function getTunnelId(req: Request): string | null {
+export function getTunnelIdFromRequest(req: Request): string | null {
   const h = req.headers[TUNNEL_ID_HEADER];
   if (typeof h === 'string' && h.length > 0) return h;
   return null;
 }
 
-function isTunneled(req: Request): boolean {
+export function isTunneledRequest(req: Request): boolean {
   return req.headers[TUNNELED_HEADER] === TUNNELED_VALUE;
+}
+
+function wantsJsonResponse(req: Request): boolean {
+  const accept = (req.headers.accept ?? '').toString();
+  if (accept.includes('application/json')) return true;
+  const ct = (req.headers['content-type'] ?? '').toString();
+  return ct.includes('application/json');
+}
+
+export function isValidTunnelSessionForTunnel(
+  tunnelId: string,
+  cookies: Record<string, string>,
+): boolean {
+  return isValidSession(cookies[SESSION_COOKIE], tunnelId);
 }
 
 function constantTimeEquals(a: string, b: string): boolean {
@@ -201,11 +247,14 @@ function constantTimeEquals(a: string, b: string): boolean {
 
 /* ---------------------------------------------------- login page HTML -- */
 
-function renderLoginPage(opts: {
+/** Gate HTML for tunneled Remote Access login (exported for tests). */
+export function renderGateLoginPage(opts: {
+  tunnelId: string;
   errorMessage?: string;
   next?: string;
 }): string {
   const safeNext = (opts.next ?? '/').replace(/"/g, '');
+  const safeTunnelId = escapeHtml(opts.tunnelId);
   const errorBlock = opts.errorMessage
     ? `<div class="ra-gate-error" role="alert">${escapeHtml(opts.errorMessage)}</div>`
     : '';
@@ -229,7 +278,10 @@ function renderLoginPage(opts: {
 </header>
 
 <main class="ra-gate-main">
-  <form method="POST" action="${LOGIN_PATH}" autocomplete="off" class="ra-gate-card">
+  <div id="ra-gate-loading" class="ra-gate-card ra-gate-loading" aria-live="polite">
+    <p class="ra-gate-lead">Checking this device…</p>
+  </div>
+  <form id="ra-gate-form" method="POST" action="#" autocomplete="off" class="ra-gate-card" hidden>
     <h1 class="ra-gate-title">Remote Access</h1>
     <p class="ra-gate-lead">Enter the passphrase shown on the device that started this link</p>
 
@@ -245,7 +297,6 @@ function renderLoginPage(opts: {
           type="password"
           autocomplete="current-password"
           required
-          autofocus
           spellcheck="false"
           autocapitalize="none"
         />
@@ -258,6 +309,11 @@ function renderLoginPage(opts: {
     <p class="ra-gate-note">This page is served by your local iClaw — not the relay</p>
   </form>
 </main>
+<meta name="iclaw-ra-tunnel-id" content="${safeTunnelId}" />
+<meta name="iclaw-ra-next" content="${safeNext}" />
+<meta name="iclaw-ra-e2e" content="true" />
+<script src="/js/ra-device-auth.js" defer></script>
+<script type="module" src="/js/ra-gate-opaque.mjs"></script>
 </body>
 </html>`;
 }
@@ -266,9 +322,9 @@ function renderLoginPage(opts: {
 
 export const remoteAccessAuthMiddleware: RequestHandler = (req, res, next) => {
   // Direct localhost / non-tunneled → never interfere.
-  if (!isTunneled(req)) return next();
+  if (!isTunneledRequest(req)) return next();
 
-  const tunnelId = getTunnelId(req);
+  const tunnelId = getTunnelIdFromRequest(req);
   if (!tunnelId || !isGateEnabled(tunnelId)) {
     // Tunneled request claiming to belong to an unknown tunnel — refuse
     // hard. Should be impossible in normal flow since the loopback
@@ -280,26 +336,50 @@ export const remoteAccessAuthMiddleware: RequestHandler = (req, res, next) => {
   // POST /__ra/login is handled by a separate route; let it through.
   if (req.method === 'POST' && req.path === LOGIN_PATH) return next();
 
+  // OPAQUE login (E2E password handshake).
+  if (req.method === 'POST' && isOpaqueLoginPath(req.path)) return next();
+
+  if (req.path.startsWith('/__ra/e2e/')) return next();
+
+  // Device challenge-response (no cookie yet).
+  if (req.method === 'POST' && req.path.startsWith('/__ra/device/')) return next();
+
   // Stylesheet + icons for the gate page (static is mounted after this middleware).
   if (req.method === 'GET' && isGatePublicAsset(req.path)) return next();
 
-  const cookies = parseCookies(req.headers.cookie);
+  const cookies = parseCookieHeader(req.headers.cookie);
   if (isValidSession(cookies[SESSION_COOKIE], tunnelId)) return next();
 
   const nextUrl = req.originalUrl && req.originalUrl !== LOGIN_PATH ? req.originalUrl : '/';
   res
     .status(401)
     .type('html')
-    .send(renderLoginPage({ next: nextUrl }));
+    .send(renderGateLoginPage({ tunnelId, next: nextUrl }));
 };
 
 export const remoteAccessLoginHandler: RequestHandler = (req, res) => {
-  const tunnelId = getTunnelId(req);
+  const tunnelId = getTunnelIdFromRequest(req);
   const expected = tunnelId ? passphrases.get(tunnelId) : undefined;
   if (!tunnelId || !expected) {
     res.status(404).type('text/plain').send('not found');
     return;
   }
+
+  if (isTunneledRequest(req)) {
+    const json = wantsJsonResponse(req);
+    if (json) {
+      res.status(426).json({ error: E2E_LOGIN_REQUIRED_MSG, login: 'opaque' });
+      return;
+    }
+    res.status(426).type('text/plain').send(E2E_LOGIN_REQUIRED_MSG);
+    return;
+  }
+
+  const nextUrl =
+    typeof req.body?.next === 'string' && req.body.next.startsWith('/')
+      ? req.body.next
+      : '/';
+  const json = wantsJsonResponse(req);
 
   // Rate-limit per (ip, tunnelId) so a flood against one tunnel doesn't
   // burn another tunnel's budget on the same IP.
@@ -308,47 +388,60 @@ export const remoteAccessLoginHandler: RequestHandler = (req, res) => {
   const limit = checkRateLimit(limitKey);
   if (!limit.ok) {
     res.setHeader('Retry-After', String(limit.retryAfterSec));
+    const msg = `Too many attempts. Try again in ${limit.retryAfterSec}s.`;
+    if (json) {
+      res.status(429).json({ error: msg, retryAfterSec: limit.retryAfterSec });
+      return;
+    }
     res
       .status(429)
       .type('html')
-      .send(
-        renderLoginPage({
-          errorMessage: `Too many attempts. Try again in ${limit.retryAfterSec}s.`,
-          next: typeof req.body?.next === 'string' ? req.body.next : '/',
-        }),
-      );
+      .send(renderGateLoginPage({
+        tunnelId,
+        errorMessage: msg,
+        next: nextUrl,
+      }));
     return;
   }
 
   const submitted = typeof req.body?.passphrase === 'string' ? req.body.passphrase : '';
   if (!constantTimeEquals(submitted, expected)) {
+    if (json) {
+      res.status(401).json({ error: 'Wrong passphrase.' });
+      return;
+    }
     res
       .status(401)
       .type('html')
-      .send(
-        renderLoginPage({
-          errorMessage: 'Wrong passphrase.',
-          next: typeof req.body?.next === 'string' ? req.body.next : '/',
-        }),
-      );
+      .send(renderGateLoginPage({
+        tunnelId,
+        errorMessage: 'Wrong passphrase.',
+        next: nextUrl,
+      }));
     return;
   }
 
-  const sessionId = mintSession(tunnelId);
-  const isHttps = (req.headers['x-forwarded-proto'] ?? '').toString().toLowerCase() === 'https';
-  const cookieParts = [
-    `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}`,
-    'Path=/',
-    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
-    'HttpOnly',
-    'SameSite=Lax',
-  ];
-  if (isHttps) cookieParts.push('Secure');
-  res.setHeader('Set-Cookie', cookieParts.join('; '));
+  attachSessionCookie(res, tunnelId, req);
 
-  const nextUrl = typeof req.body?.next === 'string' && req.body.next.startsWith('/')
-    ? req.body.next
-    : '/';
+  const reg = req.body?.registerDevice as Record<string, unknown> | undefined;
+  let deviceId: string | undefined;
+  if (reg && typeof reg.publicKey === 'string' && isValidDevicePublicKey(reg.publicKey)) {
+    const device = remoteAccessDevices.register({
+      tunnelId,
+      publicKey: reg.publicKey,
+      name: typeof reg.name === 'string' ? reg.name : null,
+      userAgent:
+        typeof reg.userAgent === 'string'
+          ? reg.userAgent
+          : (req.headers['user-agent'] ?? '').toString(),
+    });
+    deviceId = device.id;
+  }
+
+  if (json) {
+    res.json({ ok: true, next: nextUrl, deviceId: deviceId ?? null });
+    return;
+  }
   res.redirect(303, nextUrl);
 };
 
@@ -386,6 +479,6 @@ export function isValidTunnelSession(
   cookieHeader: string | undefined,
 ): boolean {
   if (!passphrases.has(tunnelId)) return false;
-  const cookies = parseCookies(cookieHeader);
+  const cookies = parseCookieHeader(cookieHeader);
   return isValidSession(cookies[SESSION_COOKIE], tunnelId);
 }
