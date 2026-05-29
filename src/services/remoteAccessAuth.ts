@@ -101,12 +101,12 @@ export function isGatePublicAsset(path: string): boolean {
  */
 export function isPublicStaticAsset(path: string): boolean {
   const p = path.split('?')[0] ?? path;
-  return (
-    p.startsWith('/css/') ||
-    p.startsWith('/js/') ||
-    p.startsWith('/favicon') ||
-    p.startsWith('/apple-touch-icon')
-  );
+  if (p.startsWith('/css/') || p.startsWith('/js/')) return true;
+  // Root-level public files: favicons, PWA icons (e.g. /icon-192.png), the web
+  // manifest, robots, fonts. Single path segment + a static extension, so this
+  // never matches user data under /uploads, /media, /api or page routes (which
+  // are multi-segment and/or extension-less).
+  return /^\/[A-Za-z0-9._-]+\.(?:png|ico|svg|webp|jpe?g|gif|webmanifest|json|txt|woff2?|map)$/.test(p);
 }
 
 function escapeHtml(s: string): string {

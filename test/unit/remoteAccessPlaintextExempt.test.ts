@@ -209,7 +209,7 @@ describe('Remote Access plaintext tunnel exempt (gate only)', () => {
     // CSS/JS/icons are loaded by <link>/<script>/<img> tags after an
     // E2E-delivered page is written — they can't be wrapped, carry no user
     // data, and must be served (else the workspace renders with no styles/JS).
-    for (const p of ['/css/style.css', '/css/highlight-github.min.css', '/js/iclaw.js', '/js/vendor/marked.min.js', '/favicon.ico']) {
+    for (const p of ['/css/style.css', '/css/highlight-github.min.css', '/js/iclaw.js', '/js/vendor/marked.min.js', '/favicon.ico', '/icon-192.png', '/apple-touch-icon.png', '/manifest.json']) {
       expect(
         isE2ePlaintextTunnelExempt({ method: 'GET', path: p, tunnelId: TUNNEL, accept: '*/*' }),
         p,
