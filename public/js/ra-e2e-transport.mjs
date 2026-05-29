@@ -425,7 +425,10 @@ export async function installRaE2eTransport() {
 
   window.WebSocket = function (url, protocols) {
     const u = new URL(url, location.origin);
-    if (u.origin !== location.origin || !u.pathname.startsWith('/ws')) {
+    // Compare HOST, not origin: a wss:// URL has origin "wss://host" which
+    // never equals the page's "https://host", so an origin check would wrongly
+    // fall through to a direct (un-encrypted, relay-rejected) /ws connection.
+    if (u.host !== location.host || !u.pathname.startsWith('/ws')) {
       return new OrigWebSocket(url, protocols);
     }
     return createE2eWebSocket(url, protocols);

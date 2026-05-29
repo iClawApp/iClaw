@@ -197,7 +197,7 @@
   function redirectAfterAuth(next) {
     var target = next || '/';
     if (isTunneledGate() && hasE2eSessionKeys()) {
-      return import('/js/ra-e2e-transport.mjs?v=ra-gate-6')
+      return import('/js/ra-e2e-transport.mjs?v=ra-gate-7')
         .then(function (m) {
           return m.navigateViaE2eDocument(target);
         })
@@ -381,7 +381,7 @@
     // encrypted transport and load the requested page WITHOUT asking for the
     // passphrase again. Only a fresh tab (keys gone) falls through to login.
     if (isTunneledGate() && hasE2eSessionKeys()) {
-      import('/js/ra-e2e-transport.mjs?v=ra-gate-6')
+      import('/js/ra-e2e-transport.mjs?v=ra-gate-7')
         .then(function (m) {
           return m.navigateViaE2eDocument(next);
         })
