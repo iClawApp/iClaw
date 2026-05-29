@@ -17,6 +17,17 @@ const E2E_HTTP_PATH = '/__ra/e2e/http';
 const E2E_WS_PATH = '/__ra/e2e/ws';
 const EXEMPT_PREFIXES = ['/__ra/opaque/', '/__ra/device/', '/__ra/e2e/', '/__ra/login'];
 
+/** Gated diagnostic logging — enable with localStorage.ra_debug='1' or ?radebug=1. */
+function dbg(...args) {
+  try {
+    if (localStorage.getItem('ra_debug') === '1' || /[?&]radebug=1/.test(location.search)) {
+      console.log('[ra-dbg:transport]', ...args);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 let state = null;
 const c2sCtr = new Map();
 const s2cLedger = new E2eCounterLedger();
@@ -372,7 +383,9 @@ let installed = false;
 
 /** Load workspace HTML via encrypted /__ra/e2e/http (after OPAQUE login). */
 export async function navigateViaE2eDocument(nextUrl) {
+  dbg('navigateViaE2eDocument: start', nextUrl);
   const installed = await installRaE2eTransport();
+  dbg('navigateViaE2eDocument: installed=', installed);
   if (!installed) {
     throw new Error('Encrypted session not ready. Sign in with your passphrase again.');
   }
@@ -382,18 +395,22 @@ export async function navigateViaE2eDocument(nextUrl) {
       : typeof nextUrl === 'string' && nextUrl.startsWith('http')
         ? new URL(nextUrl).pathname + new URL(nextUrl).search
         : '/';
+  dbg('navigateViaE2eDocument: E2E fetch', path);
   const res = await window.fetch(path, {
     method: 'GET',
     credentials: 'same-origin',
     headers: { Accept: 'text/html,application/xhtml+xml' },
   });
+  dbg('navigateViaE2eDocument: fetch status', res.status);
   if (!res.ok) {
     throw new Error('Could not load workspace (HTTP ' + res.status + ')');
   }
   const html = await res.text();
+  dbg('navigateViaE2eDocument: html length', html.length, '→ document.write');
   document.open();
   document.write(html);
   document.close();
+  dbg('navigateViaE2eDocument: document.write done');
 }
 
 export async function installRaE2eTransport() {
@@ -401,8 +418,20 @@ export async function installRaE2eTransport() {
   captureRelayBindingFromPage();
   state = loadState();
   if (!state) {
+    try {
+      const meta = document.querySelector('meta[name="iclaw-ra-e2e"]');
+      dbg('installRaE2eTransport: loadState=null', {
+        e2eMeta: meta ? meta.getAttribute('content') : null,
+        tunnelIdMeta: !!document.querySelector('meta[name="iclaw-ra-tunnel-id"]'),
+        opaqueSk: !!sessionStorage.getItem('iclaw_e2e_opaque_sk'),
+        transport: !!sessionStorage.getItem('iclaw_e2e_transport'),
+      });
+    } catch {
+      /* ignore */
+    }
     return false;
   }
+  dbg('installRaE2eTransport: state OK, alreadyInstalled=', installed);
   // Idempotent: navigateViaE2eDocument installs on the gate page, then the
   // document.write'd workspace re-runs the boot script (same realm → same
   // module instance). Re-wrapping would capture the already-wrapped fetch and
