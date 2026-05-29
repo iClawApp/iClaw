@@ -2022,7 +2022,7 @@
     if (name === 'orange') return '#ff9500';
     if (name === 'blue') return read('--md-link', '#2962ff');
     if (name === 'green') return read('--ok', '#16a34a');
-    if (name === 'fuchsia') return read('--scheduled', '#d946ef');
+    if (name === 'stone') return read('--scheduled', '#78716c');
     return '#888';
   }
 
@@ -2054,7 +2054,7 @@
     if (needsHuman) colors.push('orange'); // most urgent
     if (unread || review) colors.push('blue');
     if (working) colors.push('green');
-    if (scheduled) colors.push('fuchsia');
+    if (scheduled) colors.push('stone');
     return colors.slice(0, 2); // cap at 2 — 3 dots turn to mush at 16px
   }
 
