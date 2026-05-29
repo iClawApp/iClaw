@@ -608,6 +608,39 @@ async function main() {
     `status ${dataXhr.status}`,
   );
 
+  /* 11e. App-shell static asset (loaded by <script>/<link>, can't be E2E-wrapped)
+     must be served in the clear — otherwise the workspace renders without CSS/JS
+     ("can't see messages"). It's public, carries no user data. */
+  const staticAsset = await request({
+    port: relayPort,
+    host: subHost,
+    path: '/js/iclaw.js',
+    headers: {
+      accept: '*/*',
+      'sec-fetch-dest': 'script',
+      'sec-fetch-mode': 'no-cors',
+      cookie: jar.outerCookieHeader(),
+    },
+  });
+  check(
+    'app-shell static asset (/js/iclaw.js) is served, not 426',
+    staticAsset.status === 200 && !/E2E transport required/.test(staticAsset.body),
+    `status ${staticAsset.status}`,
+  );
+
+  // But user-uploaded content (/uploads) must NOT be served plaintext.
+  const upload = await request({
+    port: relayPort,
+    host: subHost,
+    path: '/uploads/whatever.bin',
+    headers: { accept: '*/*', 'sec-fetch-dest': 'image', cookie: jar.outerCookieHeader() },
+  });
+  check(
+    'user uploads stay E2E-gated (not served plaintext)',
+    /E2E transport required/.test(upload.body) || upload.status === 401 || upload.status === 426,
+    `status ${upload.status}`,
+  );
+
   /* 12. C2: regenerate access invalidates the old ?access= link */
   const regen = await request({
     port: iclawPort,

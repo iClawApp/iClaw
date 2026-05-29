@@ -90,6 +90,25 @@ export function isGatePublicAsset(path: string): boolean {
   return GATE_PUBLIC_ASSETS.has(p);
 }
 
+/**
+ * Public app-shell static assets (stylesheets, scripts, icons). They are
+ * loaded by the browser via <link>/<script>/<img> tags after an E2E-delivered
+ * page is written to the DOM — tag loads bypass the fetch wrapper and so can't
+ * be E2E-wrapped. They carry no user data (identical for every visitor), so
+ * they may be served in the clear. User data — HTML pages, /api, /uploads,
+ * /media, WebSocket — is NOT here and stays E2E. Single source of truth shared
+ * by the gate middleware and the tunnel plaintext-exempt check.
+ */
+export function isPublicStaticAsset(path: string): boolean {
+  const p = path.split('?')[0] ?? path;
+  return (
+    p.startsWith('/css/') ||
+    p.startsWith('/js/') ||
+    p.startsWith('/favicon') ||
+    p.startsWith('/apple-touch-icon')
+  );
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -382,8 +401,12 @@ export const remoteAccessAuthMiddleware: RequestHandler = (req, res, next) => {
   // Device challenge-response (no cookie yet).
   if (req.method === 'POST' && req.path.startsWith('/__ra/device/')) return next();
 
-  // Stylesheet + icons for the gate page (static is mounted after this middleware).
-  if (req.method === 'GET' && isGatePublicAsset(req.path)) return next();
+  // Public app-shell static assets (css/js/icons) — needed by the gate page and
+  // by the workspace after an E2E-delivered page is written to the DOM. No user
+  // data; served without a session. (static is mounted after this middleware.)
+  if (req.method === 'GET' && (isGatePublicAsset(req.path) || isPublicStaticAsset(req.path))) {
+    return next();
+  }
 
   const cookies = parseCookieHeader(req.headers.cookie);
   if (isValidSession(cookies[SESSION_COOKIE], tunnelId)) return next();

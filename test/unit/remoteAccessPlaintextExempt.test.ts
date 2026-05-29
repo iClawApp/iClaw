@@ -205,6 +205,25 @@ describe('Remote Access plaintext tunnel exempt (gate only)', () => {
     ).toBe(true);
   });
 
+  it('3b. public app-shell assets are plaintext-exempt; user data is not', () => {
+    // CSS/JS/icons are loaded by <link>/<script>/<img> tags after an
+    // E2E-delivered page is written — they can't be wrapped, carry no user
+    // data, and must be served (else the workspace renders with no styles/JS).
+    for (const p of ['/css/style.css', '/css/highlight-github.min.css', '/js/iclaw.js', '/js/vendor/marked.min.js', '/favicon.ico']) {
+      expect(
+        isE2ePlaintextTunnelExempt({ method: 'GET', path: p, tunnelId: TUNNEL, accept: '*/*' }),
+        p,
+      ).toBe(true);
+    }
+    // User-uploaded / media content is NOT a public asset → stays E2E.
+    for (const p of ['/uploads/secret.png', '/media/clip.mp4']) {
+      expect(
+        isE2ePlaintextTunnelExempt({ method: 'GET', path: p, tunnelId: TUNNEL, accept: '*/*' }),
+        p,
+      ).toBe(false);
+    }
+  });
+
   it('4. relay capture: chat JSON not in allowed plaintext; encrypted frame ok', async () => {
     await opaque.ready;
     const binding = relayAccessBindingFromAccessToken(generateAccessToken());

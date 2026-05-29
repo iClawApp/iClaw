@@ -20,6 +20,7 @@ import {
 } from './remoteAccessE2eSession';
 import {
   isGatePublicAsset,
+  isPublicStaticAsset,
   stripInternalHeaders,
   SESSION_COOKIE,
   TUNNELED_HEADER,
@@ -156,7 +157,9 @@ export function isE2ePlaintextTunnelExempt(ctx: E2ePlaintextTunnelContext): bool
   if (p === '/__ra/login') return true;
 
   if (m === 'GET' || m === 'HEAD') {
-    if (isGatePublicAsset(p)) return true;
+    // Public app-shell assets (css/js/icons) — loaded via tags after an
+    // E2E-delivered page is written to the DOM, so they can't be wrapped.
+    if (isPublicStaticAsset(p) || isGatePublicAsset(p)) return true;
     // The entry point and any top-level navigation get the gate bootstrap.
     if (p === '/') return true;
     if (isHtmlNavigation(ctx)) return true;

@@ -121,10 +121,11 @@ enters the passphrase.
 
 - **Passphrase** — never sent over the wire. OPAQUE proves knowledge of it
   without transmitting it; the relay cannot learn it.
-- **HTTP & WebSocket payloads** — encrypted end-to-end (AES-256-GCM with
-  per-stream subkeys derived from the OPAQUE session key via HKDF). The relay
-  forwards only ciphertext envelopes; it cannot read request paths, bodies,
-  responses, or chat content.
+- **HTTP & WebSocket payloads that carry your data** — encrypted end-to-end
+  (AES-256-GCM with per-stream subkeys derived from the OPAQUE session key via
+  HKDF). Page contents (the rendered HTML), `/api` calls, chat messages,
+  uploads/media, and the live WebSocket all travel as ciphertext envelopes; the
+  relay cannot read their paths, bodies, responses, or content.
 - **Tamper / replay** — each record is authenticated (GCM tag over a context
   AAD: tunnelId, streamId, direction, counter, frame kind, relay binding) and
   a per-stream monotonic counter ledger rejects replays.
@@ -136,6 +137,12 @@ enters the passphrase.
 - Which **E2E endpoints** are hit (`/__ra/e2e/http`, `/__ra/e2e/ws`) and the
   bootstrap/OPAQUE/gate-asset requests that happen before the encrypted
   session is established.
+- The **public app-shell assets** — stylesheets, scripts and icons under
+  `/css/*`, `/js/*` (incl. vendored libs) and the favicons. These are loaded by
+  the browser via `<link>`/`<script>` tags (which can't be E2E-wrapped) and are
+  byte-identical for every visitor, so serving them in the clear leaks nothing
+  about you. **Your data is not among them** — pages, `/api`, `/uploads`,
+  `/media` and the WebSocket are E2E.
 - The relay **access cookie** (`iclaw_tunnel_access`) that rides the outer
   requests. It gates the subdomain but does **not** grant the relay access to
   encrypted content (that requires the OPAQUE-derived keys, which never leave
