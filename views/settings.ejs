@@ -85,11 +85,6 @@
                         <span class="ra-url-display">
                           <span class="ra-url-host"><%= urlHost %></span><% if (urlPath) { %><span class="ra-url-path"><%= urlPath %></span><% } %>
                         </span>
-                        <svg class="ra-extlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                          <polyline points="15 3 21 3 21 9"/>
-                          <line x1="10" y1="14" x2="21" y2="3"/>
-                        </svg>
                       </a>
                       <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="url" aria-label="Copy access link" title="Copy access link">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -357,14 +352,6 @@
   color: color-mix(in srgb, currentColor 72%, transparent);
   font-weight: 400;
 }
-.ra-extlink-icon {
-  width: 13px;
-  height: 13px;
-  flex-shrink: 0;
-  color: color-mix(in srgb, var(--text) 40%, transparent);
-}
-.ra-url:hover .ra-extlink-icon { color: var(--md-link, var(--accent)); }
-
 .ra-connecting {
   display: flex;
   align-items: center;
@@ -740,7 +727,6 @@
   }
   const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   const CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
-  const EXT_ICON = '<svg class="ra-extlink-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
   function passMask(secret) {
     const n = String(secret || '').length;
     return '•'.repeat(Math.max(n, 8));
@@ -804,7 +790,6 @@
       ? '<div class="ra-field-value-row">' +
         '  <a class="ra-url" data-role="url" href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(t.url) + '">' +
         '    <span class="ra-url-display">' + urlParts.display + '</span>' +
-        '    ' + EXT_ICON +
         '  </a>' +
         '  <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="url" aria-label="Copy access link" title="Copy access link">' + COPY_ICON + '</button>' +
         '  <button type="button" class="btn btn--ghost btn--sm" data-action="regenerate-access" title="Invalidate old links">New access link</button>' +
