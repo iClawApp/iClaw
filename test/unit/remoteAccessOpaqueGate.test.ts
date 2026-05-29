@@ -235,12 +235,16 @@ describe('remoteAccessOpaqueGate', () => {
     expect(JSON.stringify({ startLoginRequest })).not.toContain(PASS);
   });
 
-  it('missing OPAQUE_SERVER_SETUP fails clearly', async () => {
+  it('service layer requires a setup when none is configured (API route auto-provisions)', async () => {
+    // With no env override and nothing persisted, the low-level service refuses
+    // (the HTTP route is what lazily generates+persists one — see
+    // ensureOpaqueServerSetup / POST /api/remote-access/tunnels).
     delete process.env.OPAQUE_SERVER_SETUP;
-    expect(() => assertOpaqueServerSetup()).toThrow(/OPAQUE_SERVER_SETUP/);
+    db.exec("DELETE FROM iclaw_kv WHERE key = 'opaque_server_setup'");
+    expect(() => assertOpaqueServerSetup()).toThrow(/OPAQUE server setup/i);
     await expect(
       remoteAccess.createTunnel(30 * 60_000, 'should-fail'),
-    ).rejects.toThrow(/OPAQUE_SERVER_SETUP/);
+    ).rejects.toThrow(/OPAQUE server setup/i);
   });
 
   it('createTunnel registers opaque record', async () => {

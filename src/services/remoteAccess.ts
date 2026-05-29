@@ -59,6 +59,7 @@ import {
 } from './remoteAccessE2eTransport';
 import {
   ensureOpaqueRegistrationForTunnel,
+  ensureOpaqueServerSetup,
   syncOpaqueRegistrationsWithServerSetup,
 } from './remoteAccessOpaque';
 import {
@@ -718,6 +719,10 @@ async function bootstrapOpaqueForActiveTunnels(): Promise<void> {
   const active = remoteAccessState.list();
   if (active.length === 0) return;
   try {
+    // Tunnels exist → an OPAQUE setup must exist too. Provision one if missing
+    // (e.g. a previously-set OPAQUE_SERVER_SETUP env was removed) so resumed
+    // tunnels re-register and stay loggable instead of silently failing.
+    await ensureOpaqueServerSetup();
     await syncOpaqueRegistrationsWithServerSetup(
       active.map((p) => ({ id: p.id, passphrase: p.passphrase })),
     );

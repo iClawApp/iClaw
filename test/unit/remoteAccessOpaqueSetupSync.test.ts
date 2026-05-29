@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '../../src/db/database';
 import { remoteAccessState } from '../../src/services/remoteAccessState';
 import {
+  ensureOpaqueServerSetup,
   forceOpaqueRegistrationForTunnel,
   getOpaqueRegistrationRecord,
   registerOpaqueForTunnel,
@@ -116,5 +117,37 @@ describe('remoteAccessOpaque setup sync', () => {
         })!.finishLoginRequest,
       }),
     ).toBeTruthy();
+  });
+
+  it('auto-generates and persists an OPAQUE setup when none is configured', async () => {
+    delete process.env.OPAQUE_SERVER_SETUP;
+    db.exec('DELETE FROM iclaw_kv');
+
+    // Nothing in env, nothing persisted → minted on demand.
+    const setup1 = await ensureOpaqueServerSetup();
+    expect(typeof setup1).toBe('string');
+    expect(setup1.length).toBeGreaterThan(20);
+
+    // Persisted in the DB → a second call returns the SAME value (stable, so
+    // existing tunnels' OPAQUE records stay valid across restarts).
+    const setup2 = await ensureOpaqueServerSetup();
+    expect(setup2).toBe(setup1);
+
+    // And it is actually usable for a register round-trip.
+    const rec = await registerOpaqueForTunnel(TUNNEL, 'amber-apple-arrow-aspen-auto');
+    expect(rec).toBeTruthy();
+  });
+
+  it('env override takes precedence over a persisted setup', async () => {
+    delete process.env.OPAQUE_SERVER_SETUP;
+    db.exec('DELETE FROM iclaw_kv');
+
+    const generated = await ensureOpaqueServerSetup(); // persists to the DB
+    const envSetup = opaque.server.createSetup();
+    process.env.OPAQUE_SERVER_SETUP = envSetup;
+
+    const resolved = await ensureOpaqueServerSetup();
+    expect(resolved).toBe(envSetup);
+    expect(resolved).not.toBe(generated);
   });
 });

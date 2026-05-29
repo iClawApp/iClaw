@@ -33,27 +33,28 @@ ciphertext envelopes.
 
 ## Setup
 
-### 1. Generate an OPAQUE server setup (required)
+### 1. OPAQUE server setup — automatic
 
-Remote Access **will not create tunnels** without this. Generate one once and
-put it in iClaw's environment:
+Nothing to do. The first time you create a tunnel, iClaw generates an OPAQUE
+server setup and stores it locally (in its SQLite, alongside the passphrases
+and access tokens it already keeps). Fresh installs "just work".
 
-```bash
-npx @serenity-kit/opaque create-server-setup
-# → prints a long base64 string
-```
-
-Add it to your environment (e.g. `.env` or your launch env):
+**Optional override** — set `OPAQUE_SERVER_SETUP` to pin a specific value
+(advanced / shared-host scenarios). The env var always wins over the
+auto-generated one:
 
 ```bash
+# generate one explicitly, if you want to control it:
+npx @serenity-kit/opaque create-server-setup    # prints a base64 string
 OPAQUE_SERVER_SETUP=<the base64 string from above>
 ```
 
-- Keep it secret and **stable**. If it changes, existing tunnels' stored
-  OPAQUE records are invalidated and re-registered on next start (logins
-  during the gap fail with a clear error, not a silent break).
-- Without it, the Settings → Remote Access "Share" button returns a clear
-  `503 OPAQUE_SERVER_SETUP is required` instead of minting a dead link.
+- Keep it **secret** (don't commit it; `.env` should be git-ignored) and
+  **stable**. If it changes, existing tunnels' stored OPAQUE records are
+  invalidated and re-registered on next start.
+- To run the **same** tunnel/passphrase across several of your machines, set
+  the **same** `OPAQUE_SERVER_SETUP` on each; otherwise each host gets its own
+  auto-generated value (independent).
 
 ### 2. (Optional) point at a different relay
 
@@ -160,8 +161,8 @@ enters the passphrase.
 
 | Symptom | Cause / fix |
 | --- | --- |
-| "Share" returns 503 `OPAQUE_SERVER_SETUP is required` | Set `OPAQUE_SERVER_SETUP` (step 1) and restart. |
-| Login says "Remote Access login is not ready" | OPAQUE setup missing or registration not synced — restart iClaw. |
+| "Share" returns 503 `opaque_setup_unavailable` | OPAQUE setup is auto-generated now; this only happens if the OPAQUE runtime can't load. Check logs / reinstall deps. On older builds it was `opaque_setup_missing` — set `OPAQUE_SERVER_SETUP` or update iClaw. |
+| Login says "Remote Access login is not ready" | OPAQUE registration not synced — restart iClaw. |
 | URL changed after a restart | Expected if iClaw was down longer than the ~10 min reconnect grace, or the relay restarted. |
 | Visitor sees "tunnel reconnecting" | iClaw briefly lost its relay WS; it retries automatically. |
 | `403 Forbidden` on the URL | Missing/expired `?access=` token — use the full link, or mint a new one with **New access link**. |

@@ -11,37 +11,79 @@ import { db } from '../db/database';
 let readyPromise: Promise<void> | null = null;
 
 const OPAQUE_FP_KV_KEY = 'opaque_server_setup_sha256';
+const OPAQUE_SETUP_KV_KEY = 'opaque_server_setup';
+
+const GET_KV = db.prepare<[string], { value: string } | undefined>(
+  'SELECT value FROM iclaw_kv WHERE key = ?',
+);
+const SET_KV = db.prepare(
+  'INSERT INTO iclaw_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+);
+const CLEAR_ALL_OPAQUE = db.prepare(
+  'UPDATE remote_access_tunnels SET opaque_registration_record = NULL',
+);
 
 export async function ensureOpaqueReady(): Promise<void> {
   if (!readyPromise) readyPromise = opaque.ready;
   await readyPromise;
 }
 
+/**
+ * Resolve the OPAQUE server setup. Precedence:
+ *   1. OPAQUE_SERVER_SETUP env override (advanced / shared-host scenarios),
+ *   2. the value auto-generated and persisted in the local DB.
+ * Returns null only on a fresh install that hasn't created a tunnel yet —
+ * `ensureOpaqueServerSetup()` mints and stores one on demand at that point.
+ */
+function loadServerSetup(): string | null {
+  const fromEnv = process.env.OPAQUE_SERVER_SETUP?.trim();
+  if (fromEnv) return fromEnv;
+  const stored = GET_KV.get(OPAQUE_SETUP_KV_KEY)?.value?.trim();
+  return stored && stored.length > 0 ? stored : null;
+}
+
 export function assertOpaqueServerSetup(): void {
-  if (!process.env.OPAQUE_SERVER_SETUP?.trim()) {
-    throw new Error(
-      'OPAQUE_SERVER_SETUP is required for Remote Access. ' +
-        'Generate one with: npx @serenity-kit/opaque create-server-setup',
-    );
+  if (!loadServerSetup()) {
+    throw new Error('OPAQUE server setup is not available for Remote Access');
   }
 }
 
 function getServerSetup(): string {
-  assertOpaqueServerSetup();
-  return process.env.OPAQUE_SERVER_SETUP!.trim();
+  const setup = loadServerSetup();
+  if (!setup) throw new Error('OPAQUE server setup is not available');
+  return setup;
+}
+
+/**
+ * Lazily ensure an OPAQUE server setup exists — generated and persisted the
+ * first time a tunnel is created, so a fresh install needs zero manual config.
+ * The env override always wins. Stored in the local SQLite (same trust level
+ * as the passphrases and access tokens already kept there). Keep it stable:
+ * changing it invalidates existing tunnels' OPAQUE registration records.
+ */
+let setupEnsure: Promise<string> | null = null;
+export function ensureOpaqueServerSetup(): Promise<string> {
+  const existing = loadServerSetup();
+  if (existing) return Promise.resolve(existing);
+  if (!setupEnsure) {
+    setupEnsure = (async () => {
+      await ensureOpaqueReady();
+      const again = loadServerSetup(); // a concurrent caller may have won
+      if (again) return again;
+      const setup = opaque.server.createSetup();
+      SET_KV.run(OPAQUE_SETUP_KV_KEY, setup);
+      console.log('[remote-access] generated a fresh OPAQUE server setup (stored locally)');
+      return setup;
+    })().finally(() => {
+      setupEnsure = null;
+    });
+  }
+  return setupEnsure;
 }
 
 function opaqueSetupFingerprint(): string {
   return createHash('sha256').update(getServerSetup()).digest('hex');
 }
-
-const GET_KV = db.prepare<[string], { value: string } | undefined>(
-  'SELECT value FROM iclaw_kv WHERE key = ?',
-);
-const SET_KV = db.prepare('INSERT INTO iclaw_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
-const CLEAR_ALL_OPAQUE = db.prepare(
-  'UPDATE remote_access_tunnels SET opaque_registration_record = NULL',
-);
 
 /**
  * When OPAQUE_SERVER_SETUP changes, stale registration records cause "Wrong passphrase".
