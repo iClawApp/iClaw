@@ -173,7 +173,7 @@ describe('remoteAccessOpaqueGate', () => {
     expect(serialized).not.toContain(PASS);
   });
 
-  it('OPAQUE start/finish succeeds and sets iclaw_ra cookie', async () => {
+  it('OPAQUE finish returns a transport handle and does NOT leak iclaw_ra to the browser', async () => {
     const { finishLoginRequest, loginStateId } = await runOpaqueClientLogin(PASS);
     const finishRes = mockRes();
     await remoteAccessOpaqueLoginFinishHandler(
@@ -187,7 +187,11 @@ describe('remoteAccessOpaqueGate', () => {
     );
     expect(finishRes.statusCode).toBe(200);
     expect((finishRes.body as { ok: boolean }).ok).toBe(true);
-    expect(String(finishRes.headers['Set-Cookie'] ?? '')).toContain('iclaw_ra=');
+    // E2E-only: the session id is NOT handed to the browser as a cookie (that
+    // would leak it to the relay). Inner encrypted requests authenticate via
+    // the transport session re-attaching the cookie server-side at loopback.
+    expect(String(finishRes.headers['Set-Cookie'] ?? '')).not.toContain('iclaw_ra=');
+    expect(typeof (finishRes.body as { transportHandle?: unknown }).transportHandle).toBe('string');
   });
 
   it('wrong passphrase fails OPAQUE login', async () => {

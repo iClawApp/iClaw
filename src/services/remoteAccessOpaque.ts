@@ -2,7 +2,7 @@
  * OPAQUE (RFC 9807) for Remote Access — passphrase never sent over the tunnel.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import * as opaque from '@serenity-kit/opaque';
 
@@ -191,5 +191,8 @@ export function takeOpaqueLoginState(
 }
 
 function opaqueRandomId(): string {
-  return `ol-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  // Used as the lookup key for in-flight OPAQUE server login state. Must be
+  // unguessable: Math.random() is not cryptographically secure, so derive the
+  // id from CSPRNG bytes instead.
+  return `ol-${randomBytes(18).toString('base64url')}`;
 }

@@ -5,7 +5,10 @@ import { hkdf } from '/js/vendor/noble/hkdf.js';
 import { sha256 } from '/js/vendor/noble/sha2.js';
 
 export const E2E_INFO = 'iClaw-ra-e2e-v1';
+/** Forward-gap tolerance for the counter ledger — NOT a replay window. See remoteAccessE2eCrypto.ts. */
 export const MAX_CTR_SKIP = 32;
+/** Upper bound on a frame counter (64-bit nonce carried as a JS number). */
+export const MAX_CTR = Number.MAX_SAFE_INTEGER;
 
 const te = new TextEncoder();
 const td = new TextDecoder();
@@ -171,6 +174,8 @@ export class E2eCounterLedger {
     this.next = new Map();
   }
   checkAndAdvance(streamId, direction, ctr) {
+    // Fail closed on malformed counters (mirrors remoteAccessE2eCrypto.ts).
+    if (!Number.isSafeInteger(ctr) || ctr < 0 || ctr > MAX_CTR) return false;
     const k = direction + '\x00' + streamId;
     const expected = this.next.get(k) ?? 0;
     if (ctr < expected) return false;

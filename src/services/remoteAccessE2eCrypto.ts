@@ -16,7 +16,33 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
 export const E2E_INFO = 'iClaw-ra-e2e-v1';
+
+/**
+ * Forward-gap tolerance for the per-stream counter ledger.
+ *
+ * The receiver expects monotonically increasing counters per (direction,
+ * streamId). A counter `< expected` is always rejected (replay protection),
+ * and accepting a counter advances `expected` to `ctr + 1` — so once a value
+ * is seen, every value `<=` it is permanently rejected. MAX_CTR_SKIP only
+ * widens how far AHEAD a counter may jump in one step, absorbing a few
+ * dropped/coalesced frames without resyncing. It is NOT a replay window.
+ *
+ * Frames travel in order over a single TCP-backed WebSocket, so large skips
+ * never occur in practice; 32 is a deliberately tight bound that still leaves
+ * slack for benign gaps. Out-of-order frames inside the window are dropped,
+ * not buffered.
+ */
 export const MAX_CTR_SKIP = 32;
+
+/**
+ * Upper bound on a frame counter. The 12-byte GCM nonce packs the counter as
+ * a 64-bit LE integer, but it is carried through JS as a `number`; past
+ * 2^53 (`Number.MAX_SAFE_INTEGER`) integer arithmetic loses precision and two
+ * distinct logical counters could collapse to the same nonce. We fail closed
+ * well before that — reaching even 2^32 frames on a single stream is already
+ * unreachable in any real session.
+ */
+export const MAX_CTR = Number.MAX_SAFE_INTEGER;
 
 export type E2eDirection = 'c2s' | 's2c';
 export type E2eFrameKind = 'http-req' | 'http-res' | 'ws-open' | 'ws-data' | 'ws-close';
@@ -191,6 +217,9 @@ export class E2eCounterLedger {
   }
 
   checkAndAdvance(streamId: string, direction: E2eDirection, ctr: number): boolean {
+    // Fail closed on malformed counters so the 64-bit nonce derivation never
+    // sees a fractional/negative/precision-losing value (see MAX_CTR).
+    if (!Number.isSafeInteger(ctr) || ctr < 0 || ctr > MAX_CTR) return false;
     const k = this.key(streamId, direction);
     const expected = this.next.get(k) ?? 0;
     if (ctr < expected) return false;

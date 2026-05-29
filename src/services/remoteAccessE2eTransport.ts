@@ -23,10 +23,36 @@ import {
   isValidTunnelSessionForTunnel,
   parseCookieHeader,
   stripInternalHeaders,
+  SESSION_COOKIE,
   TUNNELED_HEADER,
   TUNNELED_VALUE,
   TUNNEL_ID_HEADER,
 } from './remoteAccessAuth';
+
+/**
+ * Inner E2E requests are authenticated by *possession of the E2E session keys*
+ * — a request only decrypts here if it was sealed with keys derived from a
+ * successful OPAQUE login. The browser cannot carry the HttpOnly `iclaw_ra`
+ * cookie inside the encrypted inner request (it isn't visible to JS), and we
+ * deliberately never send that cookie to the browser anymore so the relay
+ * can't see it either. So we re-attach the session id here, server-side,
+ * keyed off the transport session, letting the inner request pass the gate
+ * middleware without the cookie ever crossing the wire.
+ */
+function injectSessionCookie(
+  headers: Record<string, string>,
+  session: E2eTransportSession,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === 'cookie') continue; // rebuilt below
+    out[k] = v;
+  }
+  const existing = headers.cookie ?? headers.Cookie ?? '';
+  const sessionPair = `${SESSION_COOKIE}=${encodeURIComponent(session.raSessionId)}`;
+  out.cookie = existing ? `${existing}; ${sessionPair}` : sessionPair;
+  return out;
+}
 
 export const E2E_HTTP_PATH = '/__ra/e2e/http';
 export const E2E_WS_PATH = '/__ra/e2e/ws';
@@ -217,7 +243,7 @@ export async function handleE2eHttpFrame(opts: {
     return { status: 400, body: JSON.stringify({ error: 'malformed inner http-req' }) };
   }
 
-  const safeHeaders = stripInternalHeaders(inner.headers ?? {});
+  const safeHeaders = injectSessionCookie(stripInternalHeaders(inner.headers ?? {}), session);
   const reqOpts: http.RequestOptions = {
     host: opts.localHost,
     port: opts.localPort,
@@ -353,7 +379,10 @@ function openLocalWs(opts: {
   localPort: number;
   sendPublic: (wire: string, binary: boolean) => void;
 }): void {
-  const safeHeaders = stripInternalHeaders(opts.inner.headers ?? {});
+  const safeHeaders = injectSessionCookie(
+    stripInternalHeaders(opts.inner.headers ?? {}),
+    opts.session,
+  );
   const url = `ws://${opts.localHost}:${opts.localPort}${opts.inner.path}`;
   let local: WebSocket;
   try {

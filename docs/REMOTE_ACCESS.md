@@ -131,11 +131,14 @@ enters the passphrase.
 - Which **E2E endpoints** are hit (`/__ra/e2e/http`, `/__ra/e2e/ws`) and the
   bootstrap/OPAQUE/gate-asset requests that happen before the encrypted
   session is established.
-- The relay **access cookie** and the iClaw session cookie that ride the
-  outer requests. These do **not** grant the relay access to encrypted
-  content (that requires the OPAQUE-derived keys, which never leave the
-  browser/iClaw), but they are visible. Reducing this exposure is tracked
-  work.
+- The relay **access cookie** (`iclaw_tunnel_access`) that rides the outer
+  requests. It gates the subdomain but does **not** grant the relay access to
+  encrypted content (that requires the OPAQUE-derived keys, which never leave
+  the browser/iClaw).
+- The iClaw login session (`iclaw_ra`) is **not** exposed to the relay: it is
+  never handed to the browser, so it never rides an outer request. Inner
+  encrypted requests are authenticated by possession of the E2E keys, and your
+  local iClaw re-attaches the session id itself at loopback.
 
 **What this is NOT**
 

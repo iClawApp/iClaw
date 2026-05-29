@@ -32,6 +32,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:ra-smoke": "vitest run test/unit/remoteAccessE2eSmoke.test.ts",
+    "test:ra-integration": "npm run build && node scripts/ra-e2e-integration.mjs",
     "smoke:ra-manual": "node scripts/ra-e2e-smoke.mjs",
     "scan:relay-capture": "node scripts/ra-relay-capture-scan.mjs",
     "postinstall": "node scripts/copy-opaque-vendor.mjs",

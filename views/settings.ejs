@@ -44,7 +44,7 @@
           <ul class="ra-security-list">
             <li>HTTP &amp; WebSocket payloads are encrypted end-to-end between your browser and local iClaw — the relay forwards only ciphertext.</li>
             <li>OPAQUE login keeps your passphrase off the wire — the relay never sees it.</li>
-            <li>Alpha — not externally audited. The relay still sees metadata: subdomain, request timing &amp; sizes, the access/session cookies, and which E2E endpoints you hit.</li>
+            <li>Alpha — not externally audited. The relay still sees metadata: subdomain, request timing &amp; sizes, the relay access cookie, and which E2E endpoints you hit. Your iClaw login session is never sent to the relay.</li>
           </ul>
           <p class="ra-security-foot">
             Device sessions let trusted browsers reconnect without re-entering the passphrase.

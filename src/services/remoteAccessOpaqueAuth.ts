@@ -6,10 +6,10 @@
 import type { Request, RequestHandler, Response } from 'express';
 
 import {
-  attachSessionCookie,
   getTunnelIdFromRequest,
   isGateEnabled,
   isTunneledRequest,
+  mintSession,
 } from './remoteAccessAuth';
 import { registerTrustedDevice } from './remoteAccessDeviceAuth';
 import { isValidDevicePublicKey } from './remoteAccessDeviceCrypto';
@@ -131,7 +131,12 @@ export const remoteAccessOpaqueLoginFinishHandler: RequestHandler = async (req, 
     return;
   }
 
-  const raSessionId = attachSessionCookie(res, ctx.tunnelId, req);
+  // E2E-only: do NOT Set-Cookie the iclaw_ra session to the browser. The relay
+  // forwards outer responses verbatim, so any Set-Cookie here would leak the
+  // session id to the relay. Inner encrypted requests are authenticated by
+  // possession of the E2E session keys; the transport layer re-attaches this
+  // session id server-side at loopback (see remoteAccessE2eTransport).
+  const raSessionId = mintSession(ctx.tunnelId);
   const persisted = remoteAccessState.get(ctx.tunnelId);
   const transportHandle = createE2eTransportSession({
     tunnelId: ctx.tunnelId,
