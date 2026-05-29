@@ -4853,6 +4853,25 @@
     );
   }
 
+  function scheduledRowSortKey(row) {
+    const t = parseScheduledStamp(row.dataset.scheduledAt);
+    return t ? t.getTime() : Number.POSITIVE_INFINITY;
+  }
+
+  /** Soonest scheduled_at first (matches server ORDER BY scheduled_at ASC). */
+  function sortScheduledListDom() {
+    if (!scheduledListEl) return;
+    const rows = [...scheduledListEl.querySelectorAll('.scheduled-item--scheduled')];
+    if (rows.length < 2) return;
+    rows.sort((a, b) => {
+      const da = scheduledRowSortKey(a);
+      const db = scheduledRowSortKey(b);
+      if (da !== db) return da - db;
+      return Number(a.dataset.scheduledId) - Number(b.dataset.scheduledId);
+    });
+    for (const row of rows) scheduledListEl.appendChild(row);
+  }
+
   function refreshScheduledTimes() {
     if (!scheduledListEl) return;
     scheduledListEl.querySelectorAll('.scheduled-item-when[data-when]').forEach((el) => {
@@ -4877,6 +4896,7 @@
     });
     scheduledListEl.appendChild(row);
     scheduledListEl.classList.remove('is-empty');
+    sortScheduledListDom();
   }
   function updateScheduledItem(scheduled) {
     if (!scheduledListEl) return;
@@ -4895,6 +4915,7 @@
     }
     const textEl = row.querySelector('.scheduled-item-text');
     if (textEl) textEl.textContent = scheduled.content;
+    sortScheduledListDom();
   }
 
   function removeScheduledItem(id) {
@@ -5930,6 +5951,7 @@
         /* silent */
       }
     });
+    sortScheduledListDom();
     refreshScheduledTimes();
   }
 
