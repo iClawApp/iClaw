@@ -25,6 +25,7 @@
     window.__ICLAW_VERSION__ = <%- JSON.stringify(typeof iclawVersion !== 'undefined' ? iclawVersion : '0.0.0') %>;
     window.__ICLAW_PROJECT_LOGO_EMOJIS__ = <%- JSON.stringify(projectLogoEmojis || []) %>;
     window.__ICLAW_PROJECTS__ = <%- JSON.stringify(typeof projectsMini !== 'undefined' ? projectsMini : []) %>;
+    window.__ICLAW_SCHEDULED_CHAT_COUNTS__ = <%- JSON.stringify(typeof scheduledChatCounts !== 'undefined' ? scheduledChatCounts : {}) %>;
   </script>
 </head>
 <body>

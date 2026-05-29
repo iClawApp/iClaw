@@ -68,6 +68,8 @@
   --warn-soft-bg: color-mix(in srgb, var(--warn) 8%, var(--surface));
   --warn-soft-border: color-mix(in srgb, var(--warn) 35%, var(--border));
   --info: #2962ff;
+  /* Sidebar dot — pending send-later (acid fuchsia; magenta, not link-blue). */
+  --scheduled: #d946ef;
 
   /* Apple system blue — inline banner primary actions */
   --apple-blue: #007aff;
@@ -89,6 +91,7 @@
   :root {
     --warn: #fbbf24;
     --info: #7ab7ff;
+    --scheduled: #f0abfc;
     --approve: #4ade80;
     --approve-soft-fg: #86efac;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
@@ -753,6 +756,9 @@ code {
 }
 .status-dot.unread {
   background: var(--md-link);
+}
+.status-dot.scheduled {
+  background: var(--scheduled);
 }
 .status-dot.task-human {
   background: #ff9500;
@@ -3350,7 +3356,7 @@ code {
   z-index: 2;
   border: 2px solid var(--sidebar-bg);
 }
-.chat-item-avatar-wrap .status-dot:not(.working):not(.unread) {
+.chat-item-avatar-wrap .status-dot:not(.working):not(.unread):not(.scheduled) {
   display: none;
 }
 

@@ -10,7 +10,7 @@ import { mediaRouter } from './routes/media';
 import { gatewayRouter } from './routes/gateway';
 import { updateRouter } from './routes/update';
 import { tasksRouter } from './routes/tasks';
-import { projects } from './services/store';
+import { projects, scheduledMessages } from './services/store';
 import {
   remoteAccessAuthMiddleware,
   remoteAccessLoginHandler,
@@ -69,6 +69,8 @@ export function createApp(): express.Express {
       logo_emoji: p.logo_emoji,
       logo_color: p.logo_color,
     }));
+    res.locals.scheduledChatIds = scheduledMessages.chatIdsWithPending();
+    res.locals.scheduledChatCounts = scheduledMessages.pendingCountByChatId();
     next();
   });
 

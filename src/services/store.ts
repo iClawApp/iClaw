@@ -880,6 +880,30 @@ export const scheduledMessages = {
       )
       .all(chatId) as ScheduledMessage[];
   },
+  /** Distinct chat ids with at least one pending scheduled row (sidebar dots). */
+  chatIdsWithPending(): number[] {
+    return Object.keys(this.pendingCountByChatId()).map(Number);
+  },
+  /** Pending scheduled row counts keyed by chat id (sidebar + bootstrapping). */
+  pendingCountByChatId(): Record<number, number> {
+    const rows = db
+      .prepare(
+        `SELECT chat_id, COUNT(*) AS n
+         FROM scheduled_messages
+         GROUP BY chat_id
+         ORDER BY chat_id ASC`,
+      )
+      .all() as { chat_id: number; n: number }[];
+    const out: Record<number, number> = {};
+    for (const r of rows) out[r.chat_id] = r.n;
+    return out;
+  },
+  countByChat(chatId: number): number {
+    const row = db
+      .prepare('SELECT COUNT(*) AS n FROM scheduled_messages WHERE chat_id = ?')
+      .get(chatId) as { n: number };
+    return row.n;
+  },
   get(id: number): ScheduledMessage | undefined {
     return db.prepare('SELECT * FROM scheduled_messages WHERE id = ?').get(id) as
       | ScheduledMessage

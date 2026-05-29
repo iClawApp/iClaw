@@ -102,9 +102,11 @@
 
   <nav class="chat-list" id="chat-list">
     <% if (chats.length > 0) { %>
+      <% const _scheduledChatIds = typeof scheduledChatIds !== 'undefined' ? scheduledChatIds : []; %>
       <% chats.forEach(function (c) {
         const dotWorking = workingIds.indexOf(c.id) >= 0;
         const dotUnread = !dotWorking && c.unread;
+        const dotScheduled = !dotWorking && !dotUnread && _scheduledChatIds.indexOf(c.id) >= 0;
         const p = c.project_id ? _projectsMap.get(c.project_id) : null;
       %>
         <a
@@ -130,8 +132,8 @@
             <span class="chat-item-project-mark chat-item-project-mark--spacer" aria-hidden="true"></span>
           <% } %>
             <span
-              class="status-dot<%= dotWorking ? ' working' : (dotUnread ? ' unread' : '') %>"
-              aria-hidden="true"
+              class="status-dot<%= dotWorking ? ' working' : (dotUnread ? ' unread' : (dotScheduled ? ' scheduled' : '')) %>"
+              <% if (dotScheduled) { %>aria-label="Scheduled message pending"<% } else { %>aria-hidden="true"<% } %>
             ></span>
           </span>
           <span class="chat-item-title"><%= c.title %></span>

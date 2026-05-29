@@ -1911,6 +1911,65 @@
       '.chat-item[data-chat-id="' + id + '"] .chat-item-avatar-wrap .status-dot',
     );
   }
+  /** chatId → pending scheduled row count (sidebar muted dot). */
+  const scheduledPendingCount = new Map();
+  (function initScheduledPendingCount() {
+    const raw = window.__ICLAW_SCHEDULED_CHAT_COUNTS__;
+    if (!raw || typeof raw !== 'object') return;
+    for (const [id, count] of Object.entries(raw)) {
+      const chatId = Number(id);
+      const n = Number(count);
+      if (Number.isFinite(chatId) && n > 0) scheduledPendingCount.set(chatId, n);
+    }
+  })();
+
+  function reconcileStatusDot(id) {
+    const dot = statusDot(id);
+    if (!dot) return;
+    const working = dot.classList.contains('working');
+    const unread = dot.classList.contains('unread');
+    dot.classList.remove('scheduled');
+    if (working || unread) {
+      dot.setAttribute('aria-hidden', 'true');
+      dot.removeAttribute('aria-label');
+      scheduleFaviconUpdate();
+      return;
+    }
+    const pending = scheduledPendingCount.get(id) || 0;
+    if (pending > 0) {
+      dot.classList.add('scheduled');
+      dot.removeAttribute('aria-hidden');
+      dot.setAttribute('aria-label', 'Scheduled message pending');
+    } else {
+      dot.setAttribute('aria-hidden', 'true');
+      dot.removeAttribute('aria-label');
+    }
+    scheduleFaviconUpdate();
+  }
+
+  function setScheduledPendingCount(id, count) {
+    const n = Math.max(0, Number(count) || 0);
+    if (n > 0) scheduledPendingCount.set(id, n);
+    else scheduledPendingCount.delete(id);
+    reconcileStatusDot(id);
+  }
+
+  function bumpScheduledPending(id, delta) {
+    const next = Math.max(0, (scheduledPendingCount.get(id) || 0) + delta);
+    setScheduledPendingCount(id, next);
+  }
+
+  function countScheduledRowsInComposer() {
+    if (!scheduledListEl) return 0;
+    return scheduledListEl.querySelectorAll('.scheduled-item--scheduled').length;
+  }
+
+  function syncScheduledSidebarForChat(chatId) {
+    if (chatId === activeChatId && scheduledListEl) {
+      setScheduledPendingCount(chatId, countScheduledRowsInComposer());
+    }
+  }
+
   function setWorkingDot(id, on) {
     const dot = statusDot(id);
     if (!dot) return;
@@ -1920,14 +1979,14 @@
     } else {
       dot.classList.remove('working');
     }
-    scheduleFaviconUpdate();
+    reconcileStatusDot(id);
   }
   function setUnreadDot(id, on) {
     const dot = statusDot(id);
     if (!dot) return;
     if (on) dot.classList.add('unread');
     else dot.classList.remove('unread');
-    scheduleFaviconUpdate();
+    reconcileStatusDot(id);
   }
 
   // -------------------------------------------------------------------------
@@ -1963,6 +2022,7 @@
     if (name === 'orange') return '#ff9500';
     if (name === 'blue') return read('--md-link', '#2962ff');
     if (name === 'green') return read('--ok', '#16a34a');
+    if (name === 'fuchsia') return read('--scheduled', '#d946ef');
     return '#888';
   }
 
@@ -1987,12 +2047,14 @@
       has('.chat-list .status-dot.working') ||
       has('.sidebar-tasks-dots .status-dot.working');
     const unread = has('.chat-list .status-dot.unread');
+    const scheduled = has('.chat-list .status-dot.scheduled');
     const needsHuman = has('.sidebar-tasks-dots .status-dot.task-human');
     const review = has('.sidebar-tasks-dots .status-dot.task-review');
     const colors = [];
     if (needsHuman) colors.push('orange'); // most urgent
     if (unread || review) colors.push('blue');
     if (working) colors.push('green');
+    if (scheduled) colors.push('fuchsia');
     return colors.slice(0, 2); // cap at 2 — 3 dots turn to mush at 16px
   }
 
@@ -3152,8 +3214,12 @@
       }
 
       case 'scheduled-added': {
-        if (msg.chatId !== activeChatId) return;
-        renderScheduledItem(msg.scheduled);
+        if (msg.chatId === activeChatId) {
+          renderScheduledItem(msg.scheduled);
+          syncScheduledSidebarForChat(msg.chatId);
+        } else {
+          bumpScheduledPending(msg.chatId, 1);
+        }
         return;
       }
 
@@ -3164,8 +3230,12 @@
       }
 
       case 'scheduled-deleted': {
-        if (msg.chatId !== activeChatId) return;
-        removeScheduledItem(msg.scheduledId);
+        if (msg.chatId === activeChatId) {
+          removeScheduledItem(msg.scheduledId);
+          syncScheduledSidebarForChat(msg.chatId);
+        } else {
+          bumpScheduledPending(msg.chatId, -1);
+        }
         return;
       }
 
