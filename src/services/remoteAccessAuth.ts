@@ -216,6 +216,27 @@ export function parseCookieHeader(header: string | undefined): Record<string, st
   return out;
 }
 
+/**
+ * Remove the iclaw_ra session cookie from a Cookie header.
+ *
+ * Plaintext tunnel requests must NEVER be treated as authenticated: the
+ * workspace is only ever served over the encrypted E2E loopback (which
+ * re-attaches the session id server-side). Stripping the cookie on the
+ * plaintext path means a returning visitor whose browser still holds a stale
+ * `iclaw_ra` cookie (sessionStorage E2E keys gone) lands on the gate to
+ * re-establish an encrypted session, instead of hitting an "E2E required"
+ * dead-end or — worse — having the workspace served in the clear.
+ */
+export function stripSessionCookie(cookieHeader: string | undefined): string | undefined {
+  if (!cookieHeader) return cookieHeader;
+  const prefix = `${SESSION_COOKIE.toLowerCase()}=`;
+  const kept = cookieHeader
+    .split(';')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0 && !p.toLowerCase().startsWith(prefix));
+  return kept.length ? kept.join('; ') : undefined;
+}
+
 export function getTunnelIdFromRequest(req: Request): string | null {
   const h = req.headers[TUNNEL_ID_HEADER];
   if (typeof h === 'string' && h.length > 0) return h;
@@ -329,8 +350,8 @@ export function renderGateLoginPage(opts: {
 <meta name="iclaw-ra-relay-binding" content="${relayBindingB64}" />
 <meta name="iclaw-ra-next" content="${safeNext}" />
 <meta name="iclaw-ra-e2e" content="true" />
-<script src="/js/ra-device-auth.js?v=ra-gate-3" defer></script>
-<script type="module" src="/js/ra-gate-opaque.mjs?v=ra-gate-3"></script>
+<script src="/js/ra-device-auth.js?v=ra-gate-6" defer></script>
+<script type="module" src="/js/ra-gate-opaque.mjs?v=ra-gate-6"></script>
 </body>
 </html>`;
 }

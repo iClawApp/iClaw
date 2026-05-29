@@ -159,7 +159,11 @@ describe('remoteAccessDeviceAuth', () => {
 
     expect(vRes.statusCode).toBe(200);
     expect((vRes.body as { ok: boolean }).ok).toBe(true);
-    expect(String(vRes.headers['Set-Cookie'] ?? '')).toContain('iclaw_ra=');
+    // E2E-only: device verify must NOT hand the browser an iclaw_ra cookie
+    // (it would leak to the relay and can't unlock E2E anyway). The client is
+    // told it still needs the passphrase to derive the encrypted session.
+    expect(String(vRes.headers['Set-Cookie'] ?? '')).not.toContain('iclaw_ra=');
+    expect((vRes.body as { needsPassphrase?: boolean }).needsPassphrase).toBe(true);
 
     const updated = remoteAccessDevices.get(TUNNEL, device.id)!;
     expect(updated.lastSeenAt).toBeGreaterThanOrEqual(seenBefore);

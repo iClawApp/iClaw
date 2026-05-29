@@ -8,7 +8,6 @@ import type { Request, RequestHandler, Response } from 'express';
 import { remoteAccessDevices } from './remoteAccessDevices';
 import { verifyDeviceChallengeSignature, isValidDevicePublicKey } from './remoteAccessDeviceCrypto';
 import {
-  attachSessionCookie,
   getTunnelIdFromRequest,
   isGateEnabled,
   isTunneledRequest,
@@ -145,15 +144,20 @@ export const remoteAccessDeviceVerifyHandler: RequestHandler = (req, res) => {
   finishDeviceLogin(res, tunnelId, req);
 };
 
-function finishDeviceLogin(res: Response, tunnelId: string, req: Request): void {
-  attachSessionCookie(res, tunnelId, req);
+function finishDeviceLogin(res: Response, _tunnelId: string, req: Request): void {
+  // E2E-only: do NOT Set-Cookie an iclaw_ra session here. The relay forwards
+  // outer responses verbatim, so a Set-Cookie would leak the session id to the
+  // relay — and a device challenge cannot derive the E2E transport keys anyway
+  // (those come only from an OPAQUE passphrase login). The browser detects the
+  // missing E2E keys and prompts for the passphrase to start the encrypted
+  // session. Device recognition still updates "last seen" for the UI.
   const nextUrl =
     typeof req.body?.next === 'string' && req.body.next.startsWith('/')
       ? req.body.next
       : '/';
   const accept = (req.headers.accept ?? '').toString();
   if (accept.includes('application/json')) {
-    res.json({ ok: true, next: nextUrl });
+    res.json({ ok: true, next: nextUrl, needsPassphrase: true });
     return;
   }
   res.redirect(303, nextUrl);

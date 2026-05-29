@@ -90,6 +90,25 @@
     });
   }
 
+  function deleteDevice(tunnelId) {
+    return openDb()
+      .then(function (db) {
+        return new Promise(function (resolve) {
+          var tx = db.transaction(STORE, 'readwrite');
+          tx.objectStore(STORE).delete(tunnelId);
+          tx.oncomplete = function () {
+            resolve();
+          };
+          tx.onerror = function () {
+            resolve();
+          };
+        });
+      })
+      .catch(function () {
+        // best-effort
+      });
+  }
+
   function importPrivateKey(jwk) {
     return crypto.subtle.importKey('pkcs8', jwk, { name: 'Ed25519' }, false, ['sign']);
   }
@@ -178,7 +197,7 @@
   function redirectAfterAuth(next) {
     var target = next || '/';
     if (isTunneledGate() && hasE2eSessionKeys()) {
-      return import('/js/ra-e2e-transport.mjs')
+      return import('/js/ra-e2e-transport.mjs?v=ra-gate-6')
         .then(function (m) {
           return m.navigateViaE2eDocument(target);
         })
@@ -216,10 +235,22 @@
     return redirectAfterAuth(login.next || next);
   }
 
+  // If the server no longer recognises this device (revoked / unknown), drop
+  // the stale local record so the next passphrase login registers a fresh one
+  // instead of reusing a dead device forever.
+  function dropIfRejected(tunnelId, res) {
+    if (res && res.status === 403) {
+      return deleteDevice(tunnelId).then(function () {
+        throw new Error('device revoked');
+      });
+    }
+    return null;
+  }
+
   function tryDeviceLogin(tunnelId, record, next) {
     return postJson('/__ra/device/challenge', { deviceId: record.deviceId, next: next })
       .then(function (ch) {
-        if (!ch.ok) throw new Error('challenge failed');
+        if (!ch.ok) return dropIfRejected(tunnelId, ch) || Promise.reject(new Error('challenge failed'));
         return importPrivateKey(record.privateKeyJwk).then(function (priv) {
           return signChallenge(priv, ch.data.challenge).then(function (signature) {
             return postJson('/__ra/device/verify', {
@@ -232,7 +263,7 @@
         });
       })
       .then(function (verified) {
-        if (!verified.ok) throw new Error('verify failed');
+        if (!verified.ok) return dropIfRejected(tunnelId, verified) || Promise.reject(new Error('verify failed'));
         return redirectAfterAuth(verified.data.next || next);
       });
   }
@@ -277,11 +308,22 @@
       submitBtn.textContent = 'Continuing…';
     }
 
-    generateKeypair()
-      .then(function (keys) {
-        return runOpaqueLogin(passphrase, next, keys).then(function (login) {
-          clearPassphraseInput(passInput);
-          return finishLoginSuccess(tunnelId, next, login);
+    // Reuse the device already registered for this browser instead of minting a
+    // new keypair on every login — otherwise each passphrase entry spawns a
+    // duplicate "Connected devices" record. Only register when none exists
+    // (first login here, or after the server revoked the previous one).
+    loadDevice(tunnelId)
+      .catch(function () {
+        return null;
+      })
+      .then(function (existing) {
+        var haveDevice = !!(existing && existing.deviceId && existing.privateKeyJwk);
+        var keysPromise = haveDevice ? Promise.resolve(null) : generateKeypair();
+        return keysPromise.then(function (keys) {
+          return runOpaqueLogin(passphrase, next, keys).then(function (login) {
+            clearPassphraseInput(passInput);
+            return finishLoginSuccess(tunnelId, next, login);
+          });
         });
       })
       .catch(function (err) {
@@ -330,6 +372,36 @@
     }
 
     wirePassphraseForm(tunnelId, next);
+
+    // Same-tab resume. This gate page is also the bootstrap for in-app
+    // navigations (clicking a chat, reload, deep-link) — the workspace is a
+    // multi-page app and a full navigation can't be E2E-wrapped, so the server
+    // answers it with this page. If the tab already has an E2E session
+    // (sessionStorage survives same-tab navigations), re-establish the
+    // encrypted transport and load the requested page WITHOUT asking for the
+    // passphrase again. Only a fresh tab (keys gone) falls through to login.
+    if (isTunneledGate() && hasE2eSessionKeys()) {
+      import('/js/ra-e2e-transport.mjs?v=ra-gate-6')
+        .then(function (m) {
+          return m.navigateViaE2eDocument(next);
+        })
+        .catch(function () {
+          // Keys are stale (e.g. iClaw restarted and dropped the session) —
+          // clear them and fall back to the passphrase.
+          try {
+            sessionStorage.removeItem('iclaw_e2e_opaque_sk');
+            sessionStorage.removeItem('iclaw_e2e_transport');
+          } catch (e) {
+            // ignore
+          }
+          showPassphraseForm();
+          var form = document.getElementById('ra-gate-form');
+          if (form) {
+            showFormError(form, 'Your secure session expired. Enter the passphrase to continue.');
+          }
+        });
+      return;
+    }
 
     if (!window.isSecureContext || !window.crypto || !window.crypto.subtle || !window.indexedDB) {
       showPassphraseForm();

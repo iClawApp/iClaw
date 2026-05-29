@@ -15,12 +15,22 @@ function fail(msg) {
   process.exit(1);
 }
 
-function copyFileRequired(src, dest, label) {
+/** Dangling `//# sourceMappingURL=…` comments — the .map files are not vendored. */
+const SOURCEMAP_COMMENT_RE = /\n?[ \t]*\/\/# sourceMappingURL=.*$/gm;
+
+function copyFileRequired(src, dest, label, { stripSourceMap = false } = {}) {
   if (!fs.existsSync(src)) {
     fail(`missing ${label}: ${src}`);
   }
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(src, dest);
+  if (stripSourceMap) {
+    // Drop sourceMappingURL comments so browsers (and our test loader) don't
+    // chase .map files we intentionally don't ship.
+    const code = fs.readFileSync(src, 'utf8').replace(SOURCEMAP_COMMENT_RE, '');
+    fs.writeFileSync(dest, code);
+  } else {
+    fs.copyFileSync(src, dest);
+  }
 }
 
 /** @noble/hashes@2.x ships ESM at package root; older layouts used esm/. */
@@ -46,7 +56,7 @@ if (!fs.existsSync(path.join(root, 'node_modules', '@serenity-kit', 'opaque'))) 
   fail('@serenity-kit/opaque not installed — run npm install');
 }
 
-copyFileRequired(opaqueSrc, opaqueDest, 'opaque bundle');
+copyFileRequired(opaqueSrc, opaqueDest, 'opaque bundle', { stripSourceMap: true });
 console.log('[copy-opaque-vendor] copied public/js/vendor/opaque/index.js');
 
 const nobleDestDir = path.join(root, 'public', 'js', 'vendor', 'noble');
@@ -55,7 +65,9 @@ for (const name of NOBLE_BROWSER_FILES) {
   if (!src) {
     fail(`@noble/hashes file not found: ${name} (checked esm/ and package root)`);
   }
-  copyFileRequired(src, path.join(nobleDestDir, name), `@noble/hashes ${name}`);
+  copyFileRequired(src, path.join(nobleDestDir, name), `@noble/hashes ${name}`, {
+    stripSourceMap: true,
+  });
 }
 
 console.log(

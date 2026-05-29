@@ -39,19 +39,6 @@
           </div>
         </header>
 
-        <div class="ra-security-panel" role="note">
-          <p class="ra-security-badge ra-security-badge--e2e">Remote Access E2E alpha</p>
-          <ul class="ra-security-list">
-            <li>HTTP &amp; WebSocket payloads are encrypted end-to-end between your browser and local iClaw — the relay forwards only ciphertext.</li>
-            <li>OPAQUE login keeps your passphrase off the wire — the relay never sees it.</li>
-            <li>Alpha — not externally audited. The relay still sees metadata: subdomain, request timing &amp; sizes, the relay access cookie, and which E2E endpoints you hit. Your iClaw login session is never sent to the relay.</li>
-          </ul>
-          <p class="ra-security-foot">
-            Device sessions let trusted browsers reconnect without re-entering the passphrase.
-            See <code>docs/REMOTE_ACCESS.md</code> in the iClaw repo for setup (local vs always-on host).
-          </p>
-        </div>
-
         <!-- List of active tunnels -->
         <div id="ra-list" class="ra-list">
           <% if (tunnels.length === 0) { %>
@@ -442,39 +429,6 @@
   color: var(--ok, #2ea043);
   --_btn-border: color-mix(in srgb, var(--ok, #2ea043) 35%, var(--border));
   --_btn-bg: color-mix(in srgb, var(--ok, #2ea043) 10%, transparent);
-}
-
-/* ───────────── Security panel ───────────── */
-.ra-security-panel {
-  margin-bottom: var(--space-5);
-  padding: var(--space-4) var(--space-5);
-  border-radius: var(--radius-lg);
-  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-  background: color-mix(in srgb, var(--surface-elevated, var(--bg)) 92%, transparent);
-}
-.ra-security-badge {
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-.ra-security-badge--e2e { color: var(--ok, #2ea043); }
-.ra-security-badge--legacy { color: var(--muted); }
-.ra-security-list {
-  margin: 0 0 var(--space-3);
-  padding-left: 1.2rem;
-  font-size: var(--text-sm);
-  color: var(--text);
-  line-height: 1.45;
-}
-.ra-security-list li { margin-bottom: 0.35rem; }
-.ra-security-foot {
-  margin: 0;
-  font-size: var(--text-xs, 0.8125rem);
-  color: var(--muted);
-  line-height: 1.4;
-}
-.ra-security-foot code {
-  font-size: 0.92em;
 }
 
 /* ───────────── Empty state ───────────── */

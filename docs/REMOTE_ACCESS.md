@@ -102,10 +102,14 @@ enters the passphrase.
 - **New access link** (per tunnel) rotates the relay access token: old links
   and any already-issued access cookies stop working immediately; a fresh
   `?access=` link is minted. The passphrase and URL host stay the same.
-- **Devices:** after a successful passphrase login, a browser can register a
-  device keypair (private key stays in the browser) so it can reconnect
-  without re-entering the passphrase. Revoke individual devices from the
-  tunnel card. Revoked devices can't log in.
+- **Devices:** after a successful passphrase login, a browser registers a
+  device keypair (private key stays in the browser) and appears under
+  *Connected devices*; revoke individual devices from the tunnel card.
+  > **Alpha limitation:** the E2E session keys live only in the tab's
+  > `sessionStorage`, so reopening the link in a new tab (or after closing it)
+  > currently **requires re-entering the passphrase** to re-derive them — the
+  > device record updates "last seen" but does not yet skip the passphrase for
+  > the encrypted session. Device-based E2E resume is planned, not shipped.
 - **Disable** tears the tunnel down immediately; the URL 404s.
 
 ---
@@ -161,3 +165,4 @@ enters the passphrase.
 | URL changed after a restart | Expected if iClaw was down longer than the ~10 min reconnect grace, or the relay restarted. |
 | Visitor sees "tunnel reconnecting" | iClaw briefly lost its relay WS; it retries automatically. |
 | `403 Forbidden` on the URL | Missing/expired `?access=` token — use the full link, or mint a new one with **New access link**. |
+| Raw `{"error":"E2E transport required …"}` instead of the page | A returning tab hit the workspace over plaintext. Fixed: plaintext navigations now always serve the gate. If you still see it, your iClaw predates the fix — rebuild/restart it. Re-enter the passphrase to start a fresh encrypted session. |

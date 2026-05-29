@@ -368,6 +368,7 @@ function createE2eWebSocket(url, protocols) {
 
 let origFetch = null;
 let OrigWebSocket = null;
+let installed = false;
 
 /** Load workspace HTML via encrypted /__ra/e2e/http (after OPAQUE login). */
 export async function navigateViaE2eDocument(nextUrl) {
@@ -402,6 +403,14 @@ export async function installRaE2eTransport() {
   if (!state) {
     return false;
   }
+  // Idempotent: navigateViaE2eDocument installs on the gate page, then the
+  // document.write'd workspace re-runs the boot script (same realm → same
+  // module instance). Re-wrapping would capture the already-wrapped fetch and
+  // recurse, so install the hooks exactly once. `state` is still refreshed
+  // above so the active wrappers pick up the current page's meta.
+  if (installed) {
+    return true;
+  }
   origFetch = window.fetch.bind(window);
   OrigWebSocket = window.WebSocket;
 
@@ -422,5 +431,6 @@ export async function installRaE2eTransport() {
     return createE2eWebSocket(url, protocols);
   };
   window.WebSocket.prototype = OrigWebSocket.prototype;
+  installed = true;
   return true;
 }

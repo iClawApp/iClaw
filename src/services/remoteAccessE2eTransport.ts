@@ -20,8 +20,6 @@ import {
 } from './remoteAccessE2eSession';
 import {
   isGatePublicAsset,
-  isValidTunnelSessionForTunnel,
-  parseCookieHeader,
   stripInternalHeaders,
   SESSION_COOKIE,
   TUNNELED_HEADER,
@@ -119,10 +117,33 @@ export interface E2ePlaintextTunnelContext {
   path: string;
   tunnelId: string;
   cookieHeader?: string;
+  /** Request Accept header — used to tell a page navigation from an XHR. */
+  accept?: string;
+  /** `Sec-Fetch-Mode` (e.g. "navigate") if the browser sent it. */
+  secFetchMode?: string;
+  /** `Sec-Fetch-Dest` (e.g. "document") if the browser sent it. */
+  secFetchDest?: string;
 }
 
 /**
- * Plaintext over relay: OPAQUE/E2E startup + gate static assets + unauthenticated GET / only.
+ * A top-level page navigation (address bar, link click, reload, deep-link) as
+ * opposed to an in-page fetch/XHR. The E2E transport can only wrap fetch/WS, so
+ * navigations arrive in the clear — we answer them with the gate bootstrap,
+ * which re-establishes the encrypted session (or prompts for the passphrase)
+ * and then loads the target over E2E.
+ */
+function isHtmlNavigation(ctx: E2ePlaintextTunnelContext): boolean {
+  if ((ctx.secFetchMode ?? '').toLowerCase() === 'navigate') return true;
+  if ((ctx.secFetchDest ?? '').toLowerCase() === 'document') return true;
+  return (ctx.accept ?? '').toLowerCase().includes('text/html');
+}
+
+/**
+ * What may travel plaintext over the relay: OPAQUE/E2E startup, gate static
+ * assets, and top-level HTML navigations (which get the gate bootstrap, never
+ * the workspace — the plaintext path strips the session cookie, so the gate
+ * middleware always renders the login/bootstrap shell). Everything else
+ * (the app's data XHRs, non-GET) must go through the encrypted E2E channel.
  */
 export function isE2ePlaintextTunnelExempt(ctx: E2ePlaintextTunnelContext): boolean {
   const p = ctx.path.split('?')[0] ?? ctx.path;
@@ -136,13 +157,9 @@ export function isE2ePlaintextTunnelExempt(ctx: E2ePlaintextTunnelContext): bool
 
   if (m === 'GET' || m === 'HEAD') {
     if (isGatePublicAsset(p)) return true;
-
-    const cookies = parseCookieHeader(ctx.cookieHeader);
-    if (isValidTunnelSessionForTunnel(ctx.tunnelId, cookies)) {
-      return false;
-    }
-
+    // The entry point and any top-level navigation get the gate bootstrap.
     if (p === '/') return true;
+    if (isHtmlNavigation(ctx)) return true;
   }
 
   return false;

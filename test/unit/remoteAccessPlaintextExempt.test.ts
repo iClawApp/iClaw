@@ -8,6 +8,7 @@ import {
   renderGateLoginPage,
   remoteAccessAuthMiddleware,
   SESSION_COOKIE,
+  stripSessionCookie,
   TUNNELED_HEADER,
   TUNNELED_VALUE,
   TUNNEL_ID_HEADER,
@@ -129,17 +130,58 @@ describe('Remote Access plaintext tunnel exempt (gate only)', () => {
     expect(String(res.body)).toContain('ra-gate-page');
   });
 
-  it('2. GET / with valid iclaw_ra is not plaintext-exempt', () => {
+  it('2. GET / is always exempt (gate bootstrap), even with a session cookie', () => {
+    // The plaintext path strips the session cookie before this runs; GET / is
+    // the entry point and always serves the gate bootstrap (which resumes the
+    // E2E session client-side from sessionStorage, or prompts for the
+    // passphrase). It never serves the workspace plaintext (middleware sees no
+    // session and renders the gate).
     const sid = mintSession(TUNNEL);
     const cookie = `${SESSION_COOKIE}=${encodeURIComponent(sid)}`;
+    expect(isE2ePlaintextTunnelExempt({ method: 'GET', path: '/', tunnelId: TUNNEL })).toBe(true);
+    expect(
+      isE2ePlaintextTunnelExempt({ method: 'GET', path: '/', tunnelId: TUNNEL, cookieHeader: cookie }),
+    ).toBe(true);
+  });
+
+  it('2b. deep-link navigation serves the gate bootstrap; data XHR is forced to E2E', () => {
+    // Reported bug: clicking a chat / reloading a deep link is a top-level
+    // HTML navigation to a non-"/" path. It must serve the gate bootstrap
+    // (which resumes E2E and loads the page encrypted), NOT the "E2E transport
+    // required" JSON dead-end.
     expect(
       isE2ePlaintextTunnelExempt({
         method: 'GET',
-        path: '/',
+        path: '/chats/82',
         tunnelId: TUNNEL,
-        cookieHeader: cookie,
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      }),
+    ).toBe(true);
+    expect(
+      isE2ePlaintextTunnelExempt({
+        method: 'GET',
+        path: '/chats/82',
+        tunnelId: TUNNEL,
+        secFetchDest: 'document',
+      }),
+    ).toBe(true);
+    // A data XHR (Accept: application/json) is NOT a navigation → must use E2E.
+    expect(
+      isE2ePlaintextTunnelExempt({
+        method: 'GET',
+        path: '/chats/82',
+        tunnelId: TUNNEL,
+        accept: 'application/json',
       }),
     ).toBe(false);
+
+    // stripSessionCookie keeps the relay access cookie, drops only the session,
+    // and collapses to undefined when the session was the only cookie.
+    const sid = mintSession(TUNNEL);
+    expect(
+      stripSessionCookie(`iclaw_tunnel_access=abc; ${SESSION_COOKIE}=${encodeURIComponent(sid)}`),
+    ).toBe('iclaw_tunnel_access=abc');
+    expect(stripSessionCookie(`${SESSION_COOKIE}=${encodeURIComponent(sid)}`)).toBeUndefined();
   });
 
   it('3. authenticated workspace paths blocked; E2E HTTP path allowed', () => {

@@ -36,6 +36,7 @@ import {
   generatePassphrase,
   isValidTunnelSession,
   stripInternalHeaders,
+  stripSessionCookie,
   TUNNELED_HEADER,
   TUNNELED_VALUE,
   TUNNEL_ID_HEADER,
@@ -415,17 +416,27 @@ function handleReq(socket: WebSocket, frame: ReqFrame): void {
     }
 
     const cookieRaw = frame.headers.cookie ?? frame.headers.Cookie;
-    const cookieHeader = Array.isArray(cookieRaw)
+    const rawCookieHeader = Array.isArray(cookieRaw)
       ? cookieRaw.join('; ')
       : typeof cookieRaw === 'string'
         ? cookieRaw
         : undefined;
+    // A plaintext request is never authenticated. Drop any iclaw_ra session
+    // cookie the browser still holds so (a) a returning visitor with stale
+    // E2E state gets the gate to re-establish an encrypted session instead of
+    // an "E2E required" dead-end, and (b) the workspace can never be served in
+    // the clear off a lingering cookie. The workspace is reachable only via the
+    // encrypted E2E loopback, which injects the session id itself.
+    const cookieHeader = stripSessionCookie(rawCookieHeader);
     if (
       !isE2ePlaintextTunnelExempt({
         method: frame.method,
         path: pathOnly,
         tunnelId: frame.tunnelId,
         cookieHeader,
+        accept: frame.headers.accept ?? frame.headers.Accept,
+        secFetchMode: frame.headers['sec-fetch-mode'],
+        secFetchDest: frame.headers['sec-fetch-dest'],
       })
     ) {
       sendE2eRequiredRes(frame.tunnelId, frame.id);
@@ -433,6 +444,9 @@ function handleReq(socket: WebSocket, frame: ReqFrame): void {
     }
 
     const safeHeaders = stripInternalHeaders(frame.headers);
+    delete safeHeaders.cookie;
+    delete safeHeaders.Cookie;
+    if (cookieHeader) safeHeaders.cookie = cookieHeader;
     const reqOpts: http.RequestOptions = {
       host: bound.localHost,
       port: bound.localPort,

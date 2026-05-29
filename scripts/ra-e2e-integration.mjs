@@ -523,6 +523,91 @@ async function main() {
     'iclaw_ra present in outer request cookies forwarded by the relay',
   );
 
+  /* 11b. M1: a second visitor activating the SAME link must not evict the first. */
+  const jar2 = makeJar();
+  const v2Activate = await request({
+    port: relayPort,
+    host: subHost,
+    path: `/?access=${accessToken}`,
+    headers: { accept: 'text/html' },
+  }).then((res) => {
+    jar2.ingest(res.headers['set-cookie']);
+    return res;
+  });
+  check('M1: second visitor activates the link (302)', v2Activate.status === 302, `status ${v2Activate.status}`);
+  // 401 = relay access gate ALLOWED the request (it reached iClaw's login gate);
+  // 403 = relay access gate DENIED it. Both visitors must see 401, not 403.
+  const v2Reaches = await request({
+    port: relayPort,
+    host: subHost,
+    path: '/',
+    headers: { accept: 'text/html', cookie: jar2.outerCookieHeader() },
+  });
+  check('M1: second visitor passes the relay gate', v2Reaches.status === 401, `status ${v2Reaches.status}`);
+  const v1StillReaches = await request({
+    port: relayPort,
+    host: subHost,
+    path: '/',
+    headers: { accept: 'text/html', cookie: jar.outerCookieHeader() },
+  });
+  check(
+    'M1: first visitor still passes the relay gate (not evicted)',
+    v1StillReaches.status === 401,
+    `status ${v1StillReaches.status} (403 = evicted)`,
+  );
+
+  /* 11c. Returning-visitor: a plaintext top-level GET / carrying a stray
+     iclaw_ra session cookie must serve the gate (re-login), never the
+     "E2E transport required" JSON dead-end and never the workspace. */
+  const stray = await request({
+    port: relayPort,
+    host: subHost,
+    path: '/',
+    headers: {
+      accept: 'text/html,application/xhtml+xml',
+      cookie: `${jar.outerCookieHeader()}; iclaw_ra=stale-bogus-session-value-xxxxxxxxxxxxxxxxxxxxx`,
+    },
+  });
+  check(
+    'returning-visitor: stray iclaw_ra on GET / → gate, not JSON dead-end',
+    stray.status === 401 && /id="ra-gate-form"/.test(stray.body) && !/E2E transport required/.test(stray.body),
+    `status ${stray.status}, json=${/E2E transport required/.test(stray.body)}`,
+  );
+
+  /* 11d. Deep-link navigation (clicking a chat / reload of /chats/:id) is a
+     top-level HTML navigation → must serve the gate bootstrap, not the JSON
+     dead-end and not the workspace. */
+  const deepLink = await request({
+    port: relayPort,
+    host: subHost,
+    path: '/chats/82',
+    headers: {
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-dest': 'document',
+      cookie: jar.outerCookieHeader(),
+    },
+  });
+  check(
+    'deep-link nav (/chats/82) → gate bootstrap, not JSON dead-end',
+    deepLink.status === 401 && /id="ra-gate-form"/.test(deepLink.body) && !/E2E transport required/.test(deepLink.body),
+    `status ${deepLink.status}, json=${/E2E transport required/.test(deepLink.body)}`,
+  );
+
+  // A data XHR (Accept: application/json) to a workspace path must still be
+  // forced to E2E (NOT served plaintext) — proves we didn't over-open the gate.
+  const dataXhr = await request({
+    port: relayPort,
+    host: subHost,
+    path: '/api/chats/82',
+    headers: { accept: 'application/json', cookie: jar.outerCookieHeader() },
+  });
+  check(
+    'plaintext data XHR is refused (E2E required), not served',
+    /E2E transport required/.test(dataXhr.body) || dataXhr.status === 401,
+    `status ${dataXhr.status}`,
+  );
+
   /* 12. C2: regenerate access invalidates the old ?access= link */
   const regen = await request({
     port: iclawPort,
