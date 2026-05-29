@@ -1,6 +1,14 @@
 /**
- * RA-E2E v1 transport crypto — XChaCha20-Poly1305 with monotonic counters.
- * See docs/REMOTE_ACCESS_E2E_V1.md
+ * RA-E2E v1 transport crypto — AES-256-GCM with a per-(direction,streamId)
+ * subkey and monotonic per-stream counters.
+ *
+ * Nonce uniqueness: the 12-byte GCM nonce is derived only from
+ * (tunnelId, counter), so it repeats across streams that each start their
+ * counter at 0. To keep (key, nonce) unique we derive a distinct AEAD key
+ * per (direction, streamId) via HKDF from the direction key — so a repeated
+ * nonce is always paired with a different key. Do NOT remove the subkey
+ * derivation without also making the nonce stream-unique.
+ * See docs/REMOTE_ACCESS.md
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
@@ -37,6 +45,11 @@ export function relayAccessBindingFromAccessToken(accessToken: string): Uint8Arr
   return sha256(new TextEncoder().encode(accessToken));
 }
 
+/** Base64url relay binding for gate/workspace meta (matches browser HKDF salt). */
+export function relayBindingB64urlForAccessToken(accessToken: string): string {
+  return Buffer.from(relayAccessBindingFromAccessToken(accessToken)).toString('base64url');
+}
+
 export function deriveE2eSessionKeys(
   opaqueSessionKey: Uint8Array,
   tunnelId: string,
@@ -54,6 +67,27 @@ export function deriveE2eSessionKeys(
 
 function keyForDirection(keys: E2eSessionKeys, dir: E2eDirection): Uint8Array {
   return dir === 'c2s' ? keys.c2s : keys.s2c;
+}
+
+/**
+ * Per-(direction, streamId) AEAD subkey. Counters restart at 0 for every
+ * new stream and the nonce only encodes (tunnelId, counter), so without a
+ * distinct key per stream two streams would reuse (key, nonce) under GCM —
+ * catastrophic. Binding the key to streamId removes that collision.
+ * MUST match the browser implementation in ra-e2e-crypto.mjs.
+ */
+function deriveStreamKey(
+  dirKey: Uint8Array,
+  direction: E2eDirection,
+  streamId: string,
+): Uint8Array {
+  return hkdf(
+    sha256,
+    dirKey,
+    undefined,
+    new TextEncoder().encode(`rec\x00${direction}\x00${streamId}`),
+    32,
+  );
 }
 
 function buildAad(opts: {
@@ -182,7 +216,7 @@ export function encryptE2eRecord(
     relayBinding: Uint8Array;
   },
 ): Uint8Array {
-  const key = keyForDirection(keys, direction);
+  const key = deriveStreamKey(keyForDirection(keys, direction), direction, opts.streamId);
   const plain: E2ePlainRecord = {
     v: 1,
     ctr: opts.ctr,
@@ -216,7 +250,7 @@ export function decryptE2eRecord(
   ledger: E2eCounterLedger,
 ): E2ePlainRecord | null {
   if (!ledger.checkAndAdvance(opts.streamId, direction, opts.ctr)) return null;
-  const key = keyForDirection(keys, direction);
+  const key = deriveStreamKey(keyForDirection(keys, direction), direction, opts.streamId);
   const aad = buildAad({
     tunnelId: opts.tunnelId,
     streamId: opts.streamId,

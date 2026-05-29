@@ -88,6 +88,9 @@ async function opaquePassphraseLogin(opts) {
     }
     const access = new URLSearchParams(location.search).get('access');
     if (access) sessionStorage.setItem('iclaw_relay_access_raw', access);
+    const bindingMeta = document.querySelector('meta[name="iclaw-ra-relay-binding"]');
+    const bindingB64 = bindingMeta ? bindingMeta.getAttribute('content') || '' : '';
+    if (bindingB64) sessionStorage.setItem('iclaw_relay_binding_b64', bindingB64);
   } catch {
     // ignore quota errors
   }

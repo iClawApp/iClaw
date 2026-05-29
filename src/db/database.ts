@@ -261,6 +261,13 @@ ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
 ensureColumn('remote_access_tunnels', 'access_token', 'TEXT');
 ensureColumn('remote_access_tunnels', 'opaque_registration_record', 'TEXT');
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS iclaw_kv (
+    key TEXT PRIMARY KEY NOT NULL,
+    value TEXT NOT NULL
+  );
+`);
+
 /** Older DBs created project_secrets.project_id as NOT NULL; orphan chat secrets need NULL. */
 function migrateProjectSecretsNullableProjectId(): void {
   const cols = db.prepare('PRAGMA table_info(project_secrets)').all() as {

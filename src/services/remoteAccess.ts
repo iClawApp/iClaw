@@ -53,10 +53,13 @@ import {
   handleE2eHttpFrame,
   handleE2eWsData,
   handleE2eWsOpen,
-  isE2ePlaintextExemptPath,
+  isE2ePlaintextTunnelExempt,
   type E2eWsBridge,
 } from './remoteAccessE2eTransport';
-import { ensureOpaqueRegistrationForTunnel } from './remoteAccessOpaque';
+import {
+  ensureOpaqueRegistrationForTunnel,
+  syncOpaqueRegistrationsWithServerSetup,
+} from './remoteAccessOpaque';
 import {
   ACCESS_QUERY_PARAM,
   buildPublicAccessUrl,
@@ -411,7 +414,20 @@ function handleReq(socket: WebSocket, frame: ReqFrame): void {
       return;
     }
 
-    if (!isE2ePlaintextExemptPath(pathOnly)) {
+    const cookieRaw = frame.headers.cookie ?? frame.headers.Cookie;
+    const cookieHeader = Array.isArray(cookieRaw)
+      ? cookieRaw.join('; ')
+      : typeof cookieRaw === 'string'
+        ? cookieRaw
+        : undefined;
+    if (
+      !isE2ePlaintextTunnelExempt({
+        method: frame.method,
+        path: pathOnly,
+        tunnelId: frame.tunnelId,
+        cookieHeader,
+      })
+    ) {
       sendE2eRequiredRes(frame.tunnelId, frame.id);
       return;
     }
@@ -685,14 +701,16 @@ function deleteTunnelImpl(tunnelId: string): boolean {
 }
 
 async function bootstrapOpaqueForActiveTunnels(): Promise<void> {
-  for (const p of remoteAccessState.list()) {
-    try {
-      await ensureOpaqueRegistrationForTunnel(p.id, p.passphrase);
-    } catch (err) {
-      console.warn(
-        `[remote-access:${p.id}] OPAQUE bootstrap failed: ${err instanceof Error ? err.message : err}`,
-      );
-    }
+  const active = remoteAccessState.list();
+  if (active.length === 0) return;
+  try {
+    await syncOpaqueRegistrationsWithServerSetup(
+      active.map((p) => ({ id: p.id, passphrase: p.passphrase })),
+    );
+  } catch (err) {
+    console.warn(
+      `[remote-access] OPAQUE bootstrap failed: ${err instanceof Error ? err.message : err}`,
+    );
   }
 }
 
@@ -726,7 +744,14 @@ export const remoteAccess = {
     };
     remoteAccessState.save(persisted);
 
-    await ensureOpaqueRegistrationForTunnel(id, passphrase);
+    try {
+      await syncOpaqueRegistrationsWithServerSetup(
+        remoteAccessState.list().map((p) => ({ id: p.id, passphrase: p.passphrase })),
+      );
+    } catch (err) {
+      remoteAccessState.delete(id);
+      throw err;
+    }
 
     const rt = makeRuntime(persisted);
     tunnels.set(id, rt);

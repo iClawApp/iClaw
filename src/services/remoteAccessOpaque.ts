@@ -2,11 +2,15 @@
  * OPAQUE (RFC 9807) for Remote Access — passphrase never sent over the tunnel.
  */
 
+import { createHash } from 'node:crypto';
+
 import * as opaque from '@serenity-kit/opaque';
 
 import { db } from '../db/database';
 
 let readyPromise: Promise<void> | null = null;
+
+const OPAQUE_FP_KV_KEY = 'opaque_server_setup_sha256';
 
 export async function ensureOpaqueReady(): Promise<void> {
   if (!readyPromise) readyPromise = opaque.ready;
@@ -27,12 +31,62 @@ function getServerSetup(): string {
   return process.env.OPAQUE_SERVER_SETUP!.trim();
 }
 
-/** Register OPAQUE server record for a tunnel (localhost — uses passphrase once). */
+function opaqueSetupFingerprint(): string {
+  return createHash('sha256').update(getServerSetup()).digest('hex');
+}
+
+const GET_KV = db.prepare<[string], { value: string } | undefined>(
+  'SELECT value FROM iclaw_kv WHERE key = ?',
+);
+const SET_KV = db.prepare('INSERT INTO iclaw_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+const CLEAR_ALL_OPAQUE = db.prepare(
+  'UPDATE remote_access_tunnels SET opaque_registration_record = NULL',
+);
+
+/**
+ * When OPAQUE_SERVER_SETUP changes, stale registration records cause "Wrong passphrase".
+ * Clear and re-register all persisted tunnels against the current setup.
+ */
+export async function syncOpaqueRegistrationsWithServerSetup(
+  tunnels: ReadonlyArray<{ id: string; passphrase: string }>,
+): Promise<void> {
+  if (tunnels.length === 0) return;
+  assertOpaqueServerSetup();
+  await ensureOpaqueReady();
+
+  const fp = opaqueSetupFingerprint();
+  const prev = GET_KV.get(OPAQUE_FP_KV_KEY)?.value;
+  if (prev === fp) {
+    await Promise.all(
+      tunnels.map((t) => ensureOpaqueRegistrationForTunnel(t.id, t.passphrase)),
+    );
+    return;
+  }
+
+  CLEAR_ALL_OPAQUE.run();
+  SET_KV.run(OPAQUE_FP_KV_KEY, fp);
+  if (prev) {
+    console.warn(
+      '[remote-access] OPAQUE_SERVER_SETUP changed — re-registering OPAQUE credentials for active tunnels',
+    );
+  }
+
+  await Promise.all(tunnels.map((t) => forceOpaqueRegistrationForTunnel(t.id, t.passphrase)));
+}
+
+/** Register OPAQUE server record for a tunnel (skips if record exists for current setup). */
 export async function ensureOpaqueRegistrationForTunnel(
   tunnelId: string,
   passphrase: string,
 ): Promise<void> {
   if (getOpaqueRegistrationRecord(tunnelId)) return;
+  await forceOpaqueRegistrationForTunnel(tunnelId, passphrase);
+}
+
+export async function forceOpaqueRegistrationForTunnel(
+  tunnelId: string,
+  passphrase: string,
+): Promise<void> {
   const record = await registerOpaqueForTunnel(tunnelId, passphrase);
   saveOpaqueRegistrationRecord(tunnelId, record);
 }
@@ -82,7 +136,6 @@ export async function finishOpaqueLogin(opts: {
   finishLoginRequest: string;
 }): Promise<{ sessionKey: string }> {
   await ensureOpaqueReady();
-  const serverSetup = getServerSetup();
   const result = opaque.server.finishLogin({
     serverLoginState: opts.serverLoginState,
     finishLoginRequest: opts.finishLoginRequest,

@@ -21,11 +21,13 @@ import type { Request, RequestHandler, Response } from 'express';
 
 import { remoteAccessDevices } from './remoteAccessDevices';
 import { isValidDevicePublicKey } from './remoteAccessDeviceCrypto';
+import { relayBindingB64urlForAccessToken } from './remoteAccessE2eCrypto';
 import { clearE2eTransportForTunnel } from './remoteAccessE2eSession';
 import {
   E2E_LOGIN_REQUIRED_MSG,
   isOpaqueLoginPath,
 } from './remoteAccessOpaqueAuth';
+import { remoteAccessState } from './remoteAccessState';
 
 /* ------------------------------------------------------------ passphrase -- */
 
@@ -76,12 +78,16 @@ const GATE_PUBLIC_ASSETS = new Set([
   '/js/ra-e2e-crypto.mjs',
   '/js/vendor/opaque/index.js',
   '/js/vendor/noble/hkdf.js',
+  '/js/vendor/noble/hmac.js',
   '/js/vendor/noble/sha2.js',
   '/js/vendor/noble/utils.js',
+  '/js/vendor/noble/_md.js',
+  '/js/vendor/noble/_u64.js',
 ]);
 
-function isGatePublicAsset(path: string): boolean {
-  return GATE_PUBLIC_ASSETS.has(path);
+export function isGatePublicAsset(path: string): boolean {
+  const p = path.split('?')[0] ?? path;
+  return GATE_PUBLIC_ASSETS.has(p);
 }
 
 function escapeHtml(s: string): string {
@@ -247,14 +253,24 @@ function constantTimeEquals(a: string, b: string): boolean {
 
 /* ---------------------------------------------------- login page HTML -- */
 
+export function gateRelayBindingB64url(tunnelId: string): string {
+  const accessToken = remoteAccessState.get(tunnelId)?.accessToken ?? '';
+  return relayBindingB64urlForAccessToken(accessToken);
+}
+
 /** Gate HTML for tunneled Remote Access login (exported for tests). */
 export function renderGateLoginPage(opts: {
   tunnelId: string;
   errorMessage?: string;
   next?: string;
+  relayBindingB64url?: string;
 }): string {
   const safeNext = (opts.next ?? '/').replace(/"/g, '');
   const safeTunnelId = escapeHtml(opts.tunnelId);
+  const relayBindingB64 =
+    opts.relayBindingB64url !== undefined
+      ? escapeHtml(opts.relayBindingB64url)
+      : escapeHtml(gateRelayBindingB64url(opts.tunnelId));
   const errorBlock = opts.errorMessage
     ? `<div class="ra-gate-error" role="alert">${escapeHtml(opts.errorMessage)}</div>`
     : '';
@@ -281,7 +297,7 @@ export function renderGateLoginPage(opts: {
   <div id="ra-gate-loading" class="ra-gate-card ra-gate-loading" aria-live="polite">
     <p class="ra-gate-lead">Checking this device…</p>
   </div>
-  <form id="ra-gate-form" method="POST" action="#" autocomplete="off" class="ra-gate-card" hidden>
+  <form id="ra-gate-form" autocomplete="off" class="ra-gate-card" hidden>
     <h1 class="ra-gate-title">Remote Access</h1>
     <p class="ra-gate-lead">Enter the passphrase shown on the device that started this link</p>
 
@@ -304,16 +320,17 @@ export function renderGateLoginPage(opts: {
     </div>
     <input type="hidden" name="next" value="${safeNext}" />
 
-    <button class="btn btn--primary ra-gate-submit" type="submit">Continue</button>
+    <button class="btn btn--primary ra-gate-submit" type="button">Continue</button>
 
     <p class="ra-gate-note">This page is served by your local iClaw — not the relay</p>
   </form>
 </main>
 <meta name="iclaw-ra-tunnel-id" content="${safeTunnelId}" />
+<meta name="iclaw-ra-relay-binding" content="${relayBindingB64}" />
 <meta name="iclaw-ra-next" content="${safeNext}" />
 <meta name="iclaw-ra-e2e" content="true" />
-<script src="/js/ra-device-auth.js" defer></script>
-<script type="module" src="/js/ra-gate-opaque.mjs"></script>
+<script src="/js/ra-device-auth.js?v=ra-gate-3" defer></script>
+<script type="module" src="/js/ra-gate-opaque.mjs?v=ra-gate-3"></script>
 </body>
 </html>`;
 }

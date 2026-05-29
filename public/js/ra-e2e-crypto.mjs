@@ -15,6 +15,15 @@ export function relayBindingFromAccessToken(accessToken) {
   return sha256(te.encode(accessToken));
 }
 
+export function relayBindingB64urlFromAccessToken(accessToken) {
+  return b64urlBytes(relayBindingFromAccessToken(accessToken));
+}
+
+export function relayBindingFromB64url(b64) {
+  if (!b64) return relayBindingFromAccessToken('');
+  return b64urlDecode(b64);
+}
+
 function decodeOpaqueSessionKeyB64(sessionKeyB64) {
   const pad = sessionKeyB64.length % 4 === 0 ? '' : '='.repeat(4 - (sessionKeyB64.length % 4));
   const b64 = sessionKeyB64.replace(/-/g, '+').replace(/_/g, '/') + pad;
@@ -83,6 +92,14 @@ function buildAad(opts) {
     off += p.length;
   }
   return out;
+}
+
+/**
+ * Per-(direction, streamId) AEAD subkey — MUST match remoteAccessE2eCrypto.ts.
+ * Prevents (key, nonce) reuse across streams whose counters both start at 0.
+ */
+function deriveStreamKey(dirKey, direction, streamId) {
+  return hkdf(sha256, dirKey, undefined, te.encode('rec\x00' + direction + '\x00' + streamId), 32);
 }
 
 function buildNonce(ctr, tunnelId) {
@@ -164,7 +181,8 @@ export class E2eCounterLedger {
 }
 
 export async function encryptE2eRecord(keys, direction, opts) {
-  const key = direction === 'c2s' ? keys.c2s : keys.s2c;
+  const dirKey = direction === 'c2s' ? keys.c2s : keys.s2c;
+  const key = deriveStreamKey(dirKey, direction, opts.streamId);
   const plain = {
     v: 1,
     ctr: opts.ctr,
@@ -186,7 +204,8 @@ export async function encryptE2eRecord(keys, direction, opts) {
 
 export async function decryptE2eRecord(keys, direction, opts, ledger) {
   if (!ledger.checkAndAdvance(opts.streamId, direction, opts.ctr)) return null;
-  const key = direction === 'c2s' ? keys.c2s : keys.s2c;
+  const dirKey = direction === 'c2s' ? keys.c2s : keys.s2c;
+  const key = deriveStreamKey(dirKey, direction, opts.streamId);
   const aad = buildAad({
     tunnelId: opts.tunnelId,
     streamId: opts.streamId,

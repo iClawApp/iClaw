@@ -9,6 +9,8 @@ import {
   decodeWireEnvelope,
   E2eCounterLedger,
   relayBindingFromAccessToken,
+  relayBindingB64urlFromAccessToken,
+  relayBindingFromB64url,
 } from '/js/ra-e2e-crypto.mjs';
 
 const E2E_HTTP_PATH = '/__ra/e2e/http';
@@ -28,6 +30,39 @@ function captureRelayAccessToken() {
   }
 }
 
+function captureRelayBindingFromPage() {
+  try {
+    const meta = document.querySelector('meta[name="iclaw-ra-relay-binding"]');
+    const b64 = meta ? meta.getAttribute('content') || '' : '';
+    if (b64) {
+      sessionStorage.setItem('iclaw_relay_binding_b64', b64);
+      return;
+    }
+    const stored = sessionStorage.getItem('iclaw_relay_binding_b64');
+    if (stored) return;
+    const accessRaw = sessionStorage.getItem('iclaw_relay_access_raw');
+    if (accessRaw) {
+      sessionStorage.setItem('iclaw_relay_binding_b64', relayBindingB64urlFromAccessToken(accessRaw));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function loadRelayBinding() {
+  try {
+    const meta = document.querySelector('meta[name="iclaw-ra-relay-binding"]');
+    const fromMeta = meta ? meta.getAttribute('content') || '' : '';
+    if (fromMeta) return relayBindingFromB64url(fromMeta);
+    const stored = sessionStorage.getItem('iclaw_relay_binding_b64');
+    if (stored) return relayBindingFromB64url(stored);
+    const accessRaw = sessionStorage.getItem('iclaw_relay_access_raw');
+    return relayBindingFromAccessToken(accessRaw || '');
+  } catch {
+    return relayBindingFromAccessToken('');
+  }
+}
+
 function loadState() {
   const meta = document.querySelector('meta[name="iclaw-ra-e2e"]');
   if (!meta || meta.getAttribute('content') !== 'true') return null;
@@ -35,9 +70,8 @@ function loadState() {
   const tunnelId = tunnelIdEl ? tunnelIdEl.getAttribute('content') || '' : '';
   const opaqueSk = sessionStorage.getItem('iclaw_e2e_opaque_sk');
   const transportHandle = sessionStorage.getItem('iclaw_e2e_transport');
-  const accessRaw = sessionStorage.getItem('iclaw_relay_access_raw');
   if (!tunnelId || !opaqueSk || !transportHandle) return null;
-  const relayBinding = relayBindingFromAccessToken(accessRaw || '');
+  const relayBinding = loadRelayBinding();
   const keys = deriveE2eSessionKeys(opaqueSk, tunnelId, relayBinding);
   return { tunnelId, transportHandle, keys, relayBinding };
 }
@@ -335,8 +369,35 @@ function createE2eWebSocket(url, protocols) {
 let origFetch = null;
 let OrigWebSocket = null;
 
+/** Load workspace HTML via encrypted /__ra/e2e/http (after OPAQUE login). */
+export async function navigateViaE2eDocument(nextUrl) {
+  const installed = await installRaE2eTransport();
+  if (!installed) {
+    throw new Error('Encrypted session not ready. Sign in with your passphrase again.');
+  }
+  const path =
+    typeof nextUrl === 'string' && nextUrl.startsWith('/')
+      ? nextUrl
+      : typeof nextUrl === 'string' && nextUrl.startsWith('http')
+        ? new URL(nextUrl).pathname + new URL(nextUrl).search
+        : '/';
+  const res = await window.fetch(path, {
+    method: 'GET',
+    credentials: 'same-origin',
+    headers: { Accept: 'text/html,application/xhtml+xml' },
+  });
+  if (!res.ok) {
+    throw new Error('Could not load workspace (HTTP ' + res.status + ')');
+  }
+  const html = await res.text();
+  document.open();
+  document.write(html);
+  document.close();
+}
+
 export async function installRaE2eTransport() {
   captureRelayAccessToken();
+  captureRelayBindingFromPage();
   state = loadState();
   if (!state) {
     return false;

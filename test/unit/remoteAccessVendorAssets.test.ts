@@ -3,6 +3,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+import { isGatePublicAsset } from '../../src/services/remoteAccessAuth';
+import { isE2ePlaintextTunnelExempt } from '../../src/services/remoteAccessE2eTransport';
+
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 const REQUIRED_VENDOR = [
@@ -34,5 +37,20 @@ describe('Remote Access vendor assets', () => {
     const hkdf = fs.readFileSync(path.join(pkgRoot, 'public/js/vendor/noble/hkdf.js'), 'utf8');
     expect(hkdf).toContain('from "./hmac.js"');
     expect(fs.existsSync(path.join(pkgRoot, 'public/js/vendor/noble/hmac.js'))).toBe(true);
+  });
+
+  it('all E2E vendor JS paths are gate-public (allowed on tunnel even with iclaw_ra)', () => {
+    for (const rel of REQUIRED_VENDOR) {
+      const urlPath = '/' + rel.replace(/^public\//, '');
+      expect(isGatePublicAsset(urlPath)).toBe(true);
+      expect(
+        isE2ePlaintextTunnelExempt({
+          method: 'GET',
+          path: urlPath,
+          tunnelId: 't-vendor',
+          cookieHeader: 'iclaw_ra=fake-session-for-exempt-test',
+        }),
+      ).toBe(true);
+    }
   });
 });

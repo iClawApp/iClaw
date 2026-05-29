@@ -26,7 +26,7 @@ const byHandle = new Map<string, E2eTransportSession>();
 const handleByRaSession = new Map<string, string>();
 
 export function decodeOpaqueSessionKey(sessionKey: string): Uint8Array {
-  const buf = Buffer.from(sessionKey, 'base64');
+  const buf = Buffer.from(sessionKey, 'base64url');
   if (buf.length !== 64) {
     throw new Error('invalid OPAQUE sessionKey length');
   }

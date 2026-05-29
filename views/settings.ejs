@@ -42,10 +42,9 @@
         <div class="ra-security-panel" role="note">
           <p class="ra-security-badge ra-security-badge--e2e">Remote Access E2E alpha</p>
           <ul class="ra-security-list">
-            <li>Traffic is encrypted between your browser and local iClaw.</li>
-            <li>The relay only forwards encrypted frames (not your passphrase, cookies, or chat).</li>
-            <li>OPAQUE login keeps the passphrase off the wire.</li>
-            <li>Alpha — not externally audited. Relay still sees subdomain, timing, sizes, and E2E endpoints.</li>
+            <li>HTTP &amp; WebSocket payloads are encrypted end-to-end between your browser and local iClaw — the relay forwards only ciphertext.</li>
+            <li>OPAQUE login keeps your passphrase off the wire — the relay never sees it.</li>
+            <li>Alpha — not externally audited. The relay still sees metadata: subdomain, request timing &amp; sizes, the access/session cookies, and which E2E endpoints you hit.</li>
           </ul>
           <p class="ra-security-foot">
             Device sessions let trusted browsers reconnect without re-entering the passphrase.

@@ -12,11 +12,13 @@ function readPublicJs(name: string): string {
 }
 
 describe('Remote Access gate UI (OPAQUE)', () => {
-  it('gate HTML always uses OPAQUE module and blocks native login POST target', () => {
+  it('gate HTML uses OPAQUE module without native POST to /', () => {
     const html = renderGateLoginPage({ tunnelId: 't-ui-02', next: '/' });
     expect(html).toContain('meta name="iclaw-ra-e2e" content="true"');
+    expect(html).toContain('meta name="iclaw-ra-relay-binding"');
     expect(html).toContain('ra-gate-opaque.mjs');
-    expect(html).toContain('action="#"');
+    expect(html).toContain('type="button"');
+    expect(html).not.toMatch(/method\s*=\s*["']POST["']/i);
     expect(html).not.toContain('action="/__ra/login"');
   });
 
@@ -24,6 +26,7 @@ describe('Remote Access gate UI (OPAQUE)', () => {
     const js = readPublicJs('ra-device-auth.js');
     expect(js).toContain('runOpaqueLogin');
     expect(js).toContain('iclawRaOpaqueLogin');
+    expect(js).toContain('navigateViaE2eDocument');
     expect(js).not.toContain('runLegacyLogin');
     expect(js).not.toMatch(/postJson\(['"]\/__ra\/login/);
   });

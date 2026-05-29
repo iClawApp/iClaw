@@ -14,6 +14,7 @@
   <% if (typeof raE2eEnabled !== 'undefined' && raE2eEnabled) { %>
   <meta name="iclaw-ra-e2e" content="true" />
   <meta name="iclaw-ra-tunnel-id" content="<%= typeof raTunnelId !== 'undefined' ? raTunnelId : '' %>" />
+  <meta name="iclaw-ra-relay-binding" content="<%= typeof raRelayBindingB64url !== 'undefined' ? raRelayBindingB64url : '' %>" />
   <script type="module">
     window.__iclawRaE2eBoot = import('/js/ra-e2e-transport.mjs').then(function (m) {
       return m.installRaE2eTransport();

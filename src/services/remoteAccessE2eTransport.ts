@@ -19,6 +19,9 @@ import {
   type E2eTransportSession,
 } from './remoteAccessE2eSession';
 import {
+  isGatePublicAsset,
+  isValidTunnelSessionForTunnel,
+  parseCookieHeader,
   stripInternalHeaders,
   TUNNELED_HEADER,
   TUNNELED_VALUE,
@@ -85,15 +88,48 @@ export interface InnerWsClose {
   reason?: string;
 }
 
-export function isE2ePlaintextExemptPath(path: string): boolean {
-  const p = path.split('?')[0] ?? path;
-  if (p === E2E_HTTP_PATH || p === E2E_WS_PATH || p === E2E_BOOTSTRAP_PATH) return true;
+export interface E2ePlaintextTunnelContext {
+  method: string;
+  path: string;
+  tunnelId: string;
+  cookieHeader?: string;
+}
+
+/**
+ * Plaintext over relay: OPAQUE/E2E startup + gate static assets + unauthenticated GET / only.
+ */
+export function isE2ePlaintextTunnelExempt(ctx: E2ePlaintextTunnelContext): boolean {
+  const p = ctx.path.split('?')[0] ?? ctx.path;
+  const m = ctx.method.toUpperCase();
+
+  if (p === E2E_HTTP_PATH || p === E2E_WS_PATH) return true;
+  if (p === E2E_BOOTSTRAP_PATH) return true;
   if (p.startsWith('/__ra/opaque/')) return true;
   if (p.startsWith('/__ra/device/')) return true;
   if (p === '/__ra/login') return true;
-  if (p.startsWith('/css/') || p.startsWith('/js/') || p.startsWith('/favicon')) return true;
-  if (p === '/favicon.ico') return true;
+
+  if (m === 'GET' || m === 'HEAD') {
+    if (isGatePublicAsset(p)) return true;
+
+    const cookies = parseCookieHeader(ctx.cookieHeader);
+    if (isValidTunnelSessionForTunnel(ctx.tunnelId, cookies)) {
+      return false;
+    }
+
+    if (p === '/') return true;
+  }
+
   return false;
+}
+
+/** @deprecated Use isE2ePlaintextTunnelExempt */
+export function isE2ePlaintextExemptPath(
+  path: string,
+  method = 'GET',
+  tunnelId = '',
+  cookieHeader?: string,
+): boolean {
+  return isE2ePlaintextTunnelExempt({ method, path, tunnelId, cookieHeader });
 }
 
 function decryptInbound(

@@ -116,6 +116,30 @@ describe('remoteAccessE2eCrypto', () => {
     ).toBeNull();
   });
 
+  it('does NOT reuse keystream across streams (C1 regression)', () => {
+    // Two different streams, same direction, same ctr=0, same plaintext.
+    // With a per-stream subkey the ciphertexts MUST differ; if the key were
+    // shared (the old bug) identical plaintext + identical (key,nonce) would
+    // produce byte-identical ciphertext — the catastrophic GCM nonce reuse.
+    const keys = deriveE2eSessionKeys(opaqueKey, tunnelId, relayBinding);
+    const inner = new TextEncoder().encode('{"cookie":"iclaw_ra=secret"}');
+    const common = { tunnelId, ctr: 0, kind: 'http-req' as const, inner, relayBinding };
+    const ctA = encryptE2eRecord(keys, 'c2s', { ...common, streamId: 'stream-A' });
+    const ctB = encryptE2eRecord(keys, 'c2s', { ...common, streamId: 'stream-B' });
+    expect(Buffer.from(ctA).equals(Buffer.from(ctB))).toBe(false);
+
+    // And a ciphertext from stream-B must not decrypt under stream-A's context
+    // (key is bound to streamId), proving the subkeys are actually distinct.
+    const ledger = new E2eCounterLedger();
+    const wrong = decryptE2eRecord(
+      keys,
+      'c2s',
+      { tunnelId, streamId: 'stream-A', ctr: 0, kind: 'http-req', ciphertext: ctB, relayBinding },
+      ledger,
+    );
+    expect(wrong).toBeNull();
+  });
+
   it('wire envelope round-trip', () => {
     const ct = new Uint8Array([1, 2, 3, 4]);
     const wire = encodeWireEnvelope({

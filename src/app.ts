@@ -14,6 +14,7 @@ import { projects } from './services/store';
 import {
   remoteAccessAuthMiddleware,
   remoteAccessLoginHandler,
+  gateRelayBindingB64url,
   getTunnelIdFromRequest,
   isTunneledRequest,
 } from './services/remoteAccessAuth';
@@ -83,6 +84,7 @@ export function createApp(): express.Express {
       if (tunnelId) {
         res.locals.raE2eEnabled = true;
         res.locals.raTunnelId = tunnelId;
+        res.locals.raRelayBindingB64url = gateRelayBindingB64url(tunnelId);
       }
     }
     next();

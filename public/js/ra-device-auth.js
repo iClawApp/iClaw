@@ -19,6 +19,11 @@
     return el ? el.getAttribute('content') || '/' : '/';
   }
 
+  function isTunneledGate() {
+    var el = document.querySelector('meta[name="iclaw-ra-e2e"]');
+    return el ? el.getAttribute('content') === 'true' : false;
+  }
+
   function b64urlEncode(buf) {
     var bytes = new Uint8Array(buf);
     var bin = '';
@@ -90,7 +95,7 @@
   }
 
   function generateKeypair() {
-    return crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']).then(function (pair) {
+    return crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']).then(function (pair) {
       return Promise.all([
         crypto.subtle.exportKey('pkcs8', pair.privateKey),
         crypto.subtle.exportKey('spki', pair.publicKey),
@@ -163,6 +168,41 @@
     if (passInput) passInput.value = '';
   }
 
+  function hasE2eSessionKeys() {
+    return !!(
+      sessionStorage.getItem('iclaw_e2e_opaque_sk') &&
+      sessionStorage.getItem('iclaw_e2e_transport')
+    );
+  }
+
+  function redirectAfterAuth(next) {
+    var target = next || '/';
+    if (isTunneledGate() && hasE2eSessionKeys()) {
+      return import('/js/ra-e2e-transport.mjs')
+        .then(function (m) {
+          return m.navigateViaE2eDocument(target);
+        })
+        .catch(function (err) {
+          var form = document.getElementById('ra-gate-form');
+          if (form) {
+            showFormError(
+              form,
+              err && err.message ? err.message : 'Could not open encrypted workspace.',
+            );
+          }
+        });
+    }
+    if (isTunneledGate() && !hasE2eSessionKeys()) {
+      showPassphraseForm();
+      var form = document.getElementById('ra-gate-form');
+      if (form) {
+        showFormError(form, 'Enter your passphrase to start an encrypted session.');
+      }
+      return;
+    }
+    redirectTo(target);
+  }
+
   function finishLoginSuccess(tunnelId, next, login) {
     if (login.deviceId && login.privateKeyJwk) {
       return saveDevice({
@@ -170,10 +210,10 @@
         deviceId: login.deviceId,
         privateKeyJwk: login.privateKeyJwk,
       }).then(function () {
-        redirectTo(login.next || next);
+        return redirectAfterAuth(login.next || next);
       });
     }
-    redirectTo(login.next || next);
+    return redirectAfterAuth(login.next || next);
   }
 
   function tryDeviceLogin(tunnelId, record, next) {
@@ -193,7 +233,7 @@
       })
       .then(function (verified) {
         if (!verified.ok) throw new Error('verify failed');
-        redirectTo(verified.data.next || next);
+        return redirectAfterAuth(verified.data.next || next);
       });
   }
 
@@ -216,51 +256,93 @@
     });
   }
 
+  function runPassphraseLogin(form, tunnelId, next) {
+    if (!window.isSecureContext || !window.crypto || !window.crypto.subtle) {
+      showFormError(
+        form,
+        'Secure login requires HTTPS. Open the access link from relay.iclaw.digital (not http://*.lvh.me).',
+      );
+      return;
+    }
+    if (!window.indexedDB) {
+      showFormError(form, 'This browser cannot store trusted devices (IndexedDB unavailable).');
+      return;
+    }
+
+    var passInput = form.querySelector('#p');
+    var passphrase = passInput ? passInput.value : '';
+    var submitBtn = form.querySelector('.ra-gate-submit');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Continuing…';
+    }
+
+    generateKeypair()
+      .then(function (keys) {
+        return runOpaqueLogin(passphrase, next, keys).then(function (login) {
+          clearPassphraseInput(passInput);
+          return finishLoginSuccess(tunnelId, next, login);
+        });
+      })
+      .catch(function (err) {
+        clearPassphraseInput(passInput);
+        resetSubmitButton(submitBtn);
+        var msg =
+          err && err.message
+            ? err.message
+            : 'Could not reach the server. Check your connection and try again.';
+        showFormError(form, msg);
+      });
+  }
+
   function wirePassphraseForm(tunnelId, next) {
     var form = document.getElementById('ra-gate-form');
     if (!form) return;
 
     form.addEventListener('submit', function (e) {
       e.preventDefault();
-      var passInput = form.querySelector('#p');
-      var passphrase = passInput ? passInput.value : '';
-      var submitBtn = form.querySelector('.ra-gate-submit');
-      if (submitBtn) {
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Continuing…';
-      }
-
-      generateKeypair()
-        .then(function (keys) {
-          return runOpaqueLogin(passphrase, next, keys).then(function (login) {
-            clearPassphraseInput(passInput);
-            return finishLoginSuccess(tunnelId, next, login);
-          });
-        })
-        .catch(function (err) {
-          clearPassphraseInput(passInput);
-          resetSubmitButton(submitBtn);
-          var msg =
-            err && err.message
-              ? err.message
-              : 'Could not reach the server. Check your connection and try again.';
-          showFormError(form, msg);
-        });
     });
+
+    var submitBtn = form.querySelector('.ra-gate-submit');
+    if (submitBtn) {
+      submitBtn.addEventListener('click', function () {
+        runPassphraseLogin(form, tunnelId, next);
+      });
+    }
+
+    var passInput = form.querySelector('#p');
+    if (passInput) {
+      passInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          runPassphraseLogin(form, tunnelId, next);
+        }
+      });
+    }
   }
 
   function init() {
-    if (!window.crypto || !window.crypto.subtle || !window.indexedDB) {
-      showPassphraseForm();
-      return;
-    }
     var tunnelId = tunnelIdFromMeta();
     var next = nextFromMeta();
     if (!tunnelId) {
       showPassphraseForm();
       return;
     }
+
     wirePassphraseForm(tunnelId, next);
+
+    if (!window.isSecureContext || !window.crypto || !window.crypto.subtle || !window.indexedDB) {
+      showPassphraseForm();
+      var form = document.getElementById('ra-gate-form');
+      if (form && isTunneledGate()) {
+        showFormError(
+          form,
+          'Secure login requires HTTPS (e.g. https://your-tunnel.iclaw.digital). HTTP dev URLs cannot use OPAQUE.',
+        );
+      }
+      return;
+    }
+
     loadDevice(tunnelId)
       .then(function (record) {
         if (!record || !record.deviceId || !record.privateKeyJwk) {

@@ -17,6 +17,7 @@ import {
   type TunnelStatus,
 } from '../services/remoteAccess';
 import { remoteAccessDevices, type RemoteAccessDevice } from '../services/remoteAccessDevices';
+import { assertOpaqueServerSetup } from '../services/remoteAccessOpaque';
 
 export const remoteAccessApiRouter = Router();
 
@@ -48,6 +49,19 @@ remoteAccessApiRouter.post('/tunnels', async (req, res) => {
     return;
   }
   const label = labelRaw.trim().slice(0, 64);
+
+  // Fail fast: without an OPAQUE server setup the tunnel could be created but
+  // nobody could ever log in (every OPAQUE login would 503). Refuse upfront
+  // with a clear, actionable error instead of handing back a dead link.
+  try {
+    assertOpaqueServerSetup();
+  } catch (err) {
+    res.status(503).json({
+      error: err instanceof Error ? err.message : 'OPAQUE_SERVER_SETUP is required',
+      code: 'opaque_setup_missing',
+    });
+    return;
+  }
 
   try {
     const status = await remoteAccess.createTunnel(durationMs, label);
