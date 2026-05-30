@@ -9,18 +9,6 @@
   var DB_VERSION = 1;
   var STORE = 'devices';
 
-  // Gated diagnostic logging — set localStorage.ra_debug='1' (or ?radebug=1)
-  // in the browser to see the gate/resume flow. Silent otherwise.
-  function dbg() {
-    try {
-      if (localStorage.getItem('ra_debug') === '1' || /[?&]radebug=1/.test(location.search)) {
-        console.log.apply(console, ['[ra-dbg]'].concat([].slice.call(arguments)));
-      }
-    } catch (e) {
-      /* ignore */
-    }
-  }
-
   function tunnelIdFromMeta() {
     var el = document.querySelector('meta[name="iclaw-ra-tunnel-id"]');
     return el ? el.getAttribute('content') || '' : '';
@@ -209,7 +197,7 @@
   function redirectAfterAuth(next) {
     var target = next || '/';
     if (isTunneledGate() && hasE2eSessionKeys()) {
-      return import('/js/ra-e2e-transport.mjs?v=ra-gate-8')
+      return import('/js/ra-e2e-transport.mjs?v=ra-gate-9')
         .then(function (m) {
           return m.navigateViaE2eDocument(target);
         })
@@ -385,9 +373,6 @@
 
     wirePassphraseForm(tunnelId, next);
 
-    dbg('init: tunnelId=', tunnelId, 'next=', next, 'tunneledGate=', isTunneledGate(),
-      'hasE2eKeys=', hasE2eSessionKeys(), 'secureCtx=', window.isSecureContext, 'indexedDB=', !!window.indexedDB);
-
     // Same-tab resume. This gate page is also the bootstrap for in-app
     // navigations (clicking a chat, reload, deep-link) — the workspace is a
     // multi-page app and a full navigation can't be E2E-wrapped, so the server
@@ -396,19 +381,13 @@
     // encrypted transport and load the requested page WITHOUT asking for the
     // passphrase again. Only a fresh tab (keys gone) falls through to login.
     if (isTunneledGate() && hasE2eSessionKeys()) {
-      dbg('resume: importing transport + navigateViaE2eDocument', next);
-      import('/js/ra-e2e-transport.mjs?v=ra-gate-8')
+      import('/js/ra-e2e-transport.mjs?v=ra-gate-9')
         .then(function (m) {
-          dbg('resume: transport module loaded, navigating…');
           return m.navigateViaE2eDocument(next);
-        })
-        .then(function () {
-          dbg('resume: navigateViaE2eDocument resolved (document.write done)');
         })
         .catch(function (err) {
           // Keys are stale (e.g. iClaw restarted and dropped the session) —
           // clear them and fall back to the passphrase.
-          dbg('resume: FAILED →', err && err.message ? err.message : err, err);
           try {
             sessionStorage.removeItem('iclaw_e2e_opaque_sk');
             sessionStorage.removeItem('iclaw_e2e_transport');
@@ -423,8 +402,6 @@
         });
       return;
     }
-
-    dbg('init: no same-tab resume → device/passphrase path');
 
     if (!window.isSecureContext || !window.crypto || !window.crypto.subtle || !window.indexedDB) {
       showPassphraseForm();

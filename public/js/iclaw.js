@@ -2710,26 +2710,14 @@
   let ws = null;
   let reconnectAttempt = 0;
   let reconnectTimer = null;
+  let wsPingTimer = null;
   const wsUrl = (() => {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     return proto + '//' + location.host + '/ws';
   })();
 
-  // Gated diagnostic logging — enable with localStorage.ra_debug='1' or ?radebug=1.
-  function raDbg() {
-    try {
-      return localStorage.getItem('ra_debug') === '1' || /[?&]radebug=1/.test(location.search);
-    } catch (e) {
-      return false;
-    }
-  }
-  function dbg() {
-    if (raDbg()) console.log.apply(console, ['[ra-dbg:iclaw]'].concat([].slice.call(arguments)));
-  }
-
   function wsSend(msg) {
     var open = !!(ws && ws.readyState === WebSocket.OPEN);
-    dbg('wsSend type=', msg && msg.type, 'wsExists=', !!ws, 'readyState=', ws ? ws.readyState : 'n/a', 'open=', open);
     if (!open) return false;
     try {
       ws.send(JSON.stringify(msg));
@@ -2751,14 +2739,17 @@
   }
 
   function connectWs() {
-    dbg('connectWs → new WebSocket', wsUrl, 'WebSocketWrapped=', window.WebSocket && window.WebSocket.name);
     try { ws = new WebSocket(wsUrl); }
-    catch (e) { dbg('connectWs threw', e && e.message); scheduleReconnect(); return; }
-    dbg('connectWs: socket created, readyState=', ws.readyState);
+    catch (e) { scheduleReconnect(); return; }
 
     ws.addEventListener('open', () => {
-      dbg('WS OPEN, readyState=', ws.readyState, 'activeChatId=', activeChatId);
       reconnectAttempt = 0;
+      // Keep the socket warm. Remote-access tunnels traverse Cloudflare, which
+      // drops idle WebSockets after ~100s — including during a long agent turn
+      // with gaps between stream frames. The gateway answers 'ping' with 'pong'
+      // (both no-ops in the UI), so this is a harmless heartbeat locally too.
+      if (wsPingTimer) clearInterval(wsPingTimer);
+      wsPingTimer = setInterval(() => { wsSend({ type: 'ping' }); }, 25000);
       if (activeChatId != null) {
         wsSend({ type: 'subscribe', chatId: activeChatId });
         loadPendingFactSuggestions();
@@ -2773,16 +2764,15 @@
         /* defensive — never let the open handler throw */
       }
     });
-    ws.addEventListener('close', (ev) => {
-      dbg('WS CLOSE code=', ev && ev.code, 'reason=', ev && ev.reason);
+    ws.addEventListener('close', () => {
+      if (wsPingTimer) { clearInterval(wsPingTimer); wsPingTimer = null; }
       ws = null;
       scheduleReconnect();
     });
-    ws.addEventListener('error', () => { dbg('WS ERROR'); /* close fires next */ });
+    ws.addEventListener('error', () => { /* close fires next */ });
     ws.addEventListener('message', (ev) => {
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
-      dbg('WS recv →', msg && msg.type, msg && msg.chatId != null ? '(chat ' + msg.chatId + ')' : '');
       handleServerMsg(msg);
     });
   }
@@ -8410,21 +8400,17 @@
     });
   }
   function bootConnectWs() {
-    dbg('bootConnectWs: calling connectWs (activeChatId=', activeChatId, ')');
     connectWs();
   }
-  dbg('init tail reached; __iclawRaE2eBoot present=', !!(window.__iclawRaE2eBoot && window.__iclawRaE2eBoot.then));
   if (window.__iclawRaE2eBoot && typeof window.__iclawRaE2eBoot.then === 'function') {
     window.__iclawRaE2eBoot
       .then(function (ok) {
-        dbg('__iclawRaE2eBoot resolved, ok=', ok);
         if (!ok) {
           console.warn('[iclaw] E2E transport not active — encrypted remote access unavailable');
         }
         bootConnectWs();
       })
       .catch(function (err) {
-        dbg('__iclawRaE2eBoot rejected:', err && err.message ? err.message : err);
         console.error('[iclaw] E2E transport install failed', err);
         bootConnectWs();
       });

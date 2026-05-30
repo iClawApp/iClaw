@@ -17,17 +17,6 @@ const E2E_HTTP_PATH = '/__ra/e2e/http';
 const E2E_WS_PATH = '/__ra/e2e/ws';
 const EXEMPT_PREFIXES = ['/__ra/opaque/', '/__ra/device/', '/__ra/e2e/', '/__ra/login'];
 
-/** Gated diagnostic logging — enable with localStorage.ra_debug='1' or ?radebug=1. */
-function dbg(...args) {
-  try {
-    if (localStorage.getItem('ra_debug') === '1' || /[?&]radebug=1/.test(location.search)) {
-      console.log('[ra-dbg:transport]', ...args);
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
 let state = null;
 const c2sCtr = new Map();
 const s2cLedger = new E2eCounterLedger();
@@ -314,9 +303,20 @@ function createE2eWebSocket(url, protocols) {
           bodyB64 = btoa(String.fromCharCode(...payload));
           binary = true;
         } else {
-          bodyB64 = btoa(
-            typeof payload === 'string' ? payload : new TextDecoder().decode(payload),
-          );
+          // btoa() only accepts Latin1; a JSON string with non-ASCII content
+          // (Cyrillic, emoji, …) throws InvalidCharacterError, which the
+          // surrounding .catch() swallowed → the frame silently never sent.
+          // UTF-8 encode first, mirroring the inbound TextDecoder path, and
+          // chunk the byte→char conversion so large messages don't overflow
+          // the call stack.
+          const str =
+            typeof payload === 'string' ? payload : new TextDecoder().decode(payload);
+          const bytes = new TextEncoder().encode(str);
+          let bin = '';
+          for (let i = 0; i < bytes.length; i += 0x8000) {
+            bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+          }
+          bodyB64 = btoa(bin);
         }
         const wire = await encryptOutbound('ws-data', streamId, { binary, dataB64: bodyB64 });
         if (tunnelReady) origSend(wire);
@@ -333,7 +333,7 @@ function createE2eWebSocket(url, protocols) {
     Promise.resolve()
       .then(async function () {
         const wire = decodeWireEnvelope(wireRaw);
-        if (!wire) { dbg('WS recv: NOT a wire envelope'); return; }
+        if (!wire) return;
         const plain = await decryptE2eRecord(
           state.keys,
           's2c',
@@ -347,8 +347,6 @@ function createE2eWebSocket(url, protocols) {
           },
           s2cLedger,
         );
-        dbg('WS recv: stream', wire.streamId, 'ctr', wire.ctr, 'kind', wire.kind,
-          '→ decrypt', plain ? 'OK' : 'FAIL', '| listeners', userOnMessage.length);
         if (!plain) return;
         if (plain.kind === 'ws-data') {
           const inner = JSON.parse(new TextDecoder().decode(plain.inner));
@@ -385,9 +383,7 @@ let installed = false;
 
 /** Load workspace HTML via encrypted /__ra/e2e/http (after OPAQUE login). */
 export async function navigateViaE2eDocument(nextUrl) {
-  dbg('navigateViaE2eDocument: start', nextUrl);
   const installed = await installRaE2eTransport();
-  dbg('navigateViaE2eDocument: installed=', installed);
   if (!installed) {
     throw new Error('Encrypted session not ready. Sign in with your passphrase again.');
   }
@@ -397,22 +393,18 @@ export async function navigateViaE2eDocument(nextUrl) {
       : typeof nextUrl === 'string' && nextUrl.startsWith('http')
         ? new URL(nextUrl).pathname + new URL(nextUrl).search
         : '/';
-  dbg('navigateViaE2eDocument: E2E fetch', path);
   const res = await window.fetch(path, {
     method: 'GET',
     credentials: 'same-origin',
     headers: { Accept: 'text/html,application/xhtml+xml' },
   });
-  dbg('navigateViaE2eDocument: fetch status', res.status);
   if (!res.ok) {
     throw new Error('Could not load workspace (HTTP ' + res.status + ')');
   }
   const html = await res.text();
-  dbg('navigateViaE2eDocument: html length', html.length, '→ document.write');
   document.open();
   document.write(html);
   document.close();
-  dbg('navigateViaE2eDocument: document.write done');
 }
 
 export async function installRaE2eTransport() {
@@ -420,20 +412,8 @@ export async function installRaE2eTransport() {
   captureRelayBindingFromPage();
   state = loadState();
   if (!state) {
-    try {
-      const meta = document.querySelector('meta[name="iclaw-ra-e2e"]');
-      dbg('installRaE2eTransport: loadState=null', {
-        e2eMeta: meta ? meta.getAttribute('content') : null,
-        tunnelIdMeta: !!document.querySelector('meta[name="iclaw-ra-tunnel-id"]'),
-        opaqueSk: !!sessionStorage.getItem('iclaw_e2e_opaque_sk'),
-        transport: !!sessionStorage.getItem('iclaw_e2e_transport'),
-      });
-    } catch {
-      /* ignore */
-    }
     return false;
   }
-  dbg('installRaE2eTransport: state OK, alreadyInstalled=', installed);
   // Idempotent: navigateViaE2eDocument installs on the gate page, then the
   // document.write'd workspace re-runs the boot script (same realm → same
   // module instance). Re-wrapping would capture the already-wrapped fetch and
@@ -465,6 +445,15 @@ export async function installRaE2eTransport() {
     return createE2eWebSocket(url, protocols);
   };
   window.WebSocket.prototype = OrigWebSocket.prototype;
+  // Preserve the static readyState constants. App code commonly gates sends on
+  // `ws.readyState === WebSocket.OPEN`; without these copied across, the
+  // replacement constructor has `WebSocket.OPEN === undefined`, so every such
+  // check is `1 === undefined` → false and outbound frames (e.g. a chat `send`)
+  // silently never transmit — the message just re-queues forever.
+  window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
+  window.WebSocket.OPEN = OrigWebSocket.OPEN;
+  window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
+  window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
   installed = true;
   return true;
 }

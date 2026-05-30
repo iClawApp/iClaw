@@ -459,7 +459,7 @@ function openLocalWs(opts: {
   });
 
   local.on('error', () => {
-    // close handler follows
+    // Swallow — the matching 'close' event forwards the close to the client.
   });
 }
 

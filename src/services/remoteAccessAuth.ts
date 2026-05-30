@@ -369,8 +369,8 @@ export function renderGateLoginPage(opts: {
 <meta name="iclaw-ra-relay-binding" content="${relayBindingB64}" />
 <meta name="iclaw-ra-next" content="${safeNext}" />
 <meta name="iclaw-ra-e2e" content="true" />
-<script src="/js/ra-device-auth.js?v=ra-gate-8" defer></script>
-<script type="module" src="/js/ra-gate-opaque.mjs?v=ra-gate-8"></script>
+<script src="/js/ra-device-auth.js?v=ra-gate-9" defer></script>
+<script type="module" src="/js/ra-gate-opaque.mjs?v=ra-gate-9"></script>
 </body>
 </html>`;
 }
