@@ -2782,6 +2782,7 @@
     ws.addEventListener('message', (ev) => {
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
+      dbg('WS recv →', msg && msg.type, msg && msg.chatId != null ? '(chat ' + msg.chatId + ')' : '');
       handleServerMsg(msg);
     });
   }

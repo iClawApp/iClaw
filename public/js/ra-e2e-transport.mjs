@@ -333,7 +333,7 @@ function createE2eWebSocket(url, protocols) {
     Promise.resolve()
       .then(async function () {
         const wire = decodeWireEnvelope(wireRaw);
-        if (!wire) return;
+        if (!wire) { dbg('WS recv: NOT a wire envelope'); return; }
         const plain = await decryptE2eRecord(
           state.keys,
           's2c',
@@ -347,6 +347,8 @@ function createE2eWebSocket(url, protocols) {
           },
           s2cLedger,
         );
+        dbg('WS recv: stream', wire.streamId, 'ctr', wire.ctr, 'kind', wire.kind,
+          '→ decrypt', plain ? 'OK' : 'FAIL', '| listeners', userOnMessage.length);
         if (!plain) return;
         if (plain.kind === 'ws-data') {
           const inner = JSON.parse(new TextDecoder().decode(plain.inner));
