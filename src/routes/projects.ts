@@ -13,6 +13,8 @@ import { listProjectLinkGroups } from '../services/projectLinks';
 import { chats, projects, projectFacts, projectSecrets, tasks, enrichFactsWithSourceChatTitles, enrichFactWithSourceChatTitle } from '../services/store';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
+import { openclaw } from '../services/openclaw';
+import { probeGateway } from '../services/gatewayProbe';
 import { mountProjectTasksRoutes } from './tasks';
 
 export const projectsRouter: Router = Router();
@@ -27,7 +29,7 @@ function wantsJson(req: import('express').Request): boolean {
 
 /* ---------------- project CRUD ---------------- */
 
-projectsRouter.get('/', (_req, res) => {
+projectsRouter.get('/', async (_req, res) => {
   const allProjects = projects.list();
   const projectRows = projects.listWithMetrics().map((row) => ({
     project: row.project,
@@ -35,6 +37,7 @@ projectsRouter.get('/', (_req, res) => {
     msgs14: row.messages14d,
     chats14: row.chats14d,
   }));
+  const { gatewayUp, agentsError } = await probeGateway('projects');
   res.render('projects', {
     chats: chats.list(),
     workingIds: chatStatus.workingIds(),
@@ -45,6 +48,9 @@ projectsRouter.get('/', (_req, res) => {
     activeChat: null,
     activeProject: null,
     activeProjectsList: true,
+    gatewayUp,
+    agentsError,
+    openclawBaseUrl: openclaw.baseUrl,
   });
 });
 

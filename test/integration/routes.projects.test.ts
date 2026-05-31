@@ -47,7 +47,12 @@ vi.mock('../../src/services/gatewayWs', () => ({
 }));
 
 vi.mock('../../src/services/openclaw', () => ({
-  openclaw: { baseUrl: 'http://127.0.0.1:18789', hasToken: true, tokenSource: 'test' },
+  openclaw: {
+    baseUrl: 'http://127.0.0.1:18789',
+    hasToken: true,
+    tokenSource: 'test',
+    health: vi.fn(async () => true),
+  },
 }));
 
 const { createApp } = await import('../../src/app');

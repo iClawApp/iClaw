@@ -185,6 +185,53 @@ CREATE TABLE IF NOT EXISTS task_ask_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_task_ask_sessions_task ON task_ask_sessions(task_id);
 
+-- Remote-access tunnels. A user can have multiple active tunnels with
+-- independent durations / passphrases / connected sessions. Deleting one
+-- never affects another. Persisted so tunnels survive iClaw restarts.
+--
+-- Passphrase is stored plaintext on the assumption that this DB lives on
+-- the user's local machine and isn't synced elsewhere.
+CREATE TABLE IF NOT EXISTS remote_access_tunnels (
+  id          TEXT PRIMARY KEY,           -- opaque short id (t-xxxxxx)
+  label       TEXT,                       -- optional user-facing label
+  passphrase  TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  started_at  INTEGER NOT NULL,
+  expires_at  INTEGER NOT NULL,
+  created_at  INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_remote_access_tunnels_expires
+  ON remote_access_tunnels(expires_at);
+
+-- Trusted browsers that completed passphrase login once (Ed25519 keypair).
+CREATE TABLE IF NOT EXISTS remote_access_devices (
+  id          TEXT PRIMARY KEY,
+  tunnel_id   TEXT NOT NULL REFERENCES remote_access_tunnels(id) ON DELETE CASCADE,
+  name        TEXT,
+  user_agent  TEXT,
+  public_key  TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  revoked_at  INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_remote_access_devices_tunnel
+  ON remote_access_devices(tunnel_id);
+
+-- Legacy singleton table from the previous schema. Kept as a dead table
+-- so dev DBs upgrading in place don't have to rebuild — DROP-on-startup
+-- is a follow-up clean-up once everyone has migrated.
+CREATE TABLE IF NOT EXISTS remote_access_state (
+  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  enabled     INTEGER NOT NULL DEFAULT 0,
+  passphrase  TEXT,
+  duration_ms INTEGER,
+  started_at  INTEGER,
+  expires_at  INTEGER,
+  updated_at  INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+);
+
 -- Robustness: any new message bumps the parent chat's updated_at so sidebar
 -- sorting is always correct even if a caller forgets the manual chats.touch().
 CREATE TRIGGER IF NOT EXISTS trg_chats_touch_on_message
@@ -211,6 +258,20 @@ function ensureColumn(table: string, column: string, ddl: string): void {
 }
 ensureColumn('messages', 'attachments', 'TEXT');
 ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
+ensureColumn('remote_access_tunnels', 'access_token', 'TEXT');
+ensureColumn('remote_access_tunnels', 'opaque_registration_record', 'TEXT');
+// Tunnel ownership secret. Proves to the relay that a re-registering client is
+// the same iClaw that created this tunnelId, so a stranger who learns the
+// (short) tunnelId cannot hijack the subdomain on reconnect. Local DB only;
+// the relay only ever sees SHA-256(owner_secret).
+ensureColumn('remote_access_tunnels', 'owner_secret', 'TEXT');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS iclaw_kv (
+    key TEXT PRIMARY KEY NOT NULL,
+    value TEXT NOT NULL
+  );
+`);
 
 /** Older DBs created project_secrets.project_id as NOT NULL; orphan chat secrets need NULL. */
 function migrateProjectSecretsNullableProjectId(): void {

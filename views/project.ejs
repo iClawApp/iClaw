@@ -19,6 +19,7 @@
 
   <main class="col col-main project-page" data-project-id="<%= project.id %>">
     <header class="chat-header project-header">
+      <%- include('partials/mobile-nav-toggle') %>
       <div class="project-header-primary">
         <div class="project-title-cluster">
           <button
@@ -79,10 +80,14 @@
         <form method="post" action="/projects/<%= project.id %>/delete" class="delete-form project-delete-form">
           <button
             type="submit"
-            class="project-delete-btn"
+            class="project-delete-btn btn btn--ghost btn--sm header-action-btn"
             onclick="return confirm('Delete this project? Chats inside will detach (not deleted).')"
             aria-label="Delete project"
-          >Delete</button>
+            title="Delete project"
+          >
+            <%- include('partials/header-tool-icon', { icon: 'delete' }) %>
+            <span class="header-tool-label">Delete</span>
+          </button>
         </form>
       </div>
     </header>
@@ -329,7 +334,7 @@
     </section>
 
     <script src="/js/vendor/marked.min.js"></script>
-    <script src="/js/iclaw.js"></script>
+    <script src="/js/iclaw.js?v=1"></script>
   </main>
 </div>
 

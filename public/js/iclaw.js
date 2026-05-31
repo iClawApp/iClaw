@@ -1870,7 +1870,6 @@
         '<span class="chat-item-title"></span>';
     }
     if (title != null) {
-      link.title = title;
       const titleEl = link.querySelector('.chat-item-title');
       if (titleEl) titleEl.textContent = title;
     }
@@ -1912,6 +1911,65 @@
       '.chat-item[data-chat-id="' + id + '"] .chat-item-avatar-wrap .status-dot',
     );
   }
+  /** chatId → pending scheduled row count (sidebar muted dot). */
+  const scheduledPendingCount = new Map();
+  (function initScheduledPendingCount() {
+    const raw = window.__ICLAW_SCHEDULED_CHAT_COUNTS__;
+    if (!raw || typeof raw !== 'object') return;
+    for (const [id, count] of Object.entries(raw)) {
+      const chatId = Number(id);
+      const n = Number(count);
+      if (Number.isFinite(chatId) && n > 0) scheduledPendingCount.set(chatId, n);
+    }
+  })();
+
+  function reconcileStatusDot(id) {
+    const dot = statusDot(id);
+    if (!dot) return;
+    const working = dot.classList.contains('working');
+    const unread = dot.classList.contains('unread');
+    dot.classList.remove('scheduled');
+    if (working || unread) {
+      dot.setAttribute('aria-hidden', 'true');
+      dot.removeAttribute('aria-label');
+      scheduleFaviconUpdate();
+      return;
+    }
+    const pending = scheduledPendingCount.get(id) || 0;
+    if (pending > 0) {
+      dot.classList.add('scheduled');
+      dot.removeAttribute('aria-hidden');
+      dot.setAttribute('aria-label', 'Scheduled message pending');
+    } else {
+      dot.setAttribute('aria-hidden', 'true');
+      dot.removeAttribute('aria-label');
+    }
+    scheduleFaviconUpdate();
+  }
+
+  function setScheduledPendingCount(id, count) {
+    const n = Math.max(0, Number(count) || 0);
+    if (n > 0) scheduledPendingCount.set(id, n);
+    else scheduledPendingCount.delete(id);
+    reconcileStatusDot(id);
+  }
+
+  function bumpScheduledPending(id, delta) {
+    const next = Math.max(0, (scheduledPendingCount.get(id) || 0) + delta);
+    setScheduledPendingCount(id, next);
+  }
+
+  function countScheduledRowsInComposer() {
+    if (!scheduledListEl) return 0;
+    return scheduledListEl.querySelectorAll('.scheduled-item--scheduled').length;
+  }
+
+  function syncScheduledSidebarForChat(chatId) {
+    if (chatId === activeChatId && scheduledListEl) {
+      setScheduledPendingCount(chatId, countScheduledRowsInComposer());
+    }
+  }
+
   function setWorkingDot(id, on) {
     const dot = statusDot(id);
     if (!dot) return;
@@ -1921,12 +1979,169 @@
     } else {
       dot.classList.remove('working');
     }
+    reconcileStatusDot(id);
   }
   function setUnreadDot(id, on) {
     const dot = statusDot(id);
     if (!dot) return;
     if (on) dot.classList.add('unread');
     else dot.classList.remove('unread');
+    reconcileStatusDot(id);
+  }
+
+  // -------------------------------------------------------------------------
+  // Dynamic favicon — rounded (Apple-ish) + aggregate status dots.
+  //
+  // The favicon is a *derived view* of the sidebar status dots already in the
+  // DOM, so there's no parallel state to keep in sync. We only repaint when
+  // the computed verdict actually changes (debounced), so steady-state =
+  // zero work. Dots are static (never animated) — animating a favicon would
+  // re-encode a PNG every frame, which is the one thing that actually costs.
+  // -------------------------------------------------------------------------
+  const FAVICON_DEBOUNCE_MS = 200;
+  const FAVICON_SIZE = 64; // render large; the browser downscales to 16/32
+  let faviconBaseImg = null;
+  let faviconBaseReady = false;
+  let faviconLastVerdict = null;
+  let faviconDebounceTimer = null;
+  let faviconLinkEl = null;
+
+  function faviconColor(name) {
+    // Read live CSS tokens so dark theme is respected; hardcoded fallbacks
+    // are the light-theme values.
+    const read = (v, fallback) => {
+      try {
+        const got = getComputedStyle(document.documentElement)
+          .getPropertyValue(v)
+          .trim();
+        return got || fallback;
+      } catch {
+        return fallback;
+      }
+    };
+    if (name === 'orange') return '#ff9500';
+    if (name === 'blue') return read('--md-link', '#2962ff');
+    if (name === 'green') return read('--ok', '#16a34a');
+    if (name === 'stone') return read('--scheduled', '#78716c');
+    return '#888';
+  }
+
+  function ensureFaviconLink() {
+    if (faviconLinkEl) return faviconLinkEl;
+    // Drop the static PNG/ICO icon links so the browser doesn't prefer them
+    // over our canvas one. apple-touch-icon is left alone (iOS rounds it).
+    document
+      .querySelectorAll('link[rel~="icon"]')
+      .forEach((el) => el.parentNode && el.parentNode.removeChild(el));
+    faviconLinkEl = document.createElement('link');
+    faviconLinkEl.rel = 'icon';
+    faviconLinkEl.id = 'iclaw-dynamic-favicon';
+    document.head.appendChild(faviconLinkEl);
+    return faviconLinkEl;
+  }
+
+  /** Read the sidebar DOM → ordered, de-duped color list (max 2). */
+  function computeFaviconVerdict() {
+    const has = (sel) => document.querySelector(sel) != null;
+    const working =
+      has('.chat-list .status-dot.working') ||
+      has('.sidebar-tasks-dots .status-dot.working');
+    const unread = has('.chat-list .status-dot.unread');
+    const scheduled = has('.chat-list .status-dot.scheduled');
+    const needsHuman = has('.sidebar-tasks-dots .status-dot.task-human');
+    const review = has('.sidebar-tasks-dots .status-dot.task-review');
+    const colors = [];
+    if (needsHuman) colors.push('orange'); // most urgent
+    if (unread || review) colors.push('blue');
+    if (working) colors.push('green');
+    if (scheduled) colors.push('stone');
+    return colors.slice(0, 2); // cap at 2 — 3 dots turn to mush at 16px
+  }
+
+  function roundedClip(ctx, s) {
+    const r = s * 0.28; // squircle-ish corner
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(0, 0, s, s, r);
+    } else {
+      ctx.moveTo(r, 0);
+      ctx.arcTo(s, 0, s, s, r);
+      ctx.arcTo(s, s, 0, s, r);
+      ctx.arcTo(0, s, 0, 0, r);
+      ctx.arcTo(0, 0, s, 0, r);
+    }
+    ctx.closePath();
+  }
+
+  function drawFavicon(colors) {
+    if (!faviconBaseReady) return;
+    const s = FAVICON_SIZE;
+    const canvas = document.createElement('canvas');
+    canvas.width = s;
+    canvas.height = s;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Base icon, clipped to the rounded shape.
+    ctx.save();
+    roundedClip(ctx, s);
+    ctx.clip();
+    ctx.drawImage(faviconBaseImg, 0, 0, s, s);
+    ctx.restore();
+
+    // Status dots in the bottom-right, drawn right→left so the highest
+    // priority (colors[0]) sits closest to the corner. Each gets a light
+    // ring so it reads on any base color.
+    const dotR = s * 0.17;
+    const ring = Math.max(1.5, s * 0.045);
+    const gap = dotR * 0.7;
+    let cx = s - dotR - ring;
+    const cy = s - dotR - ring;
+    for (const color of colors) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, dotR + ring, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+      ctx.fillStyle = faviconColor(color);
+      ctx.fill();
+      cx -= dotR * 2 + gap;
+    }
+
+    try {
+      ensureFaviconLink().href = canvas.toDataURL('image/png');
+    } catch {
+      /* canvas tainted / unsupported — leave the static favicon */
+    }
+  }
+
+  function scheduleFaviconUpdate() {
+    if (faviconDebounceTimer != null) clearTimeout(faviconDebounceTimer);
+    faviconDebounceTimer = setTimeout(() => {
+      faviconDebounceTimer = null;
+      const colors = computeFaviconVerdict();
+      const key = colors.join(',');
+      if (key === faviconLastVerdict) return; // verdict unchanged → no repaint
+      faviconLastVerdict = key;
+      drawFavicon(colors);
+    }, FAVICON_DEBOUNCE_MS);
+  }
+
+  function initDynamicFavicon() {
+    if (!document.head) return;
+    ensureFaviconLink();
+    const img = new Image();
+    img.onload = () => {
+      faviconBaseImg = img;
+      faviconBaseReady = true;
+      faviconLastVerdict = null; // force the first paint (rounding even when idle)
+      scheduleFaviconUpdate();
+    };
+    img.onerror = () => {
+      /* no base image — keep whatever the browser already has */
+    };
+    img.src = '/icon-192.png';
   }
 
   let searchMatchSet = null;
@@ -2043,9 +2258,27 @@
     );
   }
 
+  const SIDEBAR_MENU_HOVER_INTENT_MS = 3500;
+  let sidebarChatMenuAutoCloseTimer = null;
+
+  function armSidebarChatMenuAutoClose() {
+    if (sidebarChatMenuAutoCloseTimer != null) clearTimeout(sidebarChatMenuAutoCloseTimer);
+    sidebarChatMenuAutoCloseTimer = setTimeout(() => {
+      sidebarChatMenuAutoCloseTimer = null;
+      closeSidebarChatMenu();
+    }, SIDEBAR_MENU_HOVER_INTENT_MS);
+  }
+  function disarmSidebarChatMenuAutoClose() {
+    if (sidebarChatMenuAutoCloseTimer != null) {
+      clearTimeout(sidebarChatMenuAutoCloseTimer);
+      sidebarChatMenuAutoCloseTimer = null;
+    }
+  }
+
   function closeSidebarChatMenu() {
     sidebarChatMenu.hidden = true;
     sidebarMenuChatId = null;
+    disarmSidebarChatMenuAutoClose();
   }
 
   function openSidebarChatMenu(clientX, clientY, chatId) {
@@ -2062,7 +2295,12 @@
     y = Math.max(pad, Math.min(y, window.innerHeight - mh - pad));
     sidebarChatMenu.style.left = x + 'px';
     sidebarChatMenu.style.top = y + 'px';
+    armSidebarChatMenuAutoClose();
   }
+
+  // Hover intent for the sidebar context menu — mirrors the schedule menu.
+  sidebarChatMenu.addEventListener('mouseenter', disarmSidebarChatMenuAutoClose);
+  sidebarChatMenu.addEventListener('mouseleave', armSidebarChatMenuAutoClose);
 
   document.addEventListener('pointerdown', (e) => {
     if (sidebarChatMenu.hidden) return;
@@ -2108,7 +2346,6 @@
         if (link) {
           const te = link.querySelector('.chat-item-title');
           if (te) te.textContent = nextTitle;
-          link.title = nextTitle;
         }
         if (activeChatId === cid && titleInput) {
           titleInput.value = nextTitle;
@@ -2151,9 +2388,122 @@
       e.preventDefault();
       const id = Number(link.dataset.chatId);
       if (!Number.isFinite(id)) return;
+      markSidebarHintDiscovered(); // user discovered the gesture; never nag again
       openSidebarChatMenu(e.clientX, e.clientY, id);
     });
+
+    // Hover-and-hold parity: cursor parked on a chat-item for 1.5s opens
+    // the same context menu as right-click. Mouseover bubbles, so we use it
+    // for delegation; we de-dupe child movements via the "same target" check.
+    const HOVER_HOLD_MS = 1500;
+    let chatHoverTimer = null;
+    let chatHoverItem = null;
+    chatListNav.addEventListener('mouseover', (e) => {
+      const link = e.target.closest('a.chat-item[data-chat-id]');
+      if (link === chatHoverItem) return; // still on same item (moved to child)
+      if (chatHoverTimer) {
+        clearTimeout(chatHoverTimer);
+        chatHoverTimer = null;
+      }
+      chatHoverItem = link;
+      if (!link) return;
+      const id = Number(link.dataset.chatId);
+      if (!Number.isFinite(id)) return;
+      chatHoverTimer = setTimeout(() => {
+        chatHoverTimer = null;
+        if (chatHoverItem !== link) return; // pointer moved before timer fired
+        const rect = link.getBoundingClientRect();
+        markSidebarHintDiscovered();
+        // Open near the item's right edge so the menu doesn't cover the title.
+        openSidebarChatMenu(rect.right - 12, rect.top + 8, id);
+      }, HOVER_HOLD_MS);
+    });
+    chatListNav.addEventListener('mouseout', (e) => {
+      const link = e.target.closest('a.chat-item[data-chat-id]');
+      if (!link) return;
+      // Cursor moved to a child of the same item — not actually leaving.
+      if (e.relatedTarget && link.contains(e.relatedTarget)) return;
+      if (link !== chatHoverItem) return;
+      if (chatHoverTimer) {
+        clearTimeout(chatHoverTimer);
+        chatHoverTimer = null;
+      }
+      chatHoverItem = null;
+    });
   }
+
+  // -------------------------------------------------------------------------
+  // sidebar right-click discovery pill — paired with the contextmenu handler
+  // above. Pure client gate: once the user right-clicks a chat, the flag
+  // is set and the pill never shows again on this device.
+  // -------------------------------------------------------------------------
+  const SIDEBAR_HINT_DISCOVERED_KEY = 'iclaw-sidebar-hint-discovered';
+  const SIDEBAR_HINT_LAST_SHOWN_KEY = 'iclaw-sidebar-hint-last-shown';
+  function markSidebarHintDiscovered() {
+    try {
+      localStorage.setItem(SIDEBAR_HINT_DISCOVERED_KEY, '1');
+    } catch {
+      // Private mode — best effort; the pill will disappear next time
+      // we successfully store the per-day stamp anyway.
+    }
+    const pill = document.getElementById('sidebar-hint-pill');
+    if (pill && pill.parentNode) pill.parentNode.removeChild(pill);
+  }
+
+  (function setupSidebarHintPill() {
+    const pill = document.getElementById('sidebar-hint-pill');
+    if (!pill) return; // server skipped it (no chats yet)
+
+    let discovered = null;
+    let lastShown = null;
+    try {
+      discovered = localStorage.getItem(SIDEBAR_HINT_DISCOVERED_KEY);
+      lastShown = localStorage.getItem(SIDEBAR_HINT_LAST_SHOWN_KEY);
+    } catch {
+      // ignore
+    }
+    if (discovered === '1') {
+      pill.remove();
+      return;
+    }
+
+    const d = new Date();
+    const todayKey =
+      d.getFullYear() +
+      '-' +
+      String(d.getMonth() + 1).padStart(2, '0') +
+      '-' +
+      String(d.getDate()).padStart(2, '0');
+    if (lastShown === todayKey) {
+      pill.remove();
+      return;
+    }
+
+    try {
+      localStorage.setItem(SIDEBAR_HINT_LAST_SHOWN_KEY, todayKey);
+    } catch {
+      // ignore
+    }
+
+    pill.hidden = false;
+    const hideTimer = setTimeout(() => {
+      if (pill.parentNode) pill.parentNode.removeChild(pill);
+    }, 12_000);
+
+    // Click on any chat (left-click) = user is moving on — dismiss the
+    // pill. We don't set discovered here, because they didn't actually
+    // use the gesture yet.
+    if (chatListNav) {
+      chatListNav.addEventListener(
+        'click',
+        () => {
+          clearTimeout(hideTimer);
+          if (pill.parentNode) pill.parentNode.removeChild(pill);
+        },
+        { once: true },
+      );
+    }
+  })();
 
   const selectionReplyFab = document.createElement('div');
   selectionReplyFab.id = 'msg-selection-reply-fab';
@@ -2360,13 +2710,15 @@
   let ws = null;
   let reconnectAttempt = 0;
   let reconnectTimer = null;
+  let wsPingTimer = null;
   const wsUrl = (() => {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     return proto + '//' + location.host + '/ws';
   })();
 
   function wsSend(msg) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    var open = !!(ws && ws.readyState === WebSocket.OPEN);
+    if (!open) return false;
     try {
       ws.send(JSON.stringify(msg));
       return true;
@@ -2392,6 +2744,12 @@
 
     ws.addEventListener('open', () => {
       reconnectAttempt = 0;
+      // Keep the socket warm. Remote-access tunnels traverse Cloudflare, which
+      // drops idle WebSockets after ~100s — including during a long agent turn
+      // with gaps between stream frames. The gateway answers 'ping' with 'pong'
+      // (both no-ops in the UI), so this is a harmless heartbeat locally too.
+      if (wsPingTimer) clearInterval(wsPingTimer);
+      wsPingTimer = setInterval(() => { wsSend({ type: 'ping' }); }, 25000);
       if (activeChatId != null) {
         wsSend({ type: 'subscribe', chatId: activeChatId });
         loadPendingFactSuggestions();
@@ -2407,6 +2765,7 @@
       }
     });
     ws.addEventListener('close', () => {
+      if (wsPingTimer) { clearInterval(wsPingTimer); wsPingTimer = null; }
       ws = null;
       scheduleReconnect();
     });
@@ -2864,8 +3223,12 @@
       }
 
       case 'scheduled-added': {
-        if (msg.chatId !== activeChatId) return;
-        renderScheduledItem(msg.scheduled);
+        if (msg.chatId === activeChatId) {
+          renderScheduledItem(msg.scheduled);
+          syncScheduledSidebarForChat(msg.chatId);
+        } else {
+          bumpScheduledPending(msg.chatId, 1);
+        }
         return;
       }
 
@@ -2876,8 +3239,12 @@
       }
 
       case 'scheduled-deleted': {
-        if (msg.chatId !== activeChatId) return;
-        removeScheduledItem(msg.scheduledId);
+        if (msg.chatId === activeChatId) {
+          removeScheduledItem(msg.scheduledId);
+          syncScheduledSidebarForChat(msg.chatId);
+        } else {
+          bumpScheduledPending(msg.chatId, -1);
+        }
         return;
       }
 
@@ -3015,8 +3382,11 @@
 
   function applyGatewayStatus(status, detail) {
     const badge = document.getElementById('gateway-badge');
-    const offline =
-      status === 'down' || status === 'degraded' || status === 'shutdown';
+    // "degraded" (gateway answered /health but the WS RPC can't get through)
+    // gets its own in-page banner on the home/projects pages, so the sidebar
+    // "Start OpenClaw" banner is reserved for a genuinely-offline gateway —
+    // there's nothing to "start" when it's already running.
+    const offline = status === 'down' || status === 'shutdown';
     setGatewayOfflineBannerVisible(offline);
 
     if (!badge) return;
@@ -3026,7 +3396,7 @@
       badge.textContent = 'OpenClaw: connected';
     } else if (status === 'degraded') {
       badge.classList.add('degraded');
-      badge.textContent = 'OpenClaw: degraded';
+      badge.textContent = 'OpenClaw: unreachable';
     } else if (status === 'shutdown') {
       badge.classList.add('shutdown');
       badge.textContent = 'OpenClaw: shutting down';
@@ -3040,10 +3410,9 @@
 
   (function initGatewayOfflineBanner() {
     const badge = document.getElementById('gateway-badge');
-    if (
-      badge &&
-      (badge.classList.contains('down') || badge.classList.contains('degraded'))
-    ) {
+    // Only a genuinely-offline gateway shows the sidebar "Start OpenClaw" banner.
+    // "degraded" is handled by the in-page banner instead.
+    if (badge && badge.classList.contains('down')) {
       setGatewayOfflineBannerVisible(true);
       return;
     }
@@ -4334,7 +4703,9 @@
   const scheduleDatetimeInput = document.getElementById('schedule-datetime-input');
   const SCHEDULE_MIN_LEAD_MS = 3 * 60_000;
   const LONG_PRESS_MS = 450;
+  const HOVER_HOLD_MS = 1500;
   let schedulePressTimer = null;
+  let scheduleHoverTimer = null;
   let scheduleMenuJustOpened = false;
   let scheduleMenuAutoCloseTimer = null;
   let editingScheduledId = null;
@@ -4451,6 +4822,8 @@
     times.hidden = !showTimes;
   }
 
+  const MENU_HOVER_INTENT_MS = 3500;
+
   function closeScheduleMenu() {
     if (!scheduleMenu) return;
     showScheduleMenuPanel('main');
@@ -4463,20 +4836,39 @@
     document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
   }
 
+  /** Schedule a 3.5s close. Cleared by mouseenter on the menu; restarted by
+   * mouseleave or any other re-entry into "user away" state. */
+  function armScheduleMenuAutoClose() {
+    if (scheduleMenuAutoCloseTimer != null) clearTimeout(scheduleMenuAutoCloseTimer);
+    scheduleMenuAutoCloseTimer = setTimeout(() => {
+      scheduleMenuAutoCloseTimer = null;
+      closeScheduleMenu();
+    }, MENU_HOVER_INTENT_MS);
+  }
+  function disarmScheduleMenuAutoClose() {
+    if (scheduleMenuAutoCloseTimer != null) {
+      clearTimeout(scheduleMenuAutoCloseTimer);
+      scheduleMenuAutoCloseTimer = null;
+    }
+  }
+
   function openScheduleMenu() {
     if (!scheduleMenu || !composerHasMessageText()) return;
     closeComposerAttachMenus();
     document.removeEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
     showScheduleMenuPanel('main');
     scheduleMenu.hidden = false;
-    if (scheduleMenuAutoCloseTimer != null) clearTimeout(scheduleMenuAutoCloseTimer);
-    scheduleMenuAutoCloseTimer = setTimeout(() => {
-      scheduleMenuAutoCloseTimer = null;
-      closeScheduleMenu();
-    }, 10_000);
+    armScheduleMenuAutoClose();
     setTimeout(() => {
       document.addEventListener('pointerdown', onScheduleMenuOutsidePointerDown, true);
     }, 0);
+  }
+
+  if (scheduleMenu) {
+    // Hover intent — cursor on the menu pauses the auto-close;
+    // leaving the menu restarts the 3.5s countdown.
+    scheduleMenu.addEventListener('mouseenter', disarmScheduleMenuAutoClose);
+    scheduleMenu.addEventListener('mouseleave', armScheduleMenuAutoClose);
   }
 
   function parseScheduledStamp(stamp) {
@@ -4540,6 +4932,25 @@
     );
   }
 
+  function scheduledRowSortKey(row) {
+    const t = parseScheduledStamp(row.dataset.scheduledAt);
+    return t ? t.getTime() : Number.POSITIVE_INFINITY;
+  }
+
+  /** Soonest scheduled_at first (matches server ORDER BY scheduled_at ASC). */
+  function sortScheduledListDom() {
+    if (!scheduledListEl) return;
+    const rows = [...scheduledListEl.querySelectorAll('.scheduled-item--scheduled')];
+    if (rows.length < 2) return;
+    rows.sort((a, b) => {
+      const da = scheduledRowSortKey(a);
+      const db = scheduledRowSortKey(b);
+      if (da !== db) return da - db;
+      return Number(a.dataset.scheduledId) - Number(b.dataset.scheduledId);
+    });
+    for (const row of rows) scheduledListEl.appendChild(row);
+  }
+
   function refreshScheduledTimes() {
     if (!scheduledListEl) return;
     scheduledListEl.querySelectorAll('.scheduled-item-when[data-when]').forEach((el) => {
@@ -4564,6 +4975,7 @@
     });
     scheduledListEl.appendChild(row);
     scheduledListEl.classList.remove('is-empty');
+    sortScheduledListDom();
   }
   function updateScheduledItem(scheduled) {
     if (!scheduledListEl) return;
@@ -4582,6 +4994,7 @@
     }
     const textEl = row.querySelector('.scheduled-item-text');
     if (textEl) textEl.textContent = scheduled.content;
+    sortScheduledListDom();
   }
 
   function removeScheduledItem(id) {
@@ -4711,6 +5124,25 @@
       if (schedulePressTimer) {
         clearTimeout(schedulePressTimer);
         schedulePressTimer = null;
+      }
+    });
+    // Hover-and-hold on desktop — 1.5s of cursor parked on the button
+    // opens the same schedule menu as long-press. Discoverable for users
+    // who don't think to click-and-hold.
+    sendBtn.addEventListener('mouseenter', () => {
+      if (startedOnDraft || activeChatId == null) return;
+      if (!composerHasMessageText()) return;
+      if (scheduleHoverTimer) clearTimeout(scheduleHoverTimer);
+      scheduleHoverTimer = setTimeout(() => {
+        scheduleHoverTimer = null;
+        if (isScheduleMenuOpen()) return;
+        openScheduleMenu();
+      }, HOVER_HOLD_MS);
+    });
+    sendBtn.addEventListener('mouseleave', () => {
+      if (scheduleHoverTimer) {
+        clearTimeout(scheduleHoverTimer);
+        scheduleHoverTimer = null;
       }
     });
     // Capture-phase click guard — swallows the synthetic click that follows
@@ -5004,6 +5436,7 @@
     link.querySelector('.sidebar-tasks-dots')?.remove();
     const html = renderTasksNavDotsHtml(signals);
     if (html) link.insertAdjacentHTML('beforeend', html);
+    scheduleFaviconUpdate();
   }
 
   async function refreshTasksNavSignals() {
@@ -5597,8 +6030,66 @@
         /* silent */
       }
     });
+    sortScheduledListDom();
     refreshScheduledTimes();
   }
+
+  // -------------------------------------------------------------------------
+  // send-button discovery pill — surfaces the long-press menu (scheduled
+  // message / create task) for users who haven't crossed the usage threshold
+  // yet. Server only renders the element when eligible; this block is
+  // responsible for once-per-day throttling and auto-dismiss.
+  // -------------------------------------------------------------------------
+  (function setupSendHintPill() {
+    const pill = document.getElementById('send-hint-pill');
+    if (!pill) return; // server decided not to surface it
+
+    const STORAGE_KEY = 'iclaw-send-hint-last-shown';
+    const AUTO_HIDE_MS = 12_000;
+
+    function todayKey() {
+      const d = new Date();
+      return (
+        d.getFullYear() +
+        '-' +
+        String(d.getMonth() + 1).padStart(2, '0') +
+        '-' +
+        String(d.getDate()).padStart(2, '0')
+      );
+    }
+
+    let lastShown = null;
+    try {
+      lastShown = localStorage.getItem(STORAGE_KEY);
+    } catch {
+      // Private mode / storage disabled — treat as "never shown".
+    }
+    if (lastShown === todayKey()) return; // already shown today
+
+    try {
+      localStorage.setItem(STORAGE_KEY, todayKey());
+    } catch {
+      // ignore — we'll just nag again next page-load in that session
+    }
+
+    let hideTimer = null;
+    function hidePill() {
+      if (hideTimer != null) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+      if (pill.parentNode) pill.parentNode.removeChild(pill);
+    }
+
+    pill.hidden = false;
+    hideTimer = setTimeout(hidePill, AUTO_HIDE_MS);
+
+    // Дрібні сигнали, що юзер зорієнтувався: почав писати або тицьнув send.
+    // Без цього pill «висить» поки таймер не догорить, що відволікає.
+    const input = document.getElementById('composer-input');
+    if (input) input.addEventListener('focus', hidePill, { once: true });
+    if (sendBtn) sendBtn.addEventListener('pointerdown', hidePill, { once: true });
+  })();
 
   // -------------------------------------------------------------------------
   // chat title inline rename (HTTP form fallback for now)
@@ -7879,6 +8370,7 @@
   initProjectPageTabs();
   initTasksBoardPage();
   initTaskDetailPage();
+  initDynamicFavicon();
   if (document.getElementById('sidebar-tasks-link')) void refreshTasksNavSignals();
   hydrateTaskApproveRunFlash();
   hydrateTaskResumeFlash();
@@ -7907,5 +8399,22 @@
       messagesEl.removeAttribute('data-defer-paint');
     });
   }
-  connectWs();
+  function bootConnectWs() {
+    connectWs();
+  }
+  if (window.__iclawRaE2eBoot && typeof window.__iclawRaE2eBoot.then === 'function') {
+    window.__iclawRaE2eBoot
+      .then(function (ok) {
+        if (!ok) {
+          console.warn('[iclaw] E2E transport not active — encrypted remote access unavailable');
+        }
+        bootConnectWs();
+      })
+      .catch(function (err) {
+        console.error('[iclaw] E2E transport install failed', err);
+        bootConnectWs();
+      });
+  } else {
+    bootConnectWs();
+  }
 })();

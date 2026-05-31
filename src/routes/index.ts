@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { chats, projectSecrets, projects, tasks } from '../services/store';
 import { openclaw } from '../services/openclaw';
-import { openclawWs } from '../services/openclawWs';
+import { probeGateway } from '../services/gatewayProbe';
 import { chatStatus } from '../services/chatStatus';
+import { shouldShowSendHint } from '../services/sendHint';
 
 export const indexRouter: Router = Router();
 
@@ -14,7 +15,6 @@ indexRouter.get('/api/secrets/check-label', (req, res) => {
 indexRouter.get('/', async (req, res) => {
   const list = chats.list();
   const allProjects = projects.list();
-  const gatewayUp = await openclaw.health();
 
   // ?project=<id> — preselect a project for the new draft chat
   const projectQuery = typeof req.query.project === 'string' ? Number(req.query.project) : NaN;
@@ -23,14 +23,7 @@ indexRouter.get('/', async (req, res) => {
       ? projects.get(projectQuery) ?? null
       : null;
 
-  let agents: { id: string }[] = [];
-  let agentsError: string | null = null;
-  try {
-    const raw = await openclawWs.listAgents();
-    agents = [{ id: 'openclaw/default' }, ...raw.map((a) => ({ id: `openclaw/${a.id}` }))];
-  } catch (err) {
-    agentsError = err instanceof Error ? err.message : String(err);
-  }
+  const { gatewayUp, agents, agentsError, gatewayStatus } = await probeGateway('index');
 
   res.render('index', {
     chats: list,
@@ -41,10 +34,12 @@ indexRouter.get('/', async (req, res) => {
     activeChat: null,
     activeProject: preselectedProject,
     gatewayUp,
+    gatewayStatus,
     agents,
     agentsError,
     defaultAgent: 'openclaw/default',
     openclawBaseUrl: openclaw.baseUrl,
     workingIds: chatStatus.workingIds(),
+    sendHintShow: shouldShowSendHint(),
   });
 });

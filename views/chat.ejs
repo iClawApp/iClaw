@@ -5,6 +5,7 @@
 
   <main class="col col-main">
     <header class="chat-header">
+      <%- include('partials/mobile-nav-toggle') %>
       <form class="rename-form" id="chat-rename-form" onsubmit="return false">
         <input
           type="text"
@@ -14,6 +15,7 @@
         />
       </form>
 
+      <div class="chat-header-tools">
       <form class="agent-form header-field" method="post" action="/chats/<%= activeChat.id %>/agent">
         <label class="header-field-label" for="chat-agent-select">Agent</label>
         <select name="agent" id="chat-agent-select" onchange="this.form.submit()" aria-label="Agent">
@@ -31,13 +33,15 @@
       <label
         class="reasoning-toggle header-field"
         title="Show the model's reasoning / thinking inline. Type /reasoning on in chat to actually enable it on OpenClaw side."
+        aria-label="Reasoning"
       >
         <input
           type="checkbox"
           id="chat-reasoning-toggle"
           <%= activeChat.reasoning_mode && activeChat.reasoning_mode !== 'off' ? 'checked' : '' %>
         />
-        <span>Reasoning</span>
+        <%- include('partials/header-tool-icon', { icon: 'reasoning' }) %>
+        <span class="header-tool-label">Reasoning</span>
       </label>
 
       <% if (activeChat.project_id) { %>
@@ -47,7 +51,11 @@
           class="share-form"
           title="When on, after each assistant reply you get suggested facts to add to the project (you confirm each)."
         >
-          <label class="share-toggle">
+          <label
+            class="share-toggle"
+            title="Suggest facts for project"
+            aria-label="Suggest facts for project"
+          >
             <input
               type="checkbox"
               name="shares"
@@ -55,41 +63,51 @@
               <%= activeChat.shares_to_project ? 'checked' : '' %>
               onchange="this.form.submit()"
             />
-            <span>Suggest facts for project</span>
+            <%- include('partials/header-tool-icon', { icon: 'facts' }) %>
+            <span class="header-tool-label">Suggest facts for project</span>
           </label>
         </form>
       <% } %>
 
       <button
         type="button"
-        class="stop-btn btn btn--ghost btn--sm"
+        class="stop-btn btn btn--ghost btn--sm header-action-btn"
         id="stop-btn"
         aria-label="Stop generation"
         title="Stop this turn"
         <%= isWorking ? '' : 'hidden' %>
-      >■&#xFE0E; Stop</button>
-
+      >
+        <%- include('partials/header-tool-icon', { icon: 'stop' }) %>
+        <span class="header-tool-label">Stop</span>
+      </button>
 
       <% if (cloudShareBaseUrl) { %>
         <button
           type="button"
-          class="share-btn btn btn--ghost btn--sm"
+          class="share-btn btn btn--ghost btn--sm header-action-btn"
           id="share-btn"
           data-cloud-base-url="<%= cloudShareBaseUrl %>"
           title="Encrypted in your browser; the key is in the # part of the link. Optional password."
           aria-label="Share this chat"
-        >🔗 Share</button>
+        >
+          <%- include('partials/header-tool-icon', { icon: 'share' }) %>
+          <span class="header-tool-label">Share</span>
+        </button>
       <% } %>
 
       <form method="post" action="/chats/<%= activeChat.id %>/delete" class="delete-form">
         <button
           type="submit"
-          class="btn btn--ghost btn--sm"
+          class="btn btn--ghost btn--sm header-action-btn chat-delete-btn"
           onclick="return confirm('Delete this chat?')"
           aria-label="Delete chat"
           title="Delete this chat"
-        >🗑️ Delete</button>
+        >
+          <%- include('partials/header-tool-icon', { icon: 'delete' }) %>
+          <span class="header-tool-label">Delete</span>
+        </button>
       </form>
+      </div>
     </header>
 
     <aside
@@ -244,7 +262,7 @@
     <script>
       window.__ICLAW_QUEUE__ = <%- JSON.stringify(typeof queueList !== 'undefined' ? queueList : []) %>;
     </script>
-    <script src="/js/iclaw.js"></script>
+    <script src="/js/iclaw.js?v=1"></script>
     <% if (cloudShareBaseUrl) { %>
       <script src="/js/share.js" defer></script>
     <% } %>

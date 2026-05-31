@@ -68,6 +68,8 @@
   --warn-soft-bg: color-mix(in srgb, var(--warn) 8%, var(--surface));
   --warn-soft-border: color-mix(in srgb, var(--warn) 35%, var(--border));
   --info: #2962ff;
+  /* Sidebar dot — pending send-later (muted stone gray). */
+  --scheduled: #78716c;
 
   /* Apple system blue — inline banner primary actions */
   --apple-blue: #007aff;
@@ -89,6 +91,7 @@
   :root {
     --warn: #fbbf24;
     --info: #7ab7ff;
+    --scheduled: #a8a29e;
     --approve: #4ade80;
     --approve-soft-fg: #86efac;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
@@ -538,6 +541,48 @@ code {
   display: block;
 }
 
+/* Settings (gear) button — small icon-only entry to /settings, sits left
+   of "New chat". Sibling to the search toggle but smaller and never
+   hidden when search is open. */
+.sidebar-settings-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  align-self: center;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.sidebar-settings-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--hover) 55%, transparent);
+}
+.sidebar-settings-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-link) 35%, transparent);
+}
+.sidebar-settings-btn.active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--hover) 60%, transparent);
+}
+.sidebar-settings-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
 .sidebar-search-field-wrap {
   display: none;
   flex: 1;
@@ -711,6 +756,9 @@ code {
 }
 .status-dot.unread {
   background: var(--md-link);
+}
+.status-dot.scheduled {
+  background: var(--scheduled);
 }
 .status-dot.task-human {
   background: #ff9500;
@@ -1758,6 +1806,72 @@ code {
   opacity: 0.35;
   cursor: progress;
   transform: none;
+}
+
+/* Send-button discovery pill — floats above the Send button with a tail
+   pointing down. JS gates visibility (once per day until 2 tasks + 3
+   scheduled msgs). Pure presentational; server-side template gates whether
+   it's even in the DOM. */
+.send-hint-pill {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: inline-flex;
+  align-items: center;
+  max-width: 240px;
+  padding: 6px 12px;
+  background: var(--apple-blue);
+  color: var(--apple-blue-fg);
+  border-radius: var(--radius-md, 8px);
+  font-size: 0.82rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md, 0 6px 18px rgba(0, 0, 0, 0.15));
+  z-index: 5;
+  pointer-events: none;
+  animation: send-hint-pill-in 220ms ease-out;
+}
+.send-hint-pill[hidden] { display: none !important; }
+.send-hint-pill::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  top: 100%;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid var(--apple-blue);
+}
+.send-hint-pill__text {
+  flex: 1 1 auto;
+  white-space: normal;
+}
+@keyframes send-hint-pill-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Sidebar discovery pill — teaches the right-click context menu on chat
+   items. Sits under the toolbar, above the chat list. Same visual
+   language as the send-hint pill but block-level (no tail/arrow). */
+.sidebar-hint-pill {
+  display: block;
+  margin: var(--space-2) var(--space-3) var(--space-3);
+  padding: 6px 12px;
+  background: var(--apple-blue);
+  color: var(--apple-blue-fg);
+  border-radius: var(--radius-md, 8px);
+  font-size: 0.82rem;
+  line-height: 1.25;
+  box-shadow: var(--shadow-sm, 0 2px 6px rgba(0, 0, 0, 0.08));
+  pointer-events: none;
+  animation: send-hint-pill-in 220ms ease-out;
+}
+.sidebar-hint-pill[hidden] { display: none !important; }
+.sidebar-hint-pill__text {
+  display: block;
+  white-space: normal;
 }
 
 /* Hint strip: absolute in the composer’s bottom padding — no layout shift,
@@ -3242,7 +3356,7 @@ code {
   z-index: 2;
   border: 2px solid var(--sidebar-bg);
 }
-.chat-item-avatar-wrap .status-dot:not(.working):not(.unread) {
+.chat-item-avatar-wrap .status-dot:not(.working):not(.unread):not(.scheduled) {
   display: none;
 }
 
@@ -3336,6 +3450,67 @@ code {
   cursor: pointer;
 }
 
+/* Header toolbar — one flex row on desktop; icon-only on phone */
+.header-tool-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: block;
+  pointer-events: none;
+}
+
+.header-tool-label {
+  font-size: 0.78rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.chat-header-tools {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.chat-header-tools .share-form,
+.chat-header-tools .delete-form {
+  display: contents;
+}
+
+/* Desktop: icon + text pill buttons */
+.header-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.chat-header .reasoning-toggle .header-tool-icon,
+.chat-header .share-toggle .header-tool-icon {
+  display: none;
+}
+
+.chat-header .chat-delete-btn,
+.project-header .project-delete-btn {
+  color: var(--muted);
+}
+
+.chat-header .chat-delete-btn:hover,
+.project-header .project-delete-btn:hover {
+  color: var(--danger);
+  --_btn-bg-hover: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.project-header .project-delete-btn.header-action-btn {
+  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--header-surface));
+}
+
 .draft-header {
   flex-wrap: wrap;
   row-gap: 10px;
@@ -3361,6 +3536,51 @@ code {
 }
 .draft-body:not(.is-picking) .draft-pick-stage {
   display: none;
+}
+
+/* Gateway/agents-load failure notice — shown above the project picker so the
+ * screen stays usable and the real error (and the baseUrl we tried) is visible
+ * instead of a dead-end "Start OpenClaw" message. */
+.draft-agents-error {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto 24px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  text-align: left;
+}
+.draft-agents-error__title {
+  margin: 0 0 6px;
+  font-weight: 600;
+  color: var(--warn);
+}
+.draft-agents-error__hint {
+  margin: 0 0 12px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.draft-agents-error__detail {
+  margin: 0 0 12px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+.draft-agents-error__detail-label {
+  display: inline-block;
+  margin-right: 6px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  opacity: 0.8;
+}
+.draft-agents-error__detail code {
+  font-size: 0.78rem;
+}
+.draft-agents-error__retry {
+  margin: 0;
 }
 .draft-composer-wrap {
   flex-shrink: 0;
@@ -6340,5 +6560,665 @@ a.project-tab.project-tab--tasks:hover {
   .create-task-modal__field input:focus,
   .create-task-modal__field select:focus {
     box-shadow: none;
+  }
+}
+
+/* =============================================================================
+ * Remote Access gate — tunneled passphrase login (standalone page)
+ * =========================================================================== */
+
+.ra-gate-page {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ra-gate-header {
+  padding: var(--space-8) var(--space-9);
+}
+
+.ra-gate-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.ra-gate-logo {
+  display: block;
+  border-radius: var(--radius-sm);
+}
+
+.ra-gate-main {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 0 var(--space-9) var(--space-10);
+}
+
+.ra-gate-card {
+  width: 100%;
+  max-width: 22rem;
+  margin: 0;
+}
+
+.ra-gate-loading {
+  text-align: center;
+}
+
+.ra-gate-title {
+  margin: 0 0 var(--space-2);
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.ra-gate-lead {
+  margin: 0 0 var(--space-7);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.ra-gate-error {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--down-soft-border);
+  background: var(--down-soft-bg);
+  color: var(--danger);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+
+.ra-gate-group {
+  margin-bottom: var(--space-6);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--text) 5%, var(--surface));
+  overflow: clip;
+}
+
+.ra-gate-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 44px;
+  padding: 0 var(--space-5);
+  cursor: text;
+}
+
+.ra-gate-row-label {
+  flex: 0 0 auto;
+  font-size: var(--text-sm);
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.ra-gate-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-4) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: right;
+}
+
+.ra-gate-input:focus {
+  outline: none;
+}
+
+.ra-gate-submit {
+  width: 100%;
+  --_btn-pad-y: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.ra-gate-note {
+  margin: var(--space-6) 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  text-align: center;
+  color: var(--muted);
+}
+
+@media (max-width: 480px) {
+  .ra-gate-header { padding: var(--space-7) var(--space-6); }
+  .ra-gate-main { padding: 0 var(--space-6) var(--space-9); }
+}
+
+/* ==========================================================================
+   Phone layout (≤639px) — iPhone / Samsung portrait; tablets use desktop.
+   ========================================================================== */
+
+.mobile-nav-btn {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 65%, var(--header-surface, var(--surface)));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.mobile-nav-btn svg {
+  width: 22px;
+  height: 22px;
+}
+.mobile-nav-btn:hover {
+  background: color-mix(in srgb, var(--hover) 55%, transparent);
+}
+.mobile-nav-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.page-toolbar--stack {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.page-toolbar--task {
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+.page-toolbar--task .task-back {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+@media (max-width: 639px) {
+  .mobile-nav-btn {
+    display: inline-flex;
+  }
+
+  .app {
+    grid-template-columns: 1fr;
+  }
+
+  .col-left {
+    position: fixed;
+    z-index: 200;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(18.75rem, 88vw);
+    max-width: 100%;
+    transform: translateX(-105%);
+    transition: transform 0.22s ease;
+    border-right: 1px solid var(--border);
+    box-shadow: none;
+    padding-top: env(safe-area-inset-top, 0);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  .app.is-sidebar-open .col-left {
+    transform: translateX(0);
+    box-shadow: var(--shadow-xl);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    z-index: 190;
+    inset: 0;
+    margin: 0;
+    border: 0;
+    padding: 0;
+    background: color-mix(in srgb, #000 42%, transparent);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease;
+  }
+
+  .app.is-sidebar-open .sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  body.is-sidebar-open {
+    overflow: hidden;
+    touch-action: none;
+  }
+
+  .col-main {
+    min-width: 0;
+    width: 100%;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  /* ── Chat / draft header: menu + toolbar only (title hidden on phone) ── */
+  .chat-header {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-areas: "nav tools";
+    align-items: center;
+    gap: 6px 8px;
+    padding: 8px max(10px, env(safe-area-inset-right, 0px)) 8px
+      max(10px, env(safe-area-inset-left, 0px));
+    background: var(--header-surface);
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, var(--chat-pane-bg));
+  }
+
+  .chat-header .mobile-nav-btn {
+    grid-area: nav;
+    align-self: center;
+  }
+
+  /* Chat title is in the sidebar / page context — skip on narrow screens */
+  .chat-header > .rename-form {
+    display: none;
+  }
+
+  .chat-header-tools {
+    grid-area: tools;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    min-height: 44px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .chat-header-tools::-webkit-scrollbar {
+    display: none;
+  }
+
+  .chat-header-tools > * {
+    flex: 0 0 auto;
+  }
+
+  .chat-header .agent-form select,
+  .chat-header-tools .header-field select {
+    max-width: min(10rem, 42vw);
+    height: 40px;
+    font-size: 0.8125rem;
+  }
+
+  /* Phone: icon-only toolbar */
+  .chat-header .header-tool-label,
+  .header-action-btn .header-tool-label {
+    display: none;
+  }
+
+  .chat-header .reasoning-toggle .header-tool-icon,
+  .chat-header .share-toggle .header-tool-icon {
+    display: block;
+  }
+
+  .chat-header .reasoning-toggle,
+  .chat-header .share-toggle {
+    position: relative;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
+    gap: 0;
+  }
+
+  .chat-header .reasoning-toggle input[type="checkbox"],
+  .chat-header .share-toggle input[type="checkbox"] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+    accent-color: transparent;
+  }
+
+  .chat-header .reasoning-toggle:has(input:checked),
+  .chat-header .share-toggle:has(input:checked) {
+    color: var(--md-link);
+    background: color-mix(in srgb, var(--md-link) 12%, transparent);
+    border-color: color-mix(in srgb, var(--md-link) 38%, var(--border));
+  }
+
+  .header-action-btn {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 12px;
+    gap: 0;
+  }
+
+  .chat-header .header-tool-icon,
+  .header-action-btn .header-tool-icon {
+    width: 21px;
+    height: 21px;
+  }
+
+  .project-header .project-delete-btn.header-action-btn {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
+    border-radius: 12px;
+  }
+
+  .draft-header .gateway {
+    flex-shrink: 0;
+    max-width: none;
+    white-space: nowrap;
+    font-size: 0.72rem;
+  }
+
+  .project-header {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-areas:
+      "nav primary"
+      "actions actions";
+    align-items: center;
+    gap: 8px;
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+    flex-shrink: 0;
+    padding: 8px max(10px, env(safe-area-inset-right, 0px)) 8px
+      max(10px, env(safe-area-inset-left, 0px));
+  }
+
+  .project-header .mobile-nav-btn {
+    grid-area: nav;
+    margin-top: 0;
+  }
+
+  .project-header-primary {
+    grid-area: primary;
+    flex: none;
+    min-width: 0;
+  }
+
+  .project-header-actions {
+    grid-area: actions;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    margin-left: 0;
+    min-height: 44px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .project-header-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .project-header-actions > * {
+    flex: 0 0 auto;
+  }
+
+  /* ── Transcript + composer ── */
+  #messages {
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+  }
+
+  .composer {
+    padding:
+      10px
+      max(12px, env(safe-area-inset-right, 0px))
+      max(14px, env(safe-area-inset-bottom, 0px))
+      max(12px, env(safe-area-inset-left, 0px));
+  }
+
+  .composer-field {
+    padding: 6px 6px 6px 12px;
+    border-radius: 20px;
+  }
+
+  .composer-send,
+  #composer-attach-btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .msg.user,
+  .msg.assistant {
+    max-width: min(92%, 100%);
+  }
+
+  /* ── Settings ── */
+  .settings-page {
+    padding:
+      max(var(--space-7), env(safe-area-inset-top, 0px))
+      max(var(--space-4), env(safe-area-inset-right, 0px))
+      max(var(--space-8), env(safe-area-inset-bottom, 0px))
+      max(var(--space-4), env(safe-area-inset-left, 0px));
+  }
+
+  .settings-head.page-toolbar,
+  .task-page--board .task-board-header.page-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+    flex-shrink: 0;
+    background: var(--chat-pane-bg);
+    padding-bottom: var(--space-3);
+    margin-bottom: var(--space-2);
+  }
+
+  .settings-head.page-toolbar .settings-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 1.35rem;
+  }
+
+  .settings-section-head-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ra-new-btn {
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .ra-tunnel-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+  }
+
+  .ra-url-display {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ra-modal {
+    width: min(100vw - 24px, 28rem);
+    max-height: min(90dvh, 100%);
+    margin: auto;
+  }
+
+  /* ── Projects hub ── */
+  .projects-hub-inner {
+    padding:
+      max(24px, env(safe-area-inset-top, 0px))
+      max(16px, env(safe-area-inset-right, 0px))
+      max(40px, env(safe-area-inset-bottom, 0px))
+      max(16px, env(safe-area-inset-left, 0px));
+    max-width: none;
+  }
+
+  .projects-hub-head.page-toolbar--stack .projects-hub-title {
+    flex: 1 1 calc(100% - 52px);
+    margin: 0;
+  }
+
+  .projects-hub-head.page-toolbar--stack .projects-hub-intro {
+    flex: 1 1 100%;
+    width: 100%;
+    margin-top: var(--space-2);
+  }
+
+  .projects-hub-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .projects-hub-add {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  /* ── Tasks board (horizontal scroll, phone-sized columns) ── */
+  .task-page--board .task-shell {
+    padding:
+      max(var(--space-5), env(safe-area-inset-top, 0px))
+      max(var(--space-3), env(safe-area-inset-right, 0px))
+      max(var(--space-6), env(safe-area-inset-bottom, 0px))
+      max(var(--space-3), env(safe-area-inset-left, 0px));
+  }
+
+  .task-page--board .task-board-header.page-toolbar {
+    flex-wrap: wrap;
+    padding: 0 var(--space-2);
+  }
+
+  .task-page--board .task-board-title {
+    flex: 1 1 calc(100% - 52px);
+    margin: 0;
+    font-size: 1.35rem;
+  }
+
+  .task-page--board .task-project-filter {
+    width: 100%;
+  }
+
+  .task-page--board .task-project-filter-select {
+    width: 100%;
+    min-height: 44px;
+    max-width: none;
+  }
+
+  .task-board-col {
+    flex: 0 0 min(82vw, 17.5rem);
+    min-width: min(82vw, 16rem);
+    max-width: min(82vw, 18rem);
+  }
+
+  .task-page--board .task-board-col {
+    max-height: calc(100dvh - 9rem);
+  }
+
+  /* ── Task detail ── */
+  .task-page:not(.task-page--board) .task-shell {
+    padding:
+      max(var(--space-5), env(safe-area-inset-top, 0px))
+      max(var(--space-4), env(safe-area-inset-right, 0px))
+      max(var(--space-8), env(safe-area-inset-bottom, 0px))
+      max(var(--space-4), env(safe-area-inset-left, 0px));
+  }
+
+  .task-large-header-row {
+    flex-wrap: wrap;
+    gap: var(--space-4);
+  }
+
+  .task-large-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .task-ask-open-btn {
+    min-height: 44px;
+  }
+
+  /* ── Project body ── */
+  .project-page .project-body {
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+  }
+
+  /* ── Popovers / menus ── */
+  .slash-menu,
+  .sidebar-context-menu,
+  .schedule-menu,
+  .project-logo-popover {
+    max-width: min(calc(100vw - 16px), 20rem);
+  }
+
+  .schedule-picker__panel {
+    width: 100%;
+    max-width: none;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .composer-secret-modal__panel,
+  .create-task-modal__panel,
+  .task-ask-modal__panel {
+    width: min(calc(100vw - 20px), 32rem);
+    max-height: min(88dvh, 100%);
+  }
+}
+
+@media (min-width: 640px) {
+  .sidebar-backdrop {
+    display: none !important;
+  }
+
+  .app.is-sidebar-open .col-left {
+    transform: none;
+  }
+
+  body.is-sidebar-open {
+    overflow: auto;
+    touch-action: auto;
   }
 }

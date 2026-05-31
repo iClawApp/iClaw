@@ -25,6 +25,7 @@ import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
 import { sendMessage } from '../services/chatRunner';
+import { shouldShowSendHint } from '../services/sendHint';
 
 export const chatsRouter: Router = Router();
 
@@ -178,6 +179,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
       currentActivity: chatStatus.getActivity(id),
       scheduledList: scheduledMessages.listByChat(id),
       queueList: queuedMessages.listByChat(id),
+      sendHintShow: shouldShowSendHint(),
     });
   } catch (err) {
     next(err);

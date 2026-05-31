@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title><%= typeof title !== 'undefined' ? title : 'iClaw' %></title>
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
@@ -11,10 +11,21 @@
   <link rel="stylesheet" href="/css/style.css" />
   <link rel="stylesheet" href="/css/highlight-github.min.css" media="(prefers-color-scheme: light), (prefers-color-scheme: no-preference)" />
   <link rel="stylesheet" href="/css/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)" />
+  <% if (typeof raE2eEnabled !== 'undefined' && raE2eEnabled) { %>
+  <meta name="iclaw-ra-e2e" content="true" />
+  <meta name="iclaw-ra-tunnel-id" content="<%= typeof raTunnelId !== 'undefined' ? raTunnelId : '' %>" />
+  <meta name="iclaw-ra-relay-binding" content="<%= typeof raRelayBindingB64url !== 'undefined' ? raRelayBindingB64url : '' %>" />
+  <script type="module">
+    window.__iclawRaE2eBoot = import('/js/ra-e2e-transport.mjs?v=ra-gate-9').then(function (m) {
+      return m.installRaE2eTransport();
+    });
+  </script>
+  <% } %>
   <script>
     window.__ICLAW_VERSION__ = <%- JSON.stringify(typeof iclawVersion !== 'undefined' ? iclawVersion : '0.0.0') %>;
     window.__ICLAW_PROJECT_LOGO_EMOJIS__ = <%- JSON.stringify(projectLogoEmojis || []) %>;
     window.__ICLAW_PROJECTS__ = <%- JSON.stringify(typeof projectsMini !== 'undefined' ? projectsMini : []) %>;
+    window.__ICLAW_SCHEDULED_CHAT_COUNTS__ = <%- JSON.stringify(typeof scheduledChatCounts !== 'undefined' ? scheduledChatCounts : {}) %>;
   </script>
 </head>
 <body>

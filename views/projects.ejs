@@ -5,7 +5,12 @@
 
   <main class="col col-main projects-hub-page">
     <div class="projects-hub-inner">
-      <header class="projects-hub-head">
+      <% if (typeof agentsError !== 'undefined' && agentsError) { %>
+      <%- include('partials/gatewayError', { agentsError, gatewayUp, openclawBaseUrl }) %>
+      <% } %>
+
+      <header class="projects-hub-head page-toolbar page-toolbar--stack">
+        <%- include('partials/mobile-nav-toggle') %>
         <h1 class="projects-hub-title">Projects</h1>
         <p class="projects-hub-intro muted">
           Shared notes for your chats — facts you save in a conversation show up here and travel with new messages in the same project.
@@ -61,7 +66,7 @@
       </ul>
     </div>
 
-    <script src="/js/iclaw.js"></script>
+    <script src="/js/iclaw.js?v=1"></script>
   </main>
 </div>
 

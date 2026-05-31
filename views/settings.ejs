@@ -1,0 +1,1233 @@
+<%- include('partials/head', { title: 'Settings — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main settings-page">
+    <div class="settings-inner">
+      <header class="settings-head page-toolbar">
+        <%- include('partials/mobile-nav-toggle') %>
+        <h1 class="settings-title">Settings</h1>
+      </header>
+
+      <!-- ─────────── Remote Access ─────────── -->
+      <section class="settings-section">
+        <header class="settings-section-head">
+          <div class="settings-section-head-row">
+            <div class="settings-section-head-text">
+              <h2 class="settings-section-title">
+                <svg class="settings-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="2" y1="12" x2="22" y2="12"/>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                </svg>
+                Remote Access
+              </h2>
+              <p class="settings-section-desc">
+                Get a link to open iClaw on your phone, another computer, or
+                with someone you trust. Each link has its own passphrase and
+                stops working when the time runs out.
+              </p>
+            </div>
+            <button type="button" class="btn btn--primary btn--sm ra-new-btn" id="ra-open-modal">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              <span>Share</span>
+            </button>
+          </div>
+        </header>
+
+        <!-- List of active tunnels -->
+        <div id="ra-list" class="ra-list">
+          <% if (tunnels.length === 0) { %>
+            <div class="ra-empty">
+              <svg class="ra-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              </svg>
+              <p class="ra-empty-text">No active tunnels</p>
+            </div>
+          <% } else { %>
+            <% tunnels.forEach(function (t) {
+              var tunnelTitle = t.label || 'Remote tunnel';
+              var passMask = '•'.repeat(Math.max(t.passphrase.length, 8));
+              var urlHost = '', urlPath = '';
+              if (t.url) {
+                try {
+                  var u = new URL(t.url);
+                  urlHost = u.host;
+                  urlPath = u.pathname + u.search + u.hash;
+                } catch (e) {
+                  urlHost = t.url;
+                }
+              }
+            %>
+              <div
+                class="ra-tunnel-card"
+                data-tunnel-id="<%= t.id %>"
+                data-expires-at="<%= t.expiresAt %>"
+              >
+                <div class="ra-tunnel-head">
+                  <div class="ra-tunnel-meta">
+                    <h3 class="ra-tunnel-name"><%= tunnelTitle %></h3>
+                    <span class="ra-remaining" data-role="remaining">…</span>
+                  </div>
+                  <button type="button" class="btn btn--ghost btn--sm btn--danger ra-disable-btn" data-action="delete">Disable</button>
+                </div>
+
+                <div class="ra-field">
+                  <div class="ra-field-label">URL</div>
+                  <% if (t.url) { %>
+                    <div class="ra-field-value-row">
+                      <a class="ra-url" data-role="url" href="<%= t.url %>" target="_blank" rel="noopener noreferrer" title="<%= t.url %>">
+                        <span class="ra-url-display">
+                          <span class="ra-url-host"><%= urlHost %></span><% if (urlPath) { %><span class="ra-url-path"><%= urlPath %></span><% } %>
+                        </span>
+                      </a>
+                      <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="url" aria-label="Copy access link" title="Copy access link">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>
+                      </button>
+                      <button type="button" class="btn btn--ghost btn--sm" data-action="regenerate-access" title="Invalidate old links and mint a new access token">New access link</button>
+                    </div>
+                  <% } else { %>
+                    <div class="ra-connecting" data-role="url-pending">
+                      <span class="ra-spinner" aria-hidden="true"></span>
+                      <span>Connecting…</span>
+                    </div>
+                  <% } %>
+                </div>
+
+                <div class="ra-field">
+                  <div class="ra-field-label">Passphrase</div>
+                  <div class="ra-field-value-row">
+                    <code class="ra-passphrase is-masked" data-role="passphrase" data-secret="<%= t.passphrase %>" tabindex="0" role="button" aria-label="Show passphrase"><%= passMask %></code>
+                    <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="passphrase" aria-label="Copy passphrase" title="Copy passphrase">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="ra-field ra-devices-field" data-role="devices-wrap" data-tunnel-id="<%= t.id %>">
+                  <div class="ra-field-label">Connected devices</div>
+                  <div class="ra-devices-list" data-role="devices-list">
+                    <span class="ra-devices-muted">Loading…</span>
+                  </div>
+                </div>
+              </div>
+            <% }); %>
+          <% } %>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- ─────────── New-tunnel modal ─────────── -->
+<dialog id="ra-modal" class="ra-modal" aria-labelledby="ra-modal-title" aria-describedby="ra-modal-desc">
+  <form method="dialog" class="ra-modal-form" id="ra-modal-form">
+    <header class="ra-modal-head">
+      <div class="ra-modal-head-text">
+        <h3 class="ra-modal-title" id="ra-modal-title">Share</h3>
+        <p class="ra-modal-lead" id="ra-modal-desc">
+          Get a link and password for another device or someone you trust
+        </p>
+      </div>
+      <button type="button" class="ra-modal-x" id="ra-modal-cancel" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </header>
+
+    <div class="ra-modal-body">
+      <div class="ra-modal-group">
+        <label class="ra-modal-group-row" for="ra-modal-label">
+          <span class="ra-modal-group-label">Name</span>
+          <input
+            type="text"
+            name="label"
+            id="ra-modal-label"
+            class="ra-modal-group-input"
+            placeholder="Anna's iPhone"
+            maxlength="64"
+            autocomplete="off"
+            required
+          />
+        </label>
+      </div>
+
+      <fieldset class="ra-modal-field ra-duration-field">
+        <legend class="ra-duration-legend">Expires after</legend>
+        <div class="ra-duration-segmented" role="radiogroup" aria-label="Expires after">
+          <% allowedDurationsMs.forEach(function (ms, i) {
+            var label;
+            var title;
+            if      (ms === 30 * 60000)      { label = '30m';  title = '30 minutes'; }
+            else if (ms === 12 * 60 * 60000) { label = '12h';  title = '12 hours'; }
+            else if (ms === 7 * 86400000)    { label = '7d';   title = '7 days'; }
+            else if (ms === 30 * 86400000)   { label = '30d';  title = '30 days'; }
+            else                              { label = Math.round(ms / 60000) + 'm'; title = label; }
+          %>
+          <label class="ra-duration-seg">
+            <input type="radio" name="durationMs" value="<%= ms %>"<%= i === 1 ? ' checked' : '' %> />
+            <span class="ra-duration-seg-label" title="<%= title %>"><%= label %></span>
+          </label>
+          <% }); %>
+        </div>
+      </fieldset>
+    </div>
+
+    <footer class="ra-modal-foot">
+      <button type="submit" class="btn btn--primary btn--sm" id="ra-modal-submit">Share</button>
+    </footer>
+  </form>
+</dialog>
+
+<style>
+/* ───────────── Page shell ───────────── */
+.settings-page {
+  width: 100%;
+  max-width: 42rem;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: var(--space-9) var(--space-6) var(--space-10);
+  overflow-y: auto;
+}
+.settings-inner { width: 100%; }
+.settings-head { margin-bottom: var(--space-7); }
+.settings-title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+/* ───────────── Section ───────────── */
+.settings-section { margin: 0 0 var(--space-9); }
+.settings-section-head { margin: 0 0 var(--space-5); }
+.settings-section-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.settings-section-head-text { flex: 1; min-width: 0; }
+.settings-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.settings-section-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--muted) 70%, var(--text));
+}
+.settings-section-desc {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--muted);
+  max-width: 26rem;
+}
+.ra-new-btn {
+  flex-shrink: 0;
+  gap: var(--space-2);
+}
+.ra-new-btn svg { width: 14px; height: 14px; display: block; }
+
+/* ───────────── Tunnel cards list ───────────── */
+.ra-list { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.ra-tunnel-card {
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.ra-tunnel-card:hover {
+  border-color: color-mix(in srgb, var(--border) 100%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.ra-tunnel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-5);
+}
+.ra-tunnel-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+.ra-tunnel-name {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ra-remaining {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.ra-disable-btn {
+  flex-shrink: 0;
+}
+
+/* Field rows */
+.ra-field { margin: 0 0 var(--space-3); }
+.ra-field:last-of-type { margin-bottom: 0; }
+.ra-field-label {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-weight: 500;
+  margin: 0 0 var(--space-2);
+}
+.ra-field-value-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ra-url {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--md-link, var(--accent));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-sm);
+  text-decoration: none;
+  user-select: all;
+}
+.ra-url:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ra-url-display {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ra-url-host {
+  font-weight: 600;
+  color: inherit;
+}
+.ra-url-path {
+  color: color-mix(in srgb, currentColor 72%, transparent);
+  font-weight: 400;
+}
+.ra-connecting {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-style: italic;
+}
+.ra-spinner {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--muted) 30%, transparent);
+  border-top-color: var(--muted);
+  animation: ra-spin 0.9s linear infinite;
+}
+@keyframes ra-spin { to { transform: rotate(360deg); } }
+
+.ra-passphrase {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-sm);
+  color: var(--text);
+  word-break: break-all;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+.ra-passphrase.is-masked {
+  user-select: none;
+  color: var(--muted);
+  letter-spacing: 0.12em;
+}
+.ra-passphrase:not(.is-masked) { user-select: all; }
+.ra-passphrase:focus-visible {
+  outline: none;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--focus-ring);
+}
+
+/* Copy buttons */
+.ra-copy-btn {
+  flex-shrink: 0;
+  --_btn-pad-y: 0;
+  --_btn-pad-x: 0;
+  --_btn-border: transparent;
+  --_btn-bg: transparent;
+  width: 28px;
+  height: 28px;
+  opacity: 0.55;
+}
+.ra-field-value-row:hover .ra-copy-btn,
+.ra-copy-btn:hover,
+.ra-copy-btn:focus-visible {
+  opacity: 1;
+}
+.ra-copy-btn svg { width: 14px; height: 14px; display: block; }
+.ra-copy-btn.is-copied {
+  color: var(--ok, #2ea043);
+  --_btn-border: color-mix(in srgb, var(--ok, #2ea043) 35%, var(--border));
+  --_btn-bg: color-mix(in srgb, var(--ok, #2ea043) 10%, transparent);
+}
+
+/* ───────────── Empty state ───────────── */
+.ra-empty {
+  text-align: center;
+  padding: var(--space-9) var(--space-5);
+  border: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: var(--radius-lg);
+  color: var(--muted);
+}
+.ra-empty-icon {
+  width: 32px; height: 32px;
+  display: block;
+  margin: 0 auto var(--space-3);
+  color: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+.ra-empty-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ra-devices-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ra-device-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text) 4%, var(--surface));
+  font-size: var(--text-sm);
+}
+.ra-device-row.is-revoked { opacity: 0.55; }
+.ra-device-meta { flex: 1; min-width: 0; }
+.ra-device-name {
+  font-weight: 500;
+  color: var(--text);
+  word-break: break-word;
+}
+.ra-device-sub {
+  margin-top: 2px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.ra-devices-muted {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* ───────────── Modal ───────────── */
+.ra-modal {
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  max-width: 28rem;
+  width: calc(100% - 32px);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #fff 4%, transparent) inset,
+    0 24px 80px color-mix(in srgb, #000 50%, transparent),
+    0 4px 12px color-mix(in srgb, #000 30%, transparent);
+}
+.ra-modal::backdrop {
+  background: color-mix(in srgb, #000 55%, transparent);
+  backdrop-filter: blur(6px);
+}
+.ra-modal[open] { animation: ra-modal-in 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+@keyframes ra-modal-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+.ra-modal-form {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+.ra-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-5) var(--space-5);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.ra-modal-head-text { flex: 1; min-width: 0; }
+.ra-modal-title {
+  margin: 0 0 var(--space-2);
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--text);
+}
+.ra-modal-lead {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 20rem;
+}
+.ra-modal-x {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.ra-modal-x svg { width: 16px; height: 16px; display: block; }
+.ra-modal-x:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
+
+.ra-modal-body {
+  padding: var(--space-5) var(--space-5) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+.ra-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+/* iOS-style inset grouped row (Name) */
+.ra-modal-group {
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--text) 5%, var(--surface));
+  overflow: clip;
+}
+.ra-modal-group-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 44px;
+  padding: 0 var(--space-5);
+  cursor: text;
+}
+.ra-modal-group-label {
+  flex: 0 0 auto;
+  font-size: var(--text-sm);
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.ra-modal-group-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-4) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: right;
+}
+.ra-modal-group-input::placeholder {
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+.ra-modal-group-input:focus {
+  outline: none;
+}
+
+/* macOS-style segmented control (Expires after) */
+.ra-duration-field { gap: var(--space-2); }
+.ra-duration-legend {
+  display: block;
+  width: 100%;
+  padding: 0 var(--space-1);
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--muted);
+  text-transform: none;
+}
+.ra-duration-segmented {
+  display: flex;
+  align-items: stretch;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text) 7%, var(--surface));
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--border) 55%, transparent);
+}
+.ra-duration-seg {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  cursor: pointer;
+}
+.ra-duration-seg + .ra-duration-seg::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 18%;
+  bottom: 18%;
+  width: 0.5px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+.ra-duration-seg:has(input:checked)::before,
+.ra-duration-seg:has(input:checked) + .ra-duration-seg::before {
+  opacity: 0;
+}
+.ra-duration-seg input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.ra-duration-seg-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  margin: 0;
+  border-radius: calc(var(--radius-md) - 2px);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  opacity: 0.72;
+  user-select: none;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    font-weight 0.15s ease;
+}
+.ra-duration-seg:hover .ra-duration-seg-label { opacity: 0.92; }
+.ra-duration-seg:has(input:checked) .ra-duration-seg-label {
+  opacity: 1;
+  font-weight: 500;
+  background: var(--surface);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, #000 14%, transparent),
+    0 0 0 0.5px color-mix(in srgb, #000 8%, transparent);
+}
+.ra-duration-seg:has(input:focus-visible) .ra-duration-seg-label {
+  outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  outline-offset: 0;
+}
+
+.ra-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0 var(--space-5) var(--space-5);
+}
+
+@media (max-width: 520px) {
+  .settings-page { padding: var(--space-7) var(--space-4) var(--space-8); }
+  .settings-section-head-row { flex-direction: column; align-items: stretch; }
+  .ra-new-btn { justify-content: center; }
+  .ra-tunnel-head { align-items: flex-start; }
+}
+</style>
+
+<script>
+(function () {
+  const list = document.getElementById('ra-list');
+  const openBtn = document.getElementById('ra-open-modal');
+  const modal = document.getElementById('ra-modal');
+  const modalForm = document.getElementById('ra-modal-form');
+  const modalSubmit = document.getElementById('ra-modal-submit');
+  const cancelBtn1 = document.getElementById('ra-modal-cancel');
+  const labelInput = document.getElementById('ra-modal-label');
+  if (!list || !openBtn || !modal || !modalForm || !modalSubmit) return;
+
+  /* ─── helpers ─── */
+  function fmtRemaining(ms) {
+    if (!ms || ms <= 0) return 'expired';
+    const sec = Math.floor(ms / 1000);
+    const min = Math.floor(sec / 60);
+    const hr  = Math.floor(min / 60);
+    const day = Math.floor(hr / 24);
+
+    if (ms < 60_000) return sec + 's left';
+    if (ms < 3 * 60_000) return min + 'm ' + (sec % 60) + 's left';
+    if (ms < 60 * 60_000) return min + 'm left';
+    if (ms < 24 * 60 * 60_000) return hr + 'h left';
+    if (day < 2) return day + 'd ' + (hr % 24) + 'h left';
+    return day + 'd left';
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '"' ? '&quot;' : '&#39;';
+    });
+  }
+  const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  const CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+  function passMask(secret) {
+    const n = String(secret || '').length;
+    return '•'.repeat(Math.max(n, 8));
+  }
+  function togglePassphraseEl(el) {
+    const secret = el.getAttribute('data-secret') || '';
+    if (el.classList.contains('is-masked')) {
+      el.classList.remove('is-masked');
+      el.textContent = secret;
+      el.setAttribute('aria-label', 'Hide passphrase');
+    } else {
+      el.classList.add('is-masked');
+      el.textContent = passMask(secret);
+      el.setAttribute('aria-label', 'Show passphrase');
+    }
+  }
+  function passPhraseField(secret) {
+    const esc = escapeHtml(secret);
+    const mask = passMask(secret);
+    return '<code class="ra-passphrase is-masked" data-role="passphrase" data-secret="' + esc + '" tabindex="0" role="button" aria-label="Show passphrase">' + mask + '</code>' +
+      '<button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="passphrase" aria-label="Copy passphrase" title="Copy passphrase">' + COPY_ICON + '</button>';
+  }
+
+  function splitUrl(url) {
+    try {
+      const u = new URL(url);
+      const path = u.pathname + u.search + u.hash;
+      return {
+        host: u.host,
+        path: path === '/' ? '' : path,
+        display:
+          '<span class="ra-url-host">' + escapeHtml(u.host) + '</span>' +
+          (path && path !== '/' ? '<span class="ra-url-path">' + escapeHtml(path) + '</span>' : ''),
+      };
+    } catch (e) {
+      return { host: url, path: '', display: escapeHtml(url) };
+    }
+  }
+  async function copy(text, btn) {
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) { console.warn('clipboard write failed', e); return; }
+    if (!btn) return;
+    const origHtml = btn.innerHTML;
+    btn.innerHTML = CHECK_ICON;
+    btn.classList.add('is-copied');
+    btn.disabled = true;
+    setTimeout(function () {
+      btn.innerHTML = origHtml;
+      btn.classList.remove('is-copied');
+      btn.disabled = false;
+    }, 1200);
+  }
+
+  /* ─── render ─── */
+  function renderCard(t) {
+    const now = Date.now();
+    const title = t.label ? escapeHtml(t.label) : 'Remote tunnel';
+    const urlParts = t.url ? splitUrl(t.url) : null;
+
+    const urlBlock = t.url
+      ? '<div class="ra-field-value-row">' +
+        '  <a class="ra-url" data-role="url" href="' + escapeHtml(t.url) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(t.url) + '">' +
+        '    <span class="ra-url-display">' + urlParts.display + '</span>' +
+        '  </a>' +
+        '  <button type="button" class="ra-copy-btn btn btn--icon btn--ghost" data-copy="url" aria-label="Copy access link" title="Copy access link">' + COPY_ICON + '</button>' +
+        '  <button type="button" class="btn btn--ghost btn--sm" data-action="regenerate-access" title="Invalidate old links">New access link</button>' +
+        '</div>'
+      : '<div class="ra-connecting" data-role="url-pending"><span class="ra-spinner" aria-hidden="true"></span><span>Connecting…</span></div>';
+
+    return '<div class="ra-tunnel-card" data-tunnel-id="' + escapeHtml(t.id) + '" data-expires-at="' + t.expiresAt + '">' +
+      '  <div class="ra-tunnel-head">' +
+      '    <div class="ra-tunnel-meta">' +
+      '      <h3 class="ra-tunnel-name">' + title + '</h3>' +
+      '      <span class="ra-remaining" data-role="remaining">' + fmtRemaining(t.expiresAt - now) + '</span>' +
+      '    </div>' +
+      '    <button type="button" class="btn btn--ghost btn--sm btn--danger ra-disable-btn" data-action="delete">Disable</button>' +
+      '  </div>' +
+      '  <div class="ra-field">' +
+      '    <div class="ra-field-label">URL</div>' +
+      '    ' + urlBlock +
+      '  </div>' +
+      '  <div class="ra-field">' +
+      '    <div class="ra-field-label">Passphrase</div>' +
+      '    <div class="ra-field-value-row">' + passPhraseField(t.passphrase) + '</div>' +
+      '  </div>' +
+      '  <div class="ra-field ra-devices-field" data-role="devices-wrap" data-tunnel-id="' + escapeHtml(t.id) + '">' +
+      '    <div class="ra-field-label">Connected devices</div>' +
+      '    <div class="ra-devices-list" data-role="devices-list"><span class="ra-devices-muted">Loading…</span></div>' +
+      '  </div>' +
+      '</div>';
+  }
+
+  function fmtDeviceSeen(ts) {
+    if (!ts) return '—';
+    try {
+      return new Date(ts).toLocaleString();
+    } catch (e) {
+      return '—';
+    }
+  }
+
+  function renderDeviceRow(d) {
+    var label = d.name || (d.userAgent ? d.userAgent.slice(0, 56) : 'Unknown device');
+    var revoked = d.revokedAt != null;
+    var revokeBtn = revoked
+      ? ''
+      : '<button type="button" class="btn btn--ghost btn--sm btn--danger" data-action="revoke-device" data-device-id="' +
+        escapeHtml(d.id) +
+        '">Revoke</button>';
+    return (
+      '<div class="ra-device-row' +
+      (revoked ? ' is-revoked' : '') +
+      '" data-device-id="' +
+      escapeHtml(d.id) +
+      '">' +
+      '  <div class="ra-device-meta">' +
+      '    <div class="ra-device-name">' +
+      escapeHtml(label) +
+      (revoked ? ' (revoked)' : '') +
+      '</div>' +
+      '    <div class="ra-device-sub">Last seen ' +
+      escapeHtml(fmtDeviceSeen(d.lastSeenAt)) +
+      '</div>' +
+      '  </div>' +
+      revokeBtn +
+      '</div>'
+    );
+  }
+
+  async function loadDevicesForWrap(wrap) {
+    var tunnelId = wrap.getAttribute('data-tunnel-id');
+    var listEl = wrap.querySelector('[data-role="devices-list"]');
+    if (!tunnelId || !listEl) return;
+    try {
+      var res = await fetch(
+        '/api/remote-access/tunnels/' + encodeURIComponent(tunnelId) + '/devices',
+      );
+      if (!res.ok) {
+        listEl.innerHTML = '<span class="ra-devices-muted">Could not load devices</span>';
+        return;
+      }
+      var data = await res.json();
+      var devices = data.devices || [];
+      var active = devices.filter(function (d) {
+        return d.revokedAt == null;
+      });
+      if (active.length === 0 && devices.length === 0) {
+        listEl.innerHTML =
+          '<span class="ra-devices-muted">No trusted devices yet — they appear after someone logs in from a browser</span>';
+        return;
+      }
+      listEl.innerHTML = devices.map(renderDeviceRow).join('');
+    } catch (e) {
+      listEl.innerHTML = '<span class="ra-devices-muted">Could not load devices</span>';
+    }
+  }
+
+  function loadAllDevices() {
+    list.querySelectorAll('[data-role="devices-wrap"]').forEach(function (wrap) {
+      void loadDevicesForWrap(wrap);
+    });
+  }
+
+  function emptyState() {
+    return '<div class="ra-empty">' +
+      '  <svg class="ra-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>' +
+      '    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>' +
+      '  </svg>' +
+      '  <p class="ra-empty-text">No active tunnels</p>' +
+      '</div>';
+  }
+
+  /** Snapshot used for adaptive poll scheduling (url + expiry). */
+  let lastTunnels = <%- JSON.stringify(tunnels.map(function (t) {
+    return { id: t.id, url: t.url || null, expiresAt: t.expiresAt };
+  })) %>;
+
+  function renderList(tunnels) {
+    lastTunnels = tunnels && tunnels.length ? tunnels : [];
+    if (!tunnels || tunnels.length === 0) {
+      list.innerHTML = emptyState();
+      stopPolling();
+      return;
+    }
+    list.innerHTML = tunnels.map(renderCard).join('');
+    loadAllDevices();
+    schedulePolling();
+  }
+
+  function tickRemaining() {
+    const now = Date.now();
+    list.querySelectorAll('.ra-tunnel-card').forEach(function (card) {
+      const expires = Number(card.getAttribute('data-expires-at'));
+      const remainingEl = card.querySelector('[data-role="remaining"]');
+      if (remainingEl && expires) {
+        remainingEl.textContent = fmtRemaining(expires - now);
+      }
+    });
+  }
+
+  /* ─── adaptive polling (setTimeout chain + nextPollIn) ─── */
+  const POLL_FAST_MS = 1500;
+  const POLL_SLOW_MS = 60_000;
+  const POLL_EXPIRY_GRACE_MS = 500;
+  const POLL_SOON_MS = 60_000;
+  const POLL_SANITY_MAX_MS = 5 * 60_000;
+  const POLL_BACKOFF_BASE_MS = 1000;
+  const POLL_BACKOFF_MAX_MS = 30_000;
+
+  let pollTimer = null;
+  let pollFailStreak = 0;
+
+  function nextPollIn(tunnels) {
+    if (!tunnels || tunnels.length === 0) return Infinity;
+
+    const now = Date.now();
+    let anyPending = false;
+    let minRemaining = Infinity;
+
+    for (let i = 0; i < tunnels.length; i++) {
+      const t = tunnels[i];
+      if (!t.url) anyPending = true;
+      const rem = Number(t.expiresAt) - now;
+      if (rem < minRemaining) minRemaining = rem;
+    }
+
+    let delay;
+    if (anyPending) {
+      delay = POLL_FAST_MS;
+    } else if (minRemaining <= 0) {
+      delay = POLL_EXPIRY_GRACE_MS;
+    } else if (minRemaining < POLL_SOON_MS) {
+      delay = minRemaining + POLL_EXPIRY_GRACE_MS;
+    } else {
+      delay = POLL_SLOW_MS;
+    }
+
+    return Math.min(delay, POLL_SANITY_MAX_MS);
+  }
+
+  function pollDelayWithBackoff() {
+    const base = nextPollIn(lastTunnels);
+    if (base === Infinity || pollFailStreak === 0) return base;
+    const backoff = Math.min(
+      POLL_BACKOFF_BASE_MS * Math.pow(2, pollFailStreak - 1),
+      POLL_BACKOFF_MAX_MS,
+    );
+    return Math.max(base, backoff);
+  }
+
+  async function fetchStatus() {
+    const res = await fetch('/api/remote-access/tunnels');
+    if (res.status === 304) return { unchanged: true };
+    if (!res.ok) return null;
+    return res.json();
+  }
+
+  function stopPolling() {
+    if (pollTimer !== null) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  function schedulePolling() {
+    stopPolling();
+    if (document.hidden || lastTunnels.length === 0) return;
+
+    const delay = pollDelayWithBackoff();
+    if (!Number.isFinite(delay)) return;
+
+    pollTimer = setTimeout(function () {
+      pollTimer = null;
+      refresh();
+    }, delay);
+  }
+
+  async function refresh() {
+    if (document.hidden) return;
+    const data = await fetchStatus();
+    if (!data) {
+      pollFailStreak++;
+      schedulePolling();
+      return;
+    }
+    pollFailStreak = 0;
+    if (data.unchanged) {
+      schedulePolling();
+      return;
+    }
+    renderList(data.tunnels);
+    tickRemaining();
+  }
+
+  setInterval(tickRemaining, 1000);
+
+  /* ─── list interactions ─── */
+  list.addEventListener('keydown', function (e) {
+    const el = e.target;
+    if (
+      el instanceof HTMLElement &&
+      el.matches('[data-role="passphrase"]') &&
+      (e.key === 'Enter' || e.key === ' ')
+    ) {
+      e.preventDefault();
+      togglePassphraseEl(el);
+    }
+  });
+
+  list.addEventListener('click', async function (e) {
+    const target = e.target instanceof Element ? e.target : null;
+    const passEl = target && target.closest('[data-role="passphrase"]');
+    if (passEl instanceof HTMLElement) {
+      togglePassphraseEl(passEl);
+      return;
+    }
+
+    const t = target ? target.closest('[data-copy], [data-action]') : null;
+    if (!(t instanceof HTMLElement)) return;
+
+    if (t.hasAttribute('data-copy')) {
+      const role = t.getAttribute('data-copy');
+      const card = t.closest('[data-tunnel-id]');
+      if (!card) return;
+      const valueEl = card.querySelector('[data-role="' + role + '"]');
+      if (role === 'url' && valueEl) {
+        copy((valueEl.getAttribute('href') || '').trim(), t);
+      } else if (role === 'passphrase' && valueEl) {
+        copy((valueEl.getAttribute('data-secret') || '').trim(), t);
+      } else if (valueEl) {
+        copy((valueEl.textContent || '').trim(), t);
+      }
+      return;
+    }
+
+    if (t.getAttribute('data-action') === 'revoke-device') {
+      const wrap = t.closest('[data-role="devices-wrap"]');
+      const tunnelId = wrap ? wrap.getAttribute('data-tunnel-id') : null;
+      const deviceId = t.getAttribute('data-device-id');
+      if (!tunnelId || !deviceId) return;
+      if (!confirm('Revoke this device? It will need the passphrase to sign in again.')) return;
+      t.disabled = true;
+      try {
+        const res = await fetch(
+          '/api/remote-access/tunnels/' +
+            encodeURIComponent(tunnelId) +
+            '/devices/' +
+            encodeURIComponent(deviceId),
+          { method: 'DELETE' },
+        );
+        if (!res.ok) {
+          alert('Failed to revoke device');
+          t.disabled = false;
+          return;
+        }
+        if (wrap) await loadDevicesForWrap(wrap);
+      } catch (eRev) {
+        alert('Failed to revoke: ' + eRev.message);
+        t.disabled = false;
+      }
+      return;
+    }
+
+    if (t.getAttribute('data-action') === 'regenerate-access') {
+      const card = t.closest('[data-tunnel-id]');
+      if (!card) return;
+      const id = card.getAttribute('data-tunnel-id');
+      if (!id) return;
+      if (
+        !confirm(
+          'Generate a new access link? Anyone with the old URL or relay cookie will need the new link.',
+        )
+      ) {
+        return;
+      }
+      t.disabled = true;
+      const orig = t.textContent;
+      t.textContent = 'Updating…';
+      try {
+        const res = await fetch(
+          '/api/remote-access/tunnels/' + encodeURIComponent(id) + '/regenerate-access',
+          { method: 'POST' },
+        );
+        if (!res.ok) {
+          alert('Failed to regenerate access link');
+          t.disabled = false;
+          t.textContent = orig;
+          return;
+        }
+        await refresh();
+      } catch (eReg) {
+        alert('Failed: ' + eReg.message);
+        t.disabled = false;
+        t.textContent = orig;
+      }
+      return;
+    }
+
+    if (t.getAttribute('data-action') === 'delete') {
+      const card = t.closest('[data-tunnel-id]');
+      if (!card) return;
+      const id = card.getAttribute('data-tunnel-id');
+      if (!id) return;
+      if (!confirm('Disable this tunnel? Anyone currently connected through it will be cut off.')) return;
+      t.disabled = true;
+      const orig = t.textContent;
+      t.textContent = 'Disabling…';
+      try {
+        const res = await fetch('/api/remote-access/tunnels/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!res.ok) {
+          alert('Failed to disable');
+          t.disabled = false;
+          t.textContent = orig;
+          return;
+        }
+        await refresh();
+      } catch (e2) {
+        alert('Failed to disable: ' + e2.message);
+        t.disabled = false;
+        t.textContent = orig;
+      }
+    }
+  });
+
+  /* ─── modal ─── */
+  function openModal() {
+    if (typeof modal.showModal === 'function') {
+      modal.showModal();
+    } else {
+      modal.setAttribute('open', '');
+    }
+    setTimeout(function () { if (labelInput) labelInput.focus(); }, 50);
+  }
+  function closeModal() {
+    if (modal.open) modal.close();
+    else modal.removeAttribute('open');
+    if (labelInput) labelInput.value = '';
+  }
+
+  openBtn.addEventListener('click', openModal);
+  cancelBtn1.addEventListener('click', closeModal);
+
+  // Close when clicking outside the form (on the ::backdrop area).
+  modal.addEventListener('click', function (e) {
+    if (e.target === modal) closeModal();
+  });
+
+  modalForm.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const checked = modalForm.querySelector('input[name="durationMs"]:checked');
+    if (!checked) return;
+    const durationMs = Number(checked.value);
+    const label = labelInput ? labelInput.value.trim() : '';
+    if (!label) {
+      if (labelInput) labelInput.focus();
+      return;
+    }
+
+    modalSubmit.disabled = true;
+    const origText = modalSubmit.textContent;
+    modalSubmit.textContent = 'Creating…';
+    try {
+      const res = await fetch('/api/remote-access/tunnels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ durationMs, label }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(function () { return { error: 'failed' }; });
+        alert('Failed to create: ' + (err.error || res.status));
+      } else {
+        closeModal();
+        await refresh();
+      }
+    } catch (e3) {
+      alert('Failed to create: ' + e3.message);
+    } finally {
+      modalSubmit.disabled = false;
+      modalSubmit.textContent = origText;
+    }
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      stopPolling();
+      return;
+    }
+    if (lastTunnels.length > 0) {
+      refresh();
+    }
+  });
+
+  if (lastTunnels.length > 0) {
+    schedulePolling();
+    loadAllDevices();
+  }
+  tickRemaining();
+})();
+</script>
+
+<script src="/js/iclaw.js?v=1"></script>
+
+<%- include('partials/foot') %>

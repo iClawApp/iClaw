@@ -5,6 +5,7 @@
 
   <main class="col col-main">
     <header class="chat-header draft-header">
+      <%- include('partials/mobile-nav-toggle') %>
       <form class="rename-form" id="chat-rename-form" onsubmit="return false">
         <input
           type="text"
@@ -15,6 +16,7 @@
         />
       </form>
 
+      <div class="chat-header-tools">
       <form class="agent-form header-field" onsubmit="return false">
         <label class="header-field-label" for="draft-agent">Agent</label>
         <select id="draft-agent" aria-label="Agent">
@@ -32,29 +34,35 @@
 
       <button
         type="button"
-        class="stop-btn btn btn--ghost btn--sm"
+        class="stop-btn btn btn--ghost btn--sm header-action-btn"
         id="stop-btn"
         aria-label="Stop generation"
         title="Stop this turn"
         hidden
-      >■ Stop</button>
+      >
+        <%- include('partials/header-tool-icon', { icon: 'stop' }) %>
+        <span class="header-tool-label">Stop</span>
+      </button>
 
       <span
-        class="gateway <%= gatewayUp ? 'ok' : 'down' %>"
+        class="gateway <%= gatewayStatus %>"
         id="gateway-badge"
         data-base-url="<%= openclawBaseUrl %>"
         title="<%= openclawBaseUrl %>"
       >
-        OpenClaw: <%= gatewayUp ? 'connected' : 'off' %>
+        OpenClaw: <%= gatewayStatus === 'ok' ? 'connected' : (gatewayStatus === 'degraded' ? 'unreachable' : 'off') %>
       </span>
+      </div>
     </header>
 
     <div
-      class="draft-body<%= agentsError ? ' draft-body--gateway-error' : ' is-picking' %>"
+      class="draft-body is-picking"
       id="draft-body"
     >
-      <% if (!agentsError) { %>
       <div class="draft-pick-stage" id="draft-pick-stage">
+        <% if (agentsError) { %>
+        <%- include('partials/gatewayError', { agentsError, gatewayUp, openclawBaseUrl }) %>
+        <% } else { %>
         <section
           class="project-pick"
           id="project-pick"
@@ -93,29 +101,27 @@
             <% }); %>
           </div>
         </section>
+        <% } %>
       </div>
-      <% } %>
 
       <section class="messages" id="messages" data-chat-id="" data-draft="1">
         <div class="messages-thread">
-          <% if (agentsError) { %>
-            <p class="muted empty-state">Start OpenClaw from the sidebar to begin.</p>
-          <% } else { %>
-            <p class="muted empty-state" id="draft-empty-hint" hidden>Write your first message.</p>
-          <% } %>
+          <p class="muted empty-state" id="draft-empty-hint" hidden>Write your first message.</p>
         </div>
       </section>
 
       <section class="queue" id="queue" aria-live="polite"></section>
 
+      <% if (!agentsError) { %>
       <div id="draft-composer-wrap" class="draft-composer-wrap" hidden>
         <%- include('partials/composer') %>
       </div>
+      <% } %>
     </div>
 
     <script src="/js/vendor/marked.min.js"></script>
     <script src="/js/vendor/highlight.min.js"></script>
-    <script src="/js/iclaw.js"></script>
+    <script src="/js/iclaw.js?v=1"></script>
   </main>
 </div>
 

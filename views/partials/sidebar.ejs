@@ -7,9 +7,20 @@
     _projectsMap.set(p.id, p);
   }
 %>
-<aside class="col col-left">
+<aside class="col col-left" id="app-sidebar">
   <div class="sidebar-top">
     <div class="sidebar-toolbar">
+      <a
+        href="/settings"
+        class="sidebar-settings-btn<%= typeof activeSettings !== 'undefined' && activeSettings ? ' active' : '' %>"
+        aria-label="Settings"
+        title="Settings"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      </a>
       <a href="/" class="new-chat-btn <%= !activeChat && !activeProject && !(typeof activeProjectsList !== 'undefined' && activeProjectsList) ? 'active' : '' %>">New chat</a>
       <div class="sidebar-search-slot">
         <button
@@ -74,11 +85,28 @@
     </div>
   </div>
 
+  <% if (chats.length > 0) { %>
+    <!-- Discovery hint for the right-click context menu (Share / Rename /
+         Mark unread / Delete). JS gates with localStorage: hides forever
+         on the first contextmenu, throttles to once per day until then. -->
+    <div
+      id="sidebar-hint-pill"
+      class="sidebar-hint-pill"
+      role="status"
+      aria-live="polite"
+      hidden
+    >
+      <span class="sidebar-hint-pill__text">Tip: right-click a chat for options</span>
+    </div>
+  <% } %>
+
   <nav class="chat-list" id="chat-list">
     <% if (chats.length > 0) { %>
+      <% const _scheduledChatIds = typeof scheduledChatIds !== 'undefined' ? scheduledChatIds : []; %>
       <% chats.forEach(function (c) {
         const dotWorking = workingIds.indexOf(c.id) >= 0;
         const dotUnread = !dotWorking && c.unread;
+        const dotScheduled = !dotWorking && !dotUnread && _scheduledChatIds.indexOf(c.id) >= 0;
         const p = c.project_id ? _projectsMap.get(c.project_id) : null;
       %>
         <a
@@ -87,7 +115,6 @@
           data-chat-id="<%= c.id %>"
           data-project-id="<%= c.project_id != null ? c.project_id : '' %>"
           data-updated-at="<%= c.updated_at %>"
-          title="<%= c.title %>"
         >
           <span class="chat-item-avatar-wrap">
           <% if (p) { %>
@@ -105,8 +132,8 @@
             <span class="chat-item-project-mark chat-item-project-mark--spacer" aria-hidden="true"></span>
           <% } %>
             <span
-              class="status-dot<%= dotWorking ? ' working' : (dotUnread ? ' unread' : '') %>"
-              aria-hidden="true"
+              class="status-dot<%= dotWorking ? ' working' : (dotUnread ? ' unread' : (dotScheduled ? ' scheduled' : '')) %>"
+              <% if (dotScheduled) { %>aria-label="Scheduled message pending"<% } else { %>aria-hidden="true"<% } %>
             ></span>
           </span>
           <span class="chat-item-title"><%= c.title %></span>
@@ -155,5 +182,6 @@
     </button>
   </div>
 </aside>
+<div class="sidebar-backdrop" id="sidebar-backdrop" hidden aria-hidden="true"></div>
 
 <!-- iclaw.js handles sidebar live updates via the page-level WS connection -->
