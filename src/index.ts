@@ -5,7 +5,7 @@ import { attachWsServer } from './routes/ws';
 import { openclaw } from './services/openclaw';
 import { scheduler } from './services/scheduler';
 import { gatewayEvents } from './services/gatewayEvents';
-import { remoteAccess } from './services/remoteAccess';
+import { remoteAccess, setRemoteAccessQuiet } from './services/remoteAccess';
 import { setBoundLocalAddress } from './services/localAddress';
 import {
   findAvailablePort,
@@ -19,11 +19,13 @@ import {
   printStartupBanner,
   registerShutdownHooks,
   shouldAutoOpenBrowser,
+  shouldOfferRemoteSetup,
   releaseUninitializedLock,
   removeLockFileIfOwned,
   tryClaimLockFile,
   writeLockFile,
 } from './startup';
+import { offerRemoteAccessOnboarding } from './remoteAccessOnboarding';
 
 const preferredPort = Number(process.env.PORT ?? 3000);
 const host = '127.0.0.1';
@@ -131,25 +133,44 @@ async function main(): Promise<void> {
   const url = `http://${host}:${port}`;
   const gatewayUp = await openclaw.health();
 
-  if (cli) {
-    printStartupBanner({ url, gatewayUp });
-    attachCliBrowserControls(url, stop);
-  } else {
-    printMinimalListenLog(
-      port,
-      openclaw.baseUrl,
-      openclaw.hasToken,
-      openclaw.tokenSource,
-    );
+  // Three startup faces, by environment (not by how it was launched):
+  //  - interactive terminal + local browser (npx OR npm run dev) → the banner;
+  //  - headless server with a terminal → the remote-access onboarding (below),
+  //    which owns the screen, so we print nothing here;
+  //  - piped / service start (systemd, docker) → a functional one-line log.
+  const headlessInteractive =
+    shouldOfferRemoteSetup() && Boolean(process.stdin.isTTY);
+  if (!headlessInteractive) {
+    if (process.stdin.isTTY) {
+      // Raw-mode key controls (g / Ctrl+C) only work in a real CLI launch
+      // (npx / iclaw). Under `npm run dev`, tsx-watch owns stdin, so show the
+      // banner without them — Ctrl+C then falls back to the normal signal.
+      printStartupBanner({ url, gatewayUp, controls: cli });
+      if (cli) attachCliBrowserControls(url, stop);
+    } else {
+      printMinimalListenLog(
+        port,
+        openclaw.baseUrl,
+        openclaw.hasToken,
+        openclaw.tokenSource,
+      );
+    }
   }
 
   // Remote Access wiring. configure() locks in the relay URL + bound
   // address; resumeAll() reattaches any persisted tunnels that haven't
   // expired. Both are safe no-ops when there's nothing to do.
+  // While the headless onboarding owns the terminal, silence routine
+  // remote-access info logs so they don't clutter the polished screens.
+  if (headlessInteractive) setRemoteAccessQuiet(true);
   setBoundLocalAddress({ host, port });
   const relayUrl = resolveRelayUrl();
   remoteAccess.configure({ relayUrl, localHost: host, localPort: port });
   remoteAccess.resumeAll();
+
+  // First-run onboarding for headless servers. No-op when a local browser
+  // exists or a tunnel is already configured.
+  await offerRemoteAccessOnboarding({ localUrl: url, onStop: stop });
 }
 
 /**
