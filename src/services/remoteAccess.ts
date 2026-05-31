@@ -43,8 +43,10 @@ import {
 } from './remoteAccessAuth';
 import {
   generateTunnelId,
+  generateOwnerSecret,
   remoteAccessState,
   ensureAccessToken,
+  ensureOwnerSecret,
   type PersistedTunnel,
 } from './remoteAccessState';
 import {
@@ -76,6 +78,8 @@ interface RegisterTunnelFrame {
   tunnelId: string;
   label?: string | null;
   tokenHash: string;
+  /** Ownership secret (plaintext over the trusted iClaw→relay WS). Relay stores SHA-256 only. */
+  ownerProof?: string;
 }
 interface UnregisterTunnelFrame {
   t: 'unregister-tunnel';
@@ -200,6 +204,8 @@ interface RuntimeTunnel {
   passphrase: string;
   /** Relay gate secret — never sent to relay, only SHA-256 hash. */
   accessToken: string;
+  /** Tunnel ownership secret — sent to relay on register; relay stores SHA-256 only. */
+  ownerSecret: string;
   durationMs: number;
   startedAt: number;
   expiresAt: number;
@@ -289,12 +295,13 @@ function toStatus(rt: RuntimeTunnel): TunnelStatus {
 }
 
 function makeRuntime(p: PersistedTunnel): RuntimeTunnel {
-  const withToken = ensureAccessToken(p);
+  const withToken = ensureOwnerSecret(ensureAccessToken(p));
   return {
     id: withToken.id,
     label: withToken.label,
     passphrase: withToken.passphrase,
     accessToken: withToken.accessToken,
+    ownerSecret: withToken.ownerSecret,
     durationMs: withToken.durationMs,
     startedAt: withToken.startedAt,
     expiresAt: withToken.expiresAt,
@@ -366,6 +373,7 @@ function registerOverWire(rt: RuntimeTunnel): void {
     tunnelId: rt.id,
     label: rt.label,
     tokenHash: hashAccessToken(rt.accessToken),
+    ownerProof: rt.ownerSecret,
   });
 }
 
@@ -782,6 +790,7 @@ export const remoteAccess = {
       label: label ?? null,
       passphrase,
       accessToken: generateAccessToken(),
+      ownerSecret: generateOwnerSecret(),
       durationMs,
       startedAt: now,
       expiresAt: now + durationMs,

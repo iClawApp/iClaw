@@ -260,6 +260,11 @@ ensureColumn('messages', 'attachments', 'TEXT');
 ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
 ensureColumn('remote_access_tunnels', 'access_token', 'TEXT');
 ensureColumn('remote_access_tunnels', 'opaque_registration_record', 'TEXT');
+// Tunnel ownership secret. Proves to the relay that a re-registering client is
+// the same iClaw that created this tunnelId, so a stranger who learns the
+// (short) tunnelId cannot hijack the subdomain on reconnect. Local DB only;
+// the relay only ever sees SHA-256(owner_secret).
+ensureColumn('remote_access_tunnels', 'owner_secret', 'TEXT');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS iclaw_kv (
