@@ -306,6 +306,22 @@ function makeRuntime(p: PersistedTunnel): RuntimeTunnel {
   };
 }
 
+/** setTimeout's 32-bit ceiling (~24.8 days); longer delays overflow and fire at once. */
+const MAX_TIMER_MS = 2_147_483_647;
+
+let quietLogs = false;
+/**
+ * Silence routine remote-access info logs (used while the headless onboarding
+ * owns the terminal, so they don't clutter the polished screens). Warnings and
+ * errors still surface.
+ */
+export function setRemoteAccessQuiet(quiet: boolean): void {
+  quietLogs = quiet;
+}
+function rlog(msg: string): void {
+  if (!quietLogs) process.stdout.write(msg + '\n');
+}
+
 function scheduleExpiry(rt: RuntimeTunnel): void {
   if (rt.expiryTimer) {
     clearTimeout(rt.expiryTimer);
@@ -316,9 +332,19 @@ function scheduleExpiry(rt: RuntimeTunnel): void {
     setTimeout(() => removeTunnelLocal(rt.id), 0);
     return;
   }
+  // A 30-day link (~2.59e9 ms) exceeds setTimeout's 2^31-1 limit, which would
+  // otherwise overflow and fire immediately. Clamp and re-arm the remainder.
+  if (delta > MAX_TIMER_MS) {
+    rt.expiryTimer = setTimeout(() => {
+      rt.expiryTimer = null;
+      scheduleExpiry(rt);
+    }, MAX_TIMER_MS);
+    rt.expiryTimer.unref();
+    return;
+  }
   rt.expiryTimer = setTimeout(() => {
     rt.expiryTimer = null;
-    console.log(`[remote-access:${rt.id}] duration elapsed`);
+    rlog(`[remote-access:${rt.id}] duration elapsed`);
     deleteTunnelImpl(rt.id);
   }, delta);
   rt.expiryTimer.unref();
@@ -353,7 +379,7 @@ function handleTunnelRegistered(f: TunnelRegisteredFrame): void {
   const rt = tunnels.get(f.tunnelId);
   if (!rt) return;
   rt.currentUrl = buildPublicAccessUrl(f.publicUrl, rt.accessToken);
-  console.log(`[remote-access:${rt.id}] tunnel ready → ${f.publicUrl}`);
+  rlog(`[remote-access:${rt.id}] tunnel ready → ${f.publicUrl}`);
 }
 
 function handleTunnelRejected(f: TunnelRejectedFrame): void {
@@ -612,7 +638,7 @@ function connect(): void {
   socket.on('open', () => {
     reconnectAttempt = 0;
     startWsKeepAlive(socket);
-    console.log(`[remote-access] connected to relay (${bound!.relayUrl})`);
+    rlog(`[remote-access] connected to relay (${bound!.relayUrl})`);
     // Re-register every active tunnel (relay restores the same subdomain).
     for (const rt of tunnels.values()) {
       registerOverWire(rt);
@@ -711,7 +737,7 @@ function deleteTunnelImpl(tunnelId: string): boolean {
   unregisterOverWire(tunnelId);
   removeTunnelLocal(tunnelId);
   remoteAccessState.delete(tunnelId);
-  console.log(`[remote-access:${tunnelId}] disabled`);
+  rlog(`[remote-access:${tunnelId}] disabled`);
   return true;
 }
 
@@ -777,7 +803,7 @@ export const remoteAccess = {
     enableGate(id, passphrase);
     scheduleExpiry(rt);
 
-    console.log(
+    rlog(
       `[remote-access:${id}] creating, duration=${Math.round(durationMs / 60_000)}min` +
         (label ? ` label="${label}"` : ''),
     );
@@ -824,7 +850,7 @@ export const remoteAccess = {
     }
 
     registerOverWire(rt);
-    console.log(`[remote-access:${id}] access link regenerated`);
+    rlog(`[remote-access:${id}] access link regenerated`);
     return toStatus(rt);
   },
 
@@ -848,7 +874,7 @@ export const remoteAccess = {
       resumed += 1;
     }
     if (resumed > 0) {
-      console.log(`[remote-access] resuming ${resumed} tunnel(s)`);
+      rlog(`[remote-access] resuming ${resumed} tunnel(s)`);
       ensureConnection();
       void bootstrapOpaqueForActiveTunnels();
     }
