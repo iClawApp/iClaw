@@ -1,0 +1,96 @@
+<%- include('partials/head', { title: (typeof manifest !== 'undefined' && manifest ? manifest.title : 'Role') + ' — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main role-detail-page">
+    <div class="role-detail-inner">
+      <%- include('partials/mobile-nav-toggle') %>
+      <a class="role-detail-back" href="/templates">← Усі ролі</a>
+
+      <header class="role-detail-head">
+        <% if (manifest.icon) { %>
+        <span class="role-detail-icon" aria-hidden="true"><%= manifest.icon %></span>
+        <% } %>
+        <div>
+          <h1 class="role-detail-title"><%= manifest.title %></h1>
+          <% if (manifest.tagline) { %>
+          <p class="role-detail-tagline"><%= manifest.tagline %></p>
+          <% } %>
+        </div>
+      </header>
+
+      <div class="role-detail-meta">
+        <% if (manifest.category) { %><span class="chip"><%= manifest.category %></span><% } %>
+        <% if (manifest.forWhom) { %><span class="role-detail-for muted">Для: <%= manifest.forWhom %></span><% } %>
+      </div>
+
+      <% var _badges = (typeof mcpBadges === 'function') ? mcpBadges(manifest.mcpServers) : []; %>
+      <% if (_badges.length) { %>
+      <section class="role-detail-section">
+        <h2 class="role-detail-h2">Працює з</h2>
+        <div class="template-card-mcp-row">
+          <% _badges.forEach(function (b) { %>
+          <span class="template-card-mcp"><i class="brand-ico" style="--m:url('/icons/<%= b.icon %>.svg')" aria-hidden="true"></i><%= b.label %></span>
+          <% }); %>
+        </div>
+        <p class="muted role-detail-hint">Підключите акаунт за пару кліків при першому запуску — далі все автоматично.</p>
+      </section>
+      <% } %>
+
+      <% if (manifest.ask && manifest.ask.length) { %>
+      <section class="role-detail-section">
+        <h2 class="role-detail-h2">Кілька питань</h2>
+        <div id="role-detail-ask">
+          <% manifest.ask.forEach(function (f) { %>
+          <label class="role-detail-field">
+            <span><%= f.label %></span>
+            <% if (f.type === 'select' && f.options && f.options.length) { %>
+            <select data-ask-key="<%= f.key %>">
+              <% f.options.forEach(function (o) { %><option value="<%= o %>"><%= o %></option><% }); %>
+            </select>
+            <% } else { %>
+            <input type="text" data-ask-key="<%= f.key %>" autocomplete="off" />
+            <% } %>
+          </label>
+          <% }); %>
+        </div>
+      </section>
+      <% } %>
+
+      <div class="role-detail-actions">
+        <button type="button" class="btn btn--primary" id="role-detail-start" data-template-id="<%= manifest.id %>">Запустити</button>
+        <% if (manifest.firstHint) { %>
+        <p class="muted role-detail-starthint"><%= manifest.firstHint %></p>
+        <% } %>
+      </div>
+      <p class="role-detail-error muted" id="role-detail-error" hidden role="alert"></p>
+
+      <details class="role-detail-advanced">
+        <summary>Показати промт і команди (необов'язково)</summary>
+        <h3 class="role-detail-h2 role-detail-advanced-h">Інструкція (промт)</h3>
+        <div class="role-detail-md js-md"><%= manifest.promptTemplate %></div>
+        <% if (typeof mcpSetup !== 'undefined' && mcpSetup.length) { %>
+        <h3 class="role-detail-h2 role-detail-advanced-h">Інструменти й команди</h3>
+        <% mcpSetup.forEach(function (s) { %>
+        <div class="role-detail-tool">
+          <div class="role-detail-tool-head">
+            <i class="brand-ico" style="--m:url('/icons/<%= s.icon %>.svg')" aria-hidden="true"></i>
+            <strong><%= s.label %></strong>
+            <span class="muted role-detail-tool-meta"><%= s.transport %><% if (s.auth !== 'none') { %> · <%= s.auth %><% } %></span>
+          </div>
+          <% if (s.description) { %><p class="muted role-detail-tool-desc"><%= s.description %></p><% } %>
+          <pre class="role-detail-prompt role-detail-cmd"><%= s.commands.join('\n') %></pre>
+          <% if (s.authNote) { %><p class="muted role-detail-tool-note"><%= s.authNote %></p><% } %>
+        </div>
+        <% }); %>
+        <% } %>
+      </details>
+    </div>
+
+    <script src="/js/vendor/marked.min.js"></script>
+    <script src="/js/role-detail.js?v=2"></script>
+  </main>
+</div>
+
+<%- include('partials/foot') %>

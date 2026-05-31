@@ -15,7 +15,7 @@ import { openclaw } from '../services/openclaw';
 import { chats, projects, tasks } from '../services/store';
 import { chatStatus } from '../services/chatStatus';
 import { buildRoleFromInput } from '../services/roleFromSimpleInput';
-import { buildMcpPlaybook } from '../services/mcpPlaybook';
+import { buildMcpPlaybook, mcpSetupSteps } from '../services/mcpPlaybook';
 import { mergeRoleCategories, ROLE_CATEGORIES } from '../constants/roleCategories';
 import { mcpBadges, distinctMcpBadges } from '../constants/mcpIcons';
 
@@ -87,6 +87,36 @@ templatesRouter.get('/', async (_req, res) => {
       openclawBaseUrl: openclaw.baseUrl,
     });
   }
+});
+
+templatesRouter.get('/:id', async (req, res) => {
+  const { gatewayUp, agentsError } = await probeGateway('templates');
+  let manifest;
+  try {
+    manifest = await catalog.getById(String(req.params.id ?? '').trim());
+  } catch (err) {
+    const message =
+      err instanceof CatalogUnavailableError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : 'catalog unavailable';
+    res.status(502).type('text/plain').send(message);
+    return;
+  }
+  if (!manifest) {
+    res.status(404).type('text/plain').send('role not found');
+    return;
+  }
+  res.render('role-detail', {
+    ...sidebarLocals(),
+    manifest,
+    // Structured tool + command view for the optional collapsed "details" panel.
+    mcpSetup: mcpSetupSteps(manifest.mcpServers),
+    gatewayUp,
+    agentsError,
+    openclawBaseUrl: openclaw.baseUrl,
+  });
 });
 
 templatesRouter.post('/create', async (req, res) => {

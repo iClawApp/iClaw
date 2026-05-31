@@ -55,6 +55,18 @@ export const mockTemplates: TemplateManifest[] = [
     promptTemplate: 'Працюй з Notion користувача. Завдання: {{task}}.',
     firstHint: 'Що зробити в Notion?',
   },
+  {
+    // Regression guard: a hostile ask label must never break out of data-ask.
+    id: 'xss-probe',
+    title: 'XSS probe',
+    tagline: 'regression guard',
+    category: 'Other',
+    forWhom: 'tests',
+    search: [],
+    agentId: 'openclaw/default',
+    ask: [{ key: 'q', label: "'></article><img src=x onerror=alert(1)>", type: 'text' }],
+    promptTemplate: 'x',
+  },
 ];
 
 let templatesStore = [...mockTemplates];

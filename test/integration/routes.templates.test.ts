@@ -88,6 +88,34 @@ describe('GET /templates', () => {
     expect(res.text).toContain('AI SMM-спеціаліст');
     expect(res.text).toContain('Roles');
   });
+
+  it('escapes ask JSON in data-ask — no attribute breakout (XSS guard)', async () => {
+    const res = await request(app).get('/templates');
+    expect(res.status).toBe(200);
+    // hostile ask label must be HTML-escaped, never rendered as live markup
+    expect(res.text).not.toContain('<img src=x onerror');
+    expect(res.text).toContain('&lt;img src=x onerror');
+  });
+});
+
+describe('GET /templates/:id (role detail)', () => {
+  it('renders a clean role page; prompt + commands live in an optional collapsed block', async () => {
+    const res = await request(app).get('/templates/notion-assistant');
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('AI асистент Notion'); // title
+    expect(res.text).toContain('Працює з'); // friendly tools section
+    expect(res.text).toContain('Запустити'); // start button
+    // prompt + connect commands are AVAILABLE but tucked in an opt-in <details> (collapsed)
+    expect(res.text).toContain('<details');
+    expect(res.text).not.toContain('<details open'); // hidden by default
+    expect(res.text).toContain('Працюй з Notion'); // the prompt (inside the fold)
+    expect(res.text).toContain('openclaw mcp set notion'); // the commands (inside the fold)
+  });
+
+  it('404 for an unknown role', async () => {
+    const res = await request(app).get('/templates/no-such-role');
+    expect(res.status).toBe(404);
+  });
 });
 
 describe('POST /templates/activate', () => {

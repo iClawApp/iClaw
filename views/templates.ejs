@@ -104,10 +104,11 @@
                     data-search="<%= searchBlob %>"
                     data-category="<%= category %>"
                     data-tools="<%= _toolKey %>"
-                    data-ask='<%- JSON.stringify(t.ask || []) %>'
+                    data-ask='<%= JSON.stringify(t.ask || []) %>'
                     data-title="<%= t.title %>"
                   >
                     <div class="template-card-inner">
+                      <a class="template-card-link" href="/templates/<%= t.id %>">
                       <div class="template-card-head">
                         <% if (t.icon) { %>
                         <span class="template-card-icon" aria-hidden="true"><%= t.icon %></span>
@@ -127,6 +128,7 @@
                         <% }); %>
                       </div>
                       <% } %>
+                      </a>
                       <button type="button" class="btn btn--primary template-card-activate">
                         Start
                       </button>
