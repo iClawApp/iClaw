@@ -30,6 +30,7 @@ import {
 } from './services/remoteAccessOpaqueAuth';
 import { remoteAccessApiRouter } from './routes/remoteAccessApi';
 import { settingsRouter } from './routes/settings';
+import { templatesRouter } from './routes/templates';
 
 import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
 import { resolveUploadsRoot } from './paths';
@@ -121,6 +122,7 @@ export function createApp(): express.Express {
   app.use('/', indexRouter);
   app.use('/chats', chatsRouter);
   app.use('/projects', projectsRouter);
+  app.use('/templates', templatesRouter);
   app.use('/tasks', tasksRouter);
   app.use('/', settingsRouter);
   app.use('/api/agents', agentsRouter);

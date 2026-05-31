@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { resetTestDb } from '../helpers/db';
 import { projects, projectFacts } from '../../src/services/store';
 import {
+  applyUseCasePreamble,
   buildGatewayUserMessage,
   isDuplicateFact,
   normalizeForDedup,
@@ -156,5 +157,29 @@ describe('normalizeAgentId', () => {
   it('passes through already-bare ids', () => {
     expect(normalizeAgentId('code')).toBe('code');
     expect(normalizeAgentId('custom-agent')).toBe('custom-agent');
+  });
+});
+
+describe('applyUseCasePreamble', () => {
+  it('returns the message unchanged for an empty / whitespace preamble', () => {
+    expect(applyUseCasePreamble('', 'hello')).toBe('hello');
+    expect(applyUseCasePreamble('   \n  ', 'hello')).toBe('hello');
+  });
+
+  it('prepends an authoritative instructions block before the message', () => {
+    const out = applyUseCasePreamble('You are an SMM specialist.', 'write a post');
+    expect(out).toContain('Operating instructions');
+    expect(out).toContain('You are an SMM specialist.');
+    expect(out).toContain('write a post');
+    // the user message comes AFTER the persona
+    expect(out.indexOf('write a post')).toBeGreaterThan(
+      out.indexOf('You are an SMM specialist.'),
+    );
+  });
+
+  it('trims the preamble but preserves the downstream message verbatim', () => {
+    const out = applyUseCasePreamble('  Persona  ', 'BODY');
+    expect(out).toContain('Persona\n'); // trimmed (no leading/trailing spaces)
+    expect(out.endsWith('BODY')).toBe(true); // body preserved at the very end
   });
 });

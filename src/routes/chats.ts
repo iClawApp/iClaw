@@ -26,6 +26,7 @@ import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
 import { sendMessage } from '../services/chatRunner';
 import { shouldShowSendHint } from '../services/sendHint';
+import { catalog } from '../services/catalog';
 
 export const chatsRouter: Router = Router();
 
@@ -162,13 +163,30 @@ chatsRouter.get('/:id', async (req, res, next) => {
     }
     if (chats.markRead(id)) wsHub.broadcastAll({ type: 'chat-read', chatId: id });
     const { agents, error: agentsError } = await getAgentsSafe();
+    const chatMessages = messages.listByChat(id);
+    let activeTemplate: { id: string; title: string; icon?: string } | null = null;
+    let templateFirstHint: string | null = null;
+    if (chat.template_id) {
+      const manifest = await catalog.getById(chat.template_id);
+      if (manifest) {
+        activeTemplate = {
+          id: manifest.id,
+          title: manifest.title,
+          ...(manifest.icon ? { icon: manifest.icon } : {}),
+        };
+        const hint = manifest.firstHint?.trim();
+        if (chatMessages.length === 0 && hint) templateFirstHint = hint;
+      }
+    }
     res.render('chat', {
       chats: chats.list(),
       allProjects: projects.list(),
       hasAnyTasks: tasks.hasAny(),
       taskStatusSignals: tasks.statusSignals(),
       activeChat: chat,
-      chatMessages: messages.listByChat(id),
+      chatMessages,
+      activeTemplate,
+      templateFirstHint,
       agents,
       agentsError,
       defaultAgent: DEFAULT_AGENT,

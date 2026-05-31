@@ -1,0 +1,221 @@
+<%- include('partials/head', { title: 'Roles — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main templates-gallery-page">
+    <div class="templates-gallery-inner">
+      <% if (typeof agentsError !== 'undefined' && agentsError) { %>
+      <%- include('partials/gatewayError', { agentsError, gatewayUp, openclawBaseUrl }) %>
+      <% } %>
+
+      <% if (typeof catalogError !== 'undefined' && catalogError) { %>
+      <aside class="iclaw-inline-banner iclaw-inline-banner--error card templates-catalog-error" role="alert">
+        <p class="iclaw-inline-banner__lead">Catalog unavailable</p>
+        <p class="iclaw-inline-banner__detail muted"><%= catalogError %></p>
+        <p class="iclaw-inline-banner__detail muted">
+          Check your connection or try again later. If that doesn't help, contact whoever set up iClaw.
+        </p>
+      </aside>
+      <% } %>
+
+      <header class="templates-gallery-head page-toolbar page-toolbar--stack">
+        <%- include('partials/mobile-nav-toggle') %>
+        <div class="templates-gallery-head-row">
+          <h1 class="templates-gallery-title">Roles</h1>
+          <button
+            type="button"
+            class="templates-add-btn btn btn--primary"
+            id="templates-add-btn"
+            aria-label="Add role"
+            title="Add role"
+          >+</button>
+        </div>
+        <p class="templates-gallery-intro muted">
+          Pick a role or tap +.
+        </p>
+      </header>
+
+      <div class="templates-gallery-search-wrap">
+        <input
+          type="search"
+          id="templates-search"
+          class="templates-gallery-search"
+          placeholder="Search by task…"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="Search roles"
+          <%= typeof catalogError !== 'undefined' && catalogError ? 'disabled' : '' %>
+        />
+      </div>
+
+      <% var _toolFilters = (typeof distinctMcpBadges === 'function') ? distinctMcpBadges(templates) : []; %>
+      <% if (_toolFilters.length) { %>
+      <div class="tool-dropdown" id="tool-dropdown">
+        <button type="button" class="tool-dropdown-toggle" id="tool-dropdown-toggle" aria-haspopup="listbox" aria-expanded="false">
+          <span class="tool-dropdown-label" id="tool-dropdown-label">Усі інструменти</span>
+          <span class="tool-dropdown-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="tool-dropdown-panel" id="tool-dropdown-panel" role="listbox" aria-multiselectable="true" hidden>
+          <% _toolFilters.forEach(function (b) { %>
+          <label class="tool-dropdown-item">
+            <input type="checkbox" class="tool-filter-cb" value="<%= b.label.toLowerCase() %>" />
+            <i class="brand-ico" style="--m:url('/icons/<%= b.icon %>.svg')" aria-hidden="true"></i>
+            <span><%= b.label %></span>
+          </label>
+          <% }); %>
+        </div>
+      </div>
+      <% } %>
+
+      <div id="templates-flash" class="templates-flash" hidden role="status"></div>
+
+      <div id="templates-gallery-empty" class="templates-gallery-empty muted" hidden>
+        No results. Try a different query.
+      </div>
+
+      <div id="templates-gallery" class="templates-gallery-sections">
+        <% if (!catalogError && templates.length === 0) { %>
+          <p class="muted templates-gallery-empty">No roles yet. Tap <strong>+</strong> above to add the first one.</p>
+        <% } else if (!catalogError) { %>
+          <% templatesByCategory.forEach(function (group) {
+            const category = group[0];
+            const items = group[1];
+          %>
+            <section class="templates-gallery-section" data-category="<%= category %>">
+              <h2 class="templates-gallery-category"><%= category %></h2>
+              <div class="templates-gallery-grid">
+                <% items.forEach(function (t) {
+                  var _badges = (typeof mcpBadges === 'function') ? mcpBadges(t.mcpServers) : [];
+                  var _toolTokens = _badges.map(function (b) { return b.label; });
+                  var _toolKey = _toolTokens.map(function (s) { return s.toLowerCase(); }).join('|');
+                  const searchBlob = [
+                    t.title,
+                    t.tagline,
+                    t.category,
+                    t.forWhom,
+                    ...(t.search || []),
+                    ..._toolTokens,
+                  ].join(' ').toLowerCase();
+                %>
+                  <article
+                    class="template-card"
+                    data-template-id="<%= t.id %>"
+                    data-search="<%= searchBlob %>"
+                    data-category="<%= category %>"
+                    data-tools="<%= _toolKey %>"
+                    data-ask='<%- JSON.stringify(t.ask || []) %>'
+                    data-title="<%= t.title %>"
+                  >
+                    <div class="template-card-inner">
+                      <div class="template-card-head">
+                        <% if (t.icon) { %>
+                        <span class="template-card-icon" aria-hidden="true"><%= t.icon %></span>
+                        <% } %>
+                        <h3 class="template-card-title"><%= t.title %></h3>
+                      </div>
+                      <% if (t.tagline) { %>
+                      <p class="template-card-tagline"><%= t.tagline %></p>
+                      <% } %>
+                      <% var _mcpBadges = (typeof mcpBadges === 'function') ? mcpBadges(t.mcpServers) : []; %>
+                      <% if (_mcpBadges.length) { %>
+                      <div class="template-card-mcp-row">
+                        <% _mcpBadges.forEach(function (b) { %>
+                        <span class="template-card-mcp" title="Needs <%= b.label %>">
+                          <i class="brand-ico" style="--m:url('/icons/<%= b.icon %>.svg')" aria-hidden="true"></i><%= b.label %>
+                        </span>
+                        <% }); %>
+                      </div>
+                      <% } %>
+                      <button type="button" class="btn btn--primary template-card-activate">
+                        Start
+                      </button>
+                    </div>
+                  </article>
+                <% }); %>
+              </div>
+            </section>
+          <% }); %>
+        <% } %>
+      </div>
+    </div>
+
+    <div class="composer-secret-modal template-wizard-modal" id="template-wizard-modal" hidden>
+      <div class="composer-secret-modal__backdrop template-wizard-backdrop"></div>
+      <div
+        class="composer-secret-modal__panel template-wizard-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="template-wizard-title"
+      >
+        <header class="composer-secret-modal__head">
+          <h3 class="composer-secret-modal__title" id="template-wizard-title">Before you start</h3>
+          <p class="composer-secret-modal__hint muted" id="template-wizard-subtitle"></p>
+        </header>
+        <form id="template-wizard-form" class="template-wizard-form" novalidate>
+          <div id="template-wizard-fields"></div>
+          <div class="composer-secret-modal__actions">
+            <button type="button" class="btn btn--ghost template-wizard-cancel">Cancel</button>
+            <button type="submit" class="btn btn--primary" id="template-wizard-submit">Start chat</button>
+          </div>
+        </form>
+        <p class="template-wizard-error muted" id="template-wizard-error" hidden role="alert"></p>
+      </div>
+    </div>
+
+    <div class="composer-secret-modal template-create-modal" id="template-create-modal" hidden>
+      <div class="composer-secret-modal__backdrop template-create-backdrop"></div>
+      <div
+        class="composer-secret-modal__panel template-create-panel template-create-panel--simple template-create-panel--wide"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="template-create-title"
+      >
+        <form id="template-create-form" class="templates-create-form templates-create-form--simple" novalidate>
+          <h3 class="template-create-heading" id="template-create-title">New role</h3>
+
+          <label class="templates-create-field">
+            <span class="templates-create-label">Name</span>
+            <input
+              type="text"
+              name="title"
+              maxlength="120"
+              placeholder="Sales assistant"
+              autocomplete="off"
+              required
+            />
+          </label>
+          <label class="templates-create-field">
+            <span class="templates-create-label">AI instruction</span>
+            <textarea
+              name="promptTemplate"
+              rows="8"
+              maxlength="16000"
+              placeholder="Role, tone, API, rules…"
+              required
+            ></textarea>
+          </label>
+          <label class="templates-create-field">
+            <span class="templates-create-label">Category</span>
+            <select name="category" class="templates-create-field__input">
+              <% (typeof roleCategories !== 'undefined' ? roleCategories : ['Other']).forEach(function (cat) { %>
+                <option value="<%= cat %>"<%= cat === 'Other' ? ' selected' : '' %>><%= cat %></option>
+              <% }); %>
+            </select>
+          </label>
+
+          <div class="composer-secret-modal__actions template-create-actions">
+            <button type="button" class="btn btn--ghost template-create-cancel">Cancel</button>
+            <button type="submit" class="btn btn--primary" id="template-create-submit">Done</button>
+          </div>
+        </form>
+        <p class="template-wizard-error muted" id="template-create-error" hidden role="alert"></p>
+      </div>
+    </div>
+
+    <script src="/js/templates.js?v=12"></script>
+    <script src="/js/iclaw.js?v=1"></script>
+  </main>
+</div>
+
+<%- include('partials/foot') %>

@@ -109,7 +109,10 @@
       <textarea
         id="composer-input"
         name="content"
-        placeholder="Message…"
+        placeholder="<%= typeof templateFirstHint !== 'undefined' && templateFirstHint ? templateFirstHint : 'Message…' %>"
+        <% if (typeof templateFirstHint !== 'undefined' && templateFirstHint) { %>
+        data-default-placeholder="Message…"
+        <% } %>
         rows="1"
       ></textarea>
     </div>

@@ -30,7 +30,13 @@ CREATE TABLE IF NOT EXISTS chats (
   title_manual        INTEGER NOT NULL DEFAULT 0,
   unread              INTEGER NOT NULL DEFAULT 0,
   /** 'normal' | 'task_execution' — execution threads are hidden from sidebar lists. */
-  chat_kind           TEXT NOT NULL DEFAULT 'normal'
+  chat_kind           TEXT NOT NULL DEFAULT 'normal',
+  -- Hidden per-chat system preamble, baked in when a chat is launched from a
+  -- Templates gallery card. Injected into the gateway message every turn;
+  -- never written to the user-visible message row (UI transcript stays clean).
+  use_case_preamble   TEXT,
+  -- Slug of the source template (catalog manifest id) for UI badge / analytics.
+  template_id         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -258,6 +264,8 @@ function ensureColumn(table: string, column: string, ddl: string): void {
 }
 ensureColumn('messages', 'attachments', 'TEXT');
 ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
+ensureColumn('chats', 'use_case_preamble', 'TEXT');
+ensureColumn('chats', 'template_id', 'TEXT');
 ensureColumn('remote_access_tunnels', 'access_token', 'TEXT');
 ensureColumn('remote_access_tunnels', 'opaque_registration_record', 'TEXT');
 // Tunnel ownership secret. Proves to the relay that a re-registering client is

@@ -114,6 +114,34 @@ describe('store.chats', () => {
     expect(chats.get(c.id)!.reasoning_mode).toBe('off');
   });
 
+  it('create() persists a hidden use_case_preamble + template_id (templates)', () => {
+    const c = chats.create('openclaw/default', null, {
+      chatKind: 'draft',
+      useCasePreamble: 'You are an SMM specialist.',
+      templateId: 'smm-instagram',
+    });
+    const row = chats.get(c.id)!;
+    expect(row.use_case_preamble).toBe('You are an SMM specialist.');
+    expect(row.template_id).toBe('smm-instagram');
+    expect(row.chat_kind).toBe('draft');
+  });
+
+  it('create() leaves preamble/template null when not supplied', () => {
+    const row = chats.get(chats.create('openclaw/default').id)!;
+    expect(row.use_case_preamble).toBeNull();
+    expect(row.template_id).toBeNull();
+  });
+
+  it('setUseCasePreamble updates then clears, without touching updated_at', () => {
+    const c = chats.create('openclaw/default');
+    db.prepare("UPDATE chats SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(c.id);
+    chats.setUseCasePreamble(c.id, '  You are a sales assistant.  ');
+    expect(chats.get(c.id)!.use_case_preamble).toBe('You are a sales assistant.'); // trimmed
+    expect(chats.get(c.id)!.updated_at).toBe('2020-01-01 00:00:00'); // not bumped
+    chats.setUseCasePreamble(c.id, '   ');
+    expect(chats.get(c.id)!.use_case_preamble).toBeNull(); // blank clears
+  });
+
   it('SQLite trigger bumps chats.updated_at on message insert', () => {
     const c = chats.create('openclaw/default');
     db.prepare("UPDATE chats SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(c.id);

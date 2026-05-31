@@ -15,6 +15,19 @@
         />
       </form>
 
+      <% if (typeof activeTemplate !== 'undefined' && activeTemplate) { %>
+        <a
+          href="/templates"
+          class="chip chip--accent chat-template-badge"
+          title="Started from role «<%= activeTemplate.title %>»"
+        >
+          <% if (activeTemplate.icon) { %>
+          <span class="chat-template-badge__icon" aria-hidden="true"><%= activeTemplate.icon %></span>
+          <% } %>
+          <span class="chat-template-badge__label"><%= activeTemplate.title %></span>
+        </a>
+      <% } %>
+
       <div class="chat-header-tools">
       <form class="agent-form header-field" method="post" action="/chats/<%= activeChat.id %>/agent">
         <label class="header-field-label" for="chat-agent-select">Agent</label>
@@ -169,7 +182,11 @@
     >
       <div class="messages-thread">
         <% if (chatMessages.length === 0) { %>
-          <p class="muted empty-state">No messages yet. Say something.</p>
+          <p class="muted empty-state"><%=
+            typeof templateFirstHint !== 'undefined' && templateFirstHint
+              ? templateFirstHint
+              : 'No messages yet. Say something.'
+          %></p>
         <% } else { %>
           <% chatMessages.forEach(function (m) { %>
             <div class="msg <%= m.role %>" data-msg-id="<%= m.id %>">

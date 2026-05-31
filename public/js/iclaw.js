@@ -777,6 +777,9 @@
       const empty = messagesEl.querySelector('.empty-state');
       if (empty) empty.remove();
     }
+    if (input?.dataset.defaultPlaceholder) {
+      input.placeholder = input.dataset.defaultPlaceholder;
+    }
   }
   function replyStubRoleLabel(role) {
     if (role === 'user') return 'You';

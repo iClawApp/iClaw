@@ -180,6 +180,10 @@ export interface Chat {
   shares_to_project: number;
   /** Optional per-chat model override applied via `sessions.patch` on OpenClaw. */
   model_override: string | null;
+  /** Hidden per-chat system preamble baked in at template activation. Injected into the gateway message each turn; never shown in the UI transcript. */
+  use_case_preamble?: string | null;
+  /** Slug of the source template (catalog manifest id) when this chat was launched from the Templates gallery. */
+  template_id?: string | null;
   /** Reasoning visibility mirror — 'off' | 'on' | 'stream'. */
   reasoning_mode: string;
   title_manual: number;

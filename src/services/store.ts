@@ -66,16 +66,23 @@ export const chats = {
   create(
     agent: string,
     projectId: number | null = null,
-    opts?: { chatKind?: ChatKind; title?: string },
+    opts?: {
+      chatKind?: ChatKind;
+      title?: string;
+      useCasePreamble?: string | null;
+      templateId?: string | null;
+    },
   ): Chat {
     const sessionKey = randomUUID();
     const kind = opts?.chatKind ?? 'normal';
     const title = opts?.title?.trim() || 'New chat';
+    const preamble = opts?.useCasePreamble?.trim() || null;
+    const templateId = opts?.templateId?.trim() || null;
     const info = db
       .prepare(
-        'INSERT INTO chats (agent, openclaw_session_id, project_id, chat_kind, title) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO chats (agent, openclaw_session_id, project_id, chat_kind, title, use_case_preamble, template_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(agent, sessionKey, projectId, kind, title);
+      .run(agent, sessionKey, projectId, kind, title, preamble, templateId);
     return this.get(Number(info.lastInsertRowid))!;
   },
   /** Composer-only row — hidden from sidebar until promoted on first user message. */
@@ -133,6 +140,15 @@ export const chats = {
     db.prepare(
       "UPDATE chats SET reasoning_mode = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(mode, id);
+  },
+  /**
+   * Set/clear the hidden per-chat use-case preamble (template persona +
+   * instructions). Like `rename`, deliberately does NOT touch `updated_at` so
+   * re-applying a template never reorders the sidebar.
+   */
+  setUseCasePreamble(id: number, preamble: string | null): void {
+    const next = preamble?.trim() || null;
+    db.prepare('UPDATE chats SET use_case_preamble = ? WHERE id = ?').run(next, id);
   },
   touch(id: number): void {
     db.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").run(id);

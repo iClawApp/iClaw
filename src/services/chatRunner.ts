@@ -8,7 +8,11 @@
 
 import { randomUUID } from 'node:crypto';
 import { chats, messages, projects, projectSecrets } from './store';
-import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
+import {
+  applyUseCasePreamble,
+  buildGatewayUserMessage,
+  scheduleProjectFactExtraction,
+} from './projectMemory';
 import { chatStatus } from './chatStatus';
 import { openclawWs, type TurnEvent } from './openclawWs';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
@@ -268,10 +272,17 @@ async function runTurnLocked(opts: {
     gatewayBody = formatReplyGatewayBlock(refExpanded, reply.quote) + gatewayBody;
   }
 
-  const gatewayMessage =
+  let gatewayMessage =
     chat.project_id != null && projects.get(chat.project_id)
       ? buildGatewayUserMessage(gatewayBody, chat.project_id)
       : gatewayBody;
+  // Templates: prepend the hidden per-chat persona/instructions, if any. Layers
+  // on top of project facts (persona first, then workspace background, then the
+  // user message). `storedUserContent` below is untouched, so the preamble never
+  // appears in the UI transcript or SQLite — only the gateway ever sees it.
+  if (chat.use_case_preamble && chat.use_case_preamble.trim()) {
+    gatewayMessage = applyUseCasePreamble(chat.use_case_preamble, gatewayMessage);
+  }
 
   // Persist user message + broadcast (stored text keeps placeholders only).
   const replyToRole =

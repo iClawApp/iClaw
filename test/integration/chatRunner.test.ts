@@ -214,6 +214,63 @@ describe('sendMessage — project context injection', () => {
   });
 });
 
+describe('sendMessage — use-case preamble (templates)', () => {
+  it('prepends the hidden preamble to the gateway message but stores user text raw', async () => {
+    const draft = chats.create('openclaw/default', null, {
+      chatKind: 'draft',
+      useCasePreamble: 'You are an experienced SMM specialist.',
+      templateId: 'smm-instagram',
+    });
+    let gatewayMsg = '';
+    openclawWsMock.runTurn.mockImplementationOnce(async (params) => {
+      gatewayMsg = params.message;
+      return { runId: 'r', text: 'OK' };
+    });
+
+    const { chatId } = await sendMessage({ chatId: draft.id, content: 'хочу пости про каву' });
+
+    // Gateway sees the persona + the user's text, persona first.
+    expect(gatewayMsg).toContain('Operating instructions');
+    expect(gatewayMsg).toContain('experienced SMM specialist');
+    expect(gatewayMsg).toContain('хочу пости про каву');
+    expect(gatewayMsg.indexOf('SMM specialist')).toBeLessThan(
+      gatewayMsg.indexOf('хочу пости про каву'),
+    );
+
+    // Invariant: the stored/UI row is the raw text — the preamble never leaks.
+    const userRow = messages.listByChat(chatId).find((m) => m.role === 'user')!;
+    expect(userRow.content).toBe('хочу пости про каву');
+    expect(userRow.content).not.toContain('SMM specialist');
+  });
+
+  it('layers the preamble on top of project facts (persona → facts → user msg)', async () => {
+    const p = projects.create('SMM Proj');
+    projectFacts.append({ projectId: p.id, content: 'Brand voice: playful' });
+    const draft = chats.create('openclaw/default', p.id, {
+      chatKind: 'draft',
+      useCasePreamble: 'You are an SMM specialist.',
+    });
+    let gatewayMsg = '';
+    openclawWsMock.runTurn.mockImplementationOnce(async (params) => {
+      gatewayMsg = params.message;
+      return { runId: 'r', text: 'ok' };
+    });
+
+    await sendMessage({ chatId: draft.id, content: 'plan my week' });
+
+    expect(gatewayMsg).toContain('SMM specialist'); // persona
+    expect(gatewayMsg).toContain('Project context'); // facts block
+    expect(gatewayMsg).toContain('Brand voice: playful');
+    expect(gatewayMsg).toContain('plan my week'); // user msg
+    expect(gatewayMsg.indexOf('SMM specialist')).toBeLessThan(
+      gatewayMsg.indexOf('Project context'),
+    );
+    expect(gatewayMsg.indexOf('Project context')).toBeLessThan(
+      gatewayMsg.indexOf('plan my week'),
+    );
+  });
+});
+
 describe('sendMessage — reply-to (quoted message)', () => {
   it('persists reply metadata and prepends context for the gateway', async () => {
     openclawWsMock.runTurn.mockResolvedValueOnce({ runId: 'r0', text: 'first reply' });
