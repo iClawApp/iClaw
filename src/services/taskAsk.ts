@@ -15,7 +15,11 @@ import {
   tasks,
 } from './store';
 import { toolActivityLabel } from './toolLabels';
-import { buildContextSnapshot, truncateSnapshotForPrompt } from './taskRunner';
+import {
+  buildContextSnapshot,
+  truncateSnapshotForPrompt,
+  TASK_ASK_LANGUAGE_POLICY,
+} from './taskRunner';
 import { wsHub } from './wsHub';
 import type { ServerMsg } from '../types/protocol';
 import type { Task, TaskContextSnapshotPayload } from '../types';
@@ -53,6 +57,8 @@ function buildAskFirstTurnMessage(
     '',
     'Context snapshot (captured when the user opened Ask — may be newer than the task frozen snapshot):',
     truncateSnapshotForPrompt(payload),
+    '',
+    TASK_ASK_LANGUAGE_POLICY,
     '',
     'User question:',
     userMessage.trim(),

@@ -249,6 +249,38 @@ export function truncateSnapshotForPrompt(payload: TaskContextSnapshotPayload): 
   return parts.join('\n\n');
 }
 
+/**
+ * Language policy for every task prompt. OpenClaw must answer in the language
+ * the user actually wrote in (goal + chat context) instead of defaulting to
+ * English. We deliberately do NOT detect the language in JS — that is brittle
+ * across scripts and code-switching — and instead instruct the model to mirror
+ * it, which it does reliably.
+ *
+ * The catch: some lines in the agent's reply are machine-parsed, not shown to
+ * the user, and MUST stay verbatim/English or the runner breaks —
+ * `parsePlanLines` keys off the `agent:` / `human:` prefixes and
+ * `parseTaskOutcome` / `stripTaskOutcomeMarkers` key off the protocol markers.
+ * So the policy says "translate prose, keep tokens".
+ */
+const LANG_MIRROR =
+  'Write every human-facing line in the same language the user used in the ' +
+  'task goal and context above — for example, if they wrote in Ukrainian, ' +
+  'respond entirely in Ukrainian. Never silently switch to English.';
+
+/** Plan output only carries the `agent:`/`human:` prefixes as machine tokens. */
+export const TASK_PLAN_LANGUAGE_POLICY =
+  `${LANG_MIRROR} Keep only the "agent:" / "human:" step prefixes in English; ` +
+  'the step titles themselves go in the user\'s language.';
+
+/** Execution output additionally carries the outcome protocol markers. */
+export const TASK_EXECUTION_LANGUAGE_POLICY =
+  `${LANG_MIRROR} Do not translate the protocol keywords TASK_DONE, ` +
+  'NEEDS_HUMAN, ASK_USER, NEEDS_REVIEW, ADD_HUMAN_STEP — emit them exactly, ' +
+  'in English, on their own line; only the surrounding explanation is translated.';
+
+/** Ask answers have no machine tokens — pure prose. */
+export const TASK_ASK_LANGUAGE_POLICY = LANG_MIRROR;
+
 export function buildTaskPlanPrompt(goal: string, payload: TaskContextSnapshotPayload): string {
   return [
     'TASK: Create an execution plan for the iClaw task below.',
@@ -262,6 +294,8 @@ export function buildTaskPlanPrompt(goal: string, payload: TaskContextSnapshotPa
     `Goal: ${goal.trim()}`,
     '',
     truncateSnapshotForPrompt(payload),
+    '',
+    TASK_PLAN_LANGUAGE_POLICY,
   ].join('\n');
 }
 
@@ -306,6 +340,7 @@ function buildExecutionPrompt(opts: {
       : []),
     ...(opts.resumeNote ? [`Human input for resume:\n${opts.resumeNote}`, ''] : []),
     'Rules:',
+    `- ${TASK_EXECUTION_LANGUAGE_POLICY}`,
     current?.actor === 'human'
       ? '- Current step is HUMAN: do not run agent work; return NEEDS_HUMAN immediately.'
       : '- Execute only the current agent step; do not skip ahead past unfinished human steps.',
