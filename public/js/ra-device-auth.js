@@ -113,18 +113,30 @@
     return crypto.subtle.importKey('pkcs8', jwk, { name: 'Ed25519' }, false, ['sign']);
   }
 
+  // Generate the device keypair NON-extractable. The private key never leaves
+  // WebCrypto: we store the live CryptoKey in IndexedDB (structured-clone keeps
+  // it opaque) rather than an exportable pkcs8 blob, so an XSS on the tunnel
+  // can't read the device identity out of storage. The public key is always
+  // extractable per the WebCrypto spec, so spki export still works.
   function generateKeypair() {
-    return crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']).then(function (pair) {
-      return Promise.all([
-        crypto.subtle.exportKey('pkcs8', pair.privateKey),
-        crypto.subtle.exportKey('spki', pair.publicKey),
-      ]).then(function (parts) {
+    return crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']).then(function (pair) {
+      return crypto.subtle.exportKey('spki', pair.publicKey).then(function (spki) {
         return {
-          privateKeyJwk: parts[0],
-          publicKeySpki: b64urlEncode(parts[1]),
+          privateKey: pair.privateKey,
+          publicKeySpki: b64urlEncode(spki),
         };
       });
     });
+  }
+
+  // Resolve a signing key from a stored device record. New records hold a
+  // non-extractable CryptoKey (`privateKey`); legacy records hold an exportable
+  // pkcs8 blob (`privateKeyJwk`) — still imported for backward compatibility so
+  // already-trusted browsers keep working until their next passphrase login.
+  function resolveSigningKey(record) {
+    if (record && record.privateKey) return Promise.resolve(record.privateKey);
+    if (record && record.privateKeyJwk) return importPrivateKey(record.privateKeyJwk);
+    return Promise.reject(new Error('no device key'));
   }
 
   function signChallenge(privateKey, challengeB64) {
@@ -223,11 +235,12 @@
   }
 
   function finishLoginSuccess(tunnelId, next, login) {
-    if (login.deviceId && login.privateKeyJwk) {
+    if (login.deviceId && login.privateKey) {
       return saveDevice({
         tunnelId: tunnelId,
         deviceId: login.deviceId,
-        privateKeyJwk: login.privateKeyJwk,
+        // Non-extractable CryptoKey — stored opaquely via structured clone.
+        privateKey: login.privateKey,
       }).then(function () {
         return redirectAfterAuth(login.next || next);
       });
@@ -251,7 +264,7 @@
     return postJson('/__ra/device/challenge', { deviceId: record.deviceId, next: next })
       .then(function (ch) {
         if (!ch.ok) return dropIfRejected(tunnelId, ch) || Promise.reject(new Error('challenge failed'));
-        return importPrivateKey(record.privateKeyJwk).then(function (priv) {
+        return resolveSigningKey(record).then(function (priv) {
           return signChallenge(priv, ch.data.challenge).then(function (signature) {
             return postJson('/__ra/device/verify', {
               deviceId: record.deviceId,
@@ -282,7 +295,7 @@
       return {
         next: result.next,
         deviceId: result.deviceId,
-        privateKeyJwk: keys ? keys.privateKeyJwk : null,
+        privateKey: keys ? keys.privateKey : null,
       };
     });
   }
@@ -317,7 +330,11 @@
         return null;
       })
       .then(function (existing) {
-        var haveDevice = !!(existing && existing.deviceId && existing.privateKeyJwk);
+        var haveDevice = !!(
+          existing &&
+          existing.deviceId &&
+          (existing.privateKey || existing.privateKeyJwk)
+        );
         var keysPromise = haveDevice ? Promise.resolve(null) : generateKeypair();
         return keysPromise.then(function (keys) {
           return runOpaqueLogin(passphrase, next, keys).then(function (login) {
@@ -417,7 +434,10 @@
 
     loadDevice(tunnelId)
       .then(function (record) {
-        if (!record || !record.deviceId || !record.privateKeyJwk) {
+        // Accept both the new non-extractable CryptoKey records and legacy
+        // pkcs8-blob records; either is enough to attempt device auto-login.
+        var hasKey = record && (record.privateKey || record.privateKeyJwk);
+        if (!record || !record.deviceId || !hasKey) {
           showPassphraseForm();
           return;
         }
