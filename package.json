@@ -35,7 +35,6 @@
     "test:ra-integration": "npm run build && node scripts/ra-e2e-integration.mjs",
     "smoke:ra-manual": "node scripts/ra-e2e-smoke.mjs",
     "scan:relay-capture": "node scripts/ra-relay-capture-scan.mjs",
-    "postinstall": "node scripts/copy-opaque-vendor.mjs",
     "prepack": "node scripts/copy-opaque-vendor.mjs && node scripts/verify-vendor-assets.mjs && npm run build",
     "verify:vendor": "node scripts/verify-vendor-assets.mjs"
   },
