@@ -44,6 +44,28 @@ export function loadCloudShareBaseUrl(): string {
   return base;
 }
 
+/**
+ * OpenClaw agent id used for HARD "Ask" mode — a tools-restricted agent the
+ * operator configures in `openclaw.json` (e.g. `tools.allow`/`deny`). When this
+ * agent exists on the gateway, Ask turns run on a session bound to it, so the
+ * model physically cannot use shell/file/browser tools.
+ *
+ *   - unset            → default 'ask'
+ *   - set to a name    → use that agent id
+ *   - set to empty / 0 / off / no / disabled → hard Ask disabled (falls back to
+ *     the lightweight prompt-only Ask)
+ *
+ * Availability is still checked at runtime against `agents.list`; if the named
+ * agent isn't present, iClaw silently uses the soft Ask fallback (no error).
+ */
+export function loadAskAgentId(): string {
+  const raw = process.env.ICLAW_ASK_AGENT;
+  if (raw === undefined) return 'ask';
+  const v = raw.trim();
+  if (/^(|0|false|off|no|disabled)$/i.test(v)) return '';
+  return v;
+}
+
 export function loadOpenClawConfig(): OpenClawConfig {
   const envToken = process.env.OPENCLAW_API_KEY?.trim();
   const envUrl = process.env.OPENCLAW_BASE_URL?.trim();

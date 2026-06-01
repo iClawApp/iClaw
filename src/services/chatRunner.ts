@@ -21,7 +21,8 @@ import {
   type ProcessedAttachment,
 } from './uploads';
 import type { ChatMode, Message, MessageAttachment } from '../types';
-import { applyModeToGatewayMessage, DEFAULT_MODE } from './chatModes';
+import { applyModeToGatewayMessage, DEFAULT_MODE, getModeDef } from './chatModes';
+import { loadAskAgentId } from './config';
 import {
   expandStoredSecretPlaceholdersForGateway,
   resolveInlineSecretMarkersInContent,
@@ -30,6 +31,114 @@ import {
 } from './inlineSecrets';
 
 const DEFAULT_AGENT = 'openclaw/default';
+
+/**
+ * Agent id for HARD Ask mode (tools-restricted). Resolved once at import; the
+ * empty string means hard Ask is disabled (operator opted out) and Ask always
+ * uses the soft prompt-only fallback.
+ */
+const ASK_AGENT_ID = loadAskAgentId();
+
+/**
+ * Session key currently executing a turn for a chat. Lets `abortChatRun` stop
+ * the right session even when a turn runs on an ephemeral Ask session instead
+ * of the chat's stored main session. Cleared in the runTurn `finally`.
+ */
+const activeRunSessionKeys = new Map<number, string>();
+
+/** Recent prior-thread lines fed to a fresh Ask session so it isn't blind. */
+const ASK_CONTEXT_MAX_MESSAGES = 24;
+const ASK_CONTEXT_PER_MSG_CHARS = 800;
+const ASK_CONTEXT_TOTAL_CHARS = 12_000;
+
+/**
+ * Build the message sent to a fresh (tools-restricted) Ask session. Because
+ * that session has no native memory of this chat, we replay a compact snapshot
+ * of the recent thread (read from iClaw's own message store, so it includes
+ * BOTH prior Execute and Ask turns) ahead of the current question.
+ */
+function buildAskContextMessage(
+  chatId: number,
+  currentUserMsgId: number,
+  currentMessage: string,
+): string {
+  const prior = messages
+    .listByChat(chatId)
+    .filter((m) => m.id < currentUserMsgId && (m.role === 'user' || m.role === 'assistant'))
+    .slice(-ASK_CONTEXT_MAX_MESSAGES);
+
+  const lines: string[] = [];
+  let total = 0;
+  for (const m of prior) {
+    const who = m.role === 'assistant' ? 'Assistant' : 'User';
+    let text = m.content.replace(/\s+$/, '');
+    if (text.length > ASK_CONTEXT_PER_MSG_CHARS) {
+      text = text.slice(0, ASK_CONTEXT_PER_MSG_CHARS) + '…';
+    }
+    const line = `${who}: ${text}`;
+    if (total + line.length > ASK_CONTEXT_TOTAL_CHARS) break;
+    lines.push(line);
+    total += line.length;
+  }
+
+  const header = [
+    '[iClaw Ask mode]',
+    "You're answering a question in a lightweight Ask mode — explanation, planning,",
+    'or a direct answer. Be concise. (Tool access is already restricted for this run.)',
+  ].join('\n');
+
+  const transcript =
+    lines.length > 0
+      ? `\n\nConversation so far:\n${lines.join('\n')}`
+      : '';
+
+  return `${header}${transcript}\n\nLatest message:\n${currentMessage}`;
+}
+
+interface TurnTarget {
+  sessionKey: string;
+  message: string;
+  /** Set when `sessionKey` is a throwaway Ask session to delete after the turn. */
+  ephemeralSessionKey: string | null;
+}
+
+/**
+ * Decide which session + message a turn uses based on its mode. Execute and
+ * soft-Ask run on the chat's main session; hard-Ask runs on a throwaway session
+ * bound to the tools-restricted ask agent (when that agent is configured and
+ * present on the gateway).
+ */
+async function resolveTurnTarget(opts: {
+  chatId: number;
+  mode: ChatMode;
+  mainSessionKey: string;
+  gatewayMessageBase: string;
+  currentUserMsgId: number;
+}): Promise<TurnTarget> {
+  const { chatId, mode, mainSessionKey, gatewayMessageBase, currentUserMsgId } = opts;
+
+  const wantsLightweight = getModeDef(mode).lightweight;
+  if (wantsLightweight && ASK_AGENT_ID && (await openclawWs.agentExists(ASK_AGENT_ID))) {
+    try {
+      const askSession = await openclawWs.createSession({ agentId: ASK_AGENT_ID });
+      return {
+        sessionKey: askSession.key,
+        message: buildAskContextMessage(chatId, currentUserMsgId, gatewayMessageBase),
+        ephemeralSessionKey: askSession.key,
+      };
+    } catch {
+      // Couldn't spin up the restricted session — degrade to soft Ask rather
+      // than failing the turn.
+    }
+  }
+
+  // Execute → unchanged. Soft Ask → prompt-only preamble (no-op for execute).
+  return {
+    sessionKey: mainSessionKey,
+    message: applyModeToGatewayMessage(mode, gatewayMessageBase),
+    ephemeralSessionKey: null,
+  };
+}
 
 /**
  * Map an iClaw agent label ("openclaw/default", "openclaw/code", ...) to the
@@ -276,12 +385,9 @@ async function runTurnLocked(opts: {
     chat.project_id != null && projects.get(chat.project_id)
       ? buildGatewayUserMessage(gatewayBody, chat.project_id)
       : gatewayBody;
-  // Ask mode: prepend a lightweight "answer, don't execute" directive. Execute
-  // mode passes through unchanged (applyModeToGatewayMessage is a no-op for it),
-  // so existing behavior is byte-for-byte identical. This is the interim
-  // mechanism — see services/chatModes.ts for the no-tools-profile / OpenRouter
-  // routing this can be swapped for later.
-  const gatewayMessage = applyModeToGatewayMessage(mode, gatewayMessageBase);
+  // The session + message for this turn are resolved AFTER the user row is
+  // persisted (Ask mode needs userMsg.id to seed prior-thread context). See
+  // resolveTurnTarget below. Execute stays byte-for-byte identical to before.
 
   // Persist user message + broadcast (stored text keeps placeholders only).
   const replyToRole =
@@ -432,16 +538,46 @@ async function runTurnLocked(opts: {
     }
   };
 
-  const {
-    text: gatewayAccumulated,
-    aborted,
-    authoritativeText,
-  } = await openclawWs.runTurn({
-    sessionKey,
-    message: gatewayMessage,
-    onEvent,
-    attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
+  // Resolve where this turn runs.
+  //   - Execute: the chat's own (main-agent) session, message unchanged.
+  //   - Ask, HARD: a throwaway session bound to the tools-restricted ask agent,
+  //     seeded with the recent thread so it isn't blind to prior turns. The
+  //     gateway enforces that agent's tool policy — the model physically can't
+  //     run shell/file/browser tools. Ask turns happen on a separate session, so
+  //     the main (Execute) session's native memory won't include them — see
+  //     README "Chat modes" for that v1 limitation.
+  //   - Ask, SOFT (no ask agent configured): main session + the prompt-only
+  //     "answer, don't execute" preamble (best-effort, not enforced).
+  const turn = await resolveTurnTarget({
+    chatId,
+    mode,
+    mainSessionKey: sessionKey,
+    gatewayMessageBase,
+    currentUserMsgId: userMsg.id,
   });
+  activeRunSessionKeys.set(chatId, turn.sessionKey);
+
+  let gatewayAccumulated = '';
+  let aborted = false;
+  let authoritativeText: string | null = null;
+  try {
+    ({
+      text: gatewayAccumulated,
+      aborted,
+      authoritativeText,
+    } = await openclawWs.runTurn({
+      sessionKey: turn.sessionKey,
+      message: turn.message,
+      onEvent,
+      attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
+    }));
+  } finally {
+    activeRunSessionKeys.delete(chatId);
+    // Tear down the ephemeral ask session (best-effort; never block the turn).
+    if (turn.ephemeralSessionKey) {
+      void openclawWs.deleteSession(turn.ephemeralSessionKey).catch(() => {});
+    }
+  }
 
   // Picking the assistant text in priority order:
   //
@@ -678,6 +814,13 @@ export async function sendMessage(opts: {
 }
 
 export async function abortChatRun(chatId: number): Promise<void> {
+  // Prefer the session actually running this turn — for a hard-Ask turn that's
+  // an ephemeral ask session, not the chat's stored main session.
+  const active = activeRunSessionKeys.get(chatId);
+  if (active && active.startsWith('agent:')) {
+    await openclawWs.abortRun(active);
+    return;
+  }
   const chat = chats.get(chatId);
   if (!chat) return;
   if (chat.openclaw_session_id?.startsWith('agent:')) {

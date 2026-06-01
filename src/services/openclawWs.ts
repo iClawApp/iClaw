@@ -195,10 +195,36 @@ const pendingAbortIntents = new Set<string>();
 
 // ---------- public client -------------------------------------------------
 
+/** Short cache for agent-existence lookups so Ask routing doesn't hit agents.list every turn. */
+const AGENT_EXISTS_TTL_MS = 30_000;
+const agentExistsCache = new Map<string, { at: number; exists: boolean }>();
+
 export const openclawWs = {
   async listAgents(): Promise<OpenClawAgent[]> {
     const res = await gatewayWs.request<{ agents: OpenClawAgent[] }>('agents.list', {});
     return res.agents ?? [];
+  },
+
+  /**
+   * Whether an agent with this id is configured on the gateway. Cached for a
+   * few seconds. Returns false on any lookup failure (caller falls back to a
+   * non-agent path rather than erroring). Empty id is always false.
+   */
+  async agentExists(agentId: string): Promise<boolean> {
+    const id = agentId.trim();
+    if (!id) return false;
+    const hit = agentExistsCache.get(id);
+    const now = Date.now();
+    if (hit && now - hit.at < AGENT_EXISTS_TTL_MS) return hit.exists;
+    try {
+      const agents = await this.listAgents();
+      const exists = agents.some((a) => a.id === id);
+      agentExistsCache.set(id, { at: now, exists });
+      return exists;
+    } catch {
+      // Gateway unreachable / RPC failed — don't cache, treat as absent.
+      return false;
+    }
   },
 
   /** Create a new "dashboard" session for an agent. Empty params → default agent. */

@@ -15,22 +15,25 @@
  *   legacy rows, older clients, scheduled messages, task runs — behaves
  *   exactly as before. `normalizeChatMode()` enforces this fallback.
  *
- * Routing Ask differently in the future
- * -------------------------------------
- * Today Ask reuses the same OpenClaw session as Execute and is differentiated
- * by a short instruction prepended to the gateway message (see
- * `applyModeToGatewayMessage`). Two cleaner backends are possible later and
- * the seams are already here:
+ * How Ask is enforced
+ * --------------------
+ * `lightweight: true` marks modes that should answer without heavy agent
+ * execution. chatRunner turns that flag into one of two behaviors:
  *
- *   1. No-tools / lightweight OpenClaw profile — if the gateway gains a way to
- *      run a session with tools disabled, return that descriptor from
- *      `gatewayProfileForMode()` and have the WS client pass it on
- *      `sessions.create` / `chat.send`. `lightweight: true` already marks the
- *      modes that want it.
- *   2. OpenRouter / OpenAI direct — for a true "no agent" answer, branch in
- *      chatRunner on `getModeDef(mode).lightweight` and call an LLM client
- *      instead of `openclawWs.runTurn`. The mode is persisted per message, so
- *      this can be added without any schema or UI change.
+ *   1. HARD (preferred) — runs the turn on a throwaway OpenClaw session bound
+ *      to a tools-restricted agent (id from `ICLAW_ASK_AGENT`, default `ask`).
+ *      The gateway enforces that agent's `tools.allow`/`deny`, so the model
+ *      physically cannot use shell/file/browser tools. Used automatically when
+ *      that agent exists on the gateway.
+ *   2. SOFT (fallback) — when no ask agent is configured/present, chatRunner
+ *      prepends the `applyModeToGatewayMessage` instruction below to the normal
+ *      session. Best-effort only: the model is asked not to use tools, but
+ *      nothing enforces it.
+ *
+ * A future option (not wired): for a true "no agent" answer, branch in
+ * chatRunner on `getModeDef(mode).lightweight` and call an LLM client
+ * (OpenRouter/OpenAI) instead of `openclawWs.runTurn`. The mode is persisted
+ * per message, so that needs no schema or UI change.
  */
 
 import type { ChatMode } from '../types';
@@ -138,13 +141,11 @@ export function getModeDef(mode: ChatMode): ChatModeDef {
 }
 
 /**
- * Instruction prepended to lightweight-mode messages so the agent answers
- * without spinning up heavy tool/agent execution. Returns the message
- * unchanged for Execute (and any non-lightweight mode) — Execute must stay
- * byte-for-byte identical to today's behavior.
- *
- * This is the interim mechanism. See the module header for the no-tools
- * profile / OpenRouter alternatives that can replace it later.
+ * SOFT-Ask fallback: instruction prepended to lightweight-mode messages so the
+ * agent answers without spinning up heavy tool/agent execution. Used only when
+ * the HARD path (a tools-restricted ask agent) is unavailable. Returns the
+ * message unchanged for Execute (and any non-lightweight mode) — Execute must
+ * stay byte-for-byte identical to today's behavior.
  */
 const ASK_PREAMBLE = [
   '[iClaw Ask mode]',
@@ -158,14 +159,4 @@ const ASK_PREAMBLE = [
 
 export function applyModeToGatewayMessage(mode: ChatMode, message: string): string {
   return getModeDef(mode).lightweight ? ASK_PREAMBLE + message : message;
-}
-
-/**
- * Reserved hook for a future no-tools / lightweight OpenClaw session profile.
- * Returns `null` today because the gateway exposes no such knob — callers must
- * treat `null` as "no special profile, send normally". Wire this up (and have
- * openclawWs forward it) if/when the gateway supports disabling tools.
- */
-export function gatewayProfileForMode(_mode: ChatMode): null {
-  return null;
 }
