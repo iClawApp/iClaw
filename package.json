@@ -1,6 +1,6 @@
 {
   "name": "@iclawapp/iclaw",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local web UI for OpenClaw Gateway",
   "license": "MIT",
   "homepage": "https://github.com/iClawApp/iClaw",
@@ -25,9 +25,12 @@
   ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "vendor": "node scripts/copy-opaque-vendor.mjs",
+    "prebuild": "node scripts/copy-opaque-vendor.mjs",
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/copy-opaque-vendor.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -35,7 +38,6 @@
     "test:ra-integration": "npm run build && node scripts/ra-e2e-integration.mjs",
     "smoke:ra-manual": "node scripts/ra-e2e-smoke.mjs",
     "scan:relay-capture": "node scripts/ra-relay-capture-scan.mjs",
-    "postinstall": "node scripts/copy-opaque-vendor.mjs",
     "prepack": "node scripts/copy-opaque-vendor.mjs && node scripts/verify-vendor-assets.mjs && npm run build",
     "verify:vendor": "node scripts/verify-vendor-assets.mjs"
   },
