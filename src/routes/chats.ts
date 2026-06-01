@@ -25,6 +25,11 @@ import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
 import { sendMessage } from '../services/chatRunner';
+import {
+  DEFAULT_MODE,
+  listSelectableModes,
+  normalizeChatMode,
+} from '../services/chatModes';
 import { shouldShowSendHint } from '../services/sendHint';
 
 export const chatsRouter: Router = Router();
@@ -180,6 +185,8 @@ chatsRouter.get('/:id', async (req, res, next) => {
       scheduledList: scheduledMessages.listByChat(id),
       queueList: queuedMessages.listByChat(id),
       sendHintShow: shouldShowSendHint(),
+      chatModes: listSelectableModes(),
+      defaultChatMode: DEFAULT_MODE,
     });
   } catch (err) {
     next(err);
@@ -619,6 +626,7 @@ chatsRouter.post('/:id/queue', (req, res) => {
       replyTo: replyTo ?? null,
       attachments: persistedAttachments,
       inlineSecrets: inlineSecrets ?? null,
+      mode: normalizeChatMode(req.body?.mode),
     });
     wsHub.broadcastAll({ type: 'queue-added', chatId: id, item: row });
     res.json({ item: row });
@@ -696,6 +704,7 @@ chatsRouter.post('/:id/queue/:queueId/flush', async (req, res) => {
       prePersistedAttachments:
         row.attachments && row.attachments.length > 0 ? row.attachments : undefined,
       requestId: String(req.body?.requestId ?? '').trim() || undefined,
+      mode: row.mode,
     });
     res.json({ ok: true });
   } catch (err) {

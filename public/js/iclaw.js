@@ -42,6 +42,90 @@
   const rawChatId = messagesEl?.dataset.chatId;
   const startedOnDraft = messagesEl?.dataset.draft === '1' || !rawChatId;
   let activeChatId = startedOnDraft ? null : Number(rawChatId);
+
+  // -------------------------------------------------------------------------
+  // composer mode (Ask / Execute). Mode rides along with each sent message.
+  // The set of selectable modes is rendered server-side from the config in
+  // services/chatModes.ts, so adding a mode there surfaces it here with no
+  // client change. Default + back-compat fallback is 'execute'.
+  // -------------------------------------------------------------------------
+  const MODE_STORAGE_KEY = 'iclaw:composer-mode';
+  const composerModesEl = document.getElementById('composer-modes');
+  const composerModeBtn = document.getElementById('composer-mode-btn');
+  const composerModeMenu = document.getElementById('composer-mode-menu');
+  const composerModeLabel = document.getElementById('composer-mode-label');
+  const composerModeDefault =
+    composerModesEl?.dataset.defaultMode || 'execute';
+  const composerModeIds = composerModeMenu
+    ? Array.from(composerModeMenu.querySelectorAll('.composer-mode-menu-item')).map(
+        (el) => el.dataset.mode,
+      )
+    : [composerModeDefault];
+  let selectedComposerMode = composerModeDefault;
+
+  /** Currently selected send mode (always one of the rendered, enabled ids). */
+  function getComposerMode() {
+    return composerModeIds.includes(selectedComposerMode)
+      ? selectedComposerMode
+      : composerModeDefault;
+  }
+
+  function setComposerMode(mode, opts) {
+    const next = composerModeIds.includes(mode) ? mode : composerModeDefault;
+    selectedComposerMode = next;
+    if (composerModeBtn) composerModeBtn.dataset.mode = next;
+    if (composerModeMenu) {
+      composerModeMenu.querySelectorAll('.composer-mode-menu-item').forEach((el) => {
+        const on = el.dataset.mode === next;
+        el.setAttribute('aria-checked', on ? 'true' : 'false');
+        if (composerModeLabel && on) {
+          const t = el.querySelector('.menu-item__title');
+          composerModeLabel.textContent = t ? t.textContent : next;
+        }
+        if (on) {
+          const desc = el.querySelector('.composer-mode-menu-item__desc');
+          if (composerModeBtn && desc) composerModeBtn.title = desc.textContent || '';
+        }
+      });
+    }
+    if (!opts || opts.persist !== false) {
+      try { localStorage.setItem(MODE_STORAGE_KEY, next); } catch (_) {}
+    }
+  }
+
+  function closeComposerModeMenu() {
+    if (!composerModeMenu) return;
+    composerModeMenu.hidden = true;
+    if (composerModeBtn) composerModeBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  if (composerModeBtn && composerModeMenu) {
+    // Restore the last choice (falls back to the server default).
+    let stored = null;
+    try { stored = localStorage.getItem(MODE_STORAGE_KEY); } catch (_) {}
+    setComposerMode(stored || composerModeDefault, { persist: false });
+
+    composerModeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = composerModeMenu.hidden;
+      composerModeMenu.hidden = !open;
+      composerModeBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    composerModeMenu.addEventListener('click', (e) => {
+      const item = e.target.closest('.composer-mode-menu-item');
+      if (!item) return;
+      setComposerMode(item.dataset.mode);
+      closeComposerModeMenu();
+      input?.focus();
+    });
+    document.addEventListener('click', (e) => {
+      if (composerModeMenu.hidden) return;
+      if (composerModesEl && !composerModesEl.contains(e.target)) closeComposerModeMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !composerModeMenu.hidden) closeComposerModeMenu();
+    });
+  }
   /** Clears timed reply-quote highlights in the transcript. */
   let replyJumpHighlightTimer = null;
   let replyJumpHighlightFadeTimer = null;
@@ -1385,6 +1469,7 @@
       serverId: row.id,
       id: String(row.id),
       content: row.content,
+      mode: row.mode || undefined,
     };
     if (row.reply_to_message_id != null && row.reply_quote) {
       item.replyTo = {
@@ -1414,6 +1499,7 @@
 
   async function enqueueQueueOnServer(chatId, draft) {
     const body = { content: draft.content };
+    if (draft.mode) body.mode = draft.mode;
     if (draft.replyTo) body.replyTo = draft.replyTo;
     if (draft.inlineSecrets && draft.inlineSecrets.length > 0) {
       body.inlineSecrets = draft.inlineSecrets;
@@ -3536,7 +3622,7 @@
     // Optimistically append user msg. Mark it as pending-id so the
     // upcoming `message-appended` for the same user msg adopts this node
     // instead of duplicating.
-    const optimistic = { role: 'user', content: item.content };
+    const optimistic = { role: 'user', content: item.content, mode: item.mode };
     if (item.replyTo) {
       optimistic.reply_to_message_id = item.replyTo.messageId;
       optimistic.reply_quote = item.replyTo.quote;
@@ -3561,6 +3647,7 @@
       requestId: 'r-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
       content: item.content,
     };
+    if (item.mode) payload.mode = item.mode;
     if (item.replyTo) {
       payload.replyTo = {
         messageId: item.replyTo.messageId,
@@ -4667,6 +4754,7 @@
         replyTo: replySnap || undefined,
         attachments: attachmentsSnap.length > 0 ? attachmentsSnap : undefined,
         inlineSecrets,
+        mode: getComposerMode(),
       };
       let queued;
       const persistOnServer =

@@ -4,6 +4,7 @@ import { deriveTitle } from './chatTitle';
 import type {
   Chat,
   ChatKind,
+  ChatMode,
   Message,
   MessageAttachment,
   Project,
@@ -24,6 +25,7 @@ import type {
   TaskWithSteps,
 } from '../types';
 import type { InlineSecretWire } from './inlineSecrets';
+import { DEFAULT_MODE } from './chatModes';
 import { clampLogoColor, clampLogoEmoji } from '../constants/projectLogos';
 
 // ---------- chats ----------
@@ -210,6 +212,8 @@ export const messages = {
     finishReason: string | null = null,
     reply?: { replyToMessageId: number; replyQuote: string; replyToRole: string } | null,
     attachments?: MessageAttachment[] | null,
+    /** Send mode for user rows. Defaults to 'execute' (back-compat). */
+    mode: ChatMode = DEFAULT_MODE,
   ): Message {
     const rid = reply?.replyToMessageId ?? null;
     const rq = reply?.replyQuote ?? null;
@@ -218,9 +222,9 @@ export const messages = {
       attachments && attachments.length > 0 ? JSON.stringify(attachments) : null;
     const info = db
       .prepare(
-        'INSERT INTO messages (chat_id, role, content, finish_reason, reply_to_message_id, reply_quote, reply_to_role, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO messages (chat_id, role, content, finish_reason, reply_to_message_id, reply_quote, reply_to_role, attachments, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(chatId, role, content, finishReason, rid, rq, rrole, att);
+      .run(chatId, role, content, finishReason, rid, rq, rrole, att, mode);
     // chats.updated_at is bumped by the trg_chats_touch_on_message SQLite
     // trigger; no manual touch() needed here. We keep chats.touch() public
     // for callers that mutate parents without writing a message (e.g.
@@ -767,7 +771,7 @@ export const queuedMessages = {
   listByChat(chatId: number): QueuedMessage[] {
     const rows = db
       .prepare(
-        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, created_at FROM queued_messages WHERE chat_id = ? ORDER BY position ASC, id ASC',
+        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, mode, created_at FROM queued_messages WHERE chat_id = ? ORDER BY position ASC, id ASC',
       )
       .all(chatId) as QueuedRow[];
     return rows.map(parseQueuedRow);
@@ -775,7 +779,7 @@ export const queuedMessages = {
   get(id: number): QueuedMessage | undefined {
     const row = db
       .prepare(
-        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, created_at FROM queued_messages WHERE id = ?',
+        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, mode, created_at FROM queued_messages WHERE id = ?',
       )
       .get(id) as QueuedRow | undefined;
     return row ? parseQueuedRow(row) : undefined;
@@ -786,7 +790,7 @@ export const queuedMessages = {
     | undefined {
     const row = db
       .prepare(
-        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, inline_secrets, created_at FROM queued_messages WHERE id = ?',
+        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, mode, inline_secrets, created_at FROM queued_messages WHERE id = ?',
       )
       .get(id) as (QueuedRow & { inline_secrets: string | null }) | undefined;
     if (!row) return undefined;
@@ -808,6 +812,7 @@ export const queuedMessages = {
     replyTo?: { messageId: number; quote: string; role?: string } | null;
     attachments?: MessageAttachment[] | null;
     inlineSecrets?: InlineSecretWire[] | null;
+    mode?: ChatMode;
   }): QueuedMessage {
     const trimmed = opts.content.trim();
     const hasAttachments = opts.attachments && opts.attachments.length > 0;
@@ -826,8 +831,8 @@ export const queuedMessages = {
       .prepare(
         `INSERT INTO queued_messages (
           chat_id, content, reply_to_message_id, reply_quote, reply_to_role,
-          attachments, inline_secrets, position
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          attachments, inline_secrets, mode, position
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         opts.chatId,
@@ -837,6 +842,7 @@ export const queuedMessages = {
         opts.replyTo?.role ?? null,
         attachmentsJson,
         inlineJson,
+        opts.mode ?? DEFAULT_MODE,
         position,
       );
     return this.get(Number(info.lastInsertRowid))!;

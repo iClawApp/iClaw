@@ -10,6 +10,7 @@
  */
 
 import type {
+  ChatMode,
   Message,
   Project,
   ProjectFact,
@@ -39,6 +40,12 @@ export type ClientMsg =
       content: string;
       agent?: string;
       projectId?: number | null;
+      /**
+       * How to handle this message — 'ask' (lightweight, no heavy execution)
+       * or 'execute' (full agent, current default). Omitted/unknown → server
+       * treats it as 'execute'. See services/chatModes.ts.
+       */
+      mode?: ChatMode;
       /** Reply to an existing user/assistant row in this chat (quote ≤240 chars). */
       replyTo?: { messageId: number; quote: string; role?: string };
       /**

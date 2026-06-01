@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS messages (
   reply_to_role        TEXT,
   /** JSON array of {url, mimeType, fileName, sizeBytes} for user-attached files. NULL when no attachments. */
   attachments          TEXT,
+  /** Send mode: 'ask' | 'execute' (see services/chatModes.ts). Legacy rows default to 'execute'. */
+  mode                 TEXT NOT NULL DEFAULT 'execute',
   created_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -111,6 +113,8 @@ CREATE TABLE IF NOT EXISTS queued_messages (
   attachments          TEXT,
   /** JSON array of {slot, label, plain} for [[iclaw:sN]] markers; resolved on flush. */
   inline_secrets       TEXT,
+  /** Send mode chosen at enqueue time; preserved so flush sends with it. */
+  mode                 TEXT NOT NULL DEFAULT 'execute',
   /** Lower sorts first; promote-to-front uses values below the current min. */
   position             INTEGER NOT NULL DEFAULT 0,
   created_at           TEXT NOT NULL DEFAULT (datetime('now'))
@@ -257,6 +261,8 @@ function ensureColumn(table: string, column: string, ddl: string): void {
   }
 }
 ensureColumn('messages', 'attachments', 'TEXT');
+ensureColumn('messages', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
+ensureColumn('queued_messages', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
 ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
 ensureColumn('remote_access_tunnels', 'access_token', 'TEXT');
 ensureColumn('remote_access_tunnels', 'opaque_registration_record', 'TEXT');

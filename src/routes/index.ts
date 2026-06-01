@@ -4,6 +4,7 @@ import { openclaw } from '../services/openclaw';
 import { probeGateway } from '../services/gatewayProbe';
 import { chatStatus } from '../services/chatStatus';
 import { shouldShowSendHint } from '../services/sendHint';
+import { DEFAULT_MODE, listSelectableModes } from '../services/chatModes';
 
 export const indexRouter: Router = Router();
 
@@ -41,5 +42,7 @@ indexRouter.get('/', async (req, res) => {
     openclawBaseUrl: openclaw.baseUrl,
     workingIds: chatStatus.workingIds(),
     sendHintShow: shouldShowSendHint(),
+    chatModes: listSelectableModes(),
+    defaultChatMode: DEFAULT_MODE,
   });
 });

@@ -20,7 +20,8 @@ import {
   type IncomingAttachment,
   type ProcessedAttachment,
 } from './uploads';
-import type { Message, MessageAttachment } from '../types';
+import type { ChatMode, Message, MessageAttachment } from '../types';
+import { applyModeToGatewayMessage, DEFAULT_MODE } from './chatModes';
 import {
   expandStoredSecretPlaceholdersForGateway,
   resolveInlineSecretMarkersInContent,
@@ -211,6 +212,8 @@ async function runTurnLocked(opts: {
   /** Attachments already saved under data/uploads (queued-message flush). */
   prePersistedAttachments?: MessageAttachment[];
   inlineSecrets?: InlineSecretWire[];
+  /** 'ask' | 'execute'. Defaults to 'execute' for full back-compat. */
+  mode?: ChatMode;
 }): Promise<void> {
   const {
     chatId,
@@ -221,6 +224,7 @@ async function runTurnLocked(opts: {
     prePersistedAttachments,
     inlineSecrets,
   } = opts;
+  const mode: ChatMode = opts.mode ?? DEFAULT_MODE;
   const chat = chats.get(chatId)!;
   const sessionKey = await ensureSession(chatId);
   const projectId = chat.project_id ?? null;
@@ -268,10 +272,16 @@ async function runTurnLocked(opts: {
     gatewayBody = formatReplyGatewayBlock(refExpanded, reply.quote) + gatewayBody;
   }
 
-  const gatewayMessage =
+  const gatewayMessageBase =
     chat.project_id != null && projects.get(chat.project_id)
       ? buildGatewayUserMessage(gatewayBody, chat.project_id)
       : gatewayBody;
+  // Ask mode: prepend a lightweight "answer, don't execute" directive. Execute
+  // mode passes through unchanged (applyModeToGatewayMessage is a no-op for it),
+  // so existing behavior is byte-for-byte identical. This is the interim
+  // mechanism — see services/chatModes.ts for the no-tools-profile / OpenRouter
+  // routing this can be swapped for later.
+  const gatewayMessage = applyModeToGatewayMessage(mode, gatewayMessageBase);
 
   // Persist user message + broadcast (stored text keeps placeholders only).
   const replyToRole =
@@ -289,6 +299,7 @@ async function runTurnLocked(opts: {
         }
       : null,
     persistedAttachments.length > 0 ? persistedAttachments : null,
+    mode,
   );
   for (const sid of newSecretIds) {
     projectSecrets.setSourceMessage(sid, userMsg.id);
@@ -584,6 +595,8 @@ export async function sendMessage(opts: {
   incomingAttachments?: IncomingAttachment[];
   /** Files already on disk (queued-message flush). */
   prePersistedAttachments?: MessageAttachment[];
+  /** 'ask' | 'execute'. Defaults to 'execute' when omitted. */
+  mode?: ChatMode;
 }): Promise<{ chatId: number }> {
   let chatId = opts.chatId;
   let isFirstTurn = false;
@@ -629,6 +642,7 @@ export async function sendMessage(opts: {
         incomingAttachments: opts.incomingAttachments,
         prePersistedAttachments: opts.prePersistedAttachments,
         inlineSecrets: opts.inlineSecrets,
+        mode: opts.mode,
       }),
     );
   } catch (err) {

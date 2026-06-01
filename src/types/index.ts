@@ -41,6 +41,8 @@ export interface QueuedMessage {
   reply_quote: string | null;
   reply_to_role: string | null;
   attachments: MessageAttachment[] | null;
+  /** Selected mode at enqueue time; preserved so the flush sends with it. */
+  mode: ChatMode;
   created_at: string;
 }
 
@@ -67,6 +69,23 @@ export interface ProjectSecret {
 }
 
 export type ChatKind = 'normal' | 'draft' | 'task_execution';
+
+/**
+ * How a user message should be handled.
+ *
+ *   - 'execute' — current behavior: OpenClaw may use tools, files, shell,
+ *     browser, etc. This is the default and the back-compat fallback for any
+ *     message whose `mode` is missing or unrecognized.
+ *   - 'ask'     — lightweight question / explanation / planning; OpenClaw is
+ *     asked to answer without heavy agent execution.
+ *
+ * Kept as a string union for the two live modes, but the full catalog
+ * (incl. planned modes like research / image / safe_run) lives in
+ * `services/chatModes.ts` so new modes can be added without touching this
+ * type everywhere. Storage columns are plain TEXT, so adding a mode later
+ * needs no DB migration.
+ */
+export type ChatMode = 'ask' | 'execute';
 
 export type TaskStatus =
   | 'planning'
@@ -214,5 +233,11 @@ export interface Message {
   reply_to_role?: string | null;
   /** Persisted user-uploaded files (image / doc). `null` row column is parsed to undefined here. */
   attachments?: MessageAttachment[] | null;
+  /**
+   * How this message was sent. Only meaningful on `user` rows; assistant /
+   * system rows default to 'execute'. Missing/legacy rows read back as
+   * 'execute' (DB column default), so old chats stay fully compatible.
+   */
+  mode: ChatMode;
   created_at: string;
 }

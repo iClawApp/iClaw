@@ -37,7 +37,58 @@
   }) %>
 <% }); %></div>
 
+<%
+  // Mode selector data. Server passes the enabled modes (config-driven) and
+  // the default. Fall back gracefully if a render path forgot the locals so
+  // the composer never breaks — the selector just hides.
+  const _modes =
+    typeof chatModes !== 'undefined' && Array.isArray(chatModes) ? chatModes : [];
+  const _defaultMode =
+    typeof defaultChatMode !== 'undefined' && defaultChatMode ? defaultChatMode : 'execute';
+  const _defaultModeDef =
+    _modes.find(function (m) { return m.id === _defaultMode; }) || _modes[0] || null;
+%>
 <form id="send-form" class="composer">
+  <% if (_modes.length > 1 && _defaultModeDef) { %>
+  <!-- Mode selector — Ask (lightweight) vs Execute (full agent). Minimal pill
+       + dropdown; the chosen mode rides along with each sent message. JS
+       hydrates the active mode from localStorage on load. -->
+  <div class="composer-modes" id="composer-modes" data-default-mode="<%= _defaultMode %>">
+    <button
+      type="button"
+      class="composer-mode-btn"
+      id="composer-mode-btn"
+      data-mode="<%= _defaultMode %>"
+      aria-haspopup="menu"
+      aria-expanded="false"
+      aria-controls="composer-mode-menu"
+      title="<%= _defaultModeDef.description %>"
+    >
+      <span class="composer-mode-btn__label" id="composer-mode-label"><%= _defaultModeDef.label %></span>
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </button>
+    <div
+      id="composer-mode-menu"
+      class="menu composer-mode-menu"
+      role="menu"
+      aria-label="Message mode"
+      hidden
+    ><% _modes.forEach(function (m) { %>
+      <button
+        type="button"
+        class="menu-item composer-mode-menu-item"
+        role="menuitemradio"
+        data-mode="<%= m.id %>"
+        aria-checked="<%= m.id === _defaultMode ? 'true' : 'false' %>"
+      >
+        <span class="menu-item__title"><%= m.label %></span>
+        <span class="composer-mode-menu-item__desc"><%= m.description %></span>
+      </button><% }); %>
+    </div>
+  </div>
+  <% } %>
   <div id="composer-reply-bar" class="composer-reply-bar" hidden>
     <div class="composer-reply-bar-inner">
       <span class="composer-reply-accent" aria-hidden="true"></span>

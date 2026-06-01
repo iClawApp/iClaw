@@ -37,6 +37,34 @@ Hit **Share** in any chat to get an encrypted link. The chat is encrypted in you
 
 Powered by [iClaw-cloud](https://github.com/iClawApp/iClaw-cloud) — defaults to `https://app.iclaw.digital`.
 
+## Chat modes (Ask / Execute)
+
+The composer has a small mode selector. **Execute** (default) is the full agent —
+OpenClaw can use files, tools, shell, and the browser, exactly as before.
+**Ask** is for quick questions, explanations, and planning with no heavy agent
+execution. The selected mode is stored per message (`messages.mode`) and rides
+along the whole `frontend → WS → chatRunner → OpenClaw` path. Missing/unknown
+modes fall back to `execute`, so old chats and older clients keep working.
+
+Modes are config-driven in [`src/services/chatModes.ts`](src/services/chatModes.ts)
+(it also lists disabled placeholders — Research, Image, Safe Run — so new modes
+can be added without touching call sites or the DB; the column is plain `TEXT`).
+
+**How Ask works today and how to route it differently later.** For now Ask reuses
+the same OpenClaw session as Execute and is differentiated by a short
+"answer, don't execute" instruction prepended to the gateway message
+(`applyModeToGatewayMessage`). Two cleaner backends are pre-seamed in
+`chatModes.ts`:
+
+- **No-tools / lightweight OpenClaw profile** — if the gateway gains a way to run
+  a session with tools disabled, return it from `gatewayProfileForMode()` and
+  have `openclawWs` forward it on `sessions.create` / `chat.send`. Modes that
+  want this are already flagged `lightweight: true`.
+- **OpenRouter / OpenAI direct** — for a true "no agent" answer, branch in
+  `chatRunner` on `getModeDef(mode).lightweight` and call an LLM client instead
+  of `openclawWs.runTurn`. The mode is already persisted per message, so this
+  needs no schema or UI change.
+
 ## Remote Access (alpha)
 
 Open the iClaw UI from another device through an **iclaw-relay** tunnel (Settings → Remote Access).

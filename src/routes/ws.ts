@@ -12,6 +12,7 @@ import { sendMessage, abortChatRun } from '../services/chatRunner';
 import { openclawWs } from '../services/openclawWs';
 import type { ClientMsg, ServerMsg } from '../types/protocol';
 import type { InlineSecretWire } from '../services/inlineSecrets';
+import { normalizeChatMode } from '../services/chatModes';
 
 const PATH = '/ws';
 
@@ -90,6 +91,7 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
           replyTo: msg.replyTo,
           incomingAttachments: msg.attachments,
           inlineSecrets,
+          mode: normalizeChatMode((msg as { mode?: unknown }).mode),
         });
       } catch (err) {
         // Errors are already broadcast via chatRunner; nothing more to do.
