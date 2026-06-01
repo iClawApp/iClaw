@@ -25,9 +25,12 @@
   ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "vendor": "node scripts/copy-opaque-vendor.mjs",
+    "prebuild": "node scripts/copy-opaque-vendor.mjs",
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/copy-opaque-vendor.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
