@@ -746,10 +746,26 @@
       if (!pre || pre.tagName !== 'PRE') return;
       if (pre.closest('.exec-approval-card')) return;
       if (code.classList.contains('hljs')) return;
-      try {
-        hl.highlightElement(code);
-      } catch (_) {
-        /* unknown language / empty */
+      // Only highlight when the fence declares a language hljs actually knows.
+      // On a bare/unknown fence, highlightElement() falls back to auto-detection,
+      // which mis-guesses prose as Ruby/Perl (an apostrophe opens a "string" and
+      // the github-dark theme dims whole paragraphs). Leave those as plain text.
+      const langClass = [...code.classList].find((c) => c.startsWith('language-'));
+      const lang = langClass && langClass.slice(9);
+      const known =
+        lang &&
+        lang !== 'text' &&
+        lang !== 'plaintext' &&
+        typeof hl.getLanguage === 'function' &&
+        hl.getLanguage(lang);
+      if (known) {
+        try {
+          hl.highlightElement(code);
+        } catch (_) {
+          code.classList.add('hljs'); /* keep block styling even if hljs throws */
+        }
+      } else {
+        code.classList.add('hljs'); /* plaintext — styled, no auto-detect */
       }
     });
   }
