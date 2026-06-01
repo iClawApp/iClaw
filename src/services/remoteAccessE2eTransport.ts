@@ -168,16 +168,6 @@ export function isE2ePlaintextTunnelExempt(ctx: E2ePlaintextTunnelContext): bool
   return false;
 }
 
-/** @deprecated Use isE2ePlaintextTunnelExempt */
-export function isE2ePlaintextExemptPath(
-  path: string,
-  method = 'GET',
-  tunnelId = '',
-  cookieHeader?: string,
-): boolean {
-  return isE2ePlaintextTunnelExempt({ method, path, tunnelId, cookieHeader });
-}
-
 function decryptInbound(
   session: E2eTransportSession,
   wireRaw: string,
