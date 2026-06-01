@@ -78,10 +78,12 @@ Ask has two enforcement levels, picked automatically:
   (`applyModeToGatewayMessage`). Best-effort only — not enforced. No error is
   shown; the mode metadata is still preserved.
 
-**v1 limitations.** Hard Ask runs on a separate session, so the main (Execute)
-session's *native* memory does not include Ask turns — bridging Ask→Execute via
-`chat.inject` is a planned follow-up (the reverse, Execute→Ask, already works via
-the thread snapshot). A fresh Ask session is created per Ask turn.
+**Context both ways.** Execute→Ask works via the thread snapshot that seeds the
+Ask session. Ask→Execute works via `chat.inject`: after each hard-Ask turn a
+compact `[Ask]` note (the Q&A) is appended to the main session's transcript with
+no model run, so a later Execute turn ("ok, now do what we discussed") sees it.
+The note carries secret placeholders, not plaintext. (A fresh Ask session is
+created per Ask turn; this is fine but adds one `sessions.create` of latency.)
 
 A future option (not wired): for a true "no agent" answer, branch in
 `chatRunner` on `getModeDef(mode).lightweight` and call an LLM client

@@ -95,6 +95,29 @@ function buildAskContextMessage(
   return `${header}${transcript}\n\nLatest message:\n${currentMessage}`;
 }
 
+/** Max chars kept from each side of the Ask exchange in the Execute bridge note. */
+const ASK_BRIDGE_QUESTION_CHARS = 600;
+const ASK_BRIDGE_ANSWER_CHARS = 1500;
+
+function clip(text: string, max: number): string {
+  const t = text.trim();
+  return t.length > max ? t.slice(0, max) + '…' : t;
+}
+
+/**
+ * Compact note injected into the main (Execute) session after a hard-Ask turn
+ * so Execute is aware of the out-of-band Ask exchange.
+ */
+function buildAskBridgeNote(question: string, answer: string): string {
+  return [
+    'The user had an out-of-band "Ask" exchange (lightweight, no tools) in this chat:',
+    '',
+    `Q: ${clip(question, ASK_BRIDGE_QUESTION_CHARS)}`,
+    '',
+    `A: ${clip(answer, ASK_BRIDGE_ANSWER_CHARS)}`,
+  ].join('\n');
+}
+
 interface TurnTarget {
   sessionKey: string;
   message: string;
@@ -624,6 +647,19 @@ async function runTurnLocked(opts: {
       message: assistantMsg,
     });
     syncSidebarUnread(chatId);
+  }
+
+  // Ask→Execute bridge. A hard-Ask turn ran on a throwaway session, so the
+  // chat's main (Execute) session has no native memory of it. Inject a compact
+  // note into the main session (no model run, zero cost) so a later Execute
+  // turn — "ok, now do what we discussed" — sees the exchange. Best-effort:
+  // never let a bridge failure affect the turn the user already got. Stored
+  // content keeps secret placeholders, so nothing sensitive is injected.
+  if (turn.ephemeralSessionKey && assistantMsg && !aborted && finalText.trim()) {
+    const note = buildAskBridgeNote(storedUserContent, finalText);
+    void openclawWs
+      .injectMessage({ sessionKey, message: note, label: 'Ask' })
+      .catch(() => {});
   }
 
   // Persistent "Stopped by user" marker. Lives in `messages` so it

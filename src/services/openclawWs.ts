@@ -242,6 +242,25 @@ export const openclawWs = {
     await gatewayWs.request('sessions.delete', { key });
   },
 
+  /**
+   * Append a message into a session's transcript WITHOUT running the model
+   * (`chat.inject`). The gateway records it as an assistant note (zero cost,
+   * `model: "gateway-injected"`) and broadcasts a final `chat` event. Used to
+   * make the main Execute session aware of an out-of-band Ask exchange.
+   */
+  async injectMessage(opts: {
+    sessionKey: string;
+    message: string;
+    label?: string;
+  }): Promise<void> {
+    if (!opts.sessionKey.startsWith('agent:')) return;
+    await gatewayWs.request('chat.inject', {
+      sessionKey: opts.sessionKey,
+      message: opts.message,
+      ...(opts.label ? { label: opts.label } : {}),
+    });
+  },
+
   /** Fetch the canonical, UI-normalized transcript. */
   async getHistory(sessionKey: string, limit = 200): Promise<HistoryMessage[]> {
     const res = await gatewayWs.request<{ messages: HistoryMessage[] }>('chat.history', {
