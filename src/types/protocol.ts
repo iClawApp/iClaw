@@ -111,7 +111,7 @@ export type ServerMsg =
   /* ---- incognito (ephemeral; keyed by the browser's in-RAM chat id) ---- */
   | { type: 'incognito-turn-delta'; key: string; text: string }
   | { type: 'incognito-turn-tool'; key: string; name: string }
-  | { type: 'incognito-turn-ended'; key: string; tokens?: number }
+  | { type: 'incognito-turn-ended'; key: string; tokens?: number; cached?: number }
   | { type: 'incognito-error'; key: string; message: string }
 
   /* ---- chat lifecycle ---- */

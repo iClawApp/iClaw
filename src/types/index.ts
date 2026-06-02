@@ -278,5 +278,7 @@ export interface Message {
   mode: ChatMode;
   /** Total tokens spent producing this (assistant) message. Dev-mode only; null otherwise. */
   tokens?: number | null;
+  /** Of `tokens`, how many prompt tokens were served from the provider cache. Dev-mode. */
+  cached_tokens?: number | null;
   created_at: string;
 }

@@ -23,12 +23,10 @@ export const TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'list_files',
-      description: 'List entries at a path. Directories are shown as "[dir] name/" and files as "[file] name", so you can recurse into subdirectories.',
+      description: 'List a directory. Dirs show as "[dir] name/", files as "[file] name".',
       parameters: {
         type: 'object',
-        properties: {
-          path: { type: 'string', description: 'Directory path to list' },
-        },
+        properties: { path: { type: 'string', description: 'Directory path' } },
         required: ['path'],
       },
     },
@@ -37,12 +35,10 @@ export const TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'read_file',
-      description: 'Read the contents of a file.',
+      description: 'Read a file.',
       parameters: {
         type: 'object',
-        properties: {
-          path: { type: 'string', description: 'File path to read' },
-        },
+        properties: { path: { type: 'string', description: 'File path' } },
         required: ['path'],
       },
     },
@@ -51,13 +47,13 @@ export const TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'search_files',
-      description: 'Search for a string or pattern in files recursively.',
+      description: 'Recursively search files for a string.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'Directory to search in' },
-          query: { type: 'string', description: 'String to search for' },
-          filePattern: { type: 'string', description: 'Optional glob pattern, e.g. "*.ts"' },
+          path: { type: 'string', description: 'Directory to search' },
+          query: { type: 'string', description: 'String to find' },
+          filePattern: { type: 'string', description: 'Optional glob, e.g. "*.ts"' },
         },
         required: ['path', 'query'],
       },
@@ -67,12 +63,12 @@ export const TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'write_file',
-      description: 'Write content to a file. Requires user approval in Work Mode.',
+      description: 'Create or overwrite a whole file (needs approval). Use edit_file to change existing files.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path to write' },
-          content: { type: 'string', description: 'Content to write' },
+          path: { type: 'string', description: 'File path' },
+          content: { type: 'string', description: 'Full file content' },
         },
         required: ['path', 'content'],
       },
@@ -82,17 +78,13 @@ export const TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'edit_file',
-      description:
-        'Surgically replace an exact text fragment in an existing file (old_string → new_string) ' +
-        'instead of rewriting the whole file. Prefer this for edits. old_string must match EXACTLY ' +
-        '(including whitespace) and be UNIQUE in the file — include surrounding context if needed. ' +
-        'Requires approval, like write_file.',
+      description: 'Replace an exact, UNIQUE snippet in a file (old_string→new_string). Preferred for edits; needs approval.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path to edit' },
-          old_string: { type: 'string', description: 'Exact text to find (must be unique)' },
-          new_string: { type: 'string', description: 'Replacement text' },
+          path: { type: 'string', description: 'File path' },
+          old_string: { type: 'string', description: 'Exact unique text to replace' },
+          new_string: { type: 'string', description: 'Replacement' },
         },
         required: ['path', 'old_string', 'new_string'],
       },
@@ -102,12 +94,12 @@ export const TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'run_command',
-      description: 'Run a shell command inside an allowed folder.',
+      description: 'Run a shell command in an allowed folder. Chain steps with && to save calls.',
       parameters: {
         type: 'object',
         properties: {
-          command: { type: 'string', description: 'Command to run' },
-          cwd: { type: 'string', description: 'Working directory (must be in allowed folders)' },
+          command: { type: 'string', description: 'Command' },
+          cwd: { type: 'string', description: 'Working dir (allowed folder)' },
         },
         required: ['command', 'cwd'],
       },
@@ -125,14 +117,10 @@ export const WEB_FETCH_TOOL = {
   type: 'function' as const,
   function: {
     name: 'web_fetch',
-    description:
-      'Fetch a web page or HTTP(S) API and return its text (HTML is stripped to readable text). ' +
-      'Read-only — use for research. Returns up to ~20k chars.',
+    description: 'Fetch an http(s) URL and return its text (HTML stripped). Read-only.',
     parameters: {
       type: 'object',
-      properties: {
-        url: { type: 'string', description: 'Absolute http(s) URL to fetch' },
-      },
+      properties: { url: { type: 'string', description: 'Absolute http(s) URL' } },
       required: ['url'],
     },
   },
@@ -147,14 +135,12 @@ export const WEB_SEARCH_TOOL = {
   type: 'function' as const,
   function: {
     name: 'web_search',
-    description:
-      'Search the web; returns the top results (title, url, snippet). Use this to discover pages, ' +
-      'then call web_fetch on a URL for the full content.',
+    description: 'Search the web; returns top results (title, url, snippet). Then web_fetch a URL for details.',
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Search query' },
-        count: { type: 'number', description: 'Max results (default 6, max 10)' },
+        count: { type: 'number', description: 'Max results (default 6)' },
       },
       required: ['query'],
     },

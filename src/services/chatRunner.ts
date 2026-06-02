@@ -932,7 +932,7 @@ async function runWorkModeTurn(opts: {
             // `tokens` powers the dev-mode usage badge (null when not reported).
             const assistantMsg = messages.append(
               chatId, 'assistant', accumulated, null, null, null,
-              opts.secure ? 'secure' : 'work', event.tokens ?? null,
+              opts.secure ? 'secure' : 'work', event.tokens ?? null, event.cached ?? null,
             );
             wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });
 
@@ -996,7 +996,7 @@ export async function runIncognitoTurn(opts: {
   content: string;
   workFolders?: WorkFolder[];
   onEvent: (event: IncognitoEvent) => void;
-}): Promise<{ tokens?: number }> {
+}): Promise<{ tokens?: number; cached?: number }> {
   const { key, content, onEvent } = opts;
 
   // Recreate the runtime session if the selected folders changed (the shell's
@@ -1036,7 +1036,7 @@ export async function runIncognitoTurn(opts: {
     return {};
   }
 
-  return await new Promise<{ tokens?: number }>((resolve) => {
+  return await new Promise<{ tokens?: number; cached?: number }>((resolve) => {
     const unsubscribe = subscribeWorkEvents(
       sessionId!,
       (event) => {
@@ -1046,7 +1046,7 @@ export async function runIncognitoTurn(opts: {
           onEvent({ type: 'tool', name: event.name });
         } else if (event.type === 'done') {
           unsubscribe();
-          resolve({ tokens: event.tokens });
+          resolve({ tokens: event.tokens, cached: event.cached });
         } else if (event.type === 'error') {
           onEvent({ type: 'error', message: event.message });
           unsubscribe();

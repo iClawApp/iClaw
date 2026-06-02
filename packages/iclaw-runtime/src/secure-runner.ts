@@ -298,6 +298,7 @@ async function* runSecureAgentLoop(
   ];
 
   let turnTokens = 0;
+  let turnCached = 0;
   const dumpTurnId = newTurnId();
   for (let round = 0; round < MAX_ROUNDS; round++) {
     let textBuffer = '';
@@ -325,6 +326,7 @@ async function* runSecureAgentLoop(
     let finishReason: string | null = null;
     for await (const chunk of stream) {
       if (chunk.usage?.total_tokens) turnTokens += chunk.usage.total_tokens;
+      if (chunk.usage?.prompt_tokens_details?.cached_tokens) turnCached += chunk.usage.prompt_tokens_details.cached_tokens;
       const choice = chunk.choices[0];
       if (!choice) continue;
       finishReason = choice.finish_reason ?? finishReason;
@@ -346,7 +348,7 @@ async function* runSecureAgentLoop(
     const toolCalls = Object.values(toolCallBuffers);
     if (toolCalls.length === 0 || finishReason === 'stop') {
       if (textBuffer) messages.push({ role: 'assistant', content: textBuffer });
-      yield { type: 'done', tokens: turnTokens || undefined };
+      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
       return;
     }
 

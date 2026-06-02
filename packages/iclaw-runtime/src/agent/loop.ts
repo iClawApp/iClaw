@@ -32,7 +32,7 @@ export type AgentEvent =
   | { type: 'tool_start'; name: string; input: unknown }
   | { type: 'tool_result'; name: string; result: string }
   | { type: 'approval_request'; changeId: string; path: string; content: string }
-  | { type: 'done'; tokens?: number }
+  | { type: 'done'; tokens?: number; cached?: number }
   | { type: 'error'; message: string };
 
 export type Message = OpenAI.Chat.ChatCompletionMessageParam;
@@ -57,24 +57,12 @@ function describeApiError(err: unknown): string {
   return e?.message || String(err);
 }
 
-const DEFAULT_SYSTEM = `You are a helpful AI assistant running in Work Mode.
-You can read, search, edit and create files in the user's selected folders, run shell
-commands, and research the web (web_search to find pages, web_fetch to read one).
-Prefer edit_file for changes to existing files (surgical old_string→new_string) and
-write_file only for new files or full rewrites.
-Be concise and act directly: when a change is needed, just call the tool. The user sees
-and approves every write in the UI, so do NOT paste file contents into your reply
-beforehand or ask "is this correct?" — only narrate briefly what you changed after.
-Work efficiently — each tool call is one step and steps are limited. Chain related shell
-commands into a single run_command with && instead of one per step, and don't repeat
-exploratory commands you've already run.
-Never access paths outside the allowed folders.`;
+const DEFAULT_SYSTEM = `Work Mode: read/search/edit/create files in the selected folders, run shell commands, and research the web (web_search then web_fetch).
+Prefer edit_file over rewriting whole files. The user approves every write in the UI — don't paste file contents or ask "is this correct?"; just act, then briefly say what you did.
+Be efficient: chain shell steps with && in one call, don't repeat commands. Never go outside the allowed folders.`;
 
-const INCOGNITO_SYSTEM = `You are a private, READ-ONLY research assistant running in Incognito mode.
-You can: read files (anywhere on this computer), search them, run read-only shell commands in the user's selected folders, and fetch the web with web_fetch.
-You CANNOT change anything: write_file is disabled and the shell runs in a read-only sandbox — never claim you saved, created, or edited a file.
-This conversation is EPHEMERAL: nothing is stored and nothing is added to project memory. Deliver findings directly in your reply; the user copies what they need.
-Be concise.`;
+const INCOGNITO_SYSTEM = `Incognito: private, READ-ONLY research. You can read files anywhere, search, run a read-only shell in the selected folders, and use web_search/web_fetch.
+You CANNOT write — never claim you saved or changed anything. This chat is ephemeral: nothing is stored. Be concise; put findings in your reply.`;
 
 /**
  * Build the per-turn system message. The base rules and the folder-access
@@ -87,14 +75,10 @@ function buildSystemPrompt(opts: AgentOptions): string {
     const parts = [INCOGNITO_SYSTEM];
     if (opts.allowedFolders.length) {
       parts.push(
-        `\nThe read-only shell (run_command) may run in these folders:\n` +
-          opts.allowedFolders.map((f) => `- ${f}`).join('\n') +
-          `\nFile reads (read_file/search_files) are NOT limited to these — you may read elsewhere too. Secret files are always refused.`,
+        `\nShell folders (read-only): ${opts.allowedFolders.join(', ')}. File reads aren't limited to these; secrets are always refused.`,
       );
     } else {
-      parts.push(
-        '\nNo folders are selected for the shell, so run_command is unavailable. Use read_file / search_files / web_fetch.',
-      );
+      parts.push('\nNo shell folders selected — run_command is off; use read_file / search_files / web_fetch.');
     }
     if (opts.systemPrompt?.trim()) parts.push(`\n${opts.systemPrompt.trim()}`);
     return parts.join('\n');
@@ -106,14 +90,10 @@ function buildSystemPrompt(opts: AgentOptions): string {
     ? opts.folderAccess
     : opts.allowedFolders.map((path) => ({ path, readonly: false }));
   if (folders.length) {
-    const lines = folders.map(
-      (f) => `- ${f.path} (${f.readonly ? 'READ-ONLY: you may read/list/search but NOT write or run commands here' : 'read & write'})`,
-    );
+    const lines = folders.map((f) => `- ${f.path} (${f.readonly ? 'read-only' : 'rw'})`);
     parts.push(
-      `\nFolders available this session (use these exact paths):\n${lines.join('\n')}\n` +
-        `Before writing a file or running a command, check this list. If the target is in a ` +
-        `READ-ONLY folder, do NOT attempt or propose the change — say it's read-only and offer to ` +
-        `either write to a read & write folder instead or have the user switch that folder to read & write.`,
+      `\nFolders (use these exact paths):\n${lines.join('\n')}\n` +
+        `Never write or run commands in a read-only folder — say it's read-only and offer a rw folder instead.`,
     );
   }
 
@@ -144,10 +124,14 @@ export async function* runAgentTurn(
     requestWriteApproval: opts.onWriteApproval ?? (async () => true),
   };
 
-  // Web research tools are available on the host loop (Work + Incognito). They
-  // run host-side, so they're never exposed to Secure Mode (which has its own
-  // loop) — that would bypass the sandbox's container network gate.
-  const tools = [...TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL];
+  // Per-mode tool set. Incognito is read-only, so don't ship write_file/edit_file
+  // schemas it can't use (saves prompt tokens). Web research tools run host-side
+  // and are never exposed to Secure Mode (it has its own loop + container network
+  // gate that a host-side fetch would bypass).
+  const fileTools = opts.incognito
+    ? TOOL_DEFINITIONS.filter((t) => t.function.name !== 'write_file' && t.function.name !== 'edit_file')
+    : TOOL_DEFINITIONS;
+  const tools = [...fileTools, WEB_FETCH_TOOL, WEB_SEARCH_TOOL];
 
   const messages: Message[] = [
     { role: 'system', content: buildSystemPrompt(opts) },
@@ -155,8 +139,10 @@ export async function* runAgentTurn(
     { role: 'user', content: userMessage },
   ];
 
-  // Total tokens billed across all rounds of this turn (dev-mode display).
+  // Token usage across all rounds (dev-mode display). `turnCached` = how many
+  // prompt tokens were served from the provider's prefix cache.
   let turnTokens = 0;
+  let turnCached = 0;
   const dumpTurnId = newTurnId();
   const dumpMode = opts.incognito ? 'incognito' : 'work';
 
@@ -192,6 +178,9 @@ export async function* runAgentTurn(
       for await (const chunk of stream) {
         // Usage rides in a final chunk that has no choices — capture it first.
         if (chunk.usage?.total_tokens) turnTokens += chunk.usage.total_tokens;
+        const cached = (chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
+          ?.prompt_tokens_details?.cached_tokens;
+        if (cached) turnCached += cached;
         const choice = chunk.choices[0];
         if (!choice) continue;
 
@@ -228,7 +217,7 @@ export async function* runAgentTurn(
       if (textBuffer) {
         messages.push({ role: 'assistant', content: textBuffer });
       }
-      yield { type: 'done', tokens: turnTokens || undefined };
+      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
       return;
     }
 

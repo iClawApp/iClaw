@@ -1769,14 +1769,15 @@
     el.hidden = false;
   }
 
-  /** Dev mode: show token usage on a message bubble + add to the chat total. */
-  function applyTokenBadge(el, tokens) {
+  /** Dev mode: show token usage (+cache hits) on a message bubble + chat total. */
+  function applyTokenBadge(el, tokens, cached) {
     if (!window.__ICLAW_DEV__ || !tokens || !el) return;
     if (el.querySelector(':scope > .msg-tokens')) return;
+    const c = Number(cached) || 0;
     const span = document.createElement('span');
     span.className = 'msg-tokens';
-    span.title = 'Tokens spent on this reply';
-    span.textContent = Number(tokens).toLocaleString() + ' tok';
+    span.title = 'Tokens spent on this reply' + (c ? ' (' + c.toLocaleString() + ' served from cache)' : '');
+    span.textContent = Number(tokens).toLocaleString() + ' tok' + (c ? ' · ' + c.toLocaleString() + ' cached' : '');
     el.appendChild(span);
     bumpChatTokenTotal(tokens);
   }
@@ -1818,7 +1819,7 @@
       '<div class="msg-body">' + renderMessageHtml(msg.content || '') + '</div>' +
       attachmentsHtml(msg.attachments);
     decorateMessageBody(div);
-    applyTokenBadge(div, msg.tokens);
+    applyTokenBadge(div, msg.tokens, msg.cached_tokens);
     messagesAppendRoot().appendChild(div);
     scrollToBottom();
     return div;
@@ -3938,7 +3939,7 @@
               body.innerHTML = renderMarkdown(msg.message.content || '');
               decorateMessageBody(body);
             }
-            applyTokenBadge(target, msg.message.tokens);
+            applyTokenBadge(target, msg.message.tokens, msg.message.cached_tokens);
             currentStreamEl = null;
             currentStreamFullText = '';
           } else {
@@ -4144,7 +4145,7 @@
         if (msg.key !== activeIncognitoKey) return;
         const finishedEl = currentStreamEl;
         finalizeIncognitoStream();
-        applyTokenBadge(finishedEl, msg.tokens);
+        applyTokenBadge(finishedEl, msg.tokens, msg.cached);
         return;
       }
 
