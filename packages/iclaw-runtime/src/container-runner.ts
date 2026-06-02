@@ -148,7 +148,7 @@ async function spawnContainer(session: Session): Promise<void> {
   // Log stderr
   container.stderr?.on('data', (data) => {
     for (const line of data.toString().trim().split('\n')) {
-      if (line) log.debug(line, { container: agentGroup.folder });
+      if (line) log.warn(line, { container: agentGroup.folder });
     }
   });
 
@@ -403,10 +403,10 @@ async function buildContainerArgs(
     }
   }
 
-  // Pass OpenRouter key directly into the container via env
+  // Pass OpenRouter key. The in-container proxy (openrouter-proxy.ts) will
+  // set ANTHROPIC_BASE_URL to point at itself and strip unsupported beta headers.
   if (OPENROUTER_API_KEY) {
-    args.push('-e', `ANTHROPIC_BASE_URL=https://openrouter.ai/api/v1`);
-    args.push('-e', `ANTHROPIC_AUTH_TOKEN=${OPENROUTER_API_KEY}`);
+    args.push('-e', `ANTHROPIC_API_KEY=${OPENROUTER_API_KEY}`);
   }
 
   // Host gateway

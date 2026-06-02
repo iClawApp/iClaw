@@ -37,8 +37,10 @@ export const OPENROUTER_API_KEY =
   process.env.ICLAW_OPENROUTER_API_KEY || envConfig.ICLAW_OPENROUTER_API_KEY || '';
 
 /** Default model for Work Mode. */
+// Claude Code SDK in container expects Anthropic-native IDs (no "anthropic/" prefix)
+// OpenRouter Anthropic-compatible endpoint accepts these natively
 export const DEFAULT_MODEL =
-  process.env.ICLAW_MODEL || envConfig.ICLAW_MODEL || 'anthropic/claude-sonnet-4-5';
+  process.env.ICLAW_MODEL || envConfig.ICLAW_MODEL || 'claude-3-5-haiku-20241022';
 
 function resolveTimezone(): string {
   const candidates = [process.env.TZ, envConfig.TZ, Intl.DateTimeFormat().resolvedOptions().timeZone];

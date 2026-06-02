@@ -19,6 +19,7 @@ import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { routeInbound } from './router.js';
 import { log } from './log.js';
 
+import { ensureDefaultAgentGroup } from './iclaw-session.js';
 import {
   registerResponseHandler,
   getResponseHandlers,
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
 
   backfillContainerConfigs();
   migrateGroupsToClaudeLocal();
+  ensureDefaultAgentGroup();
 
   ensureContainerRuntimeRunning();
   cleanupOrphans();

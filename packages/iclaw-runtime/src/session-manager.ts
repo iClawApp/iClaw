@@ -32,6 +32,7 @@ import {
   openOutboundDb as openOutboundDbRaw,
   openOutboundDbRw as openOutboundDbRwRaw,
   upsertSessionRouting,
+  replaceDestinations,
   insertMessage,
   migrateMessagesInTable,
 } from './db/session-db.js';
@@ -177,6 +178,17 @@ export function writeSessionRouting(agentGroupId: string, sessionId: string): vo
       platform_id: platformId,
       thread_id: session.thread_id,
     });
+    // Write "user" destination so agent can use <message to="user">
+    if (channelType && platformId) {
+      replaceDestinations(db, [{
+        name: 'user',
+        display_name: 'User',
+        type: 'channel',
+        channel_type: channelType,
+        platform_id: platformId,
+        agent_group_id: null,
+      }]);
+    }
   } finally {
     db.close();
   }

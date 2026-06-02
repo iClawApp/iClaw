@@ -19,13 +19,13 @@
 import http from 'http';
 import { randomUUID } from 'crypto';
 
-import { DATA_DIR, RUNTIME_PORT } from '../config.js';
+import { RUNTIME_PORT } from '../config.js';
 import { log } from '../log.js';
+import { wireSession } from '../iclaw-session.js';
 import type { ChannelAdapter, ChannelSetup, OutboundMessage } from './adapter.js';
 import { registerChannelAdapter } from './channel-registry.js';
 
 export const CHANNEL_TYPE = 'iclaw-http';
-const PLATFORM_ID = 'iclaw';
 
 const RUNTIME_SECRET = process.env.ICLAW_RUNTIME_SECRET || '';
 
@@ -133,18 +133,14 @@ function createAdapter(): ChannelAdapter {
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       try {
-        const { sessionId: requestedId, allowedFolders, model } = JSON.parse(body || '{}');
+        const { sessionId: requestedId } = JSON.parse(body || '{}');
         const sessionId: string = requestedId ?? randomUUID();
-        // Notify the router that this session is now active
-        setup?.onInbound(PLATFORM_ID, sessionId, {
-          id: randomUUID(),
-          kind: 'chat',
-          content: JSON.stringify({ text: '__iclaw_session_init__', allowedFolders, model }),
-          timestamp: new Date().toISOString(),
-        });
+        // Ensure agent group + messaging group wiring exists for this session
+        wireSession(sessionId);
         sendJson(res, 201, { sessionId });
       } catch (err) {
-        sendJson(res, 400, { error: 'invalid body' });
+        log.error('Failed to create session', { err });
+        sendJson(res, 500, { error: String(err) });
       }
     });
   }
@@ -159,11 +155,12 @@ function createAdapter(): ChannelAdapter {
           sendJson(res, 400, { error: 'content required' });
           return;
         }
-        setup?.onInbound(PLATFORM_ID, sessionId, {
+        setup?.onInbound(sessionId, null, {
           id: randomUUID(),
           kind: 'chat',
           content: JSON.stringify({ text: content }),
           timestamp: new Date().toISOString(),
+          isMention: true,
         });
         sendJson(res, 202, { queued: true });
       } catch {
@@ -203,11 +200,12 @@ function createAdapter(): ChannelAdapter {
       sseClients.delete(sessionId);
     }
     // Notify router to tear down container
-    setup?.onInbound(PLATFORM_ID, sessionId, {
+    setup?.onInbound(sessionId, null, {
       id: randomUUID(),
       kind: 'chat',
       content: JSON.stringify({ text: '__iclaw_session_stop__' }),
       timestamp: new Date().toISOString(),
+      isMention: true,
     });
     sendJson(res, 200, { stopped: true });
   }
