@@ -4860,7 +4860,13 @@ code {
 .work-folders-list__remove:hover { color: var(--text); }
 .work-folders-add {
   display: flex;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+.work-folders-add__or {
+  font-size: var(--text-sm);
+  flex-shrink: 0;
 }
 .work-folders-input {
   flex: 1;

@@ -136,6 +136,7 @@
   const workFoldersList = document.getElementById('work-folders-list');
   const workFoldersInput = document.getElementById('work-folders-input');
   const workFoldersAddBtn = document.getElementById('work-folders-add-btn');
+  const workFoldersBrowseBtn = document.getElementById('work-folders-browse-btn');
   const workFoldersClose = document.getElementById('work-folders-close');
   const workFoldersBackdrop = document.getElementById('work-folders-backdrop');
   const workFoldersCount = document.getElementById('composer-work-folders-count');
@@ -207,6 +208,27 @@
     workFoldersAddBtn?.addEventListener('click', addFolder);
     workFoldersInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); addFolder(); }
+    });
+
+    workFoldersBrowseBtn?.addEventListener('click', async () => {
+      workFoldersBrowseBtn.disabled = true;
+      try {
+        const res = await fetch('/api/pick-folder', { method: 'POST' });
+        if (res.status === 204) return; // user cancelled
+        const data = await res.json();
+        if (data.path) {
+          const folders = getWorkFolders();
+          if (!folders.includes(data.path)) {
+            folders.push(data.path);
+            saveWorkFolders(folders);
+            renderWorkFoldersList();
+          }
+        }
+      } catch (e) {
+        console.error('pick-folder failed', e);
+      } finally {
+        workFoldersBrowseBtn.disabled = false;
+      }
     });
 
     const closeModal = () => { workFoldersModal.hidden = true; };

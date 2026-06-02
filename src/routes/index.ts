@@ -1,4 +1,6 @@
 import express, { Router } from 'express';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { chats, projectSecrets, projects, tasks } from '../services/store';
 import { openclaw } from '../services/openclaw';
 import { probeGateway } from '../services/gatewayProbe';
@@ -7,7 +9,38 @@ import { shouldShowSendHint } from '../services/sendHint';
 import { DEFAULT_MODE, listSelectableModes } from '../services/chatModes';
 import { openRouterEnabled, transcribeAudio, isOpenRouterFailure } from '../services/openRouter';
 
+const execFileAsync = promisify(execFile);
+
 export const indexRouter: Router = Router();
+
+/** Native OS folder picker — opens system dialog, returns selected path. */
+indexRouter.post('/api/pick-folder', async (_req, res) => {
+  try {
+    let folderPath: string;
+    if (process.platform === 'darwin') {
+      const { stdout } = await execFileAsync('osascript', [
+        '-e', 'POSIX path of (choose folder with prompt "Select a folder for Work Mode")',
+      ]);
+      folderPath = stdout.trim().replace(/\/$/, '');
+    } else if (process.platform === 'linux') {
+      const { stdout } = await execFileAsync('zenity', ['--file-selection', '--directory', '--title=Select folder for Work Mode']).catch(() =>
+        execFileAsync('kdialog', ['--getexistingdirectory', process.env.HOME ?? '/']),
+      );
+      folderPath = stdout.trim();
+    } else {
+      return res.status(400).json({ error: 'Folder picker not supported on this platform' });
+    }
+    if (!folderPath) return res.status(400).json({ error: 'No folder selected' });
+    res.json({ path: folderPath });
+  } catch (err: unknown) {
+    // User cancelled dialog — not an error
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('User canceled') || msg.includes('cancelled') || msg.includes('-128')) {
+      return res.status(204).end();
+    }
+    res.status(500).json({ error: msg });
+  }
+});
 
 /** Draft composer — secret name check before the chat row exists. */
 indexRouter.get('/api/secrets/check-label', (req, res) => {
