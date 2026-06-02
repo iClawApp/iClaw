@@ -49,7 +49,7 @@
   // services/chatModes.ts, so adding a mode there surfaces it here with no
   // client change. Default + back-compat fallback is 'execute'.
   // -------------------------------------------------------------------------
-  const MODE_STORAGE_KEY = 'iclaw:composer-mode';
+  const MODE_STORAGE_KEY = rawChatId ? `iclaw:composer-mode:${rawChatId}` : 'iclaw:composer-mode';
   const composerModesEl = document.getElementById('composer-modes');
   const composerModeBtn = document.getElementById('composer-mode-btn');
   const composerModeMenu = document.getElementById('composer-mode-menu');
@@ -353,6 +353,11 @@
       }
     }
     history.replaceState(null, '', '/chats/' + id);
+    // Migrate mode from the draft fallback key to the per-chat key
+    try {
+      const draftMode = localStorage.getItem('iclaw:composer-mode');
+      if (draftMode) localStorage.setItem(`iclaw:composer-mode:${id}`, draftMode);
+    } catch (_) {}
     applyTitleForActive(payload.title || 'New chat');
     if (ws && ws.readyState === WebSocket.OPEN) {
       wsSend({ type: 'subscribe', chatId: id });
