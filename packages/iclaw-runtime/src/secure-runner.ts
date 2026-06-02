@@ -1,212 +1,265 @@
 /**
- * Secure Mode runner — same agent loop as Work Mode but inside Docker.
+ * Secure Mode runner.
  *
- * The agent runs in an isolated container:
- *  - no access to host filesystem (only temp workspace)
- *  - network disabled by default
- *  - container destroyed after session ends
+ * Agent loop runs on the HOST (can reach OpenRouter).
+ * Tool execution happens INSIDE a Docker container (isolated, no network).
  *
- * The agent loop (loop.ts) runs inside the container via a self-contained
- * Node script. Communication happens via stdin/stdout piped through Docker.
+ * This way:
+ *   - Model calls → host → OpenRouter  (needs network)
+ *   - File/shell tools → Docker container  (isolated, --network none)
  */
-import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { spawn, execFile } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { promisify } from 'node:util';
+
+import { runAgentTurn, type Message } from './agent/loop.js';
+import type { AgentEvent, AgentOptions } from './agent/loop.js';
+import type { ToolContext } from './agent/tools.js';
+
+const execFileAsync = promisify(execFile);
 
 const CONTAINER_IMAGE = process.env.ICLAW_SECURE_IMAGE || 'node:22-slim';
-const COMMAND_TIMEOUT = 60_000;
+const CONTAINER_TIMEOUT = 30_000;
 
-export interface SecureRunOptions {
-  apiKey: string;
-  model: string;
-  systemPrompt?: string;
+/** Start a disposable Docker container for tool execution. Returns cleanup fn. */
+async function startSandbox(): Promise<{ containerName: string; workspaceDir: string; cleanup: () => void }> {
+  const workspaceDir = mkdtempSync(join(tmpdir(), 'iclaw-secure-'));
+  const containerName = `iclaw-secure-${randomUUID().slice(0, 8)}`;
+
+  // Start a long-running container with a sleep loop so we can docker exec into it
+  spawn('docker', [
+    'run', '--rm', '-d',
+    '--name', containerName,
+    '--network', 'none',
+    '--memory', '512m',
+    '--cpus', '1',
+    '-v', `${workspaceDir}:/workspace:rw`,
+    '--workdir', '/workspace',
+    CONTAINER_IMAGE,
+    'sleep', '3600',
+  ], { stdio: 'ignore' });
+
+  // Wait a moment for container to start
+  await new Promise((r) => setTimeout(r, 1500));
+
+  const cleanup = (): void => {
+    try { execFile('docker', ['rm', '-f', containerName], () => {}); } catch {}
+    try { rmSync(workspaceDir, { recursive: true, force: true }); } catch {}
+  };
+
+  return { containerName, workspaceDir, cleanup };
 }
 
-export type SecureEvent =
-  | { type: 'text'; content: string }
-  | { type: 'tool_start'; name: string }
-  | { type: 'tool_result'; name: string; result: string }
-  | { type: 'done' }
-  | { type: 'error'; message: string };
+/** Execute a command inside the sandbox container. */
+async function execInContainer(containerName: string, command: string): Promise<string> {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      'docker', ['exec', containerName, 'bash', '-c', command],
+      { timeout: CONTAINER_TIMEOUT },
+    );
+    return [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)';
+  } catch (err: unknown) {
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    return [e.stdout, e.stderr, e.message].filter(Boolean).join('\n').trim() || 'Error';
+  }
+}
+
+/** Read a file from the container workspace. */
+function readFromWorkspace(workspaceDir: string, filePath: string): string {
+  const safe = basename(filePath);
+  const full = join(workspaceDir, safe);
+  if (!existsSync(full)) return `File not found: ${safe}`;
+  return readFileSync(full, 'utf-8');
+}
+
+/** Write a file to the container workspace. */
+function writeToWorkspace(workspaceDir: string, filePath: string, content: string): string {
+  const safe = basename(filePath);
+  const full = join(workspaceDir, safe);
+  writeFileSync(full, content, 'utf-8');
+  return `Written: /workspace/${safe}`;
+}
+
+/** List files in the container workspace. */
+async function listWorkspace(containerName: string): Promise<string> {
+  return execInContainer(containerName, 'ls -la /workspace');
+}
+
+export type SecureEvent = AgentEvent;
 
 /**
- * Run a single turn inside an isolated Docker container.
- * Yields events as the agent works, cleans up container when done.
+ * Run a turn in Secure Mode.
+ * Agent loop on host, tools execute in Docker sandbox.
  */
 export async function* runSecureTurn(
   history: { role: string; content: string }[],
   userMessage: string,
-  opts: SecureRunOptions,
+  opts: { apiKey: string; model: string; systemPrompt?: string },
 ): AsyncGenerator<SecureEvent> {
-  // Create disposable temp workspace on host (mounted read-write into container)
-  const workspaceDir = mkdtempSync(join(tmpdir(), 'iclaw-secure-'));
-  const containerName = `iclaw-secure-${randomUUID().slice(0, 8)}`;
-
-  // Inline agent script — runs inside container, talks via stdin/stdout JSON
-  const agentScript = buildAgentScript(opts);
+  let sandbox: Awaited<ReturnType<typeof startSandbox>> | null = null;
 
   try {
-    const dockerArgs = [
-      'run', '--rm',
-      '--name', containerName,
-      '--network', 'none',          // no network by default
-      '--memory', '512m',           // memory limit
-      '--cpus', '1',
-      '--read-only',                // read-only root fs
-      '--tmpfs', '/tmp:size=128m',  // writable tmp
-      '-v', `${workspaceDir}:/workspace:rw`,
-      '-e', `ANTHROPIC_API_KEY=${opts.apiKey}`,
-      '-e', `ICLAW_MODEL=${opts.model}`,
-      '--workdir', '/workspace',
-      CONTAINER_IMAGE,
-      'node', '--input-type=module',
+    sandbox = await startSandbox();
+    const { containerName, workspaceDir } = sandbox;
+
+    // Tool context — executes inside Docker
+    const toolCtx: ToolContext = {
+      allowedFolders: [workspaceDir],
+      requestWriteApproval: async () => true, // auto-approve in sandbox
+    };
+
+    // Override tool execution to use Docker for bash/write/read
+    const sandboxToolCtx: ToolContext = {
+      ...toolCtx,
+      // We pass this ctx but override executeTool below
+    };
+
+    const agentOpts: AgentOptions = {
+      apiKey: opts.apiKey,
+      model: opts.model,
+      allowedFolders: [workspaceDir],
+      systemPrompt: opts.systemPrompt ??
+        `You are running in a secure isolated sandbox.
+You can run commands and read/write files in /workspace only.
+The sandbox has no internet access.
+Be concise.`,
+      onWriteApproval: async () => true,
+    };
+
+    // Monkey-patch tool execution to use docker exec
+    // We import executeTool and wrap it
+    const { executeTool } = await import('./agent/tools.js');
+    const origExecute = executeTool;
+
+    // We need to intercept at the loop level — pass custom tool executor
+    const messages: Message[] = [
+      ...history.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     ];
 
-    const container = spawn('docker', dockerArgs, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    // Run the agent loop with sandbox-aware tool execution
+    const gen = runSecureAgentLoop(messages, userMessage, agentOpts, containerName, workspaceDir);
 
-    // Send the agent script + conversation via stdin
-    const input = JSON.stringify({ history, userMessage, script: agentScript });
-    container.stdin.write(`
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const input = ${JSON.stringify(input)};
-const { history, userMessage, script } = JSON.parse(input);
-const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-const fn = new AsyncFunction('history', 'userMessage', 'apiKey', 'model', script);
-fn(history, userMessage, process.env.ANTHROPIC_API_KEY, process.env.ICLAW_MODEL)
-  .catch(e => { process.stdout.write(JSON.stringify({type:'error',message:String(e)})+'\n'); });
-`);
-    container.stdin.end();
+    for await (const event of gen) {
+      yield event;
+    }
+  } finally {
+    sandbox?.cleanup();
+  }
+}
 
-    // Stream stdout events (newline-delimited JSON)
-    let buf = '';
-    container.stdout.on('data', (chunk: Buffer) => { buf += chunk.toString(); });
+/** Agent loop with tool execution routed through Docker. */
+async function* runSecureAgentLoop(
+  history: Message[],
+  userMessage: string,
+  opts: AgentOptions,
+  containerName: string,
+  workspaceDir: string,
+): AsyncGenerator<SecureEvent> {
+  const OpenAI = (await import('openai')).default;
+  const { TOOL_DEFINITIONS } = await import('./agent/tools.js');
 
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        container.kill();
-        reject(new Error('Secure container timed out'));
-      }, COMMAND_TIMEOUT);
+  const client = new OpenAI({
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey: opts.apiKey,
+  });
 
-      container.on('close', (code) => {
-        clearTimeout(timeout);
-        if (code !== 0 && code !== null) {
-          reject(new Error(`Container exited with code ${code}`));
-        } else {
-          resolve();
-        }
+  const messages: Message[] = [
+    { role: 'system', content: opts.systemPrompt ?? 'You are a helpful assistant in a secure sandbox.' },
+    ...history,
+    { role: 'user', content: userMessage },
+  ];
+
+  for (let round = 0; round < 20; round++) {
+    let textBuffer = '';
+    const toolCallBuffers: Record<string, { name: string; arguments: string }> = {};
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let stream: AsyncIterable<any>;
+    try {
+      stream = await client.chat.completions.create({
+        model: opts.model,
+        messages,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        tools: TOOL_DEFINITIONS as any,
+        tool_choice: 'auto',
+        stream: true,
       });
-      container.on('error', reject);
-    }).catch((err) => { buf += JSON.stringify({ type: 'error', message: err.message }) + '\n'; });
+    } catch (err) {
+      yield { type: 'error', message: err instanceof Error ? err.message : String(err) };
+      return;
+    }
 
-    // Parse and yield buffered events
-    for (const line of buf.split('\n').filter(Boolean)) {
-      try {
-        yield JSON.parse(line) as SecureEvent;
-      } catch {
-        yield { type: 'text', content: line };
+    let finishReason: string | null = null;
+    for await (const chunk of stream) {
+      const choice = chunk.choices[0];
+      if (!choice) continue;
+      finishReason = choice.finish_reason ?? finishReason;
+      const delta = choice.delta;
+      if (delta.content) {
+        textBuffer += delta.content;
+        yield { type: 'text', content: delta.content };
+      }
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const idx = String(tc.index ?? 0);
+          if (!toolCallBuffers[idx]) toolCallBuffers[idx] = { name: '', arguments: '' };
+          if (tc.function?.name) toolCallBuffers[idx].name += tc.function.name;
+          if (tc.function?.arguments) toolCallBuffers[idx].arguments += tc.function.arguments;
+        }
       }
     }
 
-    if (!buf.includes('"type":"done"') && !buf.includes('"type":"error"')) {
+    const toolCalls = Object.values(toolCallBuffers);
+    if (toolCalls.length === 0 || finishReason === 'stop') {
+      if (textBuffer) messages.push({ role: 'assistant', content: textBuffer });
       yield { type: 'done' };
+      return;
     }
-  } finally {
-    // Always clean up
-    try { rmSync(workspaceDir, { recursive: true, force: true }); } catch {}
-    try { spawn('docker', ['rm', '-f', containerName], { stdio: 'ignore' }); } catch {}
+
+    messages.push({
+      role: 'assistant',
+      content: textBuffer || null,
+      tool_calls: toolCalls.map((tc, i) => ({
+        id: `call_${i}`,
+        type: 'function' as const,
+        function: { name: tc.name, arguments: tc.arguments },
+      })),
+    } as Message);
+
+    // Execute tools inside Docker
+    for (let i = 0; i < toolCalls.length; i++) {
+      const tc = toolCalls[i];
+      let args: Record<string, unknown> = {};
+      try { args = JSON.parse(tc.arguments); } catch {}
+
+      yield { type: 'tool_start', name: tc.name, input: args };
+
+      let result: string;
+      try {
+        if (tc.name === 'run_command') {
+          result = await execInContainer(containerName, String(args.command ?? ''));
+        } else if (tc.name === 'write_file') {
+          result = writeToWorkspace(workspaceDir, String(args.path ?? 'file.txt'), String(args.content ?? ''));
+        } else if (tc.name === 'read_file') {
+          result = readFromWorkspace(workspaceDir, String(args.path ?? ''));
+        } else if (tc.name === 'list_files') {
+          result = await listWorkspace(containerName);
+        } else if (tc.name === 'search_files') {
+          result = await execInContainer(containerName, `grep -r ${JSON.stringify(String(args.query ?? ''))} /workspace 2>/dev/null | head -20`);
+        } else {
+          result = `Tool not available in secure mode: ${tc.name}`;
+        }
+      } catch (err) {
+        result = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+
+      yield { type: 'tool_result', name: tc.name, result };
+      messages.push({ role: 'tool', tool_call_id: `call_${i}`, content: result });
+    }
   }
-}
 
-/** Inline agent script that runs inside the container. Uses only built-in Node modules + openai. */
-function buildAgentScript(_opts: SecureRunOptions): string {
-  return `
-const https = require('https');
-
-// Minimal OpenAI-compatible fetch for Node without external deps
-async function chatComplete(messages, tools, apiKey, model) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ model, messages, tools, tool_choice: 'auto', stream: false });
-    const req = https.request({
-      hostname: 'openrouter.ai',
-      path: '/api/v1/chat/completions',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + apiKey,
-        'Content-Length': Buffer.byteLength(body),
-      },
-    }, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch(e) { reject(e); }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
-
-const tools = [
-  { type: 'function', function: { name: 'run_command', description: 'Run a shell command in /workspace', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
-  { type: 'function', function: { name: 'write_file', description: 'Write a file in /workspace', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
-  { type: 'function', function: { name: 'read_file', description: 'Read a file from /workspace', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
-];
-
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-
-function executeTool(name, args) {
-  try {
-    if (name === 'run_command') {
-      return execSync(args.command, { cwd: '/workspace', timeout: 30000, encoding: 'utf8' });
-    }
-    if (name === 'write_file') {
-      const p = path.join('/workspace', path.basename(args.path));
-      fs.writeFileSync(p, args.content);
-      return 'Written: ' + p;
-    }
-    if (name === 'read_file') {
-      const p = path.join('/workspace', path.basename(args.path));
-      return fs.readFileSync(p, 'utf8');
-    }
-    return 'Unknown tool: ' + name;
-  } catch(e) { return 'Error: ' + e.message; }
-}
-
-const messages = [
-  { role: 'system', content: 'You are running in an isolated sandbox. You have access to /workspace only. Network is disabled.' },
-  ...history,
-  { role: 'user', content: userMessage },
-];
-
-for (let round = 0; round < 10; round++) {
-  const res = await chatComplete(messages, tools, apiKey, model);
-  const choice = res.choices?.[0];
-  if (!choice) break;
-
-  const msg = choice.message;
-  if (msg.content) process.stdout.write(JSON.stringify({ type: 'text', content: msg.content }) + '\n');
-
-  if (!msg.tool_calls || msg.tool_calls.length === 0) break;
-
-  messages.push(msg);
-  for (const tc of msg.tool_calls) {
-    const args = JSON.parse(tc.function.arguments || '{}');
-    process.stdout.write(JSON.stringify({ type: 'tool_start', name: tc.function.name }) + '\n');
-    const result = executeTool(tc.function.name, args);
-    process.stdout.write(JSON.stringify({ type: 'tool_result', name: tc.function.name, result: String(result).slice(0, 2000) }) + '\n');
-    messages.push({ role: 'tool', tool_call_id: tc.id, content: String(result) });
-  }
-}
-process.stdout.write(JSON.stringify({ type: 'done' }) + '\n');
-`;
+  yield { type: 'error', message: 'Agent loop exceeded maximum rounds' };
 }
