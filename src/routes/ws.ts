@@ -93,6 +93,9 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
           inlineSecrets,
           mode: normalizeChatMode((msg as { mode?: unknown }).mode),
           networkEnabled: (msg as Record<string, unknown>).networkEnabled === true,
+          ttlDays: typeof (msg as Record<string, unknown>).ttlDays === 'number'
+            ? ((msg as Record<string, unknown>).ttlDays as number)
+            : undefined,
           workFolders: Array.isArray((msg as Record<string, unknown>).workFolders)
             ? (((msg as Record<string, unknown>).workFolders as unknown[]).filter((f) => typeof f === 'string') as string[])
             : undefined,

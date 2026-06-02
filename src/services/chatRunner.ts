@@ -307,6 +307,7 @@ async function runTurnLocked(opts: {
   mode?: ChatMode;
   workFolders?: string[];
   networkEnabled?: boolean;
+  ttlDays?: number;
 }): Promise<void> {
   const {
     chatId,
@@ -541,7 +542,7 @@ async function runTurnLocked(opts: {
 
   // Work / Secure Mode — routes to iclaw-runtime, returns early.
   if (mode === 'work' || mode === 'secure') {
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', networkEnabled: opts.networkEnabled });
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }
@@ -767,6 +768,8 @@ export async function sendMessage(opts: {
   workFolders?: string[];
   /** Network toggle for Secure Mode. */
   networkEnabled?: boolean;
+  /** TTL in days for Secure Mode workspace. */
+  ttlDays?: number;
 }): Promise<{ chatId: number }> {
   let chatId = opts.chatId;
   let isFirstTurn = false;
@@ -815,6 +818,7 @@ export async function sendMessage(opts: {
         mode: opts.mode,
         workFolders: opts.workFolders,
         networkEnabled: opts.networkEnabled,
+        ttlDays: opts.ttlDays,
       }),
     );
   } catch (err) {
@@ -872,6 +876,11 @@ function buildWorkSystemPrompt(chatId: number): string {
 /** Persistent Work Mode sessions — one per chat, reused across turns. */
 const workSessions = new Map<number, string>();
 
+/** Get the runtime sessionId for a chat (if active). */
+export function getWorkSessionId(chatId: number): string | undefined {
+  return workSessions.get(chatId);
+}
+
 /**
  * Route a Work Mode turn to iclaw-runtime.
  * Reuses the session across turns to preserve conversation history.
@@ -883,6 +892,7 @@ async function runWorkModeTurn(opts: {
   workFolders?: string[];
   secure?: boolean;
   networkEnabled?: boolean;
+  ttlDays?: number;
 }): Promise<void> {
   const { chatId, content, onEvent } = opts;
 
@@ -908,7 +918,7 @@ async function runWorkModeTurn(opts: {
   }
 
   try {
-    await sendWorkMessage(sessionId, content, opts.networkEnabled);
+    await sendWorkMessage(sessionId, content, opts.networkEnabled, opts.ttlDays);
   } catch (err) {
     // Session may have expired — retry with a fresh one
     workSessions.delete(chatId);

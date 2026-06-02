@@ -71,9 +71,10 @@ export async function createWorkSession(opts: CreateSessionOptions = {}): Promis
 }
 
 /** Send a user message to a work session. */
-export async function sendWorkMessage(sessionId: string, content: string, networkEnabled?: boolean): Promise<void> {
+export async function sendWorkMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number): Promise<void> {
   const body: Record<string, unknown> = { content };
   if (networkEnabled !== undefined) body.networkEnabled = networkEnabled;
+  if (ttlDays !== undefined) body.ttlDays = ttlDays;
   const res = await request('POST', `/sessions/${sessionId}/messages`, body);
   if (res.status !== 202) {
     throw new Error(`Failed to send work message: ${JSON.stringify(res.data)}`);
@@ -134,6 +135,15 @@ export function subscribeWorkEvents(
   req.end();
 
   return () => req.destroy();
+}
+
+/** Get workspace info for a session. */
+export async function getWorkspaceInfo(sessionId: string): Promise<{ workspaceSize: number; secure: boolean } | null> {
+  try {
+    const res = await request('GET', `/sessions/${sessionId}/info`);
+    if (res.status !== 200) return null;
+    return res.data as { workspaceSize: number; secure: boolean };
+  } catch { return null; }
 }
 
 /** True if the runtime service appears to be running. */

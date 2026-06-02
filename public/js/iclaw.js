@@ -291,6 +291,94 @@
 
   updateWorkFoldersButton();
 
+  // ── Secure workspace bar ─────────────────────────────────────────────────
+  const secureBar = document.getElementById('secure-workspace-bar');
+  const secureSizeEl = document.getElementById('secure-workspace-size');
+  const secureTtlEl = document.getElementById('secure-workspace-ttl');
+  const secureChangeBtn = document.getElementById('secure-workspace-change');
+  const secureTtlMenu = document.getElementById('secure-ttl-menu');
+
+  function secureTtlKey() {
+    const pid = messagesEl?.dataset.projectId;
+    return `iclaw:secure-ttl:${pid ? 'project:' + pid : 'chat:' + rawChatId}`;
+  }
+
+  function getSecureTtl() {
+    try {
+      const raw = localStorage.getItem(secureTtlKey());
+      return raw ? JSON.parse(raw) : { ttlDays: 7, lastActivity: Date.now() };
+    } catch { return { ttlDays: 7, lastActivity: Date.now() }; }
+  }
+
+  function saveSecureTtl(ttlDays) {
+    try {
+      localStorage.setItem(secureTtlKey(), JSON.stringify({ ttlDays, lastActivity: Date.now() }));
+    } catch {}
+  }
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function formatTtlRemaining(ttlDays, lastActivity) {
+    if (ttlDays === 0) return 'never expires';
+    const expiresAt = lastActivity + ttlDays * 86400_000;
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) return 'expired';
+    const days = Math.floor(remaining / 86400_000);
+    const hours = Math.floor((remaining % 86400_000) / 3600_000);
+    if (days > 0) return `expires in ${days}d ${hours}h`;
+    return `expires in ${hours}h`;
+  }
+
+  async function refreshSecureBar() {
+    if (!secureBar) return;
+    const mode = getComposerMode();
+    if (mode !== 'secure') { secureBar.hidden = true; return; }
+    secureBar.hidden = false;
+    if (!rawChatId) return;
+
+    const ttl = getSecureTtl();
+    if (secureTtlEl) secureTtlEl.textContent = formatTtlRemaining(ttl.ttlDays, ttl.lastActivity);
+
+    try {
+      const res = await fetch(`/chats/${rawChatId}/workspace-info`);
+      const data = await res.json();
+      if (secureSizeEl) {
+        secureSizeEl.textContent = data.active && data.workspaceSize != null
+          ? formatBytes(data.workspaceSize)
+          : '';
+      }
+    } catch {}
+  }
+
+  secureChangeBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (secureTtlMenu) {
+      secureTtlMenu.hidden = !secureTtlMenu.hidden;
+    }
+  });
+
+  secureTtlMenu?.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-ttl]');
+    if (!item) return;
+    saveSecureTtl(Number(item.dataset.ttl));
+    secureTtlMenu.hidden = true;
+    refreshSecureBar();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (secureTtlMenu && !secureTtlMenu.hidden && !secureChangeBtn?.contains(e.target) && !secureTtlMenu.contains(e.target)) {
+      secureTtlMenu.hidden = true;
+    }
+  });
+
+  // Refresh bar when mode changes
+  composerModeMenu?.addEventListener('click', () => setTimeout(refreshSecureBar, 50));
+  refreshSecureBar();
+
   // -------------------------------------------------------------------------
   // Speech-to-text (mic). Records via MediaRecorder, POSTs the clip to
   // /api/stt, and inserts the returned transcript into the composer textarea.
@@ -3962,6 +4050,13 @@
     }
     if (item.mode === 'secure') {
       payload.networkEnabled = typeof getNetworkEnabled === 'function' ? getNetworkEnabled() : false;
+      // Reset TTL countdown on each message + send TTL to runtime
+      if (typeof saveSecureTtl === 'function') {
+        const cur = getSecureTtl();
+        payload.ttlDays = cur.ttlDays;
+        saveSecureTtl(cur.ttlDays);
+        setTimeout(refreshSecureBar, 100);
+      }
     }
     if (item.replyTo) {
       payload.replyTo = {

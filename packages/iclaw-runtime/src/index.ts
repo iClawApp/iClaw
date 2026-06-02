@@ -13,7 +13,7 @@
  */
 import http from 'node:http';
 
-import { createSession, getSession, deleteSession, attachSseClient, detachSseClient, sendMessage } from './sessions.js';
+import { createSession, getSession, deleteSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, sweepExpiredSessions } from './sessions.js';
 
 const PORT = parseInt(process.env.ICLAW_RUNTIME_PORT || '7430', 10);
 const SECRET = process.env.ICLAW_RUNTIME_SECRET || '';
@@ -57,6 +57,13 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true });
   }
 
+  // GET /sessions/:id/info
+  if (req.method === 'GET' && parts[0] === 'sessions' && parts[2] === 'info') {
+    const info = getSessionInfo(parts[1]);
+    if (!info) return json(res, 404, { error: 'session not found' });
+    return json(res, 200, info);
+  }
+
   // POST /sessions
   if (req.method === 'POST' && parts[0] === 'sessions' && parts.length === 1) {
     const body = await readBody(req) as { allowedFolders?: string[]; model?: string; secure?: boolean; systemPrompt?: string };
@@ -74,9 +81,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'messages') {
     const sessionId = parts[1];
     if (!getSession(sessionId)) return json(res, 404, { error: 'session not found' });
-    const body = await readBody(req) as { content?: string; networkEnabled?: boolean };
+    const body = await readBody(req) as { content?: string; networkEnabled?: boolean; ttlDays?: number };
     if (!body.content?.trim()) return json(res, 400, { error: 'content required' });
-    sendMessage(sessionId, body.content, body.networkEnabled).catch(console.error);
+    sendMessage(sessionId, body.content, body.networkEnabled, body.ttlDays).catch(console.error);
     return json(res, 202, { queued: true });
   }
 
@@ -118,6 +125,12 @@ server.on('error', (err: NodeJS.ErrnoException) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.error(`[iclaw-runtime] listening on port ${PORT}, model=${DEFAULT_MODEL}`);
 });
+
+// Periodic cleanup of expired sessions (every hour)
+setInterval(() => {
+  const removed = sweepExpiredSessions();
+  if (removed > 0) console.error(`[iclaw-runtime] swept ${removed} expired session(s)`);
+}, 3600_000).unref();
 
 process.on('SIGTERM', () => { server.close(); process.exit(0); });
 process.on('SIGINT', () => { server.close(); process.exit(0); });

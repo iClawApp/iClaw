@@ -24,7 +24,8 @@ import { openclawWs } from '../services/openclawWs';
 import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
-import { sendMessage } from '../services/chatRunner';
+import { sendMessage, getWorkSessionId } from '../services/chatRunner';
+import { getWorkspaceInfo } from '../services/workRuntime';
 import {
   DEFAULT_MODE,
   listSelectableModes,
@@ -944,4 +945,13 @@ chatsRouter.patch('/:id/scheduled/:scheduledId', (req, res) => {
       .status(400)
       .json({ error: err instanceof Error ? err.message : 'failed to update' });
   }
+});
+
+/** GET /chats/:id/workspace-info — workspace size for Work/Secure Mode. */
+chatsRouter.get('/:id/workspace-info', async (req, res) => {
+  const chatId = Number(req.params.id);
+  const sessionId = getWorkSessionId(chatId);
+  if (!sessionId) return res.json({ active: false });
+  const info = await getWorkspaceInfo(sessionId);
+  res.json({ active: true, sessionId, ...info });
 });

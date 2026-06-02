@@ -3,6 +3,7 @@
  */
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { readdirSync, statSync } from 'node:fs';
 
 import { runAgentTurn, type Message } from './agent/loop.js';
 import type { AgentEvent } from './agent/loop.js';
@@ -25,18 +26,47 @@ interface Session {
   pending: AgentEvent[];
   /** Persistent workspace dir for Secure Mode (survives container restarts). */
   secureWorkspaceDir?: string;
+  /** Last activity timestamp (ms). Updated on each message. */
+  lastActivity: number;
+  /** TTL in ms after last activity before cleanup. 0 = never. Default 7 days. */
+  ttlMs: number;
 }
 
+const DEFAULT_TTL_MS = 7 * 86400_000;
 const sessions = new Map<string, Session>();
 
 export function createSession(opts: SessionOptions): string {
   const id = randomUUID();
-  const session: Session = { id, opts, history: [], sseClient: null, pending: [] };
+  const session: Session = {
+    id, opts, history: [], sseClient: null, pending: [],
+    lastActivity: Date.now(), ttlMs: DEFAULT_TTL_MS,
+  };
   if (opts.secure) {
     session.secureWorkspaceDir = createSecureWorkspace();
   }
   sessions.set(id, session);
   return id;
+}
+
+/** Set TTL (days) for a session. 0 = never expire. */
+export function setSessionTtl(id: string, ttlDays: number): void {
+  const session = sessions.get(id);
+  if (session) session.ttlMs = ttlDays <= 0 ? 0 : ttlDays * 86400_000;
+}
+
+/** Sweep expired sessions — destroys workspace + frees memory. Runs periodically. */
+export function sweepExpiredSessions(): number {
+  const now = Date.now();
+  let removed = 0;
+  for (const [id, session] of sessions) {
+    if (session.ttlMs > 0 && now - session.lastActivity > session.ttlMs) {
+      if (session.secureWorkspaceDir) destroySecureWorkspace(session.secureWorkspaceDir);
+      session.sseClient?.end();
+      sessions.delete(id);
+      removed++;
+    }
+  }
+  return removed;
 }
 
 export function getSession(id: string): Session | undefined {
@@ -49,6 +79,32 @@ export function deleteSession(id: string): void {
     destroySecureWorkspace(session.secureWorkspaceDir);
   }
   sessions.delete(id);
+}
+
+/** Get workspace info for a session. */
+export function getSessionInfo(id: string): { workspaceSize: number; secure: boolean } | null {
+  const session = sessions.get(id);
+  if (!session) return null;
+  let workspaceSize = 0;
+  if (session.secureWorkspaceDir) {
+    workspaceSize = getDirSize(session.secureWorkspaceDir);
+  }
+  return { workspaceSize, secure: session.opts.secure ?? false };
+}
+
+function getDirSize(dir: string): number {
+  try {
+    let total = 0;
+    const walk = (d: string) => {
+      for (const entry of readdirSync(d, { withFileTypes: true })) {
+        const full = `${d}/${entry.name}`;
+        if (entry.isDirectory()) walk(full);
+        else total += statSync(full).size;
+      }
+    };
+    walk(dir);
+    return total;
+  } catch { return 0; }
 }
 
 /** Update network setting for a secure session (takes effect on next turn). */
@@ -70,9 +126,13 @@ export function detachSseClient(id: string): void {
   if (session) session.sseClient = null;
 }
 
-export async function sendMessage(sessionId: string, content: string, networkEnabled?: boolean): Promise<void> {
+export async function sendMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number): Promise<void> {
   const session = sessions.get(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
+
+  // Reset TTL countdown on activity
+  session.lastActivity = Date.now();
+  if (ttlDays !== undefined) session.ttlMs = ttlDays <= 0 ? 0 : ttlDays * 86400_000;
 
   // Per-message network override
   if (networkEnabled !== undefined && session.opts.secure) {

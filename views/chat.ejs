@@ -251,6 +251,24 @@
       </div>
     </section>
 
+    <!-- Secure Mode workspace indicator -->
+    <div class="secure-workspace-bar" id="secure-workspace-bar" hidden>
+      <span class="secure-workspace-bar__icon">🔒</span>
+      <span class="secure-workspace-bar__label">Secure workspace</span>
+      <span class="secure-workspace-bar__size" id="secure-workspace-size"></span>
+      <span class="secure-workspace-bar__sep">·</span>
+      <span class="secure-workspace-bar__ttl" id="secure-workspace-ttl"></span>
+      <button type="button" class="secure-workspace-bar__change" id="secure-workspace-change">change</button>
+    </div>
+
+    <!-- TTL picker -->
+    <div class="secure-ttl-menu menu" id="secure-ttl-menu" role="menu" hidden>
+      <button type="button" class="menu-item" data-ttl="1" role="menuitem">1 day</button>
+      <button type="button" class="menu-item" data-ttl="7" role="menuitem">7 days</button>
+      <button type="button" class="menu-item" data-ttl="30" role="menuitem">30 days</button>
+      <button type="button" class="menu-item" data-ttl="0" role="menuitem">Never</button>
+    </div>
+
     <%- include('partials/composer') %>
 
     <% if (cloudShareBaseUrl) { %>

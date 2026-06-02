@@ -7407,3 +7407,30 @@ a.project-tab.project-tab--tasks:hover {
     touch-action: auto;
   }
 }
+
+/* ── Secure workspace bar ── */
+.secure-workspace-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: var(--thread-max-width);
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 20px 6px;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+.secure-workspace-bar[hidden] { display: none; }
+.secure-workspace-bar__sep { opacity: 0.4; }
+.secure-workspace-bar__change {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+.secure-workspace-bar__change:hover { color: var(--text); }
+.secure-ttl-menu { bottom: auto; top: auto; min-width: 120px; }
