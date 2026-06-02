@@ -27,9 +27,15 @@
               Voice &amp; Ask
             </h2>
             <p class="settings-section-desc">
-              Paste your OpenRouter key to turn on voice messages, Ask mode, and
-              auto-named chats. The key stays on this device.
+              Paste your OpenRouter key to unlock:
             </p>
+            <ul class="settings-section-feature-list">
+              <li>🎙 <strong>Voice messages</strong> — speak instead of type</li>
+              <li>💬 <strong>Ask mode</strong> — quick answers without agent execution</li>
+              <li>🗂 <strong>Work mode</strong> — AI works inside your selected folders only, file writes need your approval</li>
+              <li>✏️ <strong>Auto-named chats</strong> — titles generated automatically</li>
+            </ul>
+            <p class="settings-section-desc settings-section-desc--sub">The key stays on this device.</p>
           </div>
         </header>
 
@@ -343,6 +349,23 @@
   line-height: 1.55;
   color: var(--muted);
   max-width: 26rem;
+}
+.settings-section-desc--sub {
+  margin-top: var(--space-2);
+}
+.settings-section-feature-list {
+  margin: var(--space-2) 0 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  max-width: 26rem;
+}
+.settings-section-feature-list li {
+  line-height: 1.45;
 }
 .ra-new-btn {
   flex-shrink: 0;
@@ -1488,7 +1511,7 @@
   const disconnectBtn = document.getElementById('or-disconnect');
   if (disconnectBtn) {
     disconnectBtn.addEventListener('click', async function () {
-      if (!confirm('Disconnect OpenRouter? Voice messages and Ask mode turn off until you add a key again.')) return;
+      if (!confirm('Disconnect OpenRouter? Voice messages, Ask mode, and Work mode turn off until you add a key again.')) return;
       disconnectBtn.disabled = true;
       const orig = disconnectBtn.textContent;
       disconnectBtn.textContent = 'Disconnecting…';
