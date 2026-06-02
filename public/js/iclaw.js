@@ -116,8 +116,12 @@
         banner.id = 'incognito-banner';
         banner.className = 'incognito-banner';
         banner.innerHTML =
-          '<span class="incognito-banner__dot" aria-hidden="true"></span>' +
-          'Incognito — read-only research. This conversation isn’t saved and adds nothing to project memory.';
+          '<svg class="incognito-banner__icon" viewBox="0 0 24 24" fill="none" ' +
+          'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M2 12s3.5-7 10-7 10 7 10 7"/><path d="m4 4 16 16"/>' +
+          '<path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>' +
+          '<span>Incognito — read-only research. Your chat list is hidden, and this ' +
+          'conversation isn’t saved or added to project memory.</span>';
         const root = typeof messagesAppendRoot === 'function' ? messagesAppendRoot() : messagesEl;
         (root || messagesEl)?.prepend(banner);
       }

@@ -7461,33 +7461,59 @@ a.project-tab.project-tab--tasks:hover {
 .secure-workspace-bar__change:hover { color: var(--text); }
 
 /* ── Incognito (ephemeral, read-only) ─────────────────────────────────────── */
+/* A distinct indigo identity so it's unmistakable you're off the record. */
+body.incognito-mode { --incognito-accent: #7c6cf0; }
+
+/* Immersive surface: hide the chat list entirely — exit Incognito (pick another
+   mode in the composer) to see your chats again. */
+body.incognito-mode .app { grid-template-columns: 1fr; }
+body.incognito-mode #app-sidebar { display: none; }
+
+/* No delete and no cloud-share while incognito. */
+body.incognito-mode #share-btn,
+body.incognito-mode .delete-form { display: none !important; }
+
+/* Cool tint over the conversation column (overlay only — keeps the base bg). */
+body.incognito-mode .col-main {
+  background-image:
+    radial-gradient(120% 55% at 50% 0%,
+      color-mix(in srgb, var(--incognito-accent) 14%, transparent), transparent 65%);
+}
+
 .incognito-banner {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: min(var(--thread-max-width), 100%);
-  margin: 10px auto;
-  padding: 8px 14px;
-  border-radius: 10px;
+  margin: 14px auto 6px;
+  padding: 10px 16px;
+  border-radius: 12px;
   font-size: var(--text-sm);
-  color: var(--muted);
-  background: color-mix(in srgb, var(--text) 6%, transparent);
-  border: 1px dashed color-mix(in srgb, var(--text) 20%, transparent);
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--incognito-accent) 50%, var(--text));
+  background: color-mix(in srgb, var(--incognito-accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--incognito-accent) 32%, transparent);
 }
-.incognito-banner__dot {
+.incognito-banner__icon {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--accent) 70%, var(--muted));
+  width: 18px;
+  height: 18px;
+  color: var(--incognito-accent);
 }
-/* Subtle tint so it's obvious you're off the record. */
+.incognito-banner__dot { display: none; } /* superseded by the icon */
+
+/* Composer takes on the incognito accent. */
 body.incognito-mode .composer-field {
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--border, transparent));
-  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  border-color: color-mix(in srgb, var(--incognito-accent) 42%, var(--border, transparent));
+  background: color-mix(in srgb, var(--incognito-accent) 5%, transparent);
 }
-body.incognito-mode .composer-mode-btn {
-  color: color-mix(in srgb, var(--accent) 75%, var(--text));
+body.incognito-mode .composer-field:focus-within {
+  border-color: color-mix(in srgb, var(--incognito-accent) 60%, transparent);
+}
+body.incognito-mode .composer-mode-btn,
+body.incognito-mode .composer-mode-btn__label {
+  color: var(--incognito-accent);
+  font-weight: 600;
 }
 /* Pop up above the bar, anchored to it — never reflow the page. */
 .secure-ttl-menu {
