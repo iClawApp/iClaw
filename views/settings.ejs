@@ -10,6 +10,70 @@
         <h1 class="settings-title">Settings</h1>
       </header>
 
+      <nav class="settings-tabs" aria-label="Settings sections">
+        <a class="settings-tab<%= settingsTab === 'voice-ask' ? ' is-active' : '' %>" href="/settings/voice-ask"<%- settingsTab === 'voice-ask' ? ' aria-current="page"' : '' %>>Voice &amp; Ask</a>
+        <a class="settings-tab<%= settingsTab === 'remote-access' ? ' is-active' : '' %>" href="/settings/remote-access"<%- settingsTab === 'remote-access' ? ' aria-current="page"' : '' %>>Remote Access</a>
+      </nav>
+
+      <% if (settingsTab === 'voice-ask') { %>
+      <!-- ─────────── Voice & Ask (OpenRouter) ─────────── -->
+      <section class="settings-section">
+        <header class="settings-section-head">
+          <div class="settings-section-head-text">
+            <h2 class="settings-section-title">
+              <svg class="settings-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/><path d="M5 3v4"/><path d="M3 5h4"/>
+              </svg>
+              Voice &amp; Ask
+            </h2>
+            <p class="settings-section-desc">
+              Paste your OpenRouter key to turn on voice messages, Ask mode, and
+              auto-named chats. The key stays on this device.
+            </p>
+          </div>
+        </header>
+
+        <% if (openRouter.hasKey) { %>
+          <div class="or-card" id="or-card">
+            <div class="or-status-row">
+              <span class="or-dot" aria-hidden="true"></span>
+              <div class="or-status-text">
+                <div class="or-status-title">Connected</div>
+                <code class="or-key"><%= openRouter.maskedKey %></code>
+              </div>
+              <button type="button" class="btn btn--ghost btn--sm btn--danger" id="or-disconnect">Disconnect</button>
+            </div>
+            <div class="or-usage" id="or-usage">
+              <div class="or-usage-loading">
+                <span class="ra-spinner" aria-hidden="true"></span><span>Loading usage…</span>
+              </div>
+            </div>
+          </div>
+        <% } else { %>
+          <div class="or-card or-connect" id="or-card">
+            <form class="or-form" id="or-form">
+              <input
+                type="password"
+                id="or-key-input"
+                class="or-input"
+                placeholder="Paste your key (sk-or-…)"
+                autocomplete="off"
+                spellcheck="false"
+                aria-label="OpenRouter API key"
+              />
+              <button type="submit" class="btn btn--primary btn--sm" id="or-connect">Connect</button>
+            </form>
+            <p class="or-err" id="or-err" role="alert" hidden></p>
+            <a class="or-help" href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">
+              Don’t have a key? Get one at openrouter.ai/keys
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+            </a>
+          </div>
+        <% } %>
+      </section>
+      <% } %>
+
+      <% if (settingsTab === 'remote-access') { %>
       <!-- ─────────── Remote Access ─────────── -->
       <section class="settings-section">
         <header class="settings-section-head">
@@ -126,10 +190,12 @@
           <% } %>
         </div>
       </section>
+      <% } %>
     </div>
   </main>
 </div>
 
+<% if (settingsTab === 'remote-access') { %>
 <!-- ─────────── New-tunnel modal ─────────── -->
 <dialog id="ra-modal" class="ra-modal" aria-labelledby="ra-modal-title" aria-describedby="ra-modal-desc">
   <form method="dialog" class="ra-modal-form" id="ra-modal-form">
@@ -191,6 +257,7 @@
     </footer>
   </form>
 </dialog>
+<% } %>
 
 <style>
 /* ───────────── Page shell ───────────── */
@@ -203,7 +270,7 @@
   overflow-y: auto;
 }
 .settings-inner { width: 100%; }
-.settings-head { margin-bottom: var(--space-7); }
+.settings-head { margin-bottom: var(--space-6); }
 .settings-title {
   margin: 0;
   font-size: 1.5rem;
@@ -211,6 +278,37 @@
   letter-spacing: -0.03em;
   line-height: 1.15;
   color: var(--text);
+}
+
+/* ───────────── Section tabs (each its own page) ───────────── */
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-8);
+}
+.settings-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.settings-tab:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
+}
+.settings-tab.is-active {
+  color: var(--btn-fg);
+  background: var(--btn-bg);
+  border-color: var(--btn-bg);
 }
 
 /* ───────────── Section ───────────── */
@@ -686,14 +784,121 @@
   padding: 0 var(--space-5) var(--space-5);
 }
 
+/* ───────────── Voice & Ask (OpenRouter) ───────────── */
+.or-card {
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+
+/* Connected — status row */
+.or-status-row { display: flex; align-items: center; gap: var(--space-3); }
+.or-dot {
+  flex-shrink: 0;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--approve, #2da44e);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--approve, #2da44e) 22%, transparent);
+}
+.or-status-text { flex: 1; min-width: 0; }
+.or-status-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.or-key {
+  display: block;
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+/* Connected — usage readout */
+.or-usage {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+.or-usage-loading {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-sm); color: var(--muted); font-style: italic;
+}
+.or-usage-grid { display: flex; gap: var(--space-10); }
+.or-usage-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  line-height: 1.1;
+}
+.or-usage-label { margin-top: 3px; font-size: var(--text-xs); color: var(--muted); }
+.or-bar {
+  margin-top: var(--space-5);
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  overflow: hidden;
+}
+.or-bar-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent, var(--apple-blue));
+  transition: width 0.4s ease;
+}
+.or-usage-muted { font-size: var(--text-sm); color: var(--muted); }
+
+/* Not connected — connect form */
+.or-form { display: flex; gap: var(--space-3); align-items: center; }
+.or-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text) 3%, var(--surface));
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-sm);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.or-input::placeholder { color: color-mix(in srgb, var(--muted) 75%, transparent); }
+.or-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
+  box-shadow: var(--focus-ring);
+}
+.or-err { margin: var(--space-3) 0 0; font-size: var(--text-sm); color: var(--danger); }
+.or-err[hidden] { display: none; }
+.or-help {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  text-decoration: none;
+}
+.or-help > svg { width: 13px; height: 13px; flex-shrink: 0; }
+.or-help:hover { color: var(--text); }
+.or-help:hover { text-decoration: underline; text-underline-offset: 2px; }
+
 @media (max-width: 520px) {
   .settings-page { padding: var(--space-7) var(--space-4) var(--space-8); }
   .settings-section-head-row { flex-direction: column; align-items: stretch; }
   .ra-new-btn { justify-content: center; }
   .ra-tunnel-head { align-items: flex-start; }
+  .or-form { flex-direction: column; align-items: stretch; }
+  .or-usage-grid { gap: var(--space-8); }
 }
 </style>
 
+<% if (settingsTab === 'remote-access') { %>
 <script>
 (function () {
   const list = document.getElementById('ra-list');
@@ -1227,6 +1432,113 @@
   tickRemaining();
 })();
 </script>
+<% } %>
+
+<% if (settingsTab === 'voice-ask') { %>
+<script>
+(function () {
+  const card = document.getElementById('or-card');
+  if (!card) return;
+
+  function usd(n) {
+    if (!isFinite(n) || n <= 0) return '$0';
+    if (n < 0.01) return '$' + n.toFixed(4);
+    if (n < 1) return '$' + n.toFixed(3);
+    return '$' + n.toFixed(2);
+  }
+
+  /* ─── connect ─── */
+  const form = document.getElementById('or-form');
+  if (form) {
+    const input = document.getElementById('or-key-input');
+    const btn = document.getElementById('or-connect');
+    const err = document.getElementById('or-err');
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const key = ((input && input.value) || '').trim();
+      if (err) err.hidden = true;
+      if (!key) { if (input) input.focus(); return; }
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = 'Connecting…';
+      try {
+        const res = await fetch('/api/openrouter/key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key }),
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok) {
+          if (err) { err.textContent = data.error || ('Could not save key (HTTP ' + res.status + ')'); err.hidden = false; }
+          btn.disabled = false;
+          btn.textContent = orig;
+          return;
+        }
+        // Reload so the connected state + composer (mic, Ask) pick up the key.
+        location.reload();
+      } catch (e2) {
+        if (err) { err.textContent = 'Could not save key: ' + e2.message; err.hidden = false; }
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+  }
+
+  /* ─── disconnect ─── */
+  const disconnectBtn = document.getElementById('or-disconnect');
+  if (disconnectBtn) {
+    disconnectBtn.addEventListener('click', async function () {
+      if (!confirm('Disconnect OpenRouter? Voice messages and Ask mode turn off until you add a key again.')) return;
+      disconnectBtn.disabled = true;
+      const orig = disconnectBtn.textContent;
+      disconnectBtn.textContent = 'Disconnecting…';
+      try {
+        const res = await fetch('/api/openrouter/key', { method: 'DELETE' });
+        if (!res.ok) { alert('Failed to disconnect'); disconnectBtn.disabled = false; disconnectBtn.textContent = orig; return; }
+        location.reload();
+      } catch (e3) {
+        alert('Failed to disconnect: ' + e3.message);
+        disconnectBtn.disabled = false;
+        disconnectBtn.textContent = orig;
+      }
+    });
+  }
+
+  /* ─── usage ─── */
+  const usageEl = document.getElementById('or-usage');
+  if (usageEl) {
+    (async function () {
+      try {
+        const res = await fetch('/api/openrouter/usage');
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || !data.usage) {
+          usageEl.innerHTML = '<div class="or-usage-muted">Couldn’t load usage right now.</div>';
+          return;
+        }
+        const u = data.usage;
+        const used = Number(u.usage || 0);
+        const remaining = u.remaining == null ? null : Number(u.remaining);
+        const limit = u.limit == null ? null : Number(u.limit);
+
+        let html = '<div class="or-usage-grid">';
+        html += '<div><div class="or-usage-value">' + usd(used) + '</div><div class="or-usage-label">spent</div></div>';
+        if (remaining != null) {
+          html += '<div><div class="or-usage-value">' + usd(remaining) + '</div><div class="or-usage-label">remaining</div></div>';
+        }
+        html += '</div>';
+        if (limit != null && limit > 0) {
+          const pct = Math.max(0, Math.min(100, (used / limit) * 100));
+          html += '<div class="or-bar"><div class="or-bar-fill" style="width:' + pct.toFixed(1) + '%"></div></div>';
+        }
+        usageEl.innerHTML = html;
+      } catch (e4) {
+        usageEl.innerHTML = '<div class="or-usage-muted">Couldn’t load usage right now.</div>';
+      }
+    })();
+  }
+})();
+</script>
+<% } %>
 
 <script src="/js/iclaw.js?v=1"></script>
 
