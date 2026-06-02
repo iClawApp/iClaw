@@ -1101,12 +1101,13 @@ code {
 
 .empty-state {
   text-align: center;
-  margin: 48px auto 32px;
-  max-width: 22rem;
+  margin: 80px auto 32px;
+  max-width: 32rem;
   padding: 0 20px;
   font-size: 0.95rem;
   line-height: 1.5;
   letter-spacing: -0.01em;
+  white-space: nowrap;
 }
 
 /* ---------- Messages (ChatGPT-like thread) ---------- */
