@@ -49,46 +49,6 @@
     _modes.find(function (m) { return m.id === _defaultMode; }) || _modes[0] || null;
 %>
 <form id="send-form" class="composer">
-  <% if (_modes.length > 1 && _defaultModeDef) { %>
-  <!-- Mode selector — Ask (lightweight) vs Execute (full agent). Minimal pill
-       + dropdown; the chosen mode rides along with each sent message. JS
-       hydrates the active mode from localStorage on load. -->
-  <div class="composer-modes" id="composer-modes" data-default-mode="<%= _defaultMode %>">
-    <button
-      type="button"
-      class="composer-mode-btn"
-      id="composer-mode-btn"
-      data-mode="<%= _defaultMode %>"
-      aria-haspopup="menu"
-      aria-expanded="false"
-      aria-controls="composer-mode-menu"
-      title="<%= _defaultModeDef.description %>"
-    >
-      <span class="composer-mode-btn__label" id="composer-mode-label"><%= _defaultModeDef.label %></span>
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <polyline points="6 9 12 15 18 9"/>
-      </svg>
-    </button>
-    <div
-      id="composer-mode-menu"
-      class="menu composer-mode-menu"
-      role="menu"
-      aria-label="Message mode"
-      hidden
-    ><% _modes.forEach(function (m) { %>
-      <button
-        type="button"
-        class="menu-item composer-mode-menu-item"
-        role="menuitemradio"
-        data-mode="<%= m.id %>"
-        aria-checked="<%= m.id === _defaultMode ? 'true' : 'false' %>"
-      >
-        <span class="menu-item__title"><%= m.label %></span>
-        <span class="composer-mode-menu-item__desc"><%= m.description %></span>
-      </button><% }); %>
-    </div>
-  </div>
-  <% } %>
   <div id="composer-reply-bar" class="composer-reply-bar" hidden>
     <div class="composer-reply-bar-inner">
       <span class="composer-reply-accent" aria-hidden="true"></span>
@@ -114,103 +74,111 @@
       </svg>
       <span>Drop file here</span>
     </div>
-    <input
-      type="file"
-      id="composer-file-input"
-      class="composer-file-input"
-      multiple
-      hidden
-    />
-    <div
-      id="composer-attach-menu"
-      class="menu composer-attach-menu"
-      role="menu"
-      aria-label="Attachments"
-      hidden
-    >
-      <button type="button" class="menu-item composer-attach-menu-item" data-attach-pick="file" role="menuitem">
-        <span class="menu-item__title">File</span>
-      </button>
-      <button type="button" class="menu-item composer-attach-menu-item" data-attach-pick="secret" role="menuitem">
-        <span class="menu-item__title">Secret</span>
-      </button>
+    <input type="file" id="composer-file-input" class="composer-file-input" multiple hidden />
+    <!-- menus stay here so JS can position them relative to the field -->
+    <div id="composer-attach-menu" class="menu composer-attach-menu" role="menu" aria-label="Attachments" hidden>
+      <button type="button" class="menu-item composer-attach-menu-item" data-attach-pick="file" role="menuitem"><span class="menu-item__title">File</span></button>
+      <button type="button" class="menu-item composer-attach-menu-item" data-attach-pick="secret" role="menuitem"><span class="menu-item__title">Secret</span></button>
     </div>
-    <div
-      id="composer-secret-pick-menu"
-      class="menu composer-secret-pick-menu"
-      role="menu"
-      aria-label="Choose secret"
-      hidden
-    ></div>
-    <!-- Work Mode folders button — shown only when mode=work -->
-    <button
-      type="button"
-      class="composer-work-folders"
-      id="composer-work-folders-btn"
-      aria-label="Work Mode folders"
-      title="Configure allowed folders for Work Mode"
-      hidden
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-      </svg>
-      <span class="composer-work-folders__count" id="composer-work-folders-count"></span>
-    </button>
-    <button
-      type="button"
-      class="composer-attach"
-      id="composer-attach-btn"
-      aria-label="Add attachment"
-      title="File or secret (also drag &amp; drop and paste)"
-      aria-haspopup="menu"
-      aria-expanded="false"
-      aria-controls="composer-attach-menu"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l8.57-8.57A4 4 0 1117.95 8.83l-8.59 8.57a2 2 0 01-2.83-2.83l8.49-8.49"/>
-      </svg>
-    </button>
+    <div id="composer-secret-pick-menu" class="menu composer-secret-pick-menu" role="menu" aria-label="Choose secret" hidden></div>
+
+    <!-- Textarea — full width, top -->
     <div class="composer-input-stack">
       <textarea
         id="composer-input"
         name="content"
-        placeholder="Message…"
+        placeholder="Ask anything"
         rows="1"
       ></textarea>
     </div>
-    <% if (typeof sttEnabled !== 'undefined' && sttEnabled) { %>
-    <!-- Speech-to-text mic. Click to record, click to stop; the transcript is
-         inserted into the textarea. Only rendered when OPENROUTER_API_KEY is
-         set (see routes → sttEnabled). JS lives in iclaw.js. -->
-    <button
-      type="button"
-      class="composer-mic"
-      id="composer-mic-btn"
-      data-state="idle"
-      aria-label="Record voice"
-      aria-pressed="false"
-      title="Record voice"
-    >
-      <svg class="composer-mic__idle" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-        <line x1="12" y1="19" x2="12" y2="22"/>
-      </svg>
-      <svg class="composer-mic__busy" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
-        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-      </svg>
-    </button>
-    <% } %>
-    <button
-      type="submit"
-      class="composer-send"
-      id="composer-send-btn"
-      aria-label="Send (hold to schedule)"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 19V5M5 12l7-7 7 7"/>
-      </svg>
-    </button>
+
+    <!-- Toolbar — bottom row -->
+    <div class="composer-toolbar">
+      <div class="composer-toolbar__left">
+        <!-- Attach -->
+        <button
+          type="button"
+          class="composer-toolbar-btn composer-attach"
+          id="composer-attach-btn"
+          aria-label="Add attachment"
+          title="File or secret (also drag &amp; drop and paste)"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-controls="composer-attach-menu"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14M12 5l7 7-7 7"/>
+          </svg>
+        </button>
+
+        <!-- Mode selector -->
+        <% if (_modes.length > 1 && _defaultModeDef) { %>
+        <div class="composer-modes composer-toolbar-modes" id="composer-modes" data-default-mode="<%= _defaultMode %>">
+          <button
+            type="button"
+            class="composer-toolbar-btn composer-mode-btn"
+            id="composer-mode-btn"
+            data-mode="<%= _defaultMode %>"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="composer-mode-menu"
+            title="<%= _defaultModeDef.description %>"
+          >
+            <span class="composer-mode-btn__label" id="composer-mode-label"><%= _defaultModeDef.label %></span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div id="composer-mode-menu" class="menu composer-mode-menu" role="menu" aria-label="Message mode" hidden>
+            <% _modes.forEach(function (m) { %>
+            <button type="button" class="menu-item composer-mode-menu-item" role="menuitemradio" data-mode="<%= m.id %>" aria-checked="<%= m.id === _defaultMode ? 'true' : 'false' %>">
+              <span class="menu-item__title"><%= m.label %></span>
+              <span class="composer-mode-menu-item__desc"><%= m.description %></span>
+            </button>
+            <% }); %>
+          </div>
+        </div>
+        <% } %>
+
+        <!-- Work Mode folders -->
+        <button
+          type="button"
+          class="composer-toolbar-btn composer-work-folders"
+          id="composer-work-folders-btn"
+          aria-label="Work Mode folders"
+          title="Configure allowed folders for Work Mode"
+          hidden
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          <span class="composer-work-folders__count" id="composer-work-folders-count"></span>
+        </button>
+      </div>
+
+      <div class="composer-toolbar__right">
+        <!-- Mic -->
+        <% if (typeof sttEnabled !== 'undefined' && sttEnabled) { %>
+        <button type="button" class="composer-mic" id="composer-mic-btn" data-state="idle" aria-label="Record voice" aria-pressed="false" title="Record voice">
+          <svg class="composer-mic__idle" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="22"/>
+          </svg>
+          <svg class="composer-mic__busy" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          </svg>
+        </button>
+        <% } %>
+
+        <!-- Send -->
+        <button type="submit" class="composer-send" id="composer-send-btn" aria-label="Send (hold to schedule)">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 19V5M5 12l7-7 7 7"/>
+          </svg>
+        </button>
+      </div>
+    </div>
 
     <% if (typeof sendHintShow !== 'undefined' && sendHintShow) { %>
       <!-- Discovery pill — surfaces the long-press menu (scheduled msg / create

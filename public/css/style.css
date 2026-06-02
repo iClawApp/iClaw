@@ -1731,36 +1731,90 @@ code {
   --composer-secret-strip-gap: var(--space-1);
 }
 
-/* Mode selector (Ask / Execute) — compact pill + upward dropdown. */
-.composer-modes {
-  position: relative;
+/* ── Composer field — new layout: textarea top, toolbar bottom ── */
+.composer-field {
+  margin-bottom: var(--space-4);
   display: flex;
-  margin-bottom: 6px;
-  padding-left: 4px;
-}
-.composer-mode-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px 3px 11px;
-  font: inherit;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--muted);
+  flex-direction: column;
+  padding: 12px 12px 8px 16px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
+  border-radius: 18px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.composer-field:focus-within {
+  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 0 0 3px color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+/* Textarea */
+.composer-field .composer-input-stack {
+  width: 100%;
+}
+.composer-field .composer-input-stack textarea {
+  width: 100%;
+  margin: 0;
+  padding: 0 0 10px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.95em;
+  line-height: 1.5;
+  resize: none;
+  min-height: 24px;
+  max-height: 200px;
+  field-sizing: content;
+}
+.composer-field .composer-input-stack textarea:focus { outline: none; }
+.composer-field .composer-input-stack textarea::placeholder { color: var(--muted); opacity: 0.55; }
+
+/* Toolbar row */
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.composer-toolbar__left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.composer-toolbar__right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Generic toolbar button */
+.composer-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-sm);
   cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
 }
-.composer-mode-btn:hover,
-.composer-mode-btn[aria-expanded='true'] {
+.composer-toolbar-btn:hover,
+.composer-toolbar-btn[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
   color: var(--text);
-  border-color: color-mix(in srgb, var(--text) 24%, var(--border));
 }
-.composer-mode-btn svg {
-  opacity: 0.65;
+
+/* Mode selector in toolbar */
+.composer-toolbar-modes { position: relative; }
+.composer-mode-btn {
+  font-weight: 500;
 }
+.composer-mode-btn svg { opacity: 0.6; }
 .composer-mode-menu {
   bottom: calc(100% + 6px);
   left: 0;
@@ -1773,58 +1827,6 @@ code {
   font-size: var(--text-xs);
   color: var(--muted);
   line-height: 1.35;
-}
-
-.composer-field {
-  margin-top: -8px;
-  margin-bottom: var(--space-4);
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
-  padding: 6px 6px 6px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 22px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.composer-field:focus-within {
-  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.04),
-    0 0 0 3px color-mix(in srgb, var(--text) 8%, transparent);
-}
-
-.composer-field .composer-input-stack {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-}
-
-.composer-field .composer-input-stack textarea {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 8px 0;
-  border: none;
-  background: transparent;
-  border-radius: 0;
-  font-family: inherit;
-  font-size: 0.95em;
-  line-height: 1.45;
-  resize: none;
-  min-height: 24px;
-  max-height: 200px;
-  field-sizing: content;
-}
-.composer-field .composer-input-stack textarea:focus {
-  outline: none;
-}
-.composer-field .composer-input-stack textarea::placeholder {
-  color: var(--muted);
-  opacity: 0.5;
 }
 
 .composer-send {
@@ -4736,51 +4738,12 @@ code {
 
 /* ---------- Composer attachments ---------- */
 
-.composer-attach {
-  flex: 0 0 auto;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  margin: 0;
-  margin-left: -8px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
-}
-.composer-attach:hover {
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-  color: var(--text);
-}
+/* attach button inherits .composer-toolbar-btn */
+.composer-attach { padding: 5px 7px; border-radius: 8px; }
 .composer-attach:active { transform: scale(0.94); }
 
 /* Work Mode folders button */
 .composer-work-folders[hidden] { display: none; }
-.composer-work-folders {
-  flex: 0 0 auto;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-}
-.composer-work-folders:hover {
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-  color: var(--text);
-}
 .composer-work-folders__count {
   font-size: 11px;
   font-weight: 600;
