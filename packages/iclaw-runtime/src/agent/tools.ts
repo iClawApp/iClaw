@@ -11,10 +11,30 @@ import { validatePath, isWriteAllowed, SecurityError } from './security.js';
 
 const execFileAsync = promisify(execFile);
 
-const MAX_FILE_SIZE = 1_000_000; // 1 MB read limit
+// Refuse to slurp a huge file into memory at all (use search_files instead).
+const MAX_FILE_BYTES = Number(process.env.ICLAW_MAX_FILE_BYTES) || 5_000_000;
 const COMMAND_TIMEOUT = 30_000;
 const WEB_FETCH_TIMEOUT = 20_000;
 const WEB_FETCH_MAX_CHARS = 20_000;
+
+// ── Token-saving output caps ──────────────────────────────────────────────────
+// Tool outputs are the biggest token sink in multi-turn chats: they land in the
+// history and get resent every round. Cap what we hand back to the model.
+const MAX_FILE_READ_CHARS = Number(process.env.ICLAW_MAX_FILE_READ) || 16_000;
+const MAX_CMD_OUTPUT_CHARS = Number(process.env.ICLAW_MAX_CMD_OUTPUT) || 8_000;
+const MAX_LIST_ENTRIES = Number(process.env.ICLAW_MAX_LIST_ENTRIES) || 200;
+
+export const TOOL_OUTPUT_MAX_CHARS = MAX_CMD_OUTPUT_CHARS;
+
+/** Keep the head and tail of long output (errors are usually at the end). */
+export function clampMiddle(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const head = Math.ceil(max * 0.6);
+  const tail = max - head;
+  return s.slice(0, head) +
+    `\n\n…[truncated ${(s.length - max).toLocaleString()} of ${s.length.toLocaleString()} chars — refine the command or use search_files/read_file]…\n\n` +
+    s.slice(s.length - tail);
+}
 
 // ── Tool JSON schemas (sent to the model) ────────────────────────────────────
 
@@ -223,16 +243,28 @@ async function listFiles(args: Record<string, unknown>, ctx: ToolContext): Promi
   const lines = entries
     .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
     .map((e) => (e.isDirectory() ? `[dir]  ${e.name}/` : `[file] ${e.name}`));
-  return lines.join('\n') || '(empty directory)';
+  if (lines.length === 0) return '(empty directory)';
+  // Cap big listings — the full list otherwise lands in history and is resent
+  // every round.
+  if (lines.length > MAX_LIST_ENTRIES) {
+    const shown = lines.slice(0, MAX_LIST_ENTRIES);
+    return `${shown.join('\n')}\n…[+${lines.length - MAX_LIST_ENTRIES} more entries — narrow with search_files]`;
+  }
+  return lines.join('\n');
 }
 
 async function readFile(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
   const filePath = validatePath(args.path as string, readFolders(ctx));
   const stat = fs.statSync(filePath);
-  if (stat.size > MAX_FILE_SIZE) {
-    return `File too large (${stat.size} bytes, limit ${MAX_FILE_SIZE}). Use search_files to find specific content.`;
+  if (stat.size > MAX_FILE_BYTES) {
+    return `File too large to read whole (${stat.size.toLocaleString()} bytes). Use search_files to find the part you need.`;
   }
-  return fs.readFileSync(filePath, 'utf-8');
+  const content = fs.readFileSync(filePath, 'utf-8');
+  if (content.length > MAX_FILE_READ_CHARS) {
+    return content.slice(0, MAX_FILE_READ_CHARS) +
+      `\n\n…[truncated: showing first ${MAX_FILE_READ_CHARS.toLocaleString()} of ${content.length.toLocaleString()} chars. Use search_files for specific content.]`;
+  }
+  return content;
 }
 
 async function searchFiles(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
@@ -336,7 +368,9 @@ async function runCommand(args: Record<string, unknown>, ctx: ToolContext): Prom
   // The sandbox mounts read-only folders as :ro, so the kernel — not us —
   // rejects any write outside the read & write folders. Commands may freely
   // read from read-only folders.
-  return ctx.runShell(command, cwd);
+  const out = await ctx.runShell(command, cwd);
+  // Cap verbose output (test runs, build logs) so it doesn't flood history.
+  return clampMiddle(out, MAX_CMD_OUTPUT_CHARS);
 }
 
 // ── web_fetch (read-only research) ────────────────────────────────────────────

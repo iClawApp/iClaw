@@ -59,7 +59,8 @@ function describeApiError(err: unknown): string {
 
 const DEFAULT_SYSTEM = `Work Mode: read/search/edit/create files in the selected folders, run shell commands, and research the web (web_search then web_fetch).
 Prefer edit_file over rewriting whole files. The user approves every write in the UI — don't paste file contents or ask "is this correct?"; just act, then briefly say what you did.
-Be efficient: chain shell steps with && in one call, don't repeat commands. Never go outside the allowed folders.`;
+Be efficient: chain shell steps with && in one call, don't repeat commands. Never go outside the allowed folders.
+Keep replies short — don't echo back long file listings or file contents; summarize in a line or two.`;
 
 const INCOGNITO_SYSTEM = `Incognito: private, READ-ONLY research. You can read files anywhere, search, run a read-only shell in the selected folders, and use web_search/web_fetch.
 You CANNOT write — never claim you saved or changed anything. This chat is ephemeral: nothing is stored. Be concise; put findings in your reply.`;

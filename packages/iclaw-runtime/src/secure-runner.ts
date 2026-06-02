@@ -282,7 +282,7 @@ async function* runSecureAgentLoop(
   networkEnabled: boolean,
 ): AsyncGenerator<SecureEvent> {
   const OpenAI = (await import('openai')).default;
-  const { TOOL_DEFINITIONS } = await import('./agent/tools.js');
+  const { TOOL_DEFINITIONS, clampMiddle, TOOL_OUTPUT_MAX_CHARS } = await import('./agent/tools.js');
 
   const tools = TOOL_DEFINITIONS;
 
@@ -371,7 +371,7 @@ async function* runSecureAgentLoop(
 
       let result: string;
       if (tc.name === 'run_command') {
-        result = await execInContainer(containerName, String(args.command ?? ''));
+        result = clampMiddle(await execInContainer(containerName, String(args.command ?? '')), TOOL_OUTPUT_MAX_CHARS);
       } else if (tc.name === 'write_file') {
         result = writeToWorkspace(workspaceDir, String(args.path ?? 'file.txt'), String(args.content ?? ''));
       } else if (tc.name === 'edit_file') {
