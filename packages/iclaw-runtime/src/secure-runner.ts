@@ -202,6 +202,21 @@ function writeToWorkspace(workspaceDir: string, filePath: string, content: strin
   return `Written: /workspace/${safe}`;
 }
 
+function editInWorkspace(workspaceDir: string, filePath: string, oldStr: string, newStr: string): string {
+  if (!oldStr) return 'edit_file requires old_string — the exact text to replace.';
+  const safe = basename(filePath);
+  const full = join(workspaceDir, safe);
+  if (!existsSync(full)) return `File not found: ${safe}`;
+  const content = readFileSync(full, 'utf-8');
+  const first = content.indexOf(oldStr);
+  if (first === -1) return 'old_string not found — copy the exact text (including whitespace) from the file.';
+  if (content.indexOf(oldStr, first + oldStr.length) !== -1) {
+    return 'old_string is not unique — add more surrounding context so it matches one place.';
+  }
+  writeFileSync(full, content.slice(0, first) + newStr + content.slice(first + oldStr.length), 'utf-8');
+  return `Edited: /workspace/${safe}`;
+}
+
 /**
  * Run one turn in Secure Mode.
  *
@@ -346,6 +361,8 @@ async function* runSecureAgentLoop(
         result = await execInContainer(containerName, String(args.command ?? ''));
       } else if (tc.name === 'write_file') {
         result = writeToWorkspace(workspaceDir, String(args.path ?? 'file.txt'), String(args.content ?? ''));
+      } else if (tc.name === 'edit_file') {
+        result = editInWorkspace(workspaceDir, String(args.path ?? ''), String(args.old_string ?? ''), String(args.new_string ?? ''));
       } else if (tc.name === 'read_file') {
         result = readFromWorkspace(workspaceDir, String(args.path ?? ''));
       } else if (tc.name === 'list_files') {

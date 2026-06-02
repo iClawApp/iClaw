@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, executeTool, type ToolContext, type ToolName } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, executeTool, type ToolContext, type ToolName } from './tools.js';
 
 export interface AgentOptions {
   apiKey: string;
@@ -54,10 +54,13 @@ function describeApiError(err: unknown): string {
 }
 
 const DEFAULT_SYSTEM = `You are a helpful AI assistant running in Work Mode.
-You can read, search and edit files in the user's selected folders using the tools.
-Be concise and act directly: when a change is needed, just call write_file. The user
-sees and approves every write in the UI, so do NOT paste the file contents into your
-reply beforehand or ask "is this correct?" — only narrate briefly what you changed after.
+You can read, search, edit and create files in the user's selected folders, run shell
+commands, and research the web (web_search to find pages, web_fetch to read one).
+Prefer edit_file for changes to existing files (surgical old_string→new_string) and
+write_file only for new files or full rewrites.
+Be concise and act directly: when a change is needed, just call the tool. The user sees
+and approves every write in the UI, so do NOT paste file contents into your reply
+beforehand or ask "is this correct?" — only narrate briefly what you changed after.
 Never access paths outside the allowed folders.`;
 
 const INCOGNITO_SYSTEM = `You are a private, READ-ONLY research assistant running in Incognito mode.
@@ -134,11 +137,10 @@ export async function* runAgentTurn(
     requestWriteApproval: opts.onWriteApproval ?? (async () => true),
   };
 
-  // web_fetch is exposed only in Incognito (research). Excluded elsewhere so it
-  // can't bypass Secure Mode's container network boundary.
-  const tools = opts.incognito
-    ? [...TOOL_DEFINITIONS, WEB_FETCH_TOOL]
-    : TOOL_DEFINITIONS;
+  // Web research tools are available on the host loop (Work + Incognito). They
+  // run host-side, so they're never exposed to Secure Mode (which has its own
+  // loop) — that would bypass the sandbox's container network gate.
+  const tools = [...TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL];
 
   const messages: Message[] = [
     { role: 'system', content: buildSystemPrompt(opts) },

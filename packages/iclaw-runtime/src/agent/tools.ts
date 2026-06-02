@@ -81,6 +81,26 @@ export const TOOL_DEFINITIONS = [
   {
     type: 'function' as const,
     function: {
+      name: 'edit_file',
+      description:
+        'Surgically replace an exact text fragment in an existing file (old_string → new_string) ' +
+        'instead of rewriting the whole file. Prefer this for edits. old_string must match EXACTLY ' +
+        '(including whitespace) and be UNIQUE in the file — include surrounding context if needed. ' +
+        'Requires approval, like write_file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path to edit' },
+          old_string: { type: 'string', description: 'Exact text to find (must be unique)' },
+          new_string: { type: 'string', description: 'Replacement text' },
+        },
+        required: ['path', 'old_string', 'new_string'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'run_command',
       description: 'Run a shell command inside an allowed folder.',
       parameters: {
@@ -118,8 +138,32 @@ export const WEB_FETCH_TOOL = {
   },
 } as const;
 
+/**
+ * Web search — kept OUT of TOOL_DEFINITIONS (like web_fetch) and appended by the
+ * agent loop only for the host-loop modes (Work / Incognito), never Secure
+ * (host-side network would bypass the sandbox's container network gate).
+ */
+export const WEB_SEARCH_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'web_search',
+    description:
+      'Search the web; returns the top results (title, url, snippet). Use this to discover pages, ' +
+      'then call web_fetch on a URL for the full content.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query' },
+        count: { type: 'number', description: 'Max results (default 6, max 10)' },
+      },
+      required: ['query'],
+    },
+  },
+} as const;
+
 export type ToolName =
-  | 'list_files' | 'read_file' | 'search_files' | 'write_file' | 'run_command' | 'web_fetch';
+  | 'list_files' | 'read_file' | 'search_files' | 'write_file' | 'edit_file'
+  | 'run_command' | 'web_fetch' | 'web_search';
 
 // ── Tool context (injected per-session) ──────────────────────────────────────
 
@@ -173,8 +217,10 @@ export async function executeTool(
       case 'read_file': return await readFile(args, ctx);
       case 'search_files': return await searchFiles(args, ctx);
       case 'write_file': return await writeFile(args, ctx);
+      case 'edit_file': return await editFile(args, ctx);
       case 'run_command': return await runCommand(args, ctx);
       case 'web_fetch': return await webFetch(args);
+      case 'web_search': return await webSearch(args);
       default: return `Unknown tool: ${name}`;
     }
   } catch (err) {
@@ -247,6 +293,45 @@ async function writeFile(args: Record<string, unknown>, ctx: ToolContext): Promi
   return `Written: ${filePath}`;
 }
 
+async function editFile(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+  if (ctx.readOnly) {
+    return 'edit_file is disabled in Incognito mode (read-only). Return the change in your reply instead.';
+  }
+  const filePath = validatePath(args.path as string, ctx.allowedFolders);
+  const oldStr = String(args.old_string ?? '');
+  const newStr = String(args.new_string ?? '');
+  if (!oldStr) return 'edit_file requires old_string — the exact text to replace.';
+
+  if (ctx.folderAccess && !isWriteAllowed(filePath, ctx.folderAccess)) {
+    return `Edit denied: "${filePath}" is in a read-only folder. Ask the user to grant read & write access.`;
+  }
+
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return `File not found (read it / create with write_file first): ${filePath}`;
+  }
+
+  const first = content.indexOf(oldStr);
+  if (first === -1) {
+    return 'old_string not found. Read the file and copy the exact text to replace (including whitespace/indentation).';
+  }
+  if (content.indexOf(oldStr, first + oldStr.length) !== -1) {
+    return 'old_string is not unique — it appears more than once. Include more surrounding context so it matches exactly one place.';
+  }
+
+  const next = content.slice(0, first) + newStr + content.slice(first + oldStr.length);
+
+  // Reuse the write-approval flow; show the resulting full content so the UI
+  // diff/preview reflects what will land on disk.
+  const approved = await ctx.requestWriteApproval(filePath, next);
+  if (!approved) return `Edit rejected by user: ${filePath}`;
+
+  fs.writeFileSync(filePath, next, 'utf-8');
+  return `Edited: ${filePath}`;
+}
+
 async function runCommand(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
   // Validate cwd is inside an allowed folder up front (clear error before we
   // hand off to the sandbox, and the container only mounts allowed folders).
@@ -315,6 +400,71 @@ async function webFetch(args: Record<string, unknown>): Promise<string> {
       ? `timed out after ${WEB_FETCH_TIMEOUT / 1000}s`
       : err instanceof Error ? err.message : String(err);
     return `Fetch failed (${url}): ${msg}`;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── web_search (Brave if keyed, else best-effort DuckDuckGo) ──────────────────
+
+interface SearchHit { title: string; url: string; snippet: string }
+
+function formatHits(query: string, hits: SearchHit[], provider: string): string {
+  if (hits.length === 0) return `No results for "${query}".`;
+  const lines = hits.map((h, i) => `${i + 1}. ${h.title}\n   ${h.url}${h.snippet ? `\n   ${h.snippet}` : ''}`);
+  return `Web search (${provider}) — "${query}":\n\n${lines.join('\n\n')}`;
+}
+
+async function braveSearch(query: string, count: number, signal: AbortSignal): Promise<SearchHit[]> {
+  const key = process.env.ICLAW_SEARCH_API_KEY || '';
+  const u = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`;
+  const res = await fetch(u, { signal, headers: { Accept: 'application/json', 'X-Subscription-Token': key } });
+  if (!res.ok) throw new Error(`Brave HTTP ${res.status}`);
+  const data = await res.json() as { web?: { results?: { title?: string; url?: string; description?: string }[] } };
+  return (data.web?.results ?? []).slice(0, count).map((r) => ({
+    title: r.title ?? r.url ?? '(untitled)',
+    url: r.url ?? '',
+    snippet: (r.description ?? '').replace(/<[^>]+>/g, '').trim(),
+  }));
+}
+
+async function duckDuckGoSearch(query: string, count: number, signal: AbortSignal): Promise<SearchHit[]> {
+  const u = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const res = await fetch(u, { signal, headers: { 'User-Agent': 'Mozilla/5.0 iClaw-Incognito/1.0' } });
+  const html = await res.text();
+  const hits: SearchHit[] = [];
+  const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) && hits.length < count) {
+    let url = m[1];
+    const uddg = /[?&]uddg=([^&]+)/.exec(url); // DDG wraps links in a redirect
+    if (uddg) url = decodeURIComponent(uddg[1]);
+    const title = m[2].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+    if (url.startsWith('http')) hits.push({ title, url, snippet: '' });
+  }
+  return hits;
+}
+
+async function webSearch(args: Record<string, unknown>): Promise<string> {
+  const query = String(args.query ?? '').trim();
+  if (!query) return 'web_search requires a query.';
+  const count = Math.min(10, Math.max(1, Number(args.count) || 6));
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), WEB_FETCH_TIMEOUT);
+  try {
+    if (process.env.ICLAW_SEARCH_API_KEY) {
+      try {
+        return formatHits(query, await braveSearch(query, count, ctrl.signal), 'Brave');
+      } catch {
+        // fall through to the keyless provider
+      }
+    }
+    return formatHits(query, await duckDuckGoSearch(query, count, ctrl.signal), 'DuckDuckGo');
+  } catch (err) {
+    const msg = err instanceof Error && err.name === 'AbortError'
+      ? `timed out after ${WEB_FETCH_TIMEOUT / 1000}s`
+      : err instanceof Error ? err.message : String(err);
+    return `Search failed for "${query}": ${msg}. (Set ICLAW_SEARCH_API_KEY for the Brave provider.)`;
   } finally {
     clearTimeout(timer);
   }
