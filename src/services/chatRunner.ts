@@ -538,9 +538,9 @@ async function runTurnLocked(opts: {
     }
   };
 
-  // Work Mode — routes to iclaw-runtime, returns early.
-  if (mode === 'work') {
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders });
+  // Work / Secure Mode — routes to iclaw-runtime, returns early.
+  if (mode === 'work' || mode === 'secure') {
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure' });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }
@@ -857,6 +857,7 @@ async function runWorkModeTurn(opts: {
   content: string;
   onEvent: (event: TurnEvent) => void;
   workFolders?: string[];
+  secure?: boolean;
 }): Promise<void> {
   const { chatId, content, onEvent } = opts;
 
@@ -867,7 +868,7 @@ async function runWorkModeTurn(opts: {
       const allowedFolders = opts.workFolders?.length
         ? opts.workFolders
         : [process.env.HOME ?? ''].filter(Boolean);
-      sessionId = await createWorkSession({ allowedFolders });
+      sessionId = await createWorkSession({ allowedFolders, secure: opts.secure });
       workSessions.set(chatId, sessionId);
     } catch (err) {
       const note = `Work Mode runtime unavailable. (${err instanceof Error ? err.message : String(err)})`;

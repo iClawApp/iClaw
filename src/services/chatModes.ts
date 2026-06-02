@@ -96,10 +96,10 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
     lightweight: false,
   },
   {
-    id: 'safe_run',
-    label: 'Safe Run',
-    description: 'Execute with tighter sandboxing and approvals. (Coming soon.)',
-    enabled: false,
+    id: 'secure',
+    label: 'Secure',
+    description: 'Run risky tasks in an isolated Docker container. No host access.',
+    enabled: true,
     lightweight: false,
   },
 ] as const;
@@ -121,8 +121,8 @@ export const ENABLED_MODE_IDS: readonly string[] = CHAT_MODES.filter(
 function modeAvailable(def: ChatModeDef): boolean {
   if (!def.enabled) return false;
   if (def.lightweight && !openRouterEnabled()) return false;
-  // Work Mode requires OpenRouter (it's the model provider for the runtime)
-  if (def.id === 'work' && !openRouterEnabled()) return false;
+  // Work and Secure modes require OpenRouter
+  if ((def.id === 'work' || def.id === 'secure') && !openRouterEnabled()) return false;
   return true;
 }
 

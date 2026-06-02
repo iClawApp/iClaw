@@ -7,11 +7,13 @@ import { randomUUID } from 'node:crypto';
 
 import { runAgentTurn, type Message } from './agent/loop.js';
 import type { AgentEvent } from './agent/loop.js';
+import { runSecureTurn } from './secure-runner.js';
 
 export interface SessionOptions {
   allowedFolders: string[];
   model: string;
   apiKey: string;
+  secure?: boolean;
 }
 
 interface Session {
@@ -58,6 +60,25 @@ export function detachSseClient(id: string): void {
 export async function sendMessage(sessionId: string, content: string): Promise<void> {
   const session = sessions.get(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
+
+  // Secure mode: run in Docker container
+  if (session.opts.secure) {
+    const secureGen = runSecureTurn(
+      session.history.map((m) => ({ role: m.role as string, content: String(m.content) })),
+      content,
+      { apiKey: session.opts.apiKey, model: session.opts.model },
+    );
+    let assistantText = '';
+    for await (const event of secureGen) {
+      emit(session, event as AgentEvent);
+      if (event.type === 'text') assistantText += event.content;
+    }
+    if (assistantText) {
+      session.history.push({ role: 'user', content });
+      session.history.push({ role: 'assistant', content: assistantText });
+    }
+    return;
+  }
 
   // Run the agent turn and emit events
   const gen = runAgentTurn(session.history, content, {

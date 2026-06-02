@@ -59,11 +59,12 @@ const server = http.createServer(async (req, res) => {
 
   // POST /sessions
   if (req.method === 'POST' && parts[0] === 'sessions' && parts.length === 1) {
-    const body = await readBody(req) as { allowedFolders?: string[]; model?: string };
+    const body = await readBody(req) as { allowedFolders?: string[]; model?: string; secure?: boolean };
     const sessionId = createSession({
       allowedFolders: body.allowedFolders ?? [],
       model: body.model ?? DEFAULT_MODEL,
       apiKey: API_KEY,
+      secure: body.secure ?? false,
     });
     return json(res, 201, { sessionId });
   }

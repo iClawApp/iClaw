@@ -111,14 +111,29 @@
       composerModeMenu.hidden = !open;
       composerModeBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
+    const MODE_PLACEHOLDERS = {
+      ask:     'Ask safely…',
+      work:    'Work inside selected folders…',
+      secure:  'Run risky tasks in isolation…',
+      execute: 'Use full iClaw power…',
+    };
+
+    function updateComposerPlaceholder(mode) {
+      if (input) input.placeholder = MODE_PLACEHOLDERS[mode] || 'Ask anything…';
+    }
+
     composerModeMenu.addEventListener('click', (e) => {
       const item = e.target.closest('.composer-mode-menu-item');
       if (!item) return;
       setComposerMode(item.dataset.mode);
       closeComposerModeMenu();
+      updateComposerPlaceholder(item.dataset.mode);
       if (typeof updateWorkFoldersButton === 'function') updateWorkFoldersButton();
       input?.focus();
     });
+
+    // Set placeholder on initial load
+    updateComposerPlaceholder(getComposerMode());
     document.addEventListener('click', (e) => {
       if (composerModeMenu.hidden) return;
       if (composerModesEl && !composerModesEl.contains(e.target)) closeComposerModeMenu();

@@ -54,6 +54,7 @@ function request(
 export interface CreateSessionOptions {
   allowedFolders?: string[];
   model?: string;
+  secure?: boolean;
 }
 
 /** Create a new Work Mode session. Returns sessionId. */
