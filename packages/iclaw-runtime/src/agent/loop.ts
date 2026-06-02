@@ -57,6 +57,38 @@ function describeApiError(err: unknown): string {
   return e?.message || String(err);
 }
 
+// Mid-turn compaction budget: once the in-flight message array passes this many
+// chars, stub out all but the last few tool outputs (they're already acted on;
+// the model can re-run a tool if it truly needs the data again).
+const INTURN_COMPACT_CHARS = Number(process.env.ICLAW_INTURN_COMPACT_CHARS) || 32_000;
+const INTURN_KEEP_TOOL_MSGS = Number(process.env.ICLAW_INTURN_KEEP_TOOL_MSGS) || 6;
+
+/**
+ * Shrink old tool-result messages in-place when the turn's context grows too
+ * large. Keeps message structure (assistant↔tool pairing + tool_call_ids) intact
+ * for API validity — only replaces stale tool *content* with a short stub. No
+ * extra model call. Shared by the Work/Incognito loop and the Sandbox loop.
+ */
+export function shrinkOldToolOutputs(messages: Message[]): void {
+  let total = 0;
+  for (const m of messages) total += typeof m.content === 'string' ? m.content.length : 0;
+  if (total <= INTURN_COMPACT_CHARS) return;
+
+  const toolIdx: number[] = [];
+  for (let i = 0; i < messages.length; i++) if (messages[i].role === 'tool') toolIdx.push(i);
+  const stubCount = toolIdx.length - INTURN_KEEP_TOOL_MSGS;
+  for (let k = 0; k < stubCount; k++) {
+    const i = toolIdx[k];
+    const content = (messages[i] as { content?: unknown }).content;
+    if (typeof content === 'string' && content.length > 160) {
+      messages[i] = {
+        ...messages[i],
+        content: `[earlier tool output omitted to save context — was ${content.length.toLocaleString()} chars; re-run the tool if you need it again]`,
+      } as Message;
+    }
+  }
+}
+
 const DEFAULT_SYSTEM = `Work Mode: read/search/edit/create files in the selected folders, run shell commands, and research the web (web_search then web_fetch).
 Prefer edit_file over rewriting whole files. For a large file you only need the gist of, use read_summary (cheap) instead of read_file. The user approves every write in the UI — don't paste file contents or ask "is this correct?"; just act, then briefly say what you did.
 Be efficient: chain shell steps with && in one call, don't repeat commands. Never go outside the allowed folders.
@@ -256,6 +288,9 @@ export async function* runAgentTurn(
         content: result,
       });
     }
+    // Mid-turn compaction: on a long multi-round task the accumulated tool
+    // outputs would be resent every round (O(n²) tokens). Stub out old ones.
+    shrinkOldToolOutputs(messages);
     // Continue loop — model will see tool results and respond
   }
 

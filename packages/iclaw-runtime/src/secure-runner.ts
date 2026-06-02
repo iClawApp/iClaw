@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 
 import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
+import { shrinkOldToolOutputs } from './agent/loop.js';
 import { dumpPrompt, newTurnId } from './agent/prompt-dump.js';
 
 const execFileAsync = promisify(execFile);
@@ -389,6 +390,7 @@ async function* runSecureAgentLoop(
       yield { type: 'tool_result', name: tc.name, result };
       messages.push({ role: 'tool', tool_call_id: `call_${i}`, content: result });
     }
+    shrinkOldToolOutputs(messages); // mid-turn compaction (see loop.ts)
   }
 
   yield { type: 'error', message: `Reached the step limit (${MAX_ROUNDS} tool rounds). Send "continue" to keep going, or raise ICLAW_MAX_ROUNDS.` };
