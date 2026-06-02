@@ -16,13 +16,17 @@
 
 FROM node:22-slim
 
-# High-value, low-weight CLIs (~10MB total). curl + ca-certificates also power
-# web access and non-root self-installs (downloading static binaries).
+# High-value CLIs. curl + ca-certificates also power web access and non-root
+# self-installs (downloading static binaries). git is baked in (not apt-installed
+# at runtime) because the container runs as non-root `node` and is recreated after
+# idle reap — a runtime `apt install git` can't work and wouldn't persist anyway.
+# Keep in sync with the Work-mode image (container/Dockerfile), which also ships git.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        git \
         ripgrep \
         unzip \
         zip \
