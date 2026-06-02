@@ -7,6 +7,7 @@
 import OpenAI from 'openai';
 
 import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, executeTool, type ToolContext, type ToolName } from './tools.js';
+import { dumpPrompt, newTurnId } from './prompt-dump.js';
 
 export interface AgentOptions {
   apiKey: string;
@@ -156,11 +157,16 @@ export async function* runAgentTurn(
 
   // Total tokens billed across all rounds of this turn (dev-mode display).
   let turnTokens = 0;
+  const dumpTurnId = newTurnId();
+  const dumpMode = opts.incognito ? 'incognito' : 'work';
 
   // Max tool-call rounds to prevent infinite loops (env-tunable: ICLAW_MAX_ROUNDS).
   for (let round = 0; round < MAX_ROUNDS; round++) {
     let textBuffer = '';
     const toolCallBuffers: Record<string, { name: string; arguments: string }> = {};
+
+    // Dev mode: persist exactly what we're about to send (incl. tool schemas).
+    dumpPrompt({ turnId: dumpTurnId, mode: dumpMode, model: opts.model, round, messages, tools });
 
     let stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
     try {

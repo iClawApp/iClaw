@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 
 import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
+import { dumpPrompt, newTurnId } from './agent/prompt-dump.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -297,9 +298,12 @@ async function* runSecureAgentLoop(
   ];
 
   let turnTokens = 0;
+  const dumpTurnId = newTurnId();
   for (let round = 0; round < MAX_ROUNDS; round++) {
     let textBuffer = '';
     const toolCallBuffers: Record<string, { name: string; arguments: string }> = {};
+
+    dumpPrompt({ turnId: dumpTurnId, mode: 'secure', model: opts.model, round, messages, tools });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let stream: AsyncIterable<any>;
