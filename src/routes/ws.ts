@@ -8,7 +8,7 @@ import type { Server as HttpServer, IncomingMessage } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { chats } from '../services/store';
 import { wsHub } from '../services/wsHub';
-import { sendMessage, abortChatRun, type WorkFolder } from '../services/chatRunner';
+import { sendMessage, abortChatRun, runIncognitoTurn, abortIncognito, type WorkFolder } from '../services/chatRunner';
 import { openclawWs } from '../services/openclawWs';
 import type { ClientMsg, ServerMsg } from '../types/protocol';
 import type { InlineSecretWire } from '../services/inlineSecrets';
@@ -134,6 +134,35 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
         });
       }
       return;
+
+    case 'incognito-send': {
+      const key = String((msg as { key?: unknown }).key ?? '').trim();
+      const content = String(msg.content ?? '').trim();
+      if (!key || !content) return;
+      try {
+        await runIncognitoTurn({
+          key,
+          content,
+          workFolders: parseWorkFolders((msg as Record<string, unknown>).workFolders),
+          onEvent: (e) => {
+            if (e.type === 'text-delta') send(socket, { type: 'incognito-turn-delta', key, text: e.text });
+            else if (e.type === 'tool') send(socket, { type: 'incognito-turn-tool', key, name: e.name });
+            else if (e.type === 'error') send(socket, { type: 'incognito-error', key, message: e.message });
+          },
+        });
+      } catch (err) {
+        send(socket, { type: 'incognito-error', key, message: err instanceof Error ? err.message : String(err) });
+      }
+      // Always close the turn so the client can re-enable the composer.
+      send(socket, { type: 'incognito-turn-ended', key });
+      return;
+    }
+
+    case 'incognito-abort': {
+      const key = String((msg as { key?: unknown }).key ?? '').trim();
+      if (key) await abortIncognito(key).catch((err) => console.error('[ws] incognito-abort failed', err));
+      return;
+    }
 
     case 'exec-approval': {
       const approvalId = String(msg.approvalId ?? '').trim();

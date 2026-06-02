@@ -29,6 +29,12 @@ export interface SessionOptions {
   model: string;
   apiKey: string;
   secure?: boolean;
+  /**
+   * Incognito (read-only, ephemeral): runs the host loop like Work, but writes
+   * are denied, reads are unrestricted, the shell sandbox forces every folder
+   * to :ro, and web_fetch is available. Mutually exclusive with `secure`.
+   */
+  incognito?: boolean;
   networkEnabled?: boolean;
   systemPrompt?: string;
   /** Stable identity (e.g. "chat:156") for reconnecting to a workspace. */
@@ -503,12 +509,15 @@ export async function sendMessage(sessionId: string, content: string, networkEna
   // (mounting all of home would expose ~/.ssh etc. to the shell). Each folder is
   // validated against the secret deny-list and dropped (with a notice) if it
   // names a sensitive root.
+  // Incognito forces every mounted folder to :ro — the shell may read but the
+  // kernel rejects all writes, matching the read-only contract.
+  const incognito = !!session.opts.incognito;
   let runShell: ((command: string, cwd: string) => Promise<string>) | undefined;
   if (session.opts.folderAccess?.length && await dockerAvailable()) {
     const mounts: WorkMount[] = [];
     for (const f of session.opts.folderAccess) {
       try {
-        mounts.push({ path: validateMountRoot(f.path), readonly: f.readonly });
+        mounts.push({ path: validateMountRoot(f.path), readonly: incognito ? true : f.readonly });
       } catch (err) {
         emit(session, {
           type: 'error',
@@ -531,6 +540,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     allowedFolders: session.opts.allowedFolders,
     folderAccess: session.opts.folderAccess,
     runShell,
+    incognito,
     systemPrompt: session.opts.systemPrompt,
     onWriteApproval: async (filePath, fileContent) => {
       emit(session, { type: 'approval_request', changeId: randomUUID(), path: filePath, content: fileContent });

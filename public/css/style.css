@@ -7459,6 +7459,36 @@ a.project-tab.project-tab--tasks:hover {
   padding: 0;
 }
 .secure-workspace-bar__change:hover { color: var(--text); }
+
+/* ── Incognito (ephemeral, read-only) ─────────────────────────────────────── */
+.incognito-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(var(--thread-max-width), 100%);
+  margin: 10px auto;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--text) 20%, transparent);
+}
+.incognito-banner__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 70%, var(--muted));
+}
+/* Subtle tint so it's obvious you're off the record. */
+body.incognito-mode .composer-field {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border, transparent));
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+body.incognito-mode .composer-mode-btn {
+  color: color-mix(in srgb, var(--accent) 75%, var(--text));
+}
 /* Pop up above the bar, anchored to it — never reflow the page. */
 .secure-ttl-menu {
   top: auto;

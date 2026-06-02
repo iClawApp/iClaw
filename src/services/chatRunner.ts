@@ -23,16 +23,9 @@ import {
   type ProcessedAttachment,
 } from './uploads';
 import type { ChatMode, Message, MessageAttachment } from '../types';
-import { DEFAULT_MODE, getModeDef } from './chatModes';
-import { loadOpenRouterConfig } from './config';
+import { DEFAULT_MODE } from './chatModes';
 import { buildCompactedHistory } from './contextCompaction';
 import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession } from './workRuntime';
-import {
-  streamComplete,
-  openRouterEnabled,
-  isOpenRouterFailure,
-  type OpenRouterMessage,
-} from './openRouter';
 import {
   expandStoredSecretPlaceholdersForGateway,
   resolveInlineSecretMarkersInContent,
@@ -57,64 +50,6 @@ export interface WorkFolder {
  * `abortChatRun` stop the right gateway run. Cleared in the runTurn `finally`.
  */
 const activeRunSessionKeys = new Map<number, string>();
-
-/**
- * AbortController for an in-flight Ask (OpenRouter) turn, keyed by chatId. Ask
- * runs as a direct HTTP stream — not an OpenClaw run — so Stop aborts the fetch
- * here rather than via `openclawWs.abortRun`. Cleared in the Ask `finally`.
- */
-const activeAskAborts = new Map<number, AbortController>();
-
-const ASK_SYSTEM_PROMPT = [
-  "You're answering in iClaw's lightweight Ask mode — explanation, planning, or a",
-  'direct answer to a question. You have no tools and cannot run code, edit files,',
-  "or browse: just answer clearly and concisely. Reply in the user's language.",
-].join('\n');
-
-/**
- * Build the OpenRouter message array for an Ask turn. The OpenRouter call is
- * stateless, so we replay a compact snapshot of the recent thread (read from
- * iClaw's own message store — includes BOTH prior Execute and Ask turns) as
- * proper role-tagged messages, then the current question last.
- */
-async function buildAskMessages(
-  chatId: number,
-  currentUserMsgId: number,
-  currentMessage: string,
-): Promise<OpenRouterMessage[]> {
-  // Compacted history: older turns are summarized (cheap model), recent ones
-  // kept verbatim — the chat is never truncated/cleared, only compressed.
-  const history = await buildCompactedHistory(chatId, currentUserMsgId);
-
-  return [
-    { role: 'system', content: ASK_SYSTEM_PROMPT },
-    ...history,
-    { role: 'user', content: currentMessage },
-  ];
-}
-
-/** Max chars kept from each side of the Ask exchange in the Execute bridge note. */
-const ASK_BRIDGE_QUESTION_CHARS = 600;
-const ASK_BRIDGE_ANSWER_CHARS = 1500;
-
-function clip(text: string, max: number): string {
-  const t = text.trim();
-  return t.length > max ? t.slice(0, max) + '…' : t;
-}
-
-/**
- * Compact note injected into the main (Execute) session after a hard-Ask turn
- * so Execute is aware of the out-of-band Ask exchange.
- */
-function buildAskBridgeNote(question: string, answer: string): string {
-  return [
-    'The user had an out-of-band "Ask" exchange (lightweight, no tools) in this chat:',
-    '',
-    `Q: ${clip(question, ASK_BRIDGE_QUESTION_CHARS)}`,
-    '',
-    `A: ${clip(answer, ASK_BRIDGE_ANSWER_CHARS)}`,
-  ].join('\n');
-}
 
 /**
  * Map an iClaw agent label ("openclaw/default", "openclaw/code", ...) to the
@@ -297,7 +232,7 @@ async function runTurnLocked(opts: {
   /** Attachments already saved under data/uploads (queued-message flush). */
   prePersistedAttachments?: MessageAttachment[];
   inlineSecrets?: InlineSecretWire[];
-  /** 'ask' | 'execute'. Defaults to 'execute' for full back-compat. */
+  /** 'execute' | 'work' | 'secure' | 'incognito'. Defaults to 'execute'. */
   mode?: ChatMode;
   workFolders?: WorkFolder[];
   networkEnabled?: boolean;
@@ -414,24 +349,6 @@ async function runTurnLocked(opts: {
     });
   }
 
-  // Ask gate (fail-closed). Ask answers via OpenRouter with no tools wired. If
-  // OpenRouter isn't configured we REFUSE rather than silently routing a
-  // tool-capable OpenClaw agent turn. (The composer also hides Ask without a
-  // key — this covers a stale client or a direct API call.)
-  if (getModeDef(mode).lightweight && !openRouterEnabled()) {
-    const note =
-      'Ask mode needs OPENROUTER_API_KEY configured on iClaw. Set it (see .env.example / README → "Chat modes"), or switch to Execute. Not running this turn.';
-    const sys = messages.append(chatId, 'system', note, 'ask-unavailable');
-    wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
-    wsHub.broadcastAll({
-      type: 'turn-ended',
-      chatId,
-      title: chats.get(chatId)?.title ?? '',
-      aborted: false,
-    });
-    return;
-  }
-
   // Title sub-request, in background, on first turn only.
   const titleTask: Promise<void> = isFirstTurn
     ? suggestChatTitleWithTimeout({ model: chat.agent, userMessage: storedUserContent })
@@ -545,54 +462,25 @@ async function runTurnLocked(opts: {
     return;
   }
 
-  // Run the turn. Two backends:
-  //   - Ask (lightweight): a direct, tool-less OpenRouter completion. No agent,
-  //     no tools wired — the model can't touch files/shell/browser. Deltas
-  //     stream through the same `onEvent` path Execute uses; Stop aborts the
-  //     fetch via `activeAskAborts`. Attachments aren't forwarded in Ask v1
-  //     (text Q&A only). The Ask→Execute bridge below carries the exchange into
-  //     the chat's main OpenClaw session so a later Execute turn is aware of it.
-  //   - Execute: the chat's own main-agent OpenClaw session, full tools.
-  const isAsk = getModeDef(mode).lightweight;
+  // Execute: the chat's own main-agent OpenClaw session, full tools.
   let gatewayAccumulated = '';
   let aborted = false;
   let authoritativeText: string | null = null;
 
-  if (isAsk) {
-    const controller = new AbortController();
-    activeAskAborts.set(chatId, controller);
-    try {
-      gatewayAccumulated = await streamComplete({
-        model: loadOpenRouterConfig().askModel,
-        messages: await buildAskMessages(chatId, userMsg.id, gatewayMessageBase),
-        signal: controller.signal,
-        onDelta: (text) => onEvent({ type: 'text-delta', text }),
-      });
-    } catch (err) {
-      // A user Stop aborts the fetch — treat as a normal aborted turn. The
-      // partial text already streamed via onEvent (into `assistantText`) is
-      // kept by the text-priority logic below. Anything else propagates.
-      if (controller.signal.aborted) aborted = true;
-      else throw err;
-    } finally {
-      activeAskAborts.delete(chatId);
-    }
-  } else {
-    activeRunSessionKeys.set(chatId, sessionKey);
-    try {
-      ({
-        text: gatewayAccumulated,
-        aborted,
-        authoritativeText,
-      } = await openclawWs.runTurn({
-        sessionKey,
-        message: gatewayMessageBase,
-        onEvent,
-        attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
-      }));
-    } finally {
-      activeRunSessionKeys.delete(chatId);
-    }
+  activeRunSessionKeys.set(chatId, sessionKey);
+  try {
+    ({
+      text: gatewayAccumulated,
+      aborted,
+      authoritativeText,
+    } = await openclawWs.runTurn({
+      sessionKey,
+      message: gatewayMessageBase,
+      onEvent,
+      attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
+    }));
+  } finally {
+    activeRunSessionKeys.delete(chatId);
   }
 
   // Picking the assistant text in priority order:
@@ -642,18 +530,6 @@ async function runTurnLocked(opts: {
     syncSidebarUnread(chatId);
   }
 
-  // Ask→Execute bridge. An Ask turn ran on OpenRouter, off to the side, so the
-  // chat's main OpenClaw (Execute) session has no memory of it. Inject a compact
-  // note into the main session (no model run, zero cost) so a later Execute
-  // turn — "ok, now do what we discussed" — sees the exchange. Best-effort:
-  // never let a bridge failure affect the turn the user already got. Stored
-  // content keeps secret placeholders, so nothing sensitive is injected.
-  if (isAsk && assistantMsg && !aborted && finalText.trim()) {
-    const note = buildAskBridgeNote(storedUserContent, finalText);
-    void openclawWs
-      .injectMessage({ sessionKey, message: note, label: 'Ask' })
-      .catch(() => {});
-  }
 
   // Persistent "Stopped by user" marker. Lives in `messages` so it
   // survives page reload + lands in the iClaw-cloud share payload.
@@ -1100,13 +976,99 @@ async function runWorkModeTurn(opts: {
   });
 }
 
-export async function abortChatRun(chatId: number): Promise<void> {
-  // Ask runs on OpenRouter via fetch — abort the controller, not a gateway run.
-  const askAbort = activeAskAborts.get(chatId);
-  if (askAbort) {
-    askAbort.abort();
+/**
+ * Incognito turns — fully ephemeral. Keyed by a client-generated string (the
+ * browser's in-RAM chat id), NOT a DB chat. Nothing is persisted: no message
+ * rows, no chat row, no facts/skills review. Output streams to the caller, who
+ * forwards it to the originating socket only. The runtime session enforces
+ * read-only + read-anywhere + web_fetch (incognito:true).
+ */
+const incognitoSessions = new Map<string, { sessionId: string; foldersKey: string }>();
+
+export type IncognitoEvent =
+  | { type: 'text-delta'; text: string }
+  | { type: 'tool'; name: string }
+  | { type: 'error'; message: string };
+
+export async function runIncognitoTurn(opts: {
+  key: string;
+  content: string;
+  workFolders?: WorkFolder[];
+  onEvent: (event: IncognitoEvent) => void;
+}): Promise<void> {
+  const { key, content, onEvent } = opts;
+
+  // Recreate the runtime session if the selected folders changed (the shell's
+  // :ro mounts are baked in at creation), mirroring the Work path.
+  const foldersKey = foldersSignature(opts.workFolders);
+  const existing = incognitoSessions.get(key);
+  if (existing && existing.foldersKey !== foldersKey) {
+    await stopWorkSession(existing.sessionId).catch(() => {});
+    incognitoSessions.delete(key);
+  }
+
+  let sessionId = incognitoSessions.get(key)?.sessionId;
+  if (!sessionId) {
+    try {
+      const folderAccess = opts.workFolders?.length ? opts.workFolders : undefined;
+      // No HOME fallback: incognito reads anywhere via the runtime, and with no
+      // folders the read-only shell is simply unavailable (file/web tools work).
+      const allowedFolders = folderAccess ? folderAccess.map((f) => f.path) : [];
+      sessionId = await createWorkSession({
+        allowedFolders,
+        folderAccess,
+        incognito: true,
+        key: `incognito:${key}`,
+      });
+      incognitoSessions.set(key, { sessionId, foldersKey });
+    } catch (err) {
+      onEvent({ type: 'error', message: `Incognito runtime unavailable. (${err instanceof Error ? err.message : String(err)})` });
+      return;
+    }
+  }
+
+  try {
+    await sendWorkMessage(sessionId, content);
+  } catch (err) {
+    incognitoSessions.delete(key);
+    onEvent({ type: 'error', message: `Incognito session lost, please resend. (${err instanceof Error ? err.message : String(err)})` });
     return;
   }
+
+  await new Promise<void>((resolve) => {
+    const unsubscribe = subscribeWorkEvents(
+      sessionId!,
+      (event) => {
+        if (event.type === 'text') {
+          onEvent({ type: 'text-delta', text: event.content });
+        } else if (event.type === 'tool') {
+          onEvent({ type: 'tool', name: event.name });
+        } else if (event.type === 'done') {
+          unsubscribe();
+          resolve();
+        } else if (event.type === 'error') {
+          onEvent({ type: 'error', message: event.message });
+          unsubscribe();
+          resolve();
+        }
+      },
+      (err) => {
+        if (err.message !== 'aborted') onEvent({ type: 'error', message: err.message });
+        resolve();
+      },
+    );
+  });
+}
+
+/** Stop and forget an incognito session (abort / tab close). */
+export async function abortIncognito(key: string): Promise<void> {
+  const e = incognitoSessions.get(key);
+  if (!e) return;
+  incognitoSessions.delete(key);
+  await stopWorkSession(e.sessionId).catch(() => {});
+}
+
+export async function abortChatRun(chatId: number): Promise<void> {
   // Execute: abort the OpenClaw run on the session actually executing this turn.
   const active = activeRunSessionKeys.get(chatId);
   if (active && active.startsWith('agent:')) {

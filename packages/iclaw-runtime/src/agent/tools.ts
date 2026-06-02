@@ -13,6 +13,8 @@ const execFileAsync = promisify(execFile);
 
 const MAX_FILE_SIZE = 1_000_000; // 1 MB read limit
 const COMMAND_TIMEOUT = 30_000;
+const WEB_FETCH_TIMEOUT = 20_000;
+const WEB_FETCH_MAX_CHARS = 20_000;
 
 // ── Tool JSON schemas (sent to the model) ────────────────────────────────────
 
@@ -93,7 +95,31 @@ export const TOOL_DEFINITIONS = [
   },
 ] as const;
 
-export type ToolName = 'list_files' | 'read_file' | 'search_files' | 'write_file' | 'run_command';
+/**
+ * Web research tool. Kept OUT of TOOL_DEFINITIONS and appended by the agent loop
+ * only when enabled (Incognito), so it never reaches Secure Mode — there, all
+ * network must go through the container's `--network` flag, and a host-side
+ * fetch would bypass that boundary.
+ */
+export const WEB_FETCH_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'web_fetch',
+    description:
+      'Fetch a web page or HTTP(S) API and return its text (HTML is stripped to readable text). ' +
+      'Read-only — use for research. Returns up to ~20k chars.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Absolute http(s) URL to fetch' },
+      },
+      required: ['url'],
+    },
+  },
+} as const;
+
+export type ToolName =
+  | 'list_files' | 'read_file' | 'search_files' | 'write_file' | 'run_command' | 'web_fetch';
 
 // ── Tool context (injected per-session) ──────────────────────────────────────
 
@@ -113,8 +139,25 @@ export interface ToolContext {
    * fallback that keeps read-only an honest guarantee.
    */
   runShell?: (command: string, cwd: string) => Promise<string>;
+  /**
+   * Incognito (read-only): write_file is denied outright (nothing ever hits
+   * disk), and run_command is only reachable via a read-only sandbox.
+   */
+  readOnly?: boolean;
+  /**
+   * Incognito: file reads (read/list/search) are NOT restricted to
+   * allowedFolders — the agent may read anywhere on the host. The secret
+   * deny-list (BLOCKED_PATTERNS in security.ts) still applies, so .ssh/.env/
+   * credentials etc. are refused regardless.
+   */
+  readAnywhere?: boolean;
   /** Called when agent wants to write — returns true if approved, false if rejected. */
   requestWriteApproval: (filePath: string, content: string) => Promise<boolean>;
+}
+
+/** Folders to validate reads against — empty (anywhere) for Incognito. */
+function readFolders(ctx: ToolContext): string[] {
+  return ctx.readAnywhere ? [] : ctx.allowedFolders;
 }
 
 // ── Tool implementations ──────────────────────────────────────────────────────
@@ -131,6 +174,7 @@ export async function executeTool(
       case 'search_files': return await searchFiles(args, ctx);
       case 'write_file': return await writeFile(args, ctx);
       case 'run_command': return await runCommand(args, ctx);
+      case 'web_fetch': return await webFetch(args);
       default: return `Unknown tool: ${name}`;
     }
   } catch (err) {
@@ -140,7 +184,7 @@ export async function executeTool(
 }
 
 async function listFiles(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
-  const dir = validatePath(args.path as string, ctx.allowedFolders);
+  const dir = validatePath(args.path as string, readFolders(ctx));
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   // Explicit [dir]/[file] labels (+ trailing slash on dirs) so the model can
   // reliably tell directories from files and recurse without guessing.
@@ -151,7 +195,7 @@ async function listFiles(args: Record<string, unknown>, ctx: ToolContext): Promi
 }
 
 async function readFile(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
-  const filePath = validatePath(args.path as string, ctx.allowedFolders);
+  const filePath = validatePath(args.path as string, readFolders(ctx));
   const stat = fs.statSync(filePath);
   if (stat.size > MAX_FILE_SIZE) {
     return `File too large (${stat.size} bytes, limit ${MAX_FILE_SIZE}). Use search_files to find specific content.`;
@@ -160,7 +204,7 @@ async function readFile(args: Record<string, unknown>, ctx: ToolContext): Promis
 }
 
 async function searchFiles(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
-  const dir = validatePath(args.path as string, ctx.allowedFolders);
+  const dir = validatePath(args.path as string, readFolders(ctx));
   const query = args.query as string;
   const pattern = (args.filePattern as string | undefined) ?? '';
 
@@ -184,6 +228,10 @@ async function searchFiles(args: Record<string, unknown>, ctx: ToolContext): Pro
 }
 
 async function writeFile(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+  if (ctx.readOnly) {
+    return 'write_file is disabled in Incognito mode. Incognito is read-only and never writes to disk — ' +
+      'summarize or return the content in your reply instead.';
+  }
   const filePath = validatePath(args.path as string, ctx.allowedFolders);
   const content = args.content as string;
 
@@ -218,4 +266,56 @@ async function runCommand(args: Record<string, unknown>, ctx: ToolContext): Prom
   // rejects any write outside the read & write folders. Commands may freely
   // read from read-only folders.
   return ctx.runShell(command, cwd);
+}
+
+// ── web_fetch (read-only research) ────────────────────────────────────────────
+
+/** Crude HTML → readable text. Good enough for research summaries, not parsing. */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<\/(p|div|li|h[1-6]|tr|section|article|header|footer)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function webFetch(args: Record<string, unknown>): Promise<string> {
+  const url = String(args.url ?? '').trim();
+  if (!/^https?:\/\/\S+$/i.test(url)) {
+    return 'Only absolute http(s) URLs are allowed.';
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), WEB_FETCH_TIMEOUT);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: { 'User-Agent': 'iClaw-Incognito/1.0', Accept: 'text/html,application/json;q=0.9,*/*;q=0.8' },
+    });
+    const ct = res.headers.get('content-type') || '';
+    const raw = await res.text();
+    let text = /html/i.test(ct) ? htmlToText(raw) : raw.trim();
+    if (text.length > WEB_FETCH_MAX_CHARS) {
+      text = text.slice(0, WEB_FETCH_MAX_CHARS) + `\n\n[truncated at ${WEB_FETCH_MAX_CHARS} chars]`;
+    }
+    return `HTTP ${res.status} — ${url}\n\n${text || '(empty response body)'}`;
+  } catch (err) {
+    const msg = err instanceof Error && err.name === 'AbortError'
+      ? `timed out after ${WEB_FETCH_TIMEOUT / 1000}s`
+      : err instanceof Error ? err.message : String(err);
+    return `Fetch failed (${url}): ${msg}`;
+  } finally {
+    clearTimeout(timer);
+  }
 }

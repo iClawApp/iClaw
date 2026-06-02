@@ -42,9 +42,9 @@ export type ClientMsg =
       agent?: string;
       projectId?: number | null;
       /**
-       * How to handle this message — 'ask' (lightweight, no heavy execution)
-       * or 'execute' (full agent, current default). Omitted/unknown → server
-       * treats it as 'execute'. See services/chatModes.ts.
+       * How to handle this message — 'execute' (full agent, default),
+       * 'work' / 'secure' / 'incognito' (iclaw-runtime). Omitted/unknown →
+       * server treats it as 'execute'. See services/chatModes.ts.
        */
       mode?: ChatMode;
       /** Reply to an existing user/assistant row in this chat (quote ≤240 chars). */
@@ -70,6 +70,21 @@ export type ClientMsg =
     }
   /** Abort a running turn for this chat. */
   | { type: 'abort'; chatId: number }
+  /**
+   * Incognito turn — ephemeral, never persisted. `key` is the browser's in-RAM
+   * chat id (not a DB chatId). The server streams `incognito-*` events back to
+   * THIS socket only. `workFolders` mirrors the `send` field (folders are forced
+   * read-only in incognito).
+   */
+  | {
+      type: 'incognito-send';
+      key: string;
+      content: string;
+      requestId?: string;
+      workFolders?: Array<{ path: string; readonly?: boolean } | string>;
+    }
+  /** Abort / forget an incognito session. */
+  | { type: 'incognito-abort'; key: string }
   /** Resolve a pending exec approval — `decision` is 'approved' | 'denied'. */
   | {
       type: 'exec-approval';
@@ -92,6 +107,12 @@ export interface ChatActivitySnapshot {
 export type ServerMsg =
   | { type: 'hello'; serverStarted: number }
   | { type: 'pong' }
+
+  /* ---- incognito (ephemeral; keyed by the browser's in-RAM chat id) ---- */
+  | { type: 'incognito-turn-delta'; key: string; text: string }
+  | { type: 'incognito-turn-tool'; key: string; name: string }
+  | { type: 'incognito-turn-ended'; key: string }
+  | { type: 'incognito-error'; key: string; message: string }
 
   /* ---- chat lifecycle ---- */
   | {

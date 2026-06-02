@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, executeTool, type ToolContext, type ToolName } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, executeTool, type ToolContext, type ToolName } from './tools.js';
 
 export interface AgentOptions {
   apiKey: string;
@@ -16,6 +16,12 @@ export interface AgentOptions {
   folderAccess?: { path: string; readonly: boolean }[];
   /** Shell backend for run_command (Docker sandbox). Omit to disable commands. */
   runShell?: (command: string, cwd: string) => Promise<string>;
+  /**
+   * Incognito (read-only, ephemeral): file reads are unrestricted (read
+   * anywhere; secrets still refused), write_file is disabled, run_command is
+   * sandboxed read-only, and the `web_fetch` research tool is exposed.
+   */
+  incognito?: boolean;
   systemPrompt?: string;
   onWriteApproval?: (filePath: string, content: string) => Promise<boolean>;
 }
@@ -54,6 +60,12 @@ sees and approves every write in the UI, so do NOT paste the file contents into 
 reply beforehand or ask "is this correct?" — only narrate briefly what you changed after.
 Never access paths outside the allowed folders.`;
 
+const INCOGNITO_SYSTEM = `You are a private, READ-ONLY research assistant running in Incognito mode.
+You can: read files (anywhere on this computer), search them, run read-only shell commands in the user's selected folders, and fetch the web with web_fetch.
+You CANNOT change anything: write_file is disabled and the shell runs in a read-only sandbox — never claim you saved, created, or edited a file.
+This conversation is EPHEMERAL: nothing is stored and nothing is added to project memory. Deliver findings directly in your reply; the user copies what they need.
+Be concise.`;
+
 /**
  * Build the per-turn system message. The base rules and the folder-access
  * summary are ALWAYS included so the model knows which folders are read-only
@@ -61,6 +73,23 @@ Never access paths outside the allowed folders.`;
  * context) is appended rather than replacing the base.
  */
 function buildSystemPrompt(opts: AgentOptions): string {
+  if (opts.incognito) {
+    const parts = [INCOGNITO_SYSTEM];
+    if (opts.allowedFolders.length) {
+      parts.push(
+        `\nThe read-only shell (run_command) may run in these folders:\n` +
+          opts.allowedFolders.map((f) => `- ${f}`).join('\n') +
+          `\nFile reads (read_file/search_files) are NOT limited to these — you may read elsewhere too. Secret files are always refused.`,
+      );
+    } else {
+      parts.push(
+        '\nNo folders are selected for the shell, so run_command is unavailable. Use read_file / search_files / web_fetch.',
+      );
+    }
+    if (opts.systemPrompt?.trim()) parts.push(`\n${opts.systemPrompt.trim()}`);
+    return parts.join('\n');
+  }
+
   const parts = [DEFAULT_SYSTEM];
 
   const folders = opts.folderAccess?.length
@@ -100,8 +129,16 @@ export async function* runAgentTurn(
     allowedFolders: opts.allowedFolders,
     folderAccess: opts.folderAccess,
     runShell: opts.runShell,
+    readOnly: opts.incognito,
+    readAnywhere: opts.incognito,
     requestWriteApproval: opts.onWriteApproval ?? (async () => true),
   };
+
+  // web_fetch is exposed only in Incognito (research). Excluded elsewhere so it
+  // can't bypass Secure Mode's container network boundary.
+  const tools = opts.incognito
+    ? [...TOOL_DEFINITIONS, WEB_FETCH_TOOL]
+    : TOOL_DEFINITIONS;
 
   const messages: Message[] = [
     { role: 'system', content: buildSystemPrompt(opts) },
@@ -119,7 +156,7 @@ export async function* runAgentTurn(
       stream = await client.chat.completions.create({
         model: opts.model,
         messages,
-        tools: TOOL_DEFINITIONS as unknown as OpenAI.Chat.ChatCompletionTool[],
+        tools: tools as unknown as OpenAI.Chat.ChatCompletionTool[],
         tool_choice: 'auto',
         stream: true,
       });

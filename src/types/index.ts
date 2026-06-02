@@ -109,19 +109,20 @@ export type ChatKind = 'normal' | 'draft' | 'task_execution';
 /**
  * How a user message should be handled.
  *
- *   - 'execute' — current behavior: OpenClaw may use tools, files, shell,
- *     browser, etc. This is the default and the back-compat fallback for any
- *     message whose `mode` is missing or unrecognized.
- *   - 'ask'     — lightweight question / explanation / planning; OpenClaw is
- *     asked to answer without heavy agent execution.
+ *   - 'execute' — default: OpenClaw may use tools, files, shell, browser, etc.
+ *     The back-compat fallback for any message whose `mode` is missing or
+ *     unrecognized.
+ *   - 'work' / 'secure' — run on iclaw-runtime (our runtime).
+ *   - 'incognito' — read-only, ephemeral research on iclaw-runtime; never
+ *     persisted (see services/chatModes.ts).
  *
- * Kept as a string union for the two live modes, but the full catalog
- * (incl. planned modes like research / image / safe_run) lives in
+ * Kept as a string union for the live modes, but the full catalog
+ * (incl. planned modes like image) lives in
  * `services/chatModes.ts` so new modes can be added without touching this
  * type everywhere. Storage columns are plain TEXT, so adding a mode later
  * needs no DB migration.
  */
-export type ChatMode = 'ask' | 'execute' | 'work' | 'secure';
+export type ChatMode = 'execute' | 'work' | 'secure' | 'incognito';
 
 export type TaskStatus =
   | 'planning'

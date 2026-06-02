@@ -91,6 +91,68 @@
     if (!opts || opts.persist !== false) {
       try { localStorage.setItem(MODE_STORAGE_KEY, next); } catch (_) {}
     }
+    // Incognito: tint the surface + show the "nothing saved" banner, and start a
+    // fresh ephemeral session each time the mode is (re)entered.
+    if (typeof syncIncognitoSurface === 'function') syncIncognitoSurface(next);
+  }
+
+  // ── Incognito (ephemeral, never persisted) ────────────────────────────────
+  // The conversation lives only in this tab: messages render locally, the turn
+  // streams over `incognito-*` WS events keyed by `activeIncognitoKey`, and
+  // nothing is written to the DB. Reloading the page clears it.
+  let activeIncognitoKey = null;
+
+  function newIncognitoKey() {
+    return 'inc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  }
+
+  function syncIncognitoSurface(mode) {
+    const on = mode === 'incognito';
+    document.body.classList.toggle('incognito-mode', on);
+    let banner = document.getElementById('incognito-banner');
+    if (on) {
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'incognito-banner';
+        banner.className = 'incognito-banner';
+        banner.innerHTML =
+          '<span class="incognito-banner__dot" aria-hidden="true"></span>' +
+          'Incognito — read-only research. This conversation isn’t saved and adds nothing to project memory.';
+        const root = typeof messagesAppendRoot === 'function' ? messagesAppendRoot() : messagesEl;
+        (root || messagesEl)?.prepend(banner);
+      }
+      // Fresh session whenever incognito is (re)selected.
+      activeIncognitoKey = null;
+    } else if (banner) {
+      banner.remove();
+    }
+  }
+
+  /**
+   * Finalize the streamed incognito reply (no message-appended for ephemeral
+   * turns): render the full markdown, strip the streaming chrome, and release
+   * the composer. Shared by the `incognito-turn-ended` event and the stop button.
+   */
+  function finalizeIncognitoStream() {
+    setStopVisible(false);
+    cancelStreamRender();
+    if (currentStreamEl) {
+      const body = currentStreamEl.querySelector('.stream-body, .msg-body');
+      if (body && currentStreamFullText.trim()) {
+        body.classList.remove('stream-body');
+        body.innerHTML = renderMarkdown(currentStreamFullText);
+        decorateMessageBody(body);
+        currentStreamEl.classList.remove('streaming', 'stream-waiting', 'stream-tool', 'stream-generating');
+        const st = currentStreamEl.querySelector('.stream-status');
+        if (st) { stopStreamStatusDotAnim(st); st.remove(); }
+      } else {
+        currentStreamEl.remove();
+      }
+      currentStreamEl = null;
+    }
+    currentStreamFullText = '';
+    streamShownLen = 0;
+    if (inFlight) { inFlight = false; if (waitingItems[0]) flushNextQueued(); }
   }
 
   function closeComposerModeMenu() {
@@ -112,10 +174,10 @@
       composerModeBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
     const MODE_PLACEHOLDERS = {
-      ask:     'Ask safely',
-      work:    'Work inside selected folders',
-      secure:  'Run risky tasks in isolation',
-      execute: 'Use full iClaw power',
+      work:      'Work inside selected folders',
+      secure:    'Run risky tasks in isolation',
+      incognito: 'Private read-only research — nothing saved',
+      execute:   'Use full iClaw power',
     };
 
     function updateComposerPlaceholder(mode) {
@@ -244,7 +306,8 @@
   function updateWorkFoldersButton() {
     if (!workFoldersBtn) return;
     const mode = getComposerMode();
-    workFoldersBtn.hidden = (mode !== 'work');
+    // Incognito also uses folders — as read-only roots for its sandboxed shell.
+    workFoldersBtn.hidden = (mode !== 'work' && mode !== 'incognito');
     renderWorkFoldersList();
     updateNetworkToggle();
   }
@@ -3963,6 +4026,42 @@
         return;
       }
 
+      /* ---- incognito (ephemeral; keyed, never persisted) ---- */
+      case 'incognito-turn-delta': {
+        if (msg.key !== activeIncognitoKey) return;
+        const el = ensureStreamEl();
+        currentStreamFullText += msg.text;
+        if (el.classList.contains('stream-waiting') || el.classList.contains('stream-tool')) {
+          el.classList.remove('stream-waiting', 'stream-tool');
+          el.classList.add('stream-generating');
+          const status = el.querySelector('.stream-status');
+          if (status) { stopStreamStatusDotAnim(status); status.hidden = true; }
+        }
+        ensureTyping();
+        return;
+      }
+
+      case 'incognito-turn-tool':
+        // Tool activity indicator could go here; ignored for now.
+        return;
+
+      case 'incognito-error': {
+        if (msg.key !== activeIncognitoKey) return;
+        const div = document.createElement('div');
+        div.className = 'msg system error';
+        div.innerHTML =
+          '<div class="role">error</div>' +
+          '<div class="msg-body">' + escapeHtml('Error: ' + msg.message) + '</div>';
+        messagesAppendRoot()?.appendChild(div);
+        return;
+      }
+
+      case 'incognito-turn-ended': {
+        if (msg.key !== activeIncognitoKey) return;
+        finalizeIncognitoStream();
+        return;
+      }
+
       case 'project-fact-suggestions': {
         if (msg.chatId !== activeChatId) return;
         const have = existingFactSuggestionIds();
@@ -4470,6 +4569,34 @@
     if (item.serverId != null) ownQueueIds.delete(item.serverId);
     renderQueue();
     inFlight = true;
+
+    // Incognito: ephemeral turn — render locally, stream over `incognito-*`
+    // events, never persist. No pending-id (no message-appended adopts it) and
+    // no server chat is created.
+    if (item.mode === 'incognito') {
+      if (!activeIncognitoKey) activeIncognitoKey = newIncognitoKey();
+      appendMessage({ role: 'user', content: item.content, mode: 'incognito' });
+      currentStreamFullText = '';
+      streamShownLen = 0;
+      currentStreamEl = ensureStreamEl();
+      setStopVisible(true);
+      const wf = (typeof getWorkFolders === 'function' ? getWorkFolders() : [])
+        .map((f) => ({ path: f.path, readonly: true }));
+      const ok = wsSend({
+        type: 'incognito-send',
+        key: activeIncognitoKey,
+        requestId: 'r-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        content: item.content,
+        workFolders: wf.length ? wf : undefined,
+      });
+      if (!ok) {
+        inFlight = false;
+        addWaitingItem(item, { at: 'front' });
+        renderQueue();
+      }
+      return;
+    }
+
     // Optimistically append user msg. Mark it as pending-id so the
     // upcoming `message-appended` for the same user msg adopts this node
     // instead of duplicating.
@@ -7110,6 +7237,14 @@
   }
   if (stopBtn) {
     stopBtn.addEventListener('click', () => {
+      // Incognito has no DB chat — abort by ephemeral key and finalize locally.
+      if (getComposerMode() === 'incognito' && activeIncognitoKey) {
+        wsSend({ type: 'incognito-abort', key: activeIncognitoKey });
+        finalizeIncognitoStream();
+        stopBtn.disabled = true;
+        setTimeout(() => { stopBtn.disabled = false; }, 3000);
+        return;
+      }
       if (activeChatId == null) return;
       wsSend({ type: 'abort', chatId: activeChatId });
       // Optimistically disable until server confirms via turn-error/ended,

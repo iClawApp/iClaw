@@ -3,9 +3,9 @@
  *
  * Used for the lightweight, tool-less features that should NOT spin up a full
  * OpenClaw agent run:
- *   - Ask mode      → a plain chat completion (no `tools` field at all, so the
- *                     model physically cannot call shell/file/browser tools).
  *   - Chat titles   → a cheap single-shot completion.
+ *   - Background sub-tasks (fact extraction, fact compaction, skill review) via
+ *     services/subtaskLlm.ts (preferred over a throwaway OpenClaw turn).
  *   - Speech-to-text → audio transcription via a multimodal model.
  *
  * Talks the OpenAI-compatible `/chat/completions` endpoint OpenRouter exposes.

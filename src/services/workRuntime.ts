@@ -61,6 +61,8 @@ export interface CreateSessionOptions {
   folderAccess?: { path: string; readonly: boolean }[];
   model?: string;
   secure?: boolean;
+  /** Incognito: read-only, read-anywhere, web_fetch enabled. Mutually exclusive with secure. */
+  incognito?: boolean;
   systemPrompt?: string;
   /** Stable identity (e.g. "chat:156") so a chat reconnects to its workspace. */
   key?: string;
@@ -71,6 +73,7 @@ export interface CreateSessionOptions {
 /** Create a new Work Mode session. Returns sessionId. */
 export async function createWorkSession(opts: CreateSessionOptions = {}): Promise<string> {
   const body: Record<string, unknown> = { allowedFolders: opts.allowedFolders, secure: opts.secure };
+  if (opts.incognito) body.incognito = true;
   if (opts.folderAccess?.length) body.folderAccess = opts.folderAccess;
   if (opts.model) body.model = opts.model;
   if (opts.systemPrompt) body.systemPrompt = opts.systemPrompt;
