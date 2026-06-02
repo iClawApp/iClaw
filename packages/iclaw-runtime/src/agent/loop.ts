@@ -25,6 +25,9 @@ export interface AgentOptions {
   incognito?: boolean;
   systemPrompt?: string;
   onWriteApproval?: (filePath: string, content: string) => Promise<boolean>;
+  /** Abort the in-flight turn (user pressed Stop). Stops the model stream and
+   *  ends the loop cleanly between rounds. */
+  signal?: AbortSignal;
 }
 
 export type AgentEvent =
@@ -181,6 +184,11 @@ export async function* runAgentTurn(
 
   // Max tool-call rounds to prevent infinite loops (env-tunable: ICLAW_MAX_ROUNDS).
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    // User pressed Stop between rounds → end cleanly (partial text already sent).
+    if (opts.signal?.aborted) {
+      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+      return;
+    }
     let textBuffer = '';
     const toolCallBuffers: Record<string, { name: string; arguments: string }> = {};
 
@@ -189,15 +197,23 @@ export async function* runAgentTurn(
 
     let stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
     try {
-      stream = await client.chat.completions.create({
-        model: opts.model,
-        messages,
-        tools: tools as unknown as OpenAI.Chat.ChatCompletionTool[],
-        tool_choice: 'auto',
-        stream: true,
-        stream_options: { include_usage: true }, // final chunk carries token usage
-      });
+      stream = await client.chat.completions.create(
+        {
+          model: opts.model,
+          messages,
+          tools: tools as unknown as OpenAI.Chat.ChatCompletionTool[],
+          tool_choice: 'auto',
+          stream: true,
+          stream_options: { include_usage: true }, // final chunk carries token usage
+        },
+        { signal: opts.signal },
+      );
     } catch (err) {
+      // Aborted by the user → not an error; end the turn cleanly.
+      if (opts.signal?.aborted) {
+        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+        return;
+      }
       yield { type: 'error', message: describeApiError(err) };
       return;
     }
@@ -239,6 +255,11 @@ export async function* runAgentTurn(
         }
       }
     } catch (err) {
+      // Aborted by the user → not an error; end the turn cleanly.
+      if (opts.signal?.aborted) {
+        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+        return;
+      }
       yield { type: 'error', message: describeApiError(err) };
       return;
     }

@@ -7,13 +7,14 @@
  * API:
  *   POST   /sessions                  → { sessionId }
  *   POST   /sessions/:id/messages     → 202
+ *   POST   /sessions/:id/abort        → 200 (stop in-flight turn, keep session)
  *   GET    /sessions/:id/events       → SSE stream
  *   DELETE /sessions/:id              → 200
  *   GET    /health                    → 200
  */
 import http from 'node:http';
 
-import { createSession, getSession, deleteSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, sweepExpiredSessions, startContainerReaper, loadPersistedSessions } from './sessions.js';
+import { createSession, getSession, deleteSession, abortSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, sweepExpiredSessions, startContainerReaper, loadPersistedSessions } from './sessions.js';
 import { killOrphanContainers } from './secure-runner.js';
 import { killOrphanWorkContainers } from './work-container.js';
 
@@ -101,6 +102,13 @@ const server = http.createServer(async (req, res) => {
     if (!body.content?.trim()) return json(res, 400, { error: 'content required' });
     sendMessage(sessionId, body.content, body.networkEnabled, body.ttlDays).catch(console.error);
     return json(res, 202, { queued: true });
+  }
+
+  // POST /sessions/:id/abort — stop the in-flight turn (keeps the session).
+  if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'abort') {
+    const sessionId = parts[1];
+    if (!getSession(sessionId)) return json(res, 404, { error: 'session not found' });
+    return json(res, 200, { aborted: abortSession(sessionId) });
   }
 
   // GET /sessions/:id/events (SSE)

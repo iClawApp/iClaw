@@ -200,6 +200,48 @@ export const WEB_SEARCH_TOOL = {
   },
 } as const;
 
+/**
+ * analyze_link — extract the *content* behind a URL (not the raw HTML).
+ *
+ * Kept OUT of TOOL_DEFINITIONS and appended by the loop, like the web tools.
+ * Unlike web_fetch/web_search (host-side), this runs ENTIRELY inside the
+ * sandbox: the loop injects a `runInSandbox` callback wired to the container,
+ * so the network egress respects the same container network gate. First handler
+ * is YouTube (subtitles via yt-dlp); the registry is built to grow to more
+ * sites without touching the schema.
+ *
+ * `mode` is the token lever: "summary" (default) hands the extracted text to a
+ * cheap model focused on `purpose` and returns only the gist; "full" returns the
+ * cleaned text (clamped). Always prefer "summary" unless you need exact wording.
+ */
+export const ANALYZE_LINK_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'analyze_link',
+    description:
+      'Extract and read the content behind a URL (currently: YouTube video subtitles/transcript). ' +
+      'Runs in the sandbox. Use mode:"summary" (default, cheap) for the gist; mode:"full" only when ' +
+      'you need exact wording. Always pass a short "purpose" so the summary keeps what you actually need. ' +
+      'For plain web articles use web_fetch instead.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Absolute http(s) URL (e.g. a YouTube video link)' },
+        mode: {
+          type: 'string',
+          enum: ['summary', 'full'],
+          description: 'summary = cheap, purpose-focused gist (default); full = cleaned transcript (clamped)',
+        },
+        purpose: {
+          type: 'string',
+          description: 'One short sentence on what you need from the link — drives the summary extraction',
+        },
+      },
+      required: ['url'],
+    },
+  },
+} as const;
+
 export type ToolName =
   | 'list_files' | 'read_file' | 'read_summary' | 'search_files' | 'write_file' | 'edit_file'
   | 'run_command' | 'web_fetch' | 'web_search';
@@ -612,4 +654,165 @@ async function webSearch(args: Record<string, unknown>): Promise<string> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ── analyze_link (sandboxed link → content extraction) ───────────────────────
+//
+// Engine: yt-dlp (1000+ site extractors → easy to grow past YouTube). Shipped as
+// a self-contained binary self-installed into /workspace/.tools/bin on first use
+// — deliberately NOT baked into the image (keeps it lean; the binary persists in
+// the workspace across container restarts, like uv). All network egress happens
+// inside the sandbox via the injected runInSandbox callback, so it honours the
+// same container network gate as run_command.
+
+const ANALYZE_LINK_FULL_MAX_CHARS = Number(process.env.ICLAW_ANALYZE_LINK_MAX) || 16_000;
+// Subtitle language priority (yt-dlp glob syntax). Tunable; first available wins.
+const ANALYZE_LINK_SUB_LANGS = process.env.ICLAW_ANALYZE_LINK_LANGS || 'en.*,uk.*';
+
+/** Single-quote a string for safe embedding in a bash command. */
+function shQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Pull the 11-ish-char video id out of any YouTube URL shape, else null. */
+function extractYouTubeId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null;
+    if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
+      if (u.pathname === '/watch') return u.searchParams.get('v');
+      const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([^/?#]+)/);
+      if (m) return m[1];
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * WebVTT → dense plain text. Drops the header, cue timestamps/ids and inline
+ * styling tags, and de-duplicates consecutive identical lines (YouTube
+ * auto-captions emit each segment twice — once styled, once plain).
+ */
+function cleanVtt(vtt: string): string {
+  const out: string[] = [];
+  let last = '';
+  for (const raw of vtt.split(/\r?\n/)) {
+    if (!raw.trim()) continue;
+    if (/^WEBVTT/.test(raw)) continue;
+    if (/^(Kind|Language):/i.test(raw)) continue;
+    if (raw.includes('-->')) continue; // timestamp cue line
+    if (/^\d+$/.test(raw.trim())) continue; // numeric cue id
+    const line = raw
+      .replace(/<[^>]+>/g, '') // inline <00:00.000> / <c> tags
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&#39;/g, "'")
+      .trim();
+    if (!line || line === last) continue;
+    out.push(line);
+    last = line;
+  }
+  return out.join(' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+/**
+ * Bash run inside the sandbox: ensure yt-dlp, fetch subtitles (+ info json) for
+ * the video without downloading it, then print a marker-delimited payload the
+ * host parses. `set -e`-safe: every fallible step is guarded so we always exit 0
+ * with a parseable result (success, no-subs, or install error).
+ */
+function buildYouTubeSubsCommand(videoId: string, url: string): string {
+  const out = `/workspace/.cache/links/${videoId}`; // videoId is [\w-]-validated
+  return [
+    'set -e',
+    'BIN=/workspace/.tools/bin',
+    'mkdir -p "$BIN" /workspace/.cache/links',
+    'export PATH="$BIN:$PATH"',
+    // Install yt-dlp if missing OR if a cached binary can\'t actually run (e.g. a
+    // wrong-arch download from a previous version) — self-heals the stale binary.
+    'if ! (command -v yt-dlp >/dev/null 2>&1 && yt-dlp --version >/dev/null 2>&1); then',
+    // Pick the binary matching the container arch. yt-dlp_linux is x86_64-only;
+    // arm64 containers (e.g. Docker on Apple Silicon) need the aarch64 build.
+    '  case "$(uname -m)" in aarch64|arm64) YDL=yt-dlp_linux_aarch64 ;; armv7l|armhf) YDL=yt-dlp_linux_armv7l ;; *) YDL=yt-dlp_linux ;; esac',
+    '  curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$YDL" -o "$BIN/yt-dlp" 2>/dev/null && chmod +x "$BIN/yt-dlp" || { echo "__ERR__ could not download yt-dlp (network blocked?)"; exit 0; }',
+    '  hash -r 2>/dev/null || true',
+    '  yt-dlp --version >/dev/null 2>&1 || { echo "__ERR__ yt-dlp not runnable after install (arch=$(uname -m))"; exit 0; }',
+    'fi',
+    `OUT=${shQuote(out)}`,
+    'rm -f "$OUT"*.vtt "$OUT".info.json 2>/dev/null || true',
+    `ERR=$(yt-dlp --quiet --no-warnings --skip-download --write-subs --write-auto-subs --write-info-json --sub-langs ${shQuote(ANALYZE_LINK_SUB_LANGS)} --sub-format vtt -o "$OUT.%(ext)s" ${shQuote(url)} 2>&1) || true`,
+    'f=$(ls "$OUT"*.vtt 2>/dev/null | head -1)',
+    'if [ -n "$f" ]; then',
+    '  echo "__META__"',
+    '  jq -r \'[.title, .uploader, .duration_string] | map(select(. != null)) | join(" | ")\' "$OUT.info.json" 2>/dev/null || true',
+    '  echo "__VTT__"',
+    '  cat "$f"',
+    'else',
+    '  echo "__NOSUBS__"',
+    '  echo "$ERR" | tail -n 5',
+    'fi',
+  ].join('\n');
+}
+
+/**
+ * analyze_link implementation. `runInSandbox` runs a bash command inside the
+ * session's container; `networkEnabled` mirrors the chat's network gate.
+ */
+export async function analyzeLink(
+  args: Record<string, unknown>,
+  deps: { runInSandbox: (command: string) => Promise<string>; networkEnabled: boolean },
+): Promise<string> {
+  const url = String(args.url ?? '').trim();
+  if (!/^https?:\/\/\S+$/i.test(url)) return 'analyze_link needs an absolute http(s) URL.';
+  const mode = args.mode === 'full' ? 'full' : 'summary';
+  const purpose = args.purpose ? String(args.purpose) : undefined;
+
+  if (!deps.networkEnabled) {
+    return 'analyze_link needs network, which is currently OFF for this chat. Ask the user to enable network, then retry.';
+  }
+
+  const videoId = extractYouTubeId(url);
+  if (!videoId || !/^[\w-]{6,}$/.test(videoId)) {
+    return 'analyze_link currently supports only YouTube video links. For web pages or articles, use web_fetch instead.';
+  }
+
+  let raw: string;
+  try {
+    raw = await deps.runInSandbox(buildYouTubeSubsCommand(videoId, url));
+  } catch (err) {
+    return `analyze_link failed to run in the sandbox: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  if (raw.includes('__ERR__')) {
+    return `analyze_link: ${raw.split('__ERR__')[1].trim().slice(0, 300) || 'sandbox error'}`;
+  }
+  if (raw.includes('__NOSUBS__') || (!raw.includes('__VTT__'))) {
+    const detail = (raw.split('__NOSUBS__')[1] ?? raw).trim().slice(0, 250);
+    const blocked = /sign in|confirm.*bot|429|HTTP Error 403|blocked|not a bot/i.test(detail);
+    return blocked
+      ? `analyze_link: YouTube blocked the request from the sandbox IP, or the video is restricted. ${detail}`
+      : `analyze_link: no subtitles available in ${ANALYZE_LINK_SUB_LANGS} (video may have none, or only other languages). ${detail}`;
+  }
+
+  const meta = raw.includes('__META__') ? raw.split('__META__')[1].split('__VTT__')[0].trim() : '';
+  const transcript = cleanVtt(raw.split('__VTT__')[1] ?? '');
+  if (!transcript) return 'analyze_link: subtitles were fetched but empty after cleanup.';
+  const header = meta ? `Video: ${meta}\n\n` : '';
+
+  if (mode === 'full') {
+    const body =
+      transcript.length > ANALYZE_LINK_FULL_MAX_CHARS
+        ? transcript.slice(0, ANALYZE_LINK_FULL_MAX_CHARS) +
+          `\n\n…[truncated ${(transcript.length - ANALYZE_LINK_FULL_MAX_CHARS).toLocaleString()} chars — re-call with mode:"summary" and a purpose]`
+        : transcript;
+    return `${header}Transcript (${transcript.length.toLocaleString()} chars):\n\n${body}`;
+  }
+
+  const summary = await summarizeText(transcript, purpose);
+  return `${header}Transcript summary${purpose ? ` (focus: ${purpose})` : ''}:\n\n${summary}`;
 }

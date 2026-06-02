@@ -238,6 +238,7 @@ export async function* runSecureTurn(
     containerName: string;
     networkEnabled?: boolean;
     systemPrompt?: string;
+    signal?: AbortSignal;
   },
 ): AsyncGenerator<SecureEvent> {
   const networkEnabled = opts.networkEnabled ?? false;
@@ -249,6 +250,7 @@ export async function* runSecureTurn(
       apiKey: opts.apiKey,
       model: opts.model,
       allowedFolders: [opts.workspaceDir],
+      signal: opts.signal,
       systemPrompt: opts.systemPrompt ??
         `You are running in a secure isolated sandbox.
 You can run commands and read/write files in /workspace only.
@@ -258,7 +260,9 @@ Preinstalled CLIs: git, rg (ripgrep), jq, curl, node, unzip/zip, less, tree.
 You can install more tools yourself, no root needed${networkEnabled ? '' : ' (requires network, which is currently OFF — ask the user to enable it)'}: download a static binary into /workspace/.tools/bin (already on PATH) with curl, or run \`npm i -g <pkg>\`. Self-installed tools live in the workspace, so they persist across turns and are removed automatically when the workspace expires.
 Network is ${networkEnabled ? 'enabled' : 'disabled'}.${
           networkEnabled
-            ? '\nTo fetch web pages or APIs, use run_command with `curl -s <url>` (there is no browser in this sandbox).'
+            ? '\nTo fetch web pages or APIs, use run_command with `curl -s <url>` (there is no browser in this sandbox).' +
+              '\nFor a link\'s actual content, prefer the analyze_link tool (YouTube videos: subtitles/transcript). ' +
+              'Use mode:"summary" with a short purpose by default to save tokens; mode:"full" only when you need exact wording.'
             : ''
         }
 Be concise.`,
@@ -283,9 +287,12 @@ async function* runSecureAgentLoop(
   networkEnabled: boolean,
 ): AsyncGenerator<SecureEvent> {
   const OpenAI = (await import('openai')).default;
-  const { TOOL_DEFINITIONS, clampMiddle, TOOL_OUTPUT_MAX_CHARS } = await import('./agent/tools.js');
+  const { TOOL_DEFINITIONS, ANALYZE_LINK_TOOL, analyzeLink, clampMiddle, TOOL_OUTPUT_MAX_CHARS } =
+    await import('./agent/tools.js');
 
-  const tools = TOOL_DEFINITIONS;
+  // analyze_link is appended (not part of core TOOL_DEFINITIONS) and runs its
+  // network work INSIDE this container, so it respects the same network gate.
+  const tools = [...TOOL_DEFINITIONS, ANALYZE_LINK_TOOL];
 
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
@@ -302,6 +309,11 @@ async function* runSecureAgentLoop(
   let turnCached = 0;
   const dumpTurnId = newTurnId();
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    // User pressed Stop between rounds → end cleanly (partial text already sent).
+    if (opts.signal?.aborted) {
+      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+      return;
+    }
     let textBuffer = '';
     const toolCallBuffers: Record<string, { name: string; arguments: string }> = {};
 
@@ -310,40 +322,57 @@ async function* runSecureAgentLoop(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let stream: AsyncIterable<any>;
     try {
-      stream = await client.chat.completions.create({
-        model: opts.model,
-        messages,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        tools: tools as any,
-        tool_choice: 'auto',
-        stream: true,
-        stream_options: { include_usage: true },
-      });
+      stream = await client.chat.completions.create(
+        {
+          model: opts.model,
+          messages,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          tools: tools as any,
+          tool_choice: 'auto',
+          stream: true,
+          stream_options: { include_usage: true },
+        },
+        { signal: opts.signal },
+      );
     } catch (err) {
+      if (opts.signal?.aborted) {
+        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+        return;
+      }
       yield { type: 'error', message: err instanceof Error ? err.message : String(err) };
       return;
     }
 
     let finishReason: string | null = null;
-    for await (const chunk of stream) {
-      if (chunk.usage?.total_tokens) turnTokens += chunk.usage.total_tokens;
-      if (chunk.usage?.prompt_tokens_details?.cached_tokens) turnCached += chunk.usage.prompt_tokens_details.cached_tokens;
-      const choice = chunk.choices[0];
-      if (!choice) continue;
-      finishReason = choice.finish_reason ?? finishReason;
-      const delta = choice.delta;
-      if (delta.content) {
-        textBuffer += delta.content;
-        yield { type: 'text', content: delta.content };
-      }
-      if (delta.tool_calls) {
-        for (const tc of delta.tool_calls) {
-          const idx = String(tc.index ?? 0);
-          if (!toolCallBuffers[idx]) toolCallBuffers[idx] = { name: '', arguments: '' };
-          if (tc.function?.name) toolCallBuffers[idx].name += tc.function.name;
-          if (tc.function?.arguments) toolCallBuffers[idx].arguments += tc.function.arguments;
+    try {
+      for await (const chunk of stream) {
+        if (chunk.usage?.total_tokens) turnTokens += chunk.usage.total_tokens;
+        if (chunk.usage?.prompt_tokens_details?.cached_tokens) turnCached += chunk.usage.prompt_tokens_details.cached_tokens;
+        const choice = chunk.choices[0];
+        if (!choice) continue;
+        finishReason = choice.finish_reason ?? finishReason;
+        const delta = choice.delta;
+        if (delta.content) {
+          textBuffer += delta.content;
+          yield { type: 'text', content: delta.content };
+        }
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = String(tc.index ?? 0);
+            if (!toolCallBuffers[idx]) toolCallBuffers[idx] = { name: '', arguments: '' };
+            if (tc.function?.name) toolCallBuffers[idx].name += tc.function.name;
+            if (tc.function?.arguments) toolCallBuffers[idx].arguments += tc.function.arguments;
+          }
         }
       }
+    } catch (err) {
+      // Stop pressed mid-stream → clean end; otherwise surface the error.
+      if (opts.signal?.aborted) {
+        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+        return;
+      }
+      yield { type: 'error', message: err instanceof Error ? err.message : String(err) };
+      return;
     }
 
     const toolCalls = Object.values(toolCallBuffers);
@@ -383,6 +412,12 @@ async function* runSecureAgentLoop(
         result = await execInContainer(containerName, 'ls -la /workspace');
       } else if (tc.name === 'search_files') {
         result = await execInContainer(containerName, `grep -r ${JSON.stringify(String(args.query ?? ''))} /workspace 2>/dev/null | head -20`);
+      } else if (tc.name === 'analyze_link') {
+        // Runs its fetch inside this same container (network honours the gate).
+        result = await analyzeLink(args, {
+          runInSandbox: (command) => execInContainer(containerName, command),
+          networkEnabled,
+        });
       } else {
         result = `Tool not available in secure mode: ${tc.name}`;
       }

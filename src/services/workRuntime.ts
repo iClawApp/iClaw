@@ -102,6 +102,15 @@ export async function stopWorkSession(sessionId: string): Promise<void> {
   await request('DELETE', `/sessions/${sessionId}`);
 }
 
+/**
+ * Abort the in-flight turn for a session WITHOUT destroying it (workspace +
+ * container survive — unlike stopWorkSession). Backs the Stop button for
+ * Work / Secure / Incognito turns.
+ */
+export async function abortWorkSession(sessionId: string): Promise<void> {
+  await request('POST', `/sessions/${sessionId}/abort`);
+}
+
 export type WorkEvent =
   | { type: 'text'; content: string }
   | { type: 'tool'; name: string; input?: unknown }

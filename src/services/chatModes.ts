@@ -100,6 +100,14 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
 /** Mode used whenever none is supplied or the supplied one is unknown/disabled. */
 export const DEFAULT_MODE: ChatMode = 'execute';
 
+/**
+ * UI default for the composer's mode selector on a NEW/empty chat. Deliberately
+ * separate from DEFAULT_MODE: the latter is the backend normalization fallback
+ * (mode-less posted/API messages keep routing to the OpenClaw agent), while this
+ * only seeds what the picker shows when there's nothing else to go on.
+ */
+export const DEFAULT_COMPOSER_MODE: ChatMode = 'work';
+
 /** Modes a client is allowed to select right now. */
 export const ENABLED_MODE_IDS: readonly string[] = CHAT_MODES.filter(
   (m) => m.enabled,
@@ -130,6 +138,15 @@ function findMode(id: string): ChatModeDef | undefined {
 export function isSelectableMode(id: string): boolean {
   const def = findMode(id);
   return Boolean(def && modeAvailable(def));
+}
+
+/**
+ * UI default for the composer, with a graceful fallback: Work is runtime-backed,
+ * so when it isn't currently selectable (e.g. no OpenRouter key) we fall back to
+ * the always-available DEFAULT_MODE instead of pre-selecting a hidden mode.
+ */
+export function defaultComposerMode(): ChatMode {
+  return isSelectableMode(DEFAULT_COMPOSER_MODE) ? DEFAULT_COMPOSER_MODE : DEFAULT_MODE;
 }
 
 /**

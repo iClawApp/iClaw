@@ -30,10 +30,13 @@ import { wsHub } from '../services/wsHub';
 import { sendMessage, getWorkSessionId } from '../services/chatRunner';
 import { getWorkspaceInfo } from '../services/workRuntime';
 import {
-  DEFAULT_MODE,
+  defaultComposerMode,
+  isSelectableMode,
+  isEphemeralMode,
   listSelectableModes,
   normalizeChatMode,
 } from '../services/chatModes';
+import type { ChatMode } from '../types';
 import { shouldShowSendHint } from '../services/sendHint';
 import { openRouterEnabled } from '../services/openRouter';
 
@@ -293,13 +296,27 @@ chatsRouter.get('/:id', async (req, res, next) => {
     }
     if (chats.markRead(id)) wsHub.broadcastAll({ type: 'chat-read', chatId: id });
     const { agents, error: agentsError } = await getAgentsSafe();
+    const chatMessages = messages.listByChat(id);
+    // The chat's "current" mode = the most recent message's (non-ephemeral,
+    // still-selectable) mode, so reopening a chat restores the mode it was last
+    // used in instead of snapping back to the global default. Empty string when
+    // the chat has no usable mode yet (brand-new chat) — the client then falls
+    // back to the UI default.
+    let chatCurrentMode = '';
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      const m = chatMessages[i].mode;
+      if (m && isSelectableMode(m) && !isEphemeralMode(m as ChatMode)) {
+        chatCurrentMode = m;
+        break;
+      }
+    }
     res.render('chat', {
       chats: chats.list(),
       allProjects: projects.list(),
       hasAnyTasks: tasks.hasAny(),
       taskStatusSignals: tasks.statusSignals(),
       activeChat: chat,
-      chatMessages: messages.listByChat(id),
+      chatMessages,
       agents,
       agentsError,
       defaultAgent: DEFAULT_AGENT,
@@ -312,7 +329,8 @@ chatsRouter.get('/:id', async (req, res, next) => {
       queueList: queuedMessages.listByChat(id),
       sendHintShow: shouldShowSendHint(),
       chatModes: listSelectableModes(),
-      defaultChatMode: DEFAULT_MODE,
+      defaultChatMode: defaultComposerMode(),
+      chatCurrentMode,
       sttEnabled: openRouterEnabled(),
     });
   } catch (err) {

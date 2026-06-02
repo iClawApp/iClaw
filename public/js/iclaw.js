@@ -205,10 +205,17 @@
   }
 
   if (composerModeBtn && composerModeMenu) {
-    // Restore the last choice (falls back to the server default).
+    // Initial mode precedence:
+    //   1. per-chat remembered choice (localStorage, existing chats only)
+    //   2. the mode this chat was last used in (server-derived, data-chat-mode)
+    //   3. the UI default (Work) — for new chats we ignore any stale GLOBAL
+    //      localStorage value so a fresh chat always starts on the default.
     let stored = null;
-    try { stored = localStorage.getItem(MODE_STORAGE_KEY); } catch (_) {}
-    setComposerMode(stored || composerModeDefault, { persist: false });
+    if (rawChatId) {
+      try { stored = localStorage.getItem(MODE_STORAGE_KEY); } catch (_) {}
+    }
+    const chatMode = composerModesEl ? composerModesEl.dataset.chatMode : '';
+    setComposerMode(stored || chatMode || composerModeDefault, { persist: false });
     // Entered via "Incognito" elsewhere → ?mode=incognito on a fresh surface.
     try {
       const _qp = new URLSearchParams(window.location.search);

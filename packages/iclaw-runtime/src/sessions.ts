@@ -73,6 +73,9 @@ interface Session {
   lastActivity: number;
   /** TTL in ms after last activity before cleanup. 0 = never. Default 7 days. */
   ttlMs: number;
+  /** Controller for the in-flight turn — abort() stops the model stream and
+   *  ends the agent loop (user pressed Stop). Set per turn, cleared after. */
+  abort?: AbortController;
 }
 
 const DEFAULT_TTL_MS = 7 * 86400_000;
@@ -334,6 +337,18 @@ export function getSession(id: string): Session | undefined {
   return sessions.get(id);
 }
 
+/**
+ * Abort the in-flight turn for a session WITHOUT tearing the session down
+ * (unlike deleteSession, the workspace/container survive). The agent loop stops
+ * its model stream and ends cleanly. No-op if nothing is running.
+ */
+export function abortSession(id: string): boolean {
+  const session = sessions.get(id);
+  if (!session?.abort) return false;
+  session.abort.abort();
+  return true;
+}
+
 export function deleteSession(id: string): void {
   const session = sessions.get(id);
   if (session?.secureContainer) stopContainer(session.secureContainer.name);
@@ -469,6 +484,10 @@ export async function sendMessage(sessionId: string, content: string, networkEna
   // Keep a long-running session's context bounded (summarize old turns).
   await compactHistoryIfNeeded(session);
 
+  // Fresh abort controller for this turn (user Stop → abortSession()).
+  const abort = new AbortController();
+  session.abort = abort;
+
   if (session.opts.secure) {
     const workspaceDir = session.secureWorkspaceDir!;
     const netEnabled = session.opts.networkEnabled ?? false;
@@ -493,6 +512,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
         containerName,
         networkEnabled: netEnabled,
         systemPrompt: session.opts.systemPrompt,
+        signal: abort.signal,
       },
     );
     let assistantText = '';
@@ -508,6 +528,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
         session.secureContainer.inUse = false;
         session.secureContainer.lastUsed = Date.now();
       }
+      if (session.abort === abort) session.abort = undefined;
     }
     if (assistantText) {
       session.history.push({ role: 'user', content });
@@ -558,6 +579,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     runShell,
     incognito,
     systemPrompt: session.opts.systemPrompt,
+    signal: abort.signal,
     onWriteApproval: async (filePath, fileContent) => {
       emit(session, { type: 'approval_request', changeId: randomUUID(), path: filePath, content: fileContent });
       return true;
@@ -576,6 +598,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
       session.workContainer.inUse = false;
       session.workContainer.lastUsed = Date.now();
     }
+    if (session.abort === abort) session.abort = undefined;
   }
 
   if (assistantText) {

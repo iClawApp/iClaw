@@ -25,7 +25,7 @@ import {
 import type { ChatMode, Message, MessageAttachment } from '../types';
 import { DEFAULT_MODE } from './chatModes';
 import { buildCompactedHistory } from './contextCompaction';
-import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession } from './workRuntime';
+import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession, abortWorkSession } from './workRuntime';
 import {
   expandStoredSecretPlaceholdersForGateway,
   resolveInlineSecretMarkersInContent,
@@ -1076,6 +1076,16 @@ export async function abortChatRun(chatId: number): Promise<void> {
     await openclawWs.abortRun(active);
     return;
   }
+  // Work / Secure: a runtime turn. Abort it without destroying the session —
+  // the workspace and warm container survive (unlike stopWorkSession). This is
+  // what makes the header Stop button work for Work and Sandbox, not just
+  // OpenClaw/Execute.
+  const workSessionId = getWorkSessionId(chatId);
+  if (workSessionId) {
+    await abortWorkSession(workSessionId).catch(() => {});
+    return;
+  }
+  // Fallback: abort the chat's main OpenClaw session if it's mid-run.
   const chat = chats.get(chatId);
   if (!chat) return;
   if (chat.openclaw_session_id?.startsWith('agent:')) {

@@ -6,7 +6,7 @@ import { openclaw } from '../services/openclaw';
 import { probeGateway } from '../services/gatewayProbe';
 import { chatStatus } from '../services/chatStatus';
 import { shouldShowSendHint } from '../services/sendHint';
-import { DEFAULT_MODE, listSelectableModes } from '../services/chatModes';
+import { defaultComposerMode, listSelectableModes } from '../services/chatModes';
 import { openRouterEnabled, transcribeAudio, isOpenRouterFailure } from '../services/openRouter';
 
 const execFileAsync = promisify(execFile);
@@ -125,7 +125,7 @@ indexRouter.get('/', async (req, res) => {
     workingIds: chatStatus.workingIds(),
     sendHintShow: shouldShowSendHint(),
     chatModes: listSelectableModes(),
-    defaultChatMode: DEFAULT_MODE,
+    defaultChatMode: defaultComposerMode(),
     sttEnabled: openRouterEnabled(),
   });
 });
