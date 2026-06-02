@@ -24,7 +24,7 @@ import type { ChatMode, Message, MessageAttachment } from '../types';
 import { DEFAULT_MODE, getModeDef } from './chatModes';
 import { loadOpenRouterConfig } from './config';
 import { buildCompactedHistory } from './contextCompaction';
-import { createWorkSession, sendWorkMessage, subscribeWorkEvents } from './workRuntime';
+import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession } from './workRuntime';
 import {
   streamComplete,
   openRouterEnabled,
@@ -865,12 +865,30 @@ function buildWorkSystemPrompt(chatId: number): string {
   return lines.length > 0 ? lines.join('\n') : '';
 }
 
-/** Persistent Work Mode sessions — one per chat, reused across turns. */
-const workSessions = new Map<number, string>();
+/**
+ * Persistent Work Mode sessions — one per chat, reused across turns. We store
+ * the folder signature alongside the sessionId so a mid-chat change to the
+ * folder set or a folder's read-only/read&write flag forces the session to be
+ * recreated with the new access (folderAccess is fixed at session creation).
+ */
+const workSessions = new Map<number, { sessionId: string; foldersKey: string }>();
+
+/**
+ * Stable signature of the folders granted to a chat. Order-independent so the
+ * key only changes when a path or its readonly flag actually changes.
+ */
+function foldersSignature(folders?: WorkFolder[]): string {
+  if (!folders?.length) return '';
+  return JSON.stringify(
+    folders
+      .map((f) => ({ p: f.path, r: f.readonly }))
+      .sort((a, b) => a.p.localeCompare(b.p)),
+  );
+}
 
 /** Get the runtime sessionId for a chat (if active). */
 export function getWorkSessionId(chatId: number): string | undefined {
-  return workSessions.get(chatId);
+  return workSessions.get(chatId)?.sessionId;
 }
 
 /**
@@ -890,8 +908,22 @@ async function runWorkModeTurn(opts: {
 }): Promise<void> {
   const { chatId, content, onEvent } = opts;
 
+  // Folder access is baked in at session creation. For Work Mode, if the folder
+  // set or any read-only flag changed since the active session was created, tear
+  // it down so it's recreated below with the new access. (Secure Mode doesn't
+  // mount the chosen folders, so its session is never recreated for this.)
+  const foldersKey = opts.secure ? '' : foldersSignature(opts.workFolders);
+  const existing = workSessions.get(chatId);
+  if (existing && !opts.secure && existing.foldersKey !== foldersKey) {
+    await stopWorkSession(existing.sessionId).catch(() => {});
+    workSessions.delete(chatId);
+    const note = 'Folder access changed — restarted the work session with the new permissions.';
+    const sys = messages.append(chatId, 'system', note, null);
+    wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+  }
+
   // Reuse existing session for this chat, or create a new one
-  let sessionId = workSessions.get(chatId);
+  let sessionId = workSessions.get(chatId)?.sessionId;
   if (!sessionId) {
     try {
       // Per-folder access drives both the allowed-path list and read-only
@@ -918,7 +950,7 @@ async function runWorkModeTurn(opts: {
         key: `chat:${chatId}`,
         history,
       });
-      workSessions.set(chatId, sessionId);
+      workSessions.set(chatId, { sessionId, foldersKey });
     } catch (err) {
       const note = `Work Mode runtime unavailable. (${err instanceof Error ? err.message : String(err)})`;
       const sys = messages.append(chatId, 'system', note, 'work-unavailable');

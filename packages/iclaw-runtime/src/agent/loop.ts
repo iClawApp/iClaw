@@ -30,9 +30,28 @@ export type AgentEvent =
 
 export type Message = OpenAI.Chat.ChatCompletionMessageParam;
 
+/** Turn a provider/SDK error into a concise, user-facing message. */
+function describeApiError(err: unknown): string {
+  const e = err as {
+    status?: number;
+    code?: number | string;
+    error?: { code?: number; metadata?: { error_type?: string } };
+    message?: string;
+  };
+  const code = e?.status ?? e?.code ?? e?.error?.code;
+  const isRateLimit = code === 429 || e?.error?.metadata?.error_type === 'rate_limit_exceeded';
+  if (isRateLimit) {
+    return 'Rate limit reached on the model provider (429). Wait a few seconds and try again, ' +
+      'or switch to a model with higher limits (ICLAW_MODEL).';
+  }
+  return e?.message || String(err);
+}
+
 const DEFAULT_SYSTEM = `You are a helpful AI assistant running in Work Mode.
-You have access to the user's selected folders via tools.
-Be concise. When writing files, always propose the change first in text before calling write_file.
+You can read, search and edit files in the user's selected folders using the tools.
+Be concise and act directly: when a change is needed, just call write_file. The user
+sees and approves every write in the UI, so do NOT paste the file contents into your
+reply beforehand or ask "is this correct?" — only narrate briefly what you changed after.
 Never access paths outside the allowed folders.`;
 
 /**
@@ -52,8 +71,10 @@ function buildSystemPrompt(opts: AgentOptions): string {
       (f) => `- ${f.path} (${f.readonly ? 'READ-ONLY: you may read/list/search but NOT write or run commands here' : 'read & write'})`,
     );
     parts.push(
-      `\nFolders available this session:\n${lines.join('\n')}\n` +
-        `Writes and shell commands only work in read & write folders; respect this and tell the user if they ask to modify a read-only folder.`,
+      `\nFolders available this session (use these exact paths):\n${lines.join('\n')}\n` +
+        `Before writing a file or running a command, check this list. If the target is in a ` +
+        `READ-ONLY folder, do NOT attempt or propose the change — say it's read-only and offer to ` +
+        `either write to a read & write folder instead or have the user switch that folder to read & write.`,
     );
   }
 
@@ -103,36 +124,44 @@ export async function* runAgentTurn(
         stream: true,
       });
     } catch (err) {
-      yield { type: 'error', message: err instanceof Error ? err.message : String(err) };
+      yield { type: 'error', message: describeApiError(err) };
       return;
     }
 
     let finishReason: string | null = null;
 
-    for await (const chunk of stream) {
-      const choice = chunk.choices[0];
-      if (!choice) continue;
+    // The provider can inject an error MID-STREAM (e.g. a 429 surfaced as a JSON
+    // error in the SSE body). Catch it here so the turn ends with a clean error
+    // event instead of throwing out of the generator and leaving a truncated reply.
+    try {
+      for await (const chunk of stream) {
+        const choice = chunk.choices[0];
+        if (!choice) continue;
 
-      finishReason = choice.finish_reason ?? finishReason;
-      const delta = choice.delta;
+        finishReason = choice.finish_reason ?? finishReason;
+        const delta = choice.delta;
 
-      // Text content
-      if (delta.content) {
-        textBuffer += delta.content;
-        yield { type: 'text', content: delta.content };
-      }
+        // Text content
+        if (delta.content) {
+          textBuffer += delta.content;
+          yield { type: 'text', content: delta.content };
+        }
 
-      // Tool call accumulation
-      if (delta.tool_calls) {
-        for (const tc of delta.tool_calls) {
-          const idx = String(tc.index ?? 0);
-          if (!toolCallBuffers[idx]) {
-            toolCallBuffers[idx] = { name: '', arguments: '' };
+        // Tool call accumulation
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = String(tc.index ?? 0);
+            if (!toolCallBuffers[idx]) {
+              toolCallBuffers[idx] = { name: '', arguments: '' };
+            }
+            if (tc.function?.name) toolCallBuffers[idx].name += tc.function.name;
+            if (tc.function?.arguments) toolCallBuffers[idx].arguments += tc.function.arguments;
           }
-          if (tc.function?.name) toolCallBuffers[idx].name += tc.function.name;
-          if (tc.function?.arguments) toolCallBuffers[idx].arguments += tc.function.arguments;
         }
       }
+    } catch (err) {
+      yield { type: 'error', message: describeApiError(err) };
+      return;
     }
 
     const toolCalls = Object.values(toolCallBuffers);

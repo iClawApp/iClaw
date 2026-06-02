@@ -21,7 +21,7 @@ export const TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'list_files',
-      description: 'List files and directories at a path.',
+      description: 'List entries at a path. Directories are shown as "[dir] name/" and files as "[file] name", so you can recurse into subdirectories.',
       parameters: {
         type: 'object',
         properties: {
@@ -142,8 +142,12 @@ export async function executeTool(
 async function listFiles(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
   const dir = validatePath(args.path as string, ctx.allowedFolders);
   const entries = fs.readdirSync(dir, { withFileTypes: true });
-  const lines = entries.map((e) => `${e.isDirectory() ? 'd' : 'f'} ${e.name}`);
-  return lines.join('\n') || '(empty)';
+  // Explicit [dir]/[file] labels (+ trailing slash on dirs) so the model can
+  // reliably tell directories from files and recurse without guessing.
+  const lines = entries
+    .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+    .map((e) => (e.isDirectory() ? `[dir]  ${e.name}/` : `[file] ${e.name}`));
+  return lines.join('\n') || '(empty directory)';
 }
 
 async function readFile(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
