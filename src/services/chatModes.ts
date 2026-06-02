@@ -62,7 +62,7 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
   },
   {
     id: 'secure',
-    label: 'Secure',
+    label: 'Sandbox',
     description: 'Runs in a locked sandbox - safe for untrusted code or scripts',
     enabled: true,
     runtimeBacked: true,
@@ -70,7 +70,7 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
   },
   {
     id: 'execute',
-    label: 'Execute',
+    label: 'Full Power',
     description: 'Full access via OpenClaw - for complex tasks that need more power',
     enabled: true,
     runtimeBacked: false,
