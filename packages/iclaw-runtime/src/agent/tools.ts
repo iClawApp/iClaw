@@ -24,6 +24,12 @@ const MAX_FILE_READ_CHARS = Number(process.env.ICLAW_MAX_FILE_READ) || 16_000;
 const MAX_CMD_OUTPUT_CHARS = Number(process.env.ICLAW_MAX_CMD_OUTPUT) || 8_000;
 const MAX_LIST_ENTRIES = Number(process.env.ICLAW_MAX_LIST_ENTRIES) || 200;
 
+// Cheap-model summarizer (read_summary, web_fetch summarize). Moves the cost of
+// reading big content onto a cheap model; the expensive model + history only
+// carry the short summary.
+const SUMMARY_MODEL = process.env.ICLAW_SUMMARY_MODEL || 'google/gemini-2.5-flash-lite';
+const SUMMARY_MAX_INPUT_CHARS = Number(process.env.ICLAW_SUMMARY_MAX_INPUT) || 60_000;
+
 export const TOOL_OUTPUT_MAX_CHARS = MAX_CMD_OUTPUT_CHARS;
 
 /** Keep the head and tail of long output (errors are usually at the end). */
@@ -137,11 +143,38 @@ export const WEB_FETCH_TOOL = {
   type: 'function' as const,
   function: {
     name: 'web_fetch',
-    description: 'Fetch an http(s) URL and return its text (HTML stripped). Read-only.',
+    description: 'Fetch an http(s) URL and return its text (HTML stripped). Read-only. Set summarize:true for a short gist (cheaper) instead of the full page.',
     parameters: {
       type: 'object',
-      properties: { url: { type: 'string', description: 'Absolute http(s) URL' } },
+      properties: {
+        url: { type: 'string', description: 'Absolute http(s) URL' },
+        summarize: { type: 'boolean', description: 'Return a short summary instead of the full text' },
+        focus: { type: 'string', description: 'What the summary should focus on (optional)' },
+      },
       required: ['url'],
+    },
+  },
+} as const;
+
+/**
+ * read_summary — read a file and return a SHORT summary via a cheap model,
+ * instead of dumping the whole file into the expensive model's context (and
+ * history). Host-loop only (Work / Incognito); kept out of Secure, since the
+ * summary call is a host-side network request that would bypass the sandbox's
+ * container network gate.
+ */
+export const READ_SUMMARY_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'read_summary',
+    description: 'Read a file and return a SHORT summary (cheap model) — for when you just need the gist of a large file. Use read_file when you need exact content to edit.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File path' },
+        focus: { type: 'string', description: 'What to focus the summary on (optional)' },
+      },
+      required: ['path'],
     },
   },
 } as const;
@@ -168,7 +201,7 @@ export const WEB_SEARCH_TOOL = {
 } as const;
 
 export type ToolName =
-  | 'list_files' | 'read_file' | 'search_files' | 'write_file' | 'edit_file'
+  | 'list_files' | 'read_file' | 'read_summary' | 'search_files' | 'write_file' | 'edit_file'
   | 'run_command' | 'web_fetch' | 'web_search';
 
 // ── Tool context (injected per-session) ──────────────────────────────────────
@@ -221,6 +254,7 @@ export async function executeTool(
     switch (name) {
       case 'list_files': return await listFiles(args, ctx);
       case 'read_file': return await readFile(args, ctx);
+      case 'read_summary': return await readSummary(args, ctx);
       case 'search_files': return await searchFiles(args, ctx);
       case 'write_file': return await writeFile(args, ctx);
       case 'edit_file': return await editFile(args, ctx);
@@ -262,9 +296,22 @@ async function readFile(args: Record<string, unknown>, ctx: ToolContext): Promis
   const content = fs.readFileSync(filePath, 'utf-8');
   if (content.length > MAX_FILE_READ_CHARS) {
     return content.slice(0, MAX_FILE_READ_CHARS) +
-      `\n\n…[truncated: showing first ${MAX_FILE_READ_CHARS.toLocaleString()} of ${content.length.toLocaleString()} chars. Use search_files for specific content.]`;
+      `\n\n…[truncated: showing first ${MAX_FILE_READ_CHARS.toLocaleString()} of ${content.length.toLocaleString()} chars. Use search_files for specific content, or read_summary for the gist.]`;
   }
   return content;
+}
+
+async function readSummary(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+  const filePath = validatePath(args.path as string, readFolders(ctx));
+  const stat = fs.statSync(filePath);
+  if (stat.size > MAX_FILE_BYTES) {
+    return `File too large (${stat.size.toLocaleString()} bytes). Use search_files for specific content.`;
+  }
+  const content = fs.readFileSync(filePath, 'utf-8');
+  if (!content.trim()) return '(empty file)';
+  const summary = await summarizeText(content, args.focus ? String(args.focus) : undefined);
+  return `Summary of ${path.basename(filePath)} (${content.length.toLocaleString()} chars). ` +
+    `Call read_file for the exact content if you need to edit it.\n\n${summary}`;
 }
 
 async function searchFiles(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
@@ -411,6 +458,11 @@ async function webFetch(args: Record<string, unknown>): Promise<string> {
     const ct = res.headers.get('content-type') || '';
     const raw = await res.text();
     let text = /html/i.test(ct) ? htmlToText(raw) : raw.trim();
+    // Optional: hand the page to the cheap model and return just the gist.
+    if (args.summarize === true && text) {
+      const summary = await summarizeText(text, args.focus ? String(args.focus) : undefined);
+      return `Summary of ${url} (HTTP ${res.status}):\n\n${summary}`;
+    }
     if (text.length > WEB_FETCH_MAX_CHARS) {
       text = text.slice(0, WEB_FETCH_MAX_CHARS) + `\n\n[truncated at ${WEB_FETCH_MAX_CHARS} chars]`;
     }
@@ -420,6 +472,53 @@ async function webFetch(args: Record<string, unknown>): Promise<string> {
       ? `timed out after ${WEB_FETCH_TIMEOUT / 1000}s`
       : err instanceof Error ? err.message : String(err);
     return `Fetch failed (${url}): ${msg}`;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── cheap-model summarizer (read_summary, web_fetch summarize) ────────────────
+
+/**
+ * Summarize text with a cheap model via OpenRouter. Faithful + dense; preserves
+ * exact names/numbers. Degrades gracefully to a truncation if there's no key or
+ * the call fails, so callers always get usable output.
+ */
+async function summarizeText(text: string, focus?: string): Promise<string> {
+  const key = process.env.ICLAW_OPENROUTER_API_KEY || '';
+  if (!key || !text.trim()) return clampMiddle(text, MAX_CMD_OUTPUT_CHARS);
+  const base = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
+  const input = text.length > SUMMARY_MAX_INPUT_CHARS ? text.slice(0, SUMMARY_MAX_INPUT_CHARS) : text;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), WEB_FETCH_TIMEOUT);
+  try {
+    const res = await fetch(`${base}/chat/completions`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: SUMMARY_MODEL,
+        temperature: 0.2,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You compress a document for another AI agent. Produce a dense, faithful summary: ' +
+              'what it is, its structure, and the key facts. Preserve exact names, numbers, paths and ' +
+              'identifiers. No preamble, no fluff. If the input was truncated, say so at the end.',
+          },
+          { role: 'user', content: (focus ? `Focus on: ${focus}\n\n---\n` : '') + input },
+        ],
+      }),
+    });
+    if (!res.ok) throw new Error(`summary HTTP ${res.status}`);
+    const data = await res.json() as { choices?: { message?: { content?: string } }[] };
+    const out = data.choices?.[0]?.message?.content;
+    return (typeof out === 'string' && out.trim())
+      ? out.trim() + (text.length > SUMMARY_MAX_INPUT_CHARS ? '\n\n[note: input was truncated before summarizing]' : '')
+      : clampMiddle(text, MAX_CMD_OUTPUT_CHARS);
+  } catch {
+    return clampMiddle(text, MAX_CMD_OUTPUT_CHARS);
   } finally {
     clearTimeout(timer);
   }

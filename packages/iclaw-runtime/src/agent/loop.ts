@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, executeTool, type ToolContext, type ToolName } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, executeTool, type ToolContext, type ToolName } from './tools.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 
 export interface AgentOptions {
@@ -58,7 +58,7 @@ function describeApiError(err: unknown): string {
 }
 
 const DEFAULT_SYSTEM = `Work Mode: read/search/edit/create files in the selected folders, run shell commands, and research the web (web_search then web_fetch).
-Prefer edit_file over rewriting whole files. The user approves every write in the UI — don't paste file contents or ask "is this correct?"; just act, then briefly say what you did.
+Prefer edit_file over rewriting whole files. For a large file you only need the gist of, use read_summary (cheap) instead of read_file. The user approves every write in the UI — don't paste file contents or ask "is this correct?"; just act, then briefly say what you did.
 Be efficient: chain shell steps with && in one call, don't repeat commands. Never go outside the allowed folders.
 Keep replies short — don't echo back long file listings or file contents; summarize in a line or two.`;
 
@@ -132,7 +132,7 @@ export async function* runAgentTurn(
   const fileTools = opts.incognito
     ? TOOL_DEFINITIONS.filter((t) => t.function.name !== 'write_file' && t.function.name !== 'edit_file')
     : TOOL_DEFINITIONS;
-  const tools = [...fileTools, WEB_FETCH_TOOL, WEB_SEARCH_TOOL];
+  const tools = [...fileTools, READ_SUMMARY_TOOL, WEB_FETCH_TOOL, WEB_SEARCH_TOOL];
 
   const messages: Message[] = [
     { role: 'system', content: buildSystemPrompt(opts) },
