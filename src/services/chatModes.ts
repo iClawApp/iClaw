@@ -59,24 +59,28 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
   {
     id: 'ask',
     label: 'Ask',
-    description:
-      'For simple questions, explanations, planning. No heavy agent execution.',
+    description: 'Chat with AI. No access to your files or computer.',
     enabled: true,
     lightweight: true,
   },
   {
-    id: 'execute',
-    label: 'Execute',
-    description:
-      'For tasks that may need files, tools, shell, browser, or actions.',
+    id: 'work',
+    label: 'Work',
+    description: 'AI edits files in folders you choose. You approve every change.',
     enabled: true,
     lightweight: false,
   },
   {
-    id: 'work',
-    label: 'Work',
-    description:
-      'AI works inside your selected folders only. File writes need approval. OpenRouter-powered.',
+    id: 'secure',
+    label: 'Secure',
+    description: 'Runs in a locked sandbox. Safe for untrusted code or scripts.',
+    enabled: true,
+    lightweight: false,
+  },
+  {
+    id: 'execute',
+    label: 'Execute',
+    description: 'Full access via OpenClaw. For complex tasks that need more power.',
     enabled: true,
     lightweight: false,
   },
@@ -93,13 +97,6 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
     label: 'Image',
     description: 'Generate or edit images. (Coming soon.)',
     enabled: false,
-    lightweight: false,
-  },
-  {
-    id: 'secure',
-    label: 'Secure',
-    description: 'Run risky tasks in an isolated Docker container. No host access.',
-    enabled: true,
     lightweight: false,
   },
 ] as const;
