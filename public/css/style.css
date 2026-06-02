@@ -4744,6 +4744,8 @@ code {
 .composer-attach:active { transform: scale(0.94); }
 
 /* Work Mode folders button */
+.composer-network-toggle[hidden] { display: none; }
+.composer-network-toggle[data-network='on'] { color: var(--accent); }
 .composer-work-folders[hidden] { display: none; }
 .composer-work-folders__count {
   font-size: 11px;

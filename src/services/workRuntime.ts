@@ -67,8 +67,10 @@ export async function createWorkSession(opts: CreateSessionOptions = {}): Promis
 }
 
 /** Send a user message to a work session. */
-export async function sendWorkMessage(sessionId: string, content: string): Promise<void> {
-  const res = await request('POST', `/sessions/${sessionId}/messages`, { content });
+export async function sendWorkMessage(sessionId: string, content: string, networkEnabled?: boolean): Promise<void> {
+  const body: Record<string, unknown> = { content };
+  if (networkEnabled !== undefined) body.networkEnabled = networkEnabled;
+  const res = await request('POST', `/sessions/${sessionId}/messages`, body);
   if (res.status !== 202) {
     throw new Error(`Failed to send work message: ${JSON.stringify(res.data)}`);
   }

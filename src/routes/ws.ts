@@ -92,6 +92,7 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
           incomingAttachments: msg.attachments,
           inlineSecrets,
           mode: normalizeChatMode((msg as { mode?: unknown }).mode),
+          networkEnabled: (msg as Record<string, unknown>).networkEnabled === true,
           workFolders: Array.isArray((msg as Record<string, unknown>).workFolders)
             ? (((msg as Record<string, unknown>).workFolders as unknown[]).filter((f) => typeof f === 'string') as string[])
             : undefined,

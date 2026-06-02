@@ -73,10 +73,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'messages') {
     const sessionId = parts[1];
     if (!getSession(sessionId)) return json(res, 404, { error: 'session not found' });
-    const body = await readBody(req) as { content?: string };
+    const body = await readBody(req) as { content?: string; networkEnabled?: boolean };
     if (!body.content?.trim()) return json(res, 400, { error: 'content required' });
-    // Fire-and-forget — streams via SSE
-    sendMessage(sessionId, body.content).catch(console.error);
+    sendMessage(sessionId, body.content, body.networkEnabled).catch(console.error);
     return json(res, 202, { queued: true });
   }
 

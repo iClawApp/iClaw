@@ -1,19 +1,19 @@
 /**
- * In-memory Work Mode session manager.
- * Each session holds conversation history and streams events via SSE.
+ * In-memory session manager for Work and Secure modes.
  */
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 
 import { runAgentTurn, type Message } from './agent/loop.js';
 import type { AgentEvent } from './agent/loop.js';
-import { runSecureTurn } from './secure-runner.js';
+import { runSecureTurn, createSecureWorkspace, destroySecureWorkspace } from './secure-runner.js';
 
 export interface SessionOptions {
   allowedFolders: string[];
   model: string;
   apiKey: string;
   secure?: boolean;
+  networkEnabled?: boolean;
 }
 
 interface Session {
@@ -22,13 +22,19 @@ interface Session {
   history: Message[];
   sseClient: http.ServerResponse | null;
   pending: AgentEvent[];
+  /** Persistent workspace dir for Secure Mode (survives container restarts). */
+  secureWorkspaceDir?: string;
 }
 
 const sessions = new Map<string, Session>();
 
 export function createSession(opts: SessionOptions): string {
   const id = randomUUID();
-  sessions.set(id, { id, opts, history: [], sseClient: null, pending: [] });
+  const session: Session = { id, opts, history: [], sseClient: null, pending: [] };
+  if (opts.secure) {
+    session.secureWorkspaceDir = createSecureWorkspace();
+  }
+  sessions.set(id, session);
   return id;
 }
 
@@ -37,17 +43,24 @@ export function getSession(id: string): Session | undefined {
 }
 
 export function deleteSession(id: string): void {
+  const session = sessions.get(id);
+  if (session?.secureWorkspaceDir) {
+    destroySecureWorkspace(session.secureWorkspaceDir);
+  }
   sessions.delete(id);
 }
 
-/** Register SSE client and flush any pending events. */
+/** Update network setting for a secure session (takes effect on next turn). */
+export function setNetworkEnabled(id: string, enabled: boolean): void {
+  const session = sessions.get(id);
+  if (session) session.opts.networkEnabled = enabled;
+}
+
 export function attachSseClient(id: string, res: http.ServerResponse): void {
   const session = sessions.get(id);
   if (!session) return;
   session.sseClient = res;
-  for (const event of session.pending) {
-    writeSse(res, event);
-  }
+  for (const event of session.pending) writeSse(res, event);
   session.pending = [];
 }
 
@@ -56,17 +69,26 @@ export function detachSseClient(id: string): void {
   if (session) session.sseClient = null;
 }
 
-/** Send message and run the agent turn. */
-export async function sendMessage(sessionId: string, content: string): Promise<void> {
+export async function sendMessage(sessionId: string, content: string, networkEnabled?: boolean): Promise<void> {
   const session = sessions.get(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
 
-  // Secure mode: run in Docker container
+  // Per-message network override
+  if (networkEnabled !== undefined && session.opts.secure) {
+    session.opts.networkEnabled = networkEnabled;
+  }
+
   if (session.opts.secure) {
+    const workspaceDir = session.secureWorkspaceDir!;
     const secureGen = runSecureTurn(
       session.history.map((m) => ({ role: m.role as string, content: String(m.content) })),
       content,
-      { apiKey: session.opts.apiKey, model: session.opts.model },
+      {
+        apiKey: session.opts.apiKey,
+        model: session.opts.model,
+        workspaceDir,
+        networkEnabled: session.opts.networkEnabled ?? false,
+      },
     );
     let assistantText = '';
     for await (const event of secureGen) {
@@ -80,13 +102,11 @@ export async function sendMessage(sessionId: string, content: string): Promise<v
     return;
   }
 
-  // Run the agent turn and emit events
   const gen = runAgentTurn(session.history, content, {
     apiKey: session.opts.apiKey,
     model: session.opts.model,
     allowedFolders: session.opts.allowedFolders,
     onWriteApproval: async (filePath, fileContent) => {
-      // TODO: wire up approval UI — auto-approve for now
       emit(session, { type: 'approval_request', changeId: randomUUID(), path: filePath, content: fileContent });
       return true;
     },
@@ -98,7 +118,6 @@ export async function sendMessage(sessionId: string, content: string): Promise<v
     if (event.type === 'text') assistantText += event.content;
   }
 
-  // Persist turn in history
   if (assistantText) {
     session.history.push({ role: 'user', content });
     session.history.push({ role: 'assistant', content: assistantText });
@@ -114,9 +133,5 @@ function emit(session: Session, event: AgentEvent): void {
 }
 
 function writeSse(res: http.ServerResponse, event: AgentEvent): void {
-  try {
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
-  } catch {
-    // client gone
-  }
+  try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch {}
 }

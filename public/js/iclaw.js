@@ -187,11 +187,44 @@
     }
   }
 
+  // ── Network toggle (Secure Mode) ──────────────────────────────────────────
+  const networkToggleBtn = document.getElementById('composer-network-toggle-btn');
+
+  function networkKey() {
+    const pid = messagesEl?.dataset.projectId;
+    return pid ? `iclaw:secure-network:project:${pid}` : 'iclaw:secure-network:no-project';
+  }
+
+  function getNetworkEnabled() {
+    try { return localStorage.getItem(networkKey()) === 'on'; } catch { return false; }
+  }
+
+  function setNetworkEnabledStorage(on) {
+    try { localStorage.setItem(networkKey(), on ? 'on' : 'off'); } catch {}
+  }
+
+  function updateNetworkToggle() {
+    if (!networkToggleBtn) return;
+    const mode = getComposerMode();
+    networkToggleBtn.hidden = (mode !== 'secure');
+    const on = getNetworkEnabled();
+    networkToggleBtn.dataset.network = on ? 'on' : 'off';
+    networkToggleBtn.title = on ? 'Network is ON - click to disable' : 'Network is OFF - click to enable';
+    networkToggleBtn.style.color = on ? 'var(--accent)' : '';
+  }
+
+  networkToggleBtn?.addEventListener('click', () => {
+    const on = !getNetworkEnabled();
+    setNetworkEnabledStorage(on);
+    updateNetworkToggle();
+  });
+
   function updateWorkFoldersButton() {
     if (!workFoldersBtn) return;
     const mode = getComposerMode();
     workFoldersBtn.hidden = (mode !== 'work');
     renderWorkFoldersList();
+    updateNetworkToggle();
   }
 
   if (workFoldersBtn && workFoldersModal) {
@@ -3926,6 +3959,9 @@
     if (item.mode === 'work') {
       const wf = getWorkFolders ? getWorkFolders() : [];
       if (wf.length > 0) payload.workFolders = wf;
+    }
+    if (item.mode === 'secure') {
+      payload.networkEnabled = typeof getNetworkEnabled === 'function' ? getNetworkEnabled() : false;
     }
     if (item.replyTo) {
       payload.replyTo = {

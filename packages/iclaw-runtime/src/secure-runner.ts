@@ -2,11 +2,12 @@
  * Secure Mode runner.
  *
  * Agent loop runs on the HOST (can reach OpenRouter).
- * Tool execution happens INSIDE a Docker container (isolated, no network).
+ * Tool execution happens INSIDE a Docker container (isolated).
  *
- * This way:
- *   - Model calls → host → OpenRouter  (needs network)
- *   - File/shell tools → Docker container  (isolated, --network none)
+ * Per-turn container lifecycle:
+ *   start container → execute turn → stop container → (keep workspace dir)
+ * Next turn: start NEW container with SAME workspace volume.
+ * This allows changing network settings per message while preserving files.
  */
 import { spawn, execFile } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
@@ -15,25 +16,35 @@ import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 
-import { runAgentTurn, type Message } from './agent/loop.js';
-import type { AgentEvent, AgentOptions } from './agent/loop.js';
-import type { ToolContext } from './agent/tools.js';
+import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
 
 const execFileAsync = promisify(execFile);
 
 const CONTAINER_IMAGE = process.env.ICLAW_SECURE_IMAGE || 'node:22-slim';
 const CONTAINER_TIMEOUT = 30_000;
 
-/** Start a disposable Docker container for tool execution. Returns cleanup fn. */
-async function startSandbox(): Promise<{ containerName: string; workspaceDir: string; cleanup: () => void }> {
-  const workspaceDir = mkdtempSync(join(tmpdir(), 'iclaw-secure-'));
+export type SecureEvent = AgentEvent;
+
+/** Create a persistent workspace directory (survives container restarts). */
+export function createSecureWorkspace(): string {
+  return mkdtempSync(join(tmpdir(), 'iclaw-secure-'));
+}
+
+/** Destroy a workspace directory. */
+export function destroySecureWorkspace(workspaceDir: string): void {
+  try { rmSync(workspaceDir, { recursive: true, force: true }); } catch {}
+}
+
+/** Start a container with the given workspace. Returns containerName. */
+async function startContainer(workspaceDir: string, networkEnabled: boolean): Promise<string> {
   const containerName = `iclaw-secure-${randomUUID().slice(0, 8)}`;
 
-  // Start a long-running container with a sleep loop so we can docker exec into it
+  const networkArgs = networkEnabled ? [] : ['--network', 'none'];
+
   spawn('docker', [
     'run', '--rm', '-d',
     '--name', containerName,
-    '--network', 'none',
+    ...networkArgs,
     '--memory', '512m',
     '--cpus', '1',
     '-v', `${workspaceDir}:/workspace:rw`,
@@ -42,15 +53,14 @@ async function startSandbox(): Promise<{ containerName: string; workspaceDir: st
     'sleep', '3600',
   ], { stdio: 'ignore' });
 
-  // Wait a moment for container to start
+  // Wait for container to start
   await new Promise((r) => setTimeout(r, 1500));
+  return containerName;
+}
 
-  const cleanup = (): void => {
-    try { execFile('docker', ['rm', '-f', containerName], () => {}); } catch {}
-    try { rmSync(workspaceDir, { recursive: true, force: true }); } catch {}
-  };
-
-  return { containerName, workspaceDir, cleanup };
+/** Stop a container (workspace is preserved on host). */
+function stopContainer(containerName: string): void {
+  try { execFile('docker', ['rm', '-f', containerName], () => {}); } catch {}
 }
 
 /** Execute a command inside the sandbox container. */
@@ -67,7 +77,6 @@ async function execInContainer(containerName: string, command: string): Promise<
   }
 }
 
-/** Read a file from the container workspace. */
 function readFromWorkspace(workspaceDir: string, filePath: string): string {
   const safe = basename(filePath);
   const full = join(workspaceDir, safe);
@@ -75,7 +84,6 @@ function readFromWorkspace(workspaceDir: string, filePath: string): string {
   return readFileSync(full, 'utf-8');
 }
 
-/** Write a file to the container workspace. */
 function writeToWorkspace(workspaceDir: string, filePath: string, content: string): string {
   const safe = basename(filePath);
   const full = join(workspaceDir, safe);
@@ -83,74 +91,51 @@ function writeToWorkspace(workspaceDir: string, filePath: string, content: strin
   return `Written: /workspace/${safe}`;
 }
 
-/** List files in the container workspace. */
-async function listWorkspace(containerName: string): Promise<string> {
-  return execInContainer(containerName, 'ls -la /workspace');
-}
-
-export type SecureEvent = AgentEvent;
-
 /**
- * Run a turn in Secure Mode.
- * Agent loop on host, tools execute in Docker sandbox.
+ * Run one turn in Secure Mode.
+ * Starts a fresh container (with same workspace), runs the turn, stops it.
  */
 export async function* runSecureTurn(
   history: { role: string; content: string }[],
   userMessage: string,
-  opts: { apiKey: string; model: string; systemPrompt?: string },
+  opts: {
+    apiKey: string;
+    model: string;
+    workspaceDir: string;
+    networkEnabled?: boolean;
+    systemPrompt?: string;
+  },
 ): AsyncGenerator<SecureEvent> {
-  let sandbox: Awaited<ReturnType<typeof startSandbox>> | null = null;
+  const networkEnabled = opts.networkEnabled ?? false;
+  const containerName = await startContainer(opts.workspaceDir, networkEnabled);
 
   try {
-    sandbox = await startSandbox();
-    const { containerName, workspaceDir } = sandbox;
-
-    // Tool context — executes inside Docker
-    const toolCtx: ToolContext = {
-      allowedFolders: [workspaceDir],
-      requestWriteApproval: async () => true, // auto-approve in sandbox
-    };
-
-    // Override tool execution to use Docker for bash/write/read
-    const sandboxToolCtx: ToolContext = {
-      ...toolCtx,
-      // We pass this ctx but override executeTool below
-    };
-
-    const agentOpts: AgentOptions = {
-      apiKey: opts.apiKey,
-      model: opts.model,
-      allowedFolders: [workspaceDir],
-      systemPrompt: opts.systemPrompt ??
-        `You are running in a secure isolated sandbox.
+    const gen = runSecureAgentLoop(
+      history.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+      userMessage,
+      {
+        apiKey: opts.apiKey,
+        model: opts.model,
+        allowedFolders: [opts.workspaceDir],
+        systemPrompt: opts.systemPrompt ??
+          `You are running in a secure isolated sandbox.
 You can run commands and read/write files in /workspace only.
-The sandbox has no internet access.
+Network is ${networkEnabled ? 'enabled' : 'disabled'}.
 Be concise.`,
-      onWriteApproval: async () => true,
-    };
-
-    // Monkey-patch tool execution to use docker exec
-    // We import executeTool and wrap it
-    const { executeTool } = await import('./agent/tools.js');
-    const origExecute = executeTool;
-
-    // We need to intercept at the loop level — pass custom tool executor
-    const messages: Message[] = [
-      ...history.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    ];
-
-    // Run the agent loop with sandbox-aware tool execution
-    const gen = runSecureAgentLoop(messages, userMessage, agentOpts, containerName, workspaceDir);
+        onWriteApproval: async () => true,
+      },
+      containerName,
+      opts.workspaceDir,
+    );
 
     for await (const event of gen) {
       yield event;
     }
   } finally {
-    sandbox?.cleanup();
+    stopContainer(containerName);
   }
 }
 
-/** Agent loop with tool execution routed through Docker. */
 async function* runSecureAgentLoop(
   history: Message[],
   userMessage: string,
@@ -229,7 +214,6 @@ async function* runSecureAgentLoop(
       })),
     } as Message);
 
-    // Execute tools inside Docker
     for (let i = 0; i < toolCalls.length; i++) {
       const tc = toolCalls[i];
       let args: Record<string, unknown> = {};
@@ -238,22 +222,18 @@ async function* runSecureAgentLoop(
       yield { type: 'tool_start', name: tc.name, input: args };
 
       let result: string;
-      try {
-        if (tc.name === 'run_command') {
-          result = await execInContainer(containerName, String(args.command ?? ''));
-        } else if (tc.name === 'write_file') {
-          result = writeToWorkspace(workspaceDir, String(args.path ?? 'file.txt'), String(args.content ?? ''));
-        } else if (tc.name === 'read_file') {
-          result = readFromWorkspace(workspaceDir, String(args.path ?? ''));
-        } else if (tc.name === 'list_files') {
-          result = await listWorkspace(containerName);
-        } else if (tc.name === 'search_files') {
-          result = await execInContainer(containerName, `grep -r ${JSON.stringify(String(args.query ?? ''))} /workspace 2>/dev/null | head -20`);
-        } else {
-          result = `Tool not available in secure mode: ${tc.name}`;
-        }
-      } catch (err) {
-        result = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      if (tc.name === 'run_command') {
+        result = await execInContainer(containerName, String(args.command ?? ''));
+      } else if (tc.name === 'write_file') {
+        result = writeToWorkspace(workspaceDir, String(args.path ?? 'file.txt'), String(args.content ?? ''));
+      } else if (tc.name === 'read_file') {
+        result = readFromWorkspace(workspaceDir, String(args.path ?? ''));
+      } else if (tc.name === 'list_files') {
+        result = await execInContainer(containerName, 'ls -la /workspace');
+      } else if (tc.name === 'search_files') {
+        result = await execInContainer(containerName, `grep -r ${JSON.stringify(String(args.query ?? ''))} /workspace 2>/dev/null | head -20`);
+      } else {
+        result = `Tool not available in secure mode: ${tc.name}`;
       }
 
       yield { type: 'tool_result', name: tc.name, result };

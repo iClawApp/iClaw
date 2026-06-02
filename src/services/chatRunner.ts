@@ -540,7 +540,7 @@ async function runTurnLocked(opts: {
 
   // Work / Secure Mode — routes to iclaw-runtime, returns early.
   if (mode === 'work' || mode === 'secure') {
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure' });
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', networkEnabled: opts.networkEnabled });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }
@@ -764,6 +764,8 @@ export async function sendMessage(opts: {
   mode?: ChatMode;
   /** Allowed folders for Work Mode. */
   workFolders?: string[];
+  /** Network toggle for Secure Mode. */
+  networkEnabled?: boolean;
 }): Promise<{ chatId: number }> {
   let chatId = opts.chatId;
   let isFirstTurn = false;
@@ -811,6 +813,7 @@ export async function sendMessage(opts: {
         inlineSecrets: opts.inlineSecrets,
         mode: opts.mode,
         workFolders: opts.workFolders,
+        networkEnabled: opts.networkEnabled,
       }),
     );
   } catch (err) {
@@ -858,6 +861,7 @@ async function runWorkModeTurn(opts: {
   onEvent: (event: TurnEvent) => void;
   workFolders?: string[];
   secure?: boolean;
+  networkEnabled?: boolean;
 }): Promise<void> {
   const { chatId, content, onEvent } = opts;
 
@@ -879,7 +883,7 @@ async function runWorkModeTurn(opts: {
   }
 
   try {
-    await sendWorkMessage(sessionId, content);
+    await sendWorkMessage(sessionId, content, opts.networkEnabled);
   } catch (err) {
     // Session may have expired — retry with a fresh one
     workSessions.delete(chatId);
