@@ -23,6 +23,7 @@ import {
 import type { ChatMode, Message, MessageAttachment } from '../types';
 import { DEFAULT_MODE, getModeDef } from './chatModes';
 import { loadOpenRouterConfig } from './config';
+import { createWorkSession, sendWorkMessage, subscribeWorkEvents } from './workRuntime';
 import {
   streamComplete,
   openRouterEnabled,
@@ -536,6 +537,13 @@ async function runTurnLocked(opts: {
     }
   };
 
+  // Work Mode — routes to iclaw-runtime, returns early.
+  if (mode === 'work') {
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent });
+    wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
+    return;
+  }
+
   // Run the turn. Two backends:
   //   - Ask (lightweight): a direct, tool-less OpenRouter completion. No agent,
   //     no tools wired — the model can't touch files/shell/browser. Deltas
@@ -831,6 +839,59 @@ export async function sendMessage(opts: {
   }
 
   return { chatId };
+}
+
+/**
+ * Route a Work Mode turn to iclaw-runtime.
+ * Creates a session, sends the message, streams events back via wsHub.
+ */
+async function runWorkModeTurn(opts: {
+  chatId: number;
+  content: string;
+  onEvent: (event: TurnEvent) => void;
+}): Promise<void> {
+  const { chatId, content, onEvent } = opts;
+  let sessionId: string;
+  try {
+    sessionId = await createWorkSession({});
+  } catch (err) {
+    const note = `Work Mode runtime unavailable. Make sure iclaw-runtime is running. (${err instanceof Error ? err.message : String(err)})`;
+    const sys = messages.append(chatId, 'system', note, 'work-unavailable');
+    wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+    return;
+  }
+
+  await sendWorkMessage(sessionId, content);
+
+  await new Promise<void>((resolve) => {
+    let accumulated = '';
+    const unsubscribe = subscribeWorkEvents(
+      sessionId,
+      (event) => {
+        if (event.type === 'text') {
+          accumulated += event.content;
+          onEvent({ type: 'text-delta', text: event.content });
+        } else if (event.type === 'done') {
+          if (accumulated.trim()) {
+            const assistantMsg = messages.append(chatId, 'assistant', accumulated, null);
+            wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });
+          }
+          unsubscribe();
+          resolve();
+        } else if (event.type === 'error') {
+          const sys = messages.append(chatId, 'system', `Work Mode error: ${event.message}`, null);
+          wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+          unsubscribe();
+          resolve();
+        }
+      },
+      (err) => {
+        const sys = messages.append(chatId, 'system', `Work Mode connection error: ${err.message}`, null);
+        wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+        resolve();
+      },
+    );
+  });
 }
 
 export async function abortChatRun(chatId: number): Promise<void> {

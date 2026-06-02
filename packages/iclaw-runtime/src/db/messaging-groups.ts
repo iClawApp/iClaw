@@ -1,0 +1,195 @@
+import type { MessagingGroup, MessagingGroupAgent } from '../types.js';
+// Agent-to-agent module not included in iClaw Runtime.
+// createMessagingGroupAgent skips the destination auto-creation.
+import { getDb, hasTable } from './connection.js';
+
+// ── Messaging Groups ──
+
+export function createMessagingGroup(group: MessagingGroup): void {
+  getDb()
+    .prepare(
+      `INSERT INTO messaging_groups (id, channel_type, platform_id, name, is_group, unknown_sender_policy, created_at)
+       VALUES (@id, @channel_type, @platform_id, @name, @is_group, @unknown_sender_policy, @created_at)`,
+    )
+    .run(group);
+}
+
+export function getMessagingGroup(id: string): MessagingGroup | undefined {
+  return getDb().prepare('SELECT * FROM messaging_groups WHERE id = ?').get(id) as MessagingGroup | undefined;
+}
+
+export function getMessagingGroupByPlatform(channelType: string, platformId: string): MessagingGroup | undefined {
+  return getDb()
+    .prepare('SELECT * FROM messaging_groups WHERE channel_type = ? AND platform_id = ?')
+    .get(channelType, platformId) as MessagingGroup | undefined;
+}
+
+/**
+ * Combined lookup for the router's fast-drop path. Returns the messaging
+ * group (if it exists) and a count of wired agents in one query — lets
+ * `routeInbound` short-circuit messages for unwired / unknown channels
+ * with a single DB read instead of four (mg lookup, sender upsert, agents
+ * lookup, dropped_messages insert).
+ *
+ * Returns `null` when no messaging_groups row exists for this channel.
+ * Returns `{ mg, agentCount: 0 }` when the row exists but has no wired
+ * agents. Uses the `UNIQUE(channel_type, platform_id)` index plus the
+ * `UNIQUE(messaging_group_id, agent_group_id)` index for the JOIN — both
+ * covered by existing SQLite auto-indexes from the UNIQUE constraints.
+ */
+export function getMessagingGroupWithAgentCount(
+  channelType: string,
+  platformId: string,
+): { mg: MessagingGroup; agentCount: number } | null {
+  const row = getDb()
+    .prepare(
+      `SELECT mg.*, COUNT(mga.id) AS agent_count
+         FROM messaging_groups mg
+    LEFT JOIN messaging_group_agents mga ON mga.messaging_group_id = mg.id
+        WHERE mg.channel_type = ? AND mg.platform_id = ?
+     GROUP BY mg.id`,
+    )
+    .get(channelType, platformId) as (MessagingGroup & { agent_count: number }) | undefined;
+  if (!row) return null;
+  const { agent_count, ...mg } = row;
+  return { mg: mg as MessagingGroup, agentCount: agent_count };
+}
+
+export function getAllMessagingGroups(): MessagingGroup[] {
+  return getDb().prepare('SELECT * FROM messaging_groups ORDER BY name').all() as MessagingGroup[];
+}
+
+export function getMessagingGroupsByChannel(channelType: string): MessagingGroup[] {
+  return getDb().prepare('SELECT * FROM messaging_groups WHERE channel_type = ?').all(channelType) as MessagingGroup[];
+}
+
+export function updateMessagingGroup(
+  id: string,
+  updates: Partial<Pick<MessagingGroup, 'name' | 'is_group' | 'unknown_sender_policy'>>,
+): void {
+  const fields: string[] = [];
+  const values: Record<string, unknown> = { id };
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (value !== undefined) {
+      fields.push(`${key} = @${key}`);
+      values[key] = value;
+    }
+  }
+  if (fields.length === 0) return;
+
+  getDb()
+    .prepare(`UPDATE messaging_groups SET ${fields.join(', ')} WHERE id = @id`)
+    .run(values);
+}
+
+export function deleteMessagingGroup(id: string): void {
+  getDb().prepare('DELETE FROM messaging_groups WHERE id = ?').run(id);
+}
+
+/**
+ * Mark a messaging group as denied by the owner (channel-registration flow).
+ * Future mentions on this channel silently drop until an admin explicitly
+ * wires it via `createMessagingGroupAgent`, which implicitly clears the
+ * denied state by making `agentCount > 0` — the router's denied-channel
+ * check sits on the `agentCount === 0` branch.
+ *
+ * Passing null unsets the flag (used by tests or a future "unblock channel"
+ * admin command).
+ */
+export function setMessagingGroupDeniedAt(id: string, deniedAt: string | null): void {
+  getDb().prepare('UPDATE messaging_groups SET denied_at = ? WHERE id = ?').run(deniedAt, id);
+}
+
+// ── Messaging Group Agents ──
+
+/**
+ * Wire a messaging group to an agent group. Also auto-creates the matching
+ * `agent_destinations` row so the agent can deliver to this chat as a
+ * target, not just reply to the origin. Without this, routing to chats that
+ * aren't the session's origin (agent-shared sessions, cross-channel sends)
+ * would require an operator to hand-insert destination rows every time.
+ *
+ * The destination row is skipped if one already exists for the same target,
+ * so re-wiring is a no-op. The local_name uses the messaging group's `name`
+ * field when set, falling back to `${channel_type}-${mg_id prefix}`, with
+ * a numeric suffix to break collisions within the agent's namespace. This
+ * mirrors the backfill logic in migration 004.
+ */
+export function createMessagingGroupAgent(mga: MessagingGroupAgent): void {
+  getDb()
+    .prepare(
+      `INSERT INTO messaging_group_agents (
+         id, messaging_group_id, agent_group_id,
+         engage_mode, engage_pattern, sender_scope, ignored_message_policy,
+         session_mode, priority, created_at
+       )
+       VALUES (
+         @id, @messaging_group_id, @agent_group_id,
+         @engage_mode, @engage_pattern, @sender_scope, @ignored_message_policy,
+         @session_mode, @priority, @created_at
+       )`,
+    )
+    .run(mga);
+}
+
+export function getMessagingGroupAgents(messagingGroupId: string): MessagingGroupAgent[] {
+  return getDb()
+    .prepare('SELECT * FROM messaging_group_agents WHERE messaging_group_id = ? ORDER BY priority DESC')
+    .all(messagingGroupId) as MessagingGroupAgent[];
+}
+
+export function getMessagingGroupAgentByPair(
+  messagingGroupId: string,
+  agentGroupId: string,
+): MessagingGroupAgent | undefined {
+  return getDb()
+    .prepare('SELECT * FROM messaging_group_agents WHERE messaging_group_id = ? AND agent_group_id = ?')
+    .get(messagingGroupId, agentGroupId) as MessagingGroupAgent | undefined;
+}
+
+export function getMessagingGroupAgent(id: string): MessagingGroupAgent | undefined {
+  return getDb().prepare('SELECT * FROM messaging_group_agents WHERE id = ?').get(id) as
+    | MessagingGroupAgent
+    | undefined;
+}
+
+export function updateMessagingGroupAgent(
+  id: string,
+  updates: Partial<
+    Pick<
+      MessagingGroupAgent,
+      'engage_mode' | 'engage_pattern' | 'sender_scope' | 'ignored_message_policy' | 'session_mode' | 'priority'
+    >
+  >,
+): void {
+  const fields: string[] = [];
+  const values: Record<string, unknown> = { id };
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (value !== undefined) {
+      fields.push(`${key} = @${key}`);
+      values[key] = value;
+    }
+  }
+  if (fields.length === 0) return;
+
+  getDb()
+    .prepare(`UPDATE messaging_group_agents SET ${fields.join(', ')} WHERE id = @id`)
+    .run(values);
+}
+
+export function deleteMessagingGroupAgent(id: string): void {
+  getDb().prepare('DELETE FROM messaging_group_agents WHERE id = ?').run(id);
+}
+
+/** Get all messaging groups wired to an agent group (reverse lookup). */
+export function getMessagingGroupsByAgentGroup(agentGroupId: string): MessagingGroup[] {
+  return getDb()
+    .prepare(
+      `SELECT mg.* FROM messaging_groups mg
+       JOIN messaging_group_agents mga ON mga.messaging_group_id = mg.id
+       WHERE mga.agent_group_id = ?`,
+    )
+    .all(agentGroupId) as MessagingGroup[];
+}

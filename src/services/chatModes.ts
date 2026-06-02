@@ -72,8 +72,15 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
     enabled: true,
     lightweight: false,
   },
+  {
+    id: 'work',
+    label: 'Work',
+    description:
+      'AI works inside your selected folders only. File writes need approval. OpenRouter-powered.',
+    enabled: true,
+    lightweight: false,
+  },
   // --- Planned modes (not selectable yet) -------------------------------
-  // Flip `enabled: true` and wire the backend when each is implemented.
   {
     id: 'research',
     label: 'Research',
@@ -114,6 +121,8 @@ export const ENABLED_MODE_IDS: readonly string[] = CHAT_MODES.filter(
 function modeAvailable(def: ChatModeDef): boolean {
   if (!def.enabled) return false;
   if (def.lightweight && !openRouterEnabled()) return false;
+  // Work Mode requires OpenRouter (it's the model provider for the runtime)
+  if (def.id === 'work' && !openRouterEnabled()) return false;
   return true;
 }
 
