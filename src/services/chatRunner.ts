@@ -7,7 +7,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { chats, messages, projects, projectSecrets } from './store';
+import { chats, messages, projects, projectSecrets, projectFacts } from './store';
 import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
 import { chatStatus } from './chatStatus';
 import { openclawWs, type TurnEvent } from './openclawWs';
@@ -306,6 +306,7 @@ async function runTurnLocked(opts: {
   /** 'ask' | 'execute'. Defaults to 'execute' for full back-compat. */
   mode?: ChatMode;
   workFolders?: string[];
+  networkEnabled?: boolean;
 }): Promise<void> {
   const {
     chatId,
@@ -848,6 +849,26 @@ export async function sendMessage(opts: {
   return { chatId };
 }
 
+/** Build system prompt for Work/Secure Mode including project context. */
+function buildWorkSystemPrompt(chatId: number): string {
+  const chat = chats.get(chatId);
+  const lines: string[] = [];
+
+  if (chat?.project_id) {
+    const project = projects.get(chat.project_id);
+    if (project?.name) lines.push(`Project: ${project.name}`);
+    if (project?.description) lines.push(`Description: ${project.description}`);
+
+    const facts = projectFacts.listByProject(chat.project_id, 20);
+    if (facts.length > 0) {
+      lines.push('\nProject context:');
+      facts.forEach((f) => lines.push(`- ${f.content}`));
+    }
+  }
+
+  return lines.length > 0 ? lines.join('\n') : '';
+}
+
 /** Persistent Work Mode sessions — one per chat, reused across turns. */
 const workSessions = new Map<number, string>();
 
@@ -872,7 +893,11 @@ async function runWorkModeTurn(opts: {
       const allowedFolders = opts.workFolders?.length
         ? opts.workFolders
         : [process.env.HOME ?? ''].filter(Boolean);
-      sessionId = await createWorkSession({ allowedFolders, secure: opts.secure });
+      sessionId = await createWorkSession({
+        allowedFolders,
+        secure: opts.secure,
+        systemPrompt: buildWorkSystemPrompt(chatId),
+      });
       workSessions.set(chatId, sessionId);
     } catch (err) {
       const note = `Work Mode runtime unavailable. (${err instanceof Error ? err.message : String(err)})`;

@@ -55,11 +55,15 @@ export interface CreateSessionOptions {
   allowedFolders?: string[];
   model?: string;
   secure?: boolean;
+  systemPrompt?: string;
 }
 
 /** Create a new Work Mode session. Returns sessionId. */
 export async function createWorkSession(opts: CreateSessionOptions = {}): Promise<string> {
-  const res = await request('POST', '/sessions', opts);
+  const body: Record<string, unknown> = { allowedFolders: opts.allowedFolders, secure: opts.secure };
+  if (opts.model) body.model = opts.model;
+  if (opts.systemPrompt) body.systemPrompt = opts.systemPrompt;
+  const res = await request('POST', '/sessions', body);
   if (res.status !== 201) {
     throw new Error(`Failed to create work session: ${JSON.stringify(res.data)}`);
   }

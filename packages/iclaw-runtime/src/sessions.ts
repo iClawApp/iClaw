@@ -14,6 +14,7 @@ export interface SessionOptions {
   apiKey: string;
   secure?: boolean;
   networkEnabled?: boolean;
+  systemPrompt?: string;
 }
 
 interface Session {
@@ -88,6 +89,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
         model: session.opts.model,
         workspaceDir,
         networkEnabled: session.opts.networkEnabled ?? false,
+        systemPrompt: session.opts.systemPrompt,
       },
     );
     let assistantText = '';
@@ -106,6 +108,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     apiKey: session.opts.apiKey,
     model: session.opts.model,
     allowedFolders: session.opts.allowedFolders,
+    systemPrompt: session.opts.systemPrompt,
     onWriteApproval: async (filePath, fileContent) => {
       emit(session, { type: 'approval_request', changeId: randomUUID(), path: filePath, content: fileContent });
       return true;
