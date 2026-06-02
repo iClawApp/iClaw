@@ -1236,6 +1236,19 @@ code {
 }
 .msg.user .msg-tokens { text-align: right; }
 
+/* Dev-mode chat-wide token total (chat header). */
+.chat-token-total {
+  align-self: center;
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--text) 55%, transparent);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
 .msg .role {
   position: absolute;
   width: 1px;

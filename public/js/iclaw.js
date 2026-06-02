@@ -1758,7 +1758,18 @@
     return '<div class="msg-attachments">' + items + '</div>';
   }
 
-  /** Dev mode: show token usage on a message bubble. No-op otherwise. */
+  /** Dev mode: add a live message's tokens to the chat-wide running total. */
+  function bumpChatTokenTotal(tokens) {
+    if (!window.__ICLAW_DEV__ || !tokens) return;
+    const el = document.getElementById('chat-token-total');
+    if (!el) return;
+    const cur = (Number(el.dataset.total) || 0) + Number(tokens);
+    el.dataset.total = String(cur);
+    el.textContent = cur.toLocaleString() + ' tok total';
+    el.hidden = false;
+  }
+
+  /** Dev mode: show token usage on a message bubble + add to the chat total. */
   function applyTokenBadge(el, tokens) {
     if (!window.__ICLAW_DEV__ || !tokens || !el) return;
     if (el.querySelector(':scope > .msg-tokens')) return;
@@ -1767,6 +1778,7 @@
     span.title = 'Tokens spent on this reply';
     span.textContent = Number(tokens).toLocaleString() + ' tok';
     el.appendChild(span);
+    bumpChatTokenTotal(tokens);
   }
 
   function appendMessage(msg, opts) {

@@ -14,6 +14,10 @@
           aria-label="Chat title"
         />
       </form>
+      <% if (typeof devMode !== 'undefined' && devMode) { const _tokTotal = (chatMessages || []).reduce((a, m) => a + (Number(m.tokens) || 0), 0); %>
+        <span class="chat-token-total" id="chat-token-total" data-total="<%= _tokTotal %>"
+          title="Total tokens spent in this chat (dev mode)" <%= _tokTotal > 0 ? '' : 'hidden' %>><%= _tokTotal.toLocaleString() %> tok total</span>
+      <% } %>
 
       <div class="chat-header-tools">
       <form class="agent-form header-field" method="post" action="/chats/<%= activeChat.id %>/agent">
