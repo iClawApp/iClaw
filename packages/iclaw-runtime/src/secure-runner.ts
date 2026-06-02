@@ -20,12 +20,11 @@ import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
 
 const execFileAsync = promisify(execFile);
 
-// Secure sandbox image: Chromium + agent-browser baked in (build-secure.sh).
-// Falls back to node:22-slim if the image isn't built yet — file/command tools
-// still work, only browsing is unavailable.
+// Slim secure sandbox image: a small CLI toolset, no browser (build-secure.sh).
+// The agent reaches the web via `curl` and can self-install more tools into
+// /workspace/.tools (no root).
 const CONTAINER_IMAGE = process.env.ICLAW_SECURE_IMAGE || 'iclaw-secure:latest';
 const CONTAINER_TIMEOUT = 30_000;
-const BROWSE_TIMEOUT = 45_000;
 
 export type SecureEvent = AgentEvent;
 
@@ -59,6 +58,15 @@ export function createSecureWorkspace(): string {
   // The sandbox runs as the non-root `node` user; make the bind-mounted dir
   // writable to it (mkdtemp defaults to 0700 owned by the host user).
   try { chmodSync(dir, 0o777); } catch {}
+  // Pre-create the runtime tool dirs the container puts on PATH (.tools/bin for
+  // downloaded static binaries, .tools/npm for `npm i -g`). They live inside the
+  // workspace, so self-installed tools persist across container restarts and are
+  // auto-deleted with the workspace when its TTL expires. World-writable so the
+  // non-root container user can install into them.
+  for (const sub of ['.tools', '.tools/bin', '.tools/npm']) {
+    const p = join(dir, sub);
+    try { mkdirSync(p, { recursive: true }); chmodSync(p, 0o777); } catch {}
+  }
   return dir;
 }
 
@@ -130,11 +138,9 @@ export async function startContainer(workspaceDir: string, networkEnabled: boole
       'run', '--rm', '-d',
       '--name', containerName,
       ...networkArgs,
-      // Chromium needs headroom and a larger /dev/shm than the 64MB default,
-      // or it crashes on launch. Bumped from 512m now that the image ships a
-      // browser. Tunable via env for smaller/larger hosts.
-      '--memory', process.env.ICLAW_SECURE_MEMORY || '1g',
-      '--shm-size', process.env.ICLAW_SECURE_SHM || '256m',
+      // No browser any more, so the default 64MB /dev/shm is fine and 512MB is
+      // plenty of headroom for shell/node tasks. Tunable via env.
+      '--memory', process.env.ICLAW_SECURE_MEMORY || '512m',
       '--cpus', process.env.ICLAW_SECURE_CPUS || '1',
       '-v', `${workspaceDir}:/workspace:rw`,
       '--workdir', '/workspace',
@@ -227,12 +233,11 @@ export async function* runSecureTurn(
       systemPrompt: opts.systemPrompt ??
         `You are running in a secure isolated sandbox.
 You can run commands and read/write files in /workspace only.
+Preinstalled CLIs: git, rg (ripgrep), jq, curl, node, unzip/zip, less, tree.
+You can install more tools yourself, no root needed${networkEnabled ? '' : ' (requires network, which is currently OFF — ask the user to enable it)'}: download a static binary into /workspace/.tools/bin (already on PATH) with curl, or run \`npm i -g <pkg>\`. Self-installed tools live in the workspace, so they persist across turns and are removed automatically when the workspace expires.
 Network is ${networkEnabled ? 'enabled' : 'disabled'}.${
           networkEnabled
-            ? '\nFor raw HTTP / JSON APIs, use run_command with `curl -s <url>` — do NOT use the browser. ' +
-              'Use the `browse` tool to read rendered HTML pages. For interactive browsing ' +
-              '(click, fill, screenshot) run the `agent-browser` CLI via run_command, e.g. ' +
-              '`agent-browser open <url>` then `agent-browser snapshot -i`.'
+            ? '\nTo fetch web pages or APIs, use run_command with `curl -s <url>` (there is no browser in this sandbox).'
             : ''
         }
 Be concise.`,
@@ -259,9 +264,7 @@ async function* runSecureAgentLoop(
   const OpenAI = (await import('openai')).default;
   const { TOOL_DEFINITIONS } = await import('./agent/tools.js');
 
-  // `browse` is only offered when network is on. Even if a model tried to call
-  // it otherwise, the dedicated browser container is the real boundary.
-  const tools = networkEnabled ? [...TOOL_DEFINITIONS, BROWSE_TOOL] : TOOL_DEFINITIONS;
+  const tools = TOOL_DEFINITIONS;
 
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
@@ -349,8 +352,6 @@ async function* runSecureAgentLoop(
         result = await execInContainer(containerName, 'ls -la /workspace');
       } else if (tc.name === 'search_files') {
         result = await execInContainer(containerName, `grep -r ${JSON.stringify(String(args.query ?? ''))} /workspace 2>/dev/null | head -20`);
-      } else if (tc.name === 'browse') {
-        result = await browseInContainer(containerName, String(args.url ?? ''), networkEnabled);
       } else {
         result = `Tool not available in secure mode: ${tc.name}`;
       }
@@ -361,62 +362,4 @@ async function* runSecureAgentLoop(
   }
 
   yield { type: 'error', message: 'Agent loop exceeded maximum rounds' };
-}
-
-// ── Browser tool (network-gated, isolated) ──────────────────────────────────
-
-/** Schema appended to the secure tool list only when network is enabled. */
-const BROWSE_TOOL = {
-  type: 'function' as const,
-  function: {
-    name: 'browse',
-    description:
-      'Open a web page and return its visible content. Available only when network access is enabled. ' +
-      'For interactive browsing (click, fill, screenshot) use run_command with the `agent-browser` CLI.',
-    parameters: {
-      type: 'object',
-      properties: {
-        url: { type: 'string', description: 'Absolute http(s) URL to open' },
-      },
-      required: ['url'],
-    },
-  },
-} as const;
-
-/** Shell-safe single-quote wrap (URL is pre-validated to exclude quotes). */
-function shQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}
-
-/**
- * Open a URL with the `agent-browser` CLI *inside* the per-turn sandbox
- * container and return the page's accessibility snapshot (text).
- *
- * Safety is systemic, not prompt-based:
- *  - only offered when the user's network toggle is on (re-checked here);
- *  - the browser runs in the same isolated container as the rest of the turn,
- *    so when network is off it has `--network none` and physically can't reach
- *    anything — no allowlist or prompt rule is doing the enforcing;
- *  - hard exec timeout; container is torn down at end of turn.
- */
-async function browseInContainer(containerName: string, url: string, networkEnabled: boolean): Promise<string> {
-  if (!networkEnabled) return 'Network is disabled — enable network access to browse.';
-  if (!/^https?:\/\/[^\s'"]+$/i.test(url)) return 'Only absolute http(s) URLs are allowed.';
-
-  try {
-    // Use `bash -c` (NOT `-lc`): a login shell re-sources /etc/profile and drops
-    // /pnpm from PATH, which is where agent-browser is installed. `docker exec`
-    // already inherits the image's ENV PATH (incl. /pnpm).
-    const cmd = `agent-browser open ${shQuote(url)} >/dev/null 2>&1 && agent-browser snapshot -c 2>/dev/null | head -c 8000`;
-    const { stdout, stderr } = await execFileAsync(
-      'docker', ['exec', containerName, 'bash', '-c', cmd],
-      { timeout: BROWSE_TIMEOUT, maxBuffer: 8_000_000 },
-    );
-    const out = (stdout || stderr).trim();
-    return out || '(page returned no readable content)';
-  } catch (err) {
-    const e = err as { stdout?: string; stderr?: string; message?: string };
-    const detail = (e.stderr || e.message || 'error').slice(0, 300);
-    return `Browse failed (is the "${CONTAINER_IMAGE}" image built with agent-browser?): ${detail}`;
-  }
 }
