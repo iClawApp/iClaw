@@ -76,9 +76,9 @@ export function loadOpenRouterConfig(): OpenRouterConfig {
   const baseUrl = (
     process.env.OPENROUTER_BASE_URL?.trim() || 'https://openrouter.ai/api/v1'
   ).replace(/\/+$/, '');
-  const askModel = process.env.ICLAW_ASK_MODEL?.trim() || 'google/gemini-2.0-flash-001';
-  const titleModel = process.env.ICLAW_TITLE_MODEL?.trim() || 'google/gemini-2.0-flash-001';
-  const sttModel = process.env.ICLAW_STT_MODEL?.trim() || 'google/gemini-2.0-flash-001';
+  const askModel = process.env.ICLAW_ASK_MODEL?.trim() || 'google/gemini-2.5-flash';
+  const titleModel = process.env.ICLAW_TITLE_MODEL?.trim() || 'google/gemini-2.5-flash';
+  const sttModel = process.env.ICLAW_STT_MODEL?.trim() || 'google/gemini-2.5-flash';
   const referer = process.env.OPENROUTER_REFERER?.trim() || 'https://iclaw.digital';
   const appTitle = process.env.OPENROUTER_APP_TITLE?.trim() || 'iClaw';
   return { apiKey, baseUrl, askModel, titleModel, sttModel, referer, appTitle };
