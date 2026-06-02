@@ -69,20 +69,22 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
     ephemeral: false,
   },
   {
-    id: 'incognito',
-    label: 'Incognito',
-    description: 'Private, read-only research - reads files & the web, never writes, nothing saved',
-    enabled: true,
-    runtimeBacked: true,
-    ephemeral: true,
-  },
-  {
     id: 'execute',
     label: 'Execute',
     description: 'Full access via OpenClaw - for complex tasks that need more power',
     enabled: true,
     runtimeBacked: false,
     ephemeral: false,
+  },
+  // Set apart at the bottom (the composer renders a divider before any
+  // `ephemeral` mode) — it's a distinct, off-the-record surface.
+  {
+    id: 'incognito',
+    label: 'Incognito',
+    description: 'Private, read-only research - reads files & the web, never writes, nothing saved',
+    enabled: true,
+    runtimeBacked: true,
+    ephemeral: true,
   },
   // --- Planned modes (not selectable yet) -------------------------------
   {

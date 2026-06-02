@@ -72,6 +72,10 @@
 
   function setComposerMode(mode, opts) {
     const next = composerModeIds.includes(mode) ? mode : composerModeDefault;
+    // Remember the mode we leave when entering Incognito, so the × can restore it.
+    if (next === 'incognito' && selectedComposerMode !== 'incognito') {
+      incognitoReturnMode = selectedComposerMode;
+    }
     selectedComposerMode = next;
     if (composerModeBtn) composerModeBtn.dataset.mode = next;
     if (composerModeMenu) {
@@ -101,14 +105,43 @@
   // streams over `incognito-*` WS events keyed by `activeIncognitoKey`, and
   // nothing is written to the DB. Reloading the page clears it.
   let activeIncognitoKey = null;
+  let incognitoReturnMode = composerModeDefault;
 
   function newIncognitoKey() {
     return 'inc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
   }
 
+  /** Leave Incognito → restore the previous mode (chats + sidebar come back). */
+  function exitIncognito() {
+    const back = incognitoReturnMode && incognitoReturnMode !== 'incognito'
+      ? incognitoReturnMode
+      : composerModeDefault;
+    setComposerMode(back);
+    if (typeof updateComposerPlaceholder === 'function') updateComposerPlaceholder(getComposerMode());
+    if (typeof updateWorkFoldersButton === 'function') updateWorkFoldersButton();
+  }
+
+  /** The fixed top-left × shown only in incognito. Created once, CSS toggles it. */
+  function ensureIncognitoExitButton() {
+    if (document.getElementById('incognito-exit')) return;
+    const btn = document.createElement('button');
+    btn.id = 'incognito-exit';
+    btn.type = 'button';
+    btn.className = 'incognito-exit';
+    btn.setAttribute('aria-label', 'Exit Incognito');
+    btn.title = 'Exit Incognito';
+    btn.innerHTML =
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+    btn.addEventListener('click', exitIncognito);
+    document.body.appendChild(btn);
+  }
+
   function syncIncognitoSurface(mode) {
     const on = mode === 'incognito';
     document.body.classList.toggle('incognito-mode', on);
+    if (on) ensureIncognitoExitButton();
     let banner = document.getElementById('incognito-banner');
     if (on) {
       if (!banner) {

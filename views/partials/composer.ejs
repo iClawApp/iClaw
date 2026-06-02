@@ -131,6 +131,7 @@
           </button>
           <div id="composer-mode-menu" class="menu composer-mode-menu" role="menu" aria-label="Message mode" hidden>
             <% _modes.forEach(function (m) { %>
+            <% if (m.ephemeral) { %><div class="composer-mode-menu-sep" role="separator" aria-hidden="true"></div><% } %>
             <button type="button" class="menu-item composer-mode-menu-item" role="menuitemradio" data-mode="<%= m.id %>" aria-checked="<%= m.id === _defaultMode ? 'true' : 'false' %>">
               <span class="menu-item__title"><%= m.label %></span>
               <span class="composer-mode-menu-item__desc"><%= m.description %></span>
