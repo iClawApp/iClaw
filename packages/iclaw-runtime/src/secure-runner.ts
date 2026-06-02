@@ -296,6 +296,7 @@ async function* runSecureAgentLoop(
     { role: 'user', content: userMessage },
   ];
 
+  let turnTokens = 0;
   for (let round = 0; round < MAX_ROUNDS; round++) {
     let textBuffer = '';
     const toolCallBuffers: Record<string, { name: string; arguments: string }> = {};
@@ -310,6 +311,7 @@ async function* runSecureAgentLoop(
         tools: tools as any,
         tool_choice: 'auto',
         stream: true,
+        stream_options: { include_usage: true },
       });
     } catch (err) {
       yield { type: 'error', message: err instanceof Error ? err.message : String(err) };
@@ -318,6 +320,7 @@ async function* runSecureAgentLoop(
 
     let finishReason: string | null = null;
     for await (const chunk of stream) {
+      if (chunk.usage?.total_tokens) turnTokens += chunk.usage.total_tokens;
       const choice = chunk.choices[0];
       if (!choice) continue;
       finishReason = choice.finish_reason ?? finishReason;
@@ -339,7 +342,7 @@ async function* runSecureAgentLoop(
     const toolCalls = Object.values(toolCallBuffers);
     if (toolCalls.length === 0 || finishReason === 'stop') {
       if (textBuffer) messages.push({ role: 'assistant', content: textBuffer });
-      yield { type: 'done' };
+      yield { type: 'done', tokens: turnTokens || undefined };
       return;
     }
 

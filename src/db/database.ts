@@ -312,6 +312,7 @@ function ensureColumn(table: string, column: string, ddl: string): void {
 }
 ensureColumn('messages', 'attachments', 'TEXT');
 ensureColumn('messages', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
+ensureColumn('messages', 'tokens', 'INTEGER'); // dev-mode token usage (runtime modes)
 ensureColumn('queued_messages', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
 ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
 ensureColumn('remote_access_tunnels', 'access_token', 'TEXT');

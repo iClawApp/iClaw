@@ -929,9 +929,10 @@ async function runWorkModeTurn(opts: {
           if (accumulated.trim()) {
             // Stamp the assistant row with the actual turn mode (secure/work),
             // not the append() default of 'execute'. Keeps history + UI honest.
+            // `tokens` powers the dev-mode usage badge (null when not reported).
             const assistantMsg = messages.append(
               chatId, 'assistant', accumulated, null, null, null,
-              opts.secure ? 'secure' : 'work',
+              opts.secure ? 'secure' : 'work', event.tokens ?? null,
             );
             wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });
 
@@ -995,7 +996,7 @@ export async function runIncognitoTurn(opts: {
   content: string;
   workFolders?: WorkFolder[];
   onEvent: (event: IncognitoEvent) => void;
-}): Promise<void> {
+}): Promise<{ tokens?: number }> {
   const { key, content, onEvent } = opts;
 
   // Recreate the runtime session if the selected folders changed (the shell's
@@ -1023,7 +1024,7 @@ export async function runIncognitoTurn(opts: {
       incognitoSessions.set(key, { sessionId, foldersKey });
     } catch (err) {
       onEvent({ type: 'error', message: `Incognito runtime unavailable. (${err instanceof Error ? err.message : String(err)})` });
-      return;
+      return {};
     }
   }
 
@@ -1032,10 +1033,10 @@ export async function runIncognitoTurn(opts: {
   } catch (err) {
     incognitoSessions.delete(key);
     onEvent({ type: 'error', message: `Incognito session lost, please resend. (${err instanceof Error ? err.message : String(err)})` });
-    return;
+    return {};
   }
 
-  await new Promise<void>((resolve) => {
+  return await new Promise<{ tokens?: number }>((resolve) => {
     const unsubscribe = subscribeWorkEvents(
       sessionId!,
       (event) => {
@@ -1045,16 +1046,16 @@ export async function runIncognitoTurn(opts: {
           onEvent({ type: 'tool', name: event.name });
         } else if (event.type === 'done') {
           unsubscribe();
-          resolve();
+          resolve({ tokens: event.tokens });
         } else if (event.type === 'error') {
           onEvent({ type: 'error', message: event.message });
           unsubscribe();
-          resolve();
+          resolve({});
         }
       },
       (err) => {
         if (err.message !== 'aborted') onEvent({ type: 'error', message: err.message });
-        resolve();
+        resolve({});
       },
     );
   });

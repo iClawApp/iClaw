@@ -220,6 +220,9 @@
                   <% }); %>
                 </div>
               <% } %>
+              <% if (typeof devMode !== 'undefined' && devMode && m.tokens) { %>
+                <span class="msg-tokens" title="Tokens spent on this reply"><%= Number(m.tokens).toLocaleString() %> tok</span>
+              <% } %>
             </div>
           <% }); %>
         <% } %>

@@ -31,7 +31,7 @@ export type AgentEvent =
   | { type: 'tool_start'; name: string; input: unknown }
   | { type: 'tool_result'; name: string; result: string }
   | { type: 'approval_request'; changeId: string; path: string; content: string }
-  | { type: 'done' }
+  | { type: 'done'; tokens?: number }
   | { type: 'error'; message: string };
 
 export type Message = OpenAI.Chat.ChatCompletionMessageParam;
@@ -154,6 +154,9 @@ export async function* runAgentTurn(
     { role: 'user', content: userMessage },
   ];
 
+  // Total tokens billed across all rounds of this turn (dev-mode display).
+  let turnTokens = 0;
+
   // Max tool-call rounds to prevent infinite loops (env-tunable: ICLAW_MAX_ROUNDS).
   for (let round = 0; round < MAX_ROUNDS; round++) {
     let textBuffer = '';
@@ -167,6 +170,7 @@ export async function* runAgentTurn(
         tools: tools as unknown as OpenAI.Chat.ChatCompletionTool[],
         tool_choice: 'auto',
         stream: true,
+        stream_options: { include_usage: true }, // final chunk carries token usage
       });
     } catch (err) {
       yield { type: 'error', message: describeApiError(err) };
@@ -180,6 +184,8 @@ export async function* runAgentTurn(
     // event instead of throwing out of the generator and leaving a truncated reply.
     try {
       for await (const chunk of stream) {
+        // Usage rides in a final chunk that has no choices — capture it first.
+        if (chunk.usage?.total_tokens) turnTokens += chunk.usage.total_tokens;
         const choice = chunk.choices[0];
         if (!choice) continue;
 
@@ -216,7 +222,7 @@ export async function* runAgentTurn(
       if (textBuffer) {
         messages.push({ role: 'assistant', content: textBuffer });
       }
-      yield { type: 'done' };
+      yield { type: 'done', tokens: turnTokens || undefined };
       return;
     }
 

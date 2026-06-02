@@ -276,5 +276,7 @@ export interface Message {
    * 'execute' (DB column default), so old chats stay fully compatible.
    */
   mode: ChatMode;
+  /** Total tokens spent producing this (assistant) message. Dev-mode only; null otherwise. */
+  tokens?: number | null;
   created_at: string;
 }

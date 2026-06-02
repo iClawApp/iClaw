@@ -105,7 +105,7 @@ export async function stopWorkSession(sessionId: string): Promise<void> {
 export type WorkEvent =
   | { type: 'text'; content: string }
   | { type: 'tool'; name: string; input?: unknown }
-  | { type: 'done' }
+  | { type: 'done'; tokens?: number }
   | { type: 'error'; message: string };
 
 /**

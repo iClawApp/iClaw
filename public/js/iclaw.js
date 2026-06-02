@@ -1758,6 +1758,17 @@
     return '<div class="msg-attachments">' + items + '</div>';
   }
 
+  /** Dev mode: show token usage on a message bubble. No-op otherwise. */
+  function applyTokenBadge(el, tokens) {
+    if (!window.__ICLAW_DEV__ || !tokens || !el) return;
+    if (el.querySelector(':scope > .msg-tokens')) return;
+    const span = document.createElement('span');
+    span.className = 'msg-tokens';
+    span.title = 'Tokens spent on this reply';
+    span.textContent = Number(tokens).toLocaleString() + ' tok';
+    el.appendChild(span);
+  }
+
   function appendMessage(msg, opts) {
     if (!messagesEl) return null;
     clearEmptyState();
@@ -1795,6 +1806,7 @@
       '<div class="msg-body">' + renderMessageHtml(msg.content || '') + '</div>' +
       attachmentsHtml(msg.attachments);
     decorateMessageBody(div);
+    applyTokenBadge(div, msg.tokens);
     messagesAppendRoot().appendChild(div);
     scrollToBottom();
     return div;
@@ -3914,6 +3926,7 @@
               body.innerHTML = renderMarkdown(msg.message.content || '');
               decorateMessageBody(body);
             }
+            applyTokenBadge(target, msg.message.tokens);
             currentStreamEl = null;
             currentStreamFullText = '';
           } else {
@@ -4117,7 +4130,9 @@
 
       case 'incognito-turn-ended': {
         if (msg.key !== activeIncognitoKey) return;
+        const finishedEl = currentStreamEl;
         finalizeIncognitoStream();
+        applyTokenBadge(finishedEl, msg.tokens);
         return;
       }
 

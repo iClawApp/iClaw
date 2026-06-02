@@ -71,6 +71,7 @@ export function createApp(): express.Express {
     }));
     res.locals.scheduledChatIds = scheduledMessages.chatIdsWithPending();
     res.locals.scheduledChatCounts = scheduledMessages.pendingCountByChatId();
+    res.locals.devMode = process.env.ICLAW_DEV_MODE === 'true';
     next();
   });
 

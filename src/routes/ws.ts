@@ -139,8 +139,9 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
       const key = String((msg as { key?: unknown }).key ?? '').trim();
       const content = String(msg.content ?? '').trim();
       if (!key || !content) return;
+      let endedTokens: number | undefined;
       try {
-        await runIncognitoTurn({
+        const res = await runIncognitoTurn({
           key,
           content,
           workFolders: parseWorkFolders((msg as Record<string, unknown>).workFolders),
@@ -150,11 +151,12 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
             else if (e.type === 'error') send(socket, { type: 'incognito-error', key, message: e.message });
           },
         });
+        endedTokens = res.tokens;
       } catch (err) {
         send(socket, { type: 'incognito-error', key, message: err instanceof Error ? err.message : String(err) });
       }
       // Always close the turn so the client can re-enable the composer.
-      send(socket, { type: 'incognito-turn-ended', key });
+      send(socket, { type: 'incognito-turn-ended', key, tokens: endedTokens });
       return;
     }
 

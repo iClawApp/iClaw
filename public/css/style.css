@@ -1224,6 +1224,18 @@ code {
 }
 
 /* ChatGPT hides role chrome; keep labels for screen readers only */
+/* Dev-mode token-usage badge (a subtle trailing line under a message). */
+.msg-tokens {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  color: color-mix(in srgb, var(--text) 42%, transparent);
+  user-select: none;
+}
+.msg.user .msg-tokens { text-align: right; }
+
 .msg .role {
   position: absolute;
   width: 1px;
