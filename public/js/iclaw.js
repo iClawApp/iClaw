@@ -919,6 +919,10 @@
   /** the assistant DOM node we're streaming into right now */
   let currentStreamEl = null;
   let currentStreamFullText = '';
+  /** Pending requestAnimationFrame id for the streaming typewriter (0 = none). */
+  let streamRenderRaf = 0;
+  /** How many chars of currentStreamFullText the typewriter has revealed. */
+  let streamShownLen = 0;
   /** Debounce hljs while `turn-delta` re-renders markdown (innerHTML each chunk). */
   let streamSyntaxHlTimer = null;
 
@@ -1478,6 +1482,63 @@
 
   function scrollToBottom() {
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  /** True when the messages list is at/near the bottom (within `threshold` px). */
+  function isNearBottom(threshold = 120) {
+    if (!messagesEl) return true;
+    return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= threshold;
+  }
+
+  /**
+   * Smooth "typewriter" streaming. Backend deltas arrive in bursts and can stall
+   * for ~a second; we decouple what's shown from what's arrived. `currentStream
+   * FullText` is the target (grows as deltas arrive); `streamShownLen` is how much
+   * we've revealed. Each animation frame we reveal a few more characters, so the
+   * user sees a steady flow no matter how lumpy the source is.
+   *
+   * The reveal is adaptive — a larger backlog drains faster (so we never fall
+   * seconds behind on a big burst) while a small backlog types out gently. Re-
+   * rendering happens at most once per frame (re-parsing the whole markdown +
+   * replacing innerHTML per token would be O(n²) and thrash layout). Auto-scroll
+   * fires only when the user is already at the bottom, so scrolling up mid-stream
+   * no longer yanks them back down.
+   */
+  function renderStreamFrame() {
+    streamRenderRaf = 0;
+    const el = currentStreamEl;
+    if (!el || !messagesEl?.contains(el)) return;
+    const body = el.querySelector('.stream-body, .msg-body');
+    if (!body) return;
+
+    const target = currentStreamFullText;
+    if (streamShownLen < target.length) {
+      const remaining = target.length - streamShownLen;
+      // ~120 chars/s floor (2 per frame), faster as the backlog grows.
+      const step = Math.max(2, Math.ceil(remaining / 8));
+      streamShownLen = Math.min(target.length, streamShownLen + step);
+      const stick = isNearBottom();
+      body.innerHTML = renderMarkdown(target.slice(0, streamShownLen));
+      decorateMessageBody(body, { deferSyntaxHighlight: true });
+      if (stick) scrollToBottom();
+    }
+
+    // Keep going while there's still backlog; otherwise idle until the next
+    // delta re-arms the loop via ensureTyping().
+    if (streamShownLen < currentStreamFullText.length) {
+      streamRenderRaf = requestAnimationFrame(renderStreamFrame);
+    }
+  }
+
+  /** Start the typewriter loop if it isn't already running. */
+  function ensureTyping() {
+    if (!streamRenderRaf) streamRenderRaf = requestAnimationFrame(renderStreamFrame);
+  }
+
+  /** Stop the typewriter and reset the revealed position (call when finalizing). */
+  function cancelStreamRender() {
+    if (streamRenderRaf) { cancelAnimationFrame(streamRenderRaf); streamRenderRaf = 0; }
+    streamShownLen = 0;
   }
   /** Build the HTML block for persisted attachments (image inline / file as link). */
   function attachmentsHtml(attachments) {
@@ -3443,6 +3504,7 @@
           // rather than left orphaned above the final message.
           const target = ensureStreamEl();
           if (target) {
+            cancelStreamRender(); // final render below is authoritative
             target.classList.remove(
               'streaming', 'stream-waiting', 'stream-tool', 'stream-generating',
             );
@@ -3474,6 +3536,7 @@
         setWorkingDot(msg.chatId, true);
         if (msg.chatId !== activeChatId) return;
         setStopVisible(true);
+        streamShownLen = 0; // fresh typewriter for the new turn
         ensureStreamEl();
         {
           const status = currentStreamEl?.querySelector('.stream-status');
@@ -3503,12 +3566,9 @@
             status.hidden = true;
           }
         }
-        const body = el.querySelector('.stream-body, .msg-body');
-        if (body) {
-          body.innerHTML = renderMarkdown(currentStreamFullText);
-          decorateMessageBody(body, { deferSyntaxHighlight: true });
-        }
-        scrollToBottom();
+        // Feed the typewriter — it reveals the accumulated text smoothly,
+        // a few chars per frame, instead of dumping each lumpy delta at once.
+        ensureTyping();
         return;
       }
 
@@ -3573,6 +3633,7 @@
         // turn ends without an assistant message. Without this, the
         // "Finishing…" / "Thinking…" status would sit on the page until
         // the user reloaded.
+        cancelStreamRender();
         if (currentStreamEl && currentStreamEl.classList.contains('streaming')) {
           const body = currentStreamEl.querySelector('.stream-body, .msg-body');
           const hasContent = !!(body && body.textContent && body.textContent.trim());
@@ -4097,6 +4158,7 @@
     }
     appendMessage(optimistic, { pendingId: true });
     currentStreamFullText = '';
+    streamShownLen = 0;
     currentStreamEl = ensureStreamEl();
     const payload = {
       type: 'send',

@@ -7428,15 +7428,20 @@ a.project-tab.project-tab--tasks:hover {
 
 /* ── Secure workspace bar ── */
 .secure-workspace-bar {
-  position: relative;
+  /* Mirror .composer-secret-ui exactly so the two share identical insets — they
+     never show at once (refreshSecureBar hides the bar while the secret UI is
+     up). Absolute (not in-flow) so the bottom gap matches the secret strip's
+     `bottom: var(--space-4)` instead of sitting above the composer's padding. */
+  position: absolute;
+  left: calc(20px + var(--space-2));
+  right: calc(20px + var(--space-2));
+  bottom: var(--space-4);
+  margin: 0;
+  padding: 0 var(--space-2);
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
-  /* Match the secret UI's text inset (it sits at 20px + 2×space-2 from the
-     composer edge); the bar already lives inside the composer's 20px padding,
-     so only the extra 2×space-2 is needed here. */
-  padding: 0 calc(var(--space-2) * 2) 6px;
+  min-height: var(--composer-secret-row-h, 22px);
   font-size: var(--text-xs);
   color: var(--muted);
 }
