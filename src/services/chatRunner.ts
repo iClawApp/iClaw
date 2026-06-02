@@ -841,9 +841,12 @@ export async function sendMessage(opts: {
   return { chatId };
 }
 
+/** Persistent Work Mode sessions — one per chat, reused across turns. */
+const workSessions = new Map<number, string>();
+
 /**
  * Route a Work Mode turn to iclaw-runtime.
- * Creates a session, sends the message, streams events back via wsHub.
+ * Reuses the session across turns to preserve conversation history.
  */
 async function runWorkModeTurn(opts: {
   chatId: number;
@@ -851,22 +854,38 @@ async function runWorkModeTurn(opts: {
   onEvent: (event: TurnEvent) => void;
 }): Promise<void> {
   const { chatId, content, onEvent } = opts;
-  let sessionId: string;
+
+  // Reuse existing session for this chat, or create a new one
+  let sessionId = workSessions.get(chatId);
+  if (!sessionId) {
+    try {
+      // TODO: pass allowedFolders from project settings
+      const allowedFolders = [process.env.HOME ?? ''].filter(Boolean);
+      sessionId = await createWorkSession({ allowedFolders });
+      workSessions.set(chatId, sessionId);
+    } catch (err) {
+      const note = `Work Mode runtime unavailable. (${err instanceof Error ? err.message : String(err)})`;
+      const sys = messages.append(chatId, 'system', note, 'work-unavailable');
+      wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+      return;
+    }
+  }
+
   try {
-    sessionId = await createWorkSession({});
+    await sendWorkMessage(sessionId, content);
   } catch (err) {
-    const note = `Work Mode runtime unavailable. Make sure iclaw-runtime is running. (${err instanceof Error ? err.message : String(err)})`;
-    const sys = messages.append(chatId, 'system', note, 'work-unavailable');
+    // Session may have expired — retry with a fresh one
+    workSessions.delete(chatId);
+    const note = `Work Mode session lost, please resend. (${err instanceof Error ? err.message : String(err)})`;
+    const sys = messages.append(chatId, 'system', note, null);
     wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
     return;
   }
 
-  await sendWorkMessage(sessionId, content);
-
   await new Promise<void>((resolve) => {
     let accumulated = '';
     const unsubscribe = subscribeWorkEvents(
-      sessionId,
+      sessionId!,
       (event) => {
         if (event.type === 'text') {
           accumulated += event.content;
@@ -886,8 +905,11 @@ async function runWorkModeTurn(opts: {
         }
       },
       (err) => {
-        const sys = messages.append(chatId, 'system', `Work Mode connection error: ${err.message}`, null);
-        wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+        // Ignore "aborted" — it just means the SSE stream closed normally
+        if (err.message !== 'aborted') {
+          const sys = messages.append(chatId, 'system', `Work Mode connection error: ${err.message}`, null);
+          wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+        }
         resolve();
       },
     );
