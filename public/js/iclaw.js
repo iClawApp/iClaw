@@ -112,14 +112,14 @@
       composerModeBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
     const MODE_PLACEHOLDERS = {
-      ask:     'Ask safely…',
-      work:    'Work inside selected folders…',
-      secure:  'Run risky tasks in isolation…',
-      execute: 'Use full iClaw power…',
+      ask:     'Ask safely',
+      work:    'Work inside selected folders',
+      secure:  'Run risky tasks in isolation',
+      execute: 'Use full iClaw power',
     };
 
     function updateComposerPlaceholder(mode) {
-      if (input) input.placeholder = MODE_PLACEHOLDERS[mode] || 'Ask anything…';
+      if (input) input.placeholder = MODE_PLACEHOLDERS[mode] || 'Ask anything';
     }
 
     composerModeMenu.addEventListener('click', (e) => {
