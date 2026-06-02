@@ -7467,3 +7467,260 @@ a.project-tab.project-tab--tasks:hover {
   left: auto;
   min-width: 120px;
 }
+
+/* ---------------- project skills (procedural memory) ---------------- */
+
+/* Chat inbox card — mirrors .fact-suggestions-card. */
+.msg.system.skill-suggestions-card {
+  align-self: stretch;
+  max-width: min(var(--thread-max-width), 100%);
+  width: 100%;
+  margin: 0 auto;
+  padding: 0;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+
+.skill-suggestions-shell {
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--surface) 55%, var(--chat-pane-bg));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+}
+
+@media (prefers-color-scheme: dark) {
+  .skill-suggestions-shell {
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  }
+}
+
+.skill-suggestions-lead {
+  margin: 0;
+  padding: 10px 14px 8px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.skill-suggestions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skill-suggestion-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 40%, transparent);
+}
+
+.skill-suggestion-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.skill-suggestion-badge,
+.skill-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  line-height: 1.5;
+}
+
+.skill-suggestion-badge--new,
+.skill-scope-badge {
+  background: color-mix(in srgb, var(--accent, #4a8) 18%, transparent);
+  color: color-mix(in srgb, var(--accent, #4a8) 88%, var(--text));
+}
+
+.skill-suggestion-badge--patch {
+  background: color-mix(in srgb, #c9a227 22%, transparent);
+  color: color-mix(in srgb, #9a7b10 90%, var(--text));
+}
+
+.skill-suggestion-badge--untrusted {
+  background: color-mix(in srgb, var(--danger, #d35) 16%, transparent);
+  color: color-mix(in srgb, var(--danger, #d35) 90%, var(--text));
+}
+
+.skill-suggestion-name {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  font-family: var(--mono-font, ui-monospace, monospace);
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 8px;
+  background: var(--chat-pane-bg);
+  color: var(--text);
+}
+
+.skill-suggestion-desc,
+.skill-suggestion-body {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 8px;
+  background: var(--chat-pane-bg);
+  color: var(--text);
+  resize: vertical;
+}
+
+.skill-suggestion-body {
+  font-family: var(--mono-font, ui-monospace, monospace);
+  font-size: 0.8125rem;
+}
+
+.skill-suggestion-bodywrap > summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  padding: 2px 0;
+  user-select: none;
+}
+
+.skill-suggestion-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.skill-suggestion-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.skill-suggestion-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.skill-suggestion-btn {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.skill-suggestion-accept {
+  background: var(--accent, #4a8);
+  color: #fff;
+}
+
+.skill-suggestion-accept:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.skill-suggestion-reject {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--border) 80%, transparent);
+  color: var(--muted);
+}
+
+.skill-suggestion-reject:hover {
+  color: var(--text);
+}
+
+/* Project page — skills list (mirrors .fact). */
+.project-chats > li.skill {
+  margin: 0;
+  padding: 12px 16px 14px;
+  background: transparent;
+}
+
+.project-chats > li.skill .project-row-head {
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skill-name {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 6px;
+  border: none;
+  background: transparent;
+  padding: 2px 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  font-family: var(--mono-font, ui-monospace, monospace);
+  color: var(--text);
+}
+
+.skill-description {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 6px;
+  border: none;
+  background: transparent;
+  padding: 2px 0;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 2.5rem;
+  color: var(--text);
+}
+
+.skill-name:focus,
+.skill-description:focus,
+.skill-body:focus {
+  outline: none;
+}
+
+.skill-body-details > summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  padding: 4px 0;
+  user-select: none;
+}
+
+.skill-body {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 6px 0 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 8px;
+  background: var(--chat-pane-bg);
+  color: var(--text);
+  font-family: var(--mono-font, ui-monospace, monospace);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  resize: vertical;
+}

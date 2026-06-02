@@ -56,6 +56,42 @@ export interface ProjectFactSuggestion {
   created_at: string;
 }
 
+/**
+ * Procedural memory: an accepted, active project skill stored as SKILL.md.
+ * `project_id === null` means a global skill (available to every project).
+ */
+export interface ProjectSkill {
+  id: number;
+  project_id: number | null; // null = global
+  name: string;
+  description: string;
+  body: string;
+  tags: string | null; // JSON array
+  source_chat_id: number | null;
+  usage_count: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  /** Filled by server for UI (not a DB column). */
+  source_chat_title?: string;
+}
+
+/** LLM-proposed skill awaiting user accept/reject in the chat UI (inbox-gated). */
+export interface ProjectSkillSuggestion {
+  id: number;
+  project_id: number;
+  chat_id: number;
+  kind: 'new' | 'patch';
+  target_skill_id: number | null;
+  name: string;
+  description: string;
+  body: string;
+  tags: string | null;
+  untrusted: number; // 0 | 1
+  assistant_message_id: number | null;
+  created_at: string;
+}
+
 /** API key / token; message text uses `[[iclaw:secret:id|…]]` placeholders. */
 export interface ProjectSecret {
   id: number;

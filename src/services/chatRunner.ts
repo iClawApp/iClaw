@@ -9,6 +9,8 @@
 import { randomUUID } from 'node:crypto';
 import { chats, messages, projects, projectSecrets, projectFacts } from './store';
 import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
+import { buildSkillsPromptBlock, scheduleProjectSkillReview } from './projectSkills';
+import { projectSkills } from './store';
 import { chatStatus } from './chatStatus';
 import { openclawWs, type TurnEvent } from './openclawWs';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
@@ -461,6 +463,9 @@ async function runTurnLocked(opts: {
 
   let switchedToGenerating = false;
   let assistantText = '';
+  // Whether this turn invoked any tool — used to throttle skill review to
+  // "substantive" turns (procedural learning comes from tool use, not chit-chat).
+  let usedTools = false;
 
   const onEvent = (ev: TurnEvent): void => {
     if (ev.type === 'text-delta') {
@@ -471,6 +476,7 @@ async function runTurnLocked(opts: {
       assistantText += ev.text;
       wsHub.broadcastToChat(chatId, { type: 'turn-delta', chatId, text: ev.text });
     } else if (ev.type === 'tool-start') {
+      usedTools = true;
       chatStatus.setActivity(chatId, {
         kind: 'tool',
         name: ev.name,
@@ -534,7 +540,7 @@ async function runTurnLocked(opts: {
 
   // Work / Secure Mode — routes to iclaw-runtime, returns early.
   if (mode === 'work' || mode === 'secure') {
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id });
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }
@@ -680,6 +686,22 @@ async function runTurnLocked(opts: {
       userMessage: storedUserContent,
       assistantText: finalText,
       assistantMessageId: assistantMsg.id,
+    });
+
+    // Procedural memory: throttled skill review (heavier than fact extraction,
+    // so only every Nth substantive turn). MVP untrusted heuristic: a tool-using
+    // turn with network reach may have ingested external content (web/email/etc.),
+    // so its distilled skills are flagged for extra scrutiny in the inbox.
+    // (This site handles Ask/Execute; Work/Secure returns earlier — see above.)
+    scheduleProjectSkillReview({
+      chatId,
+      projectId: chatAfter.project_id,
+      sharesToProject: Boolean(chatAfter.shares_to_project),
+      substantive: usedTools,
+      userMessage: storedUserContent,
+      assistantText: finalText,
+      assistantMessageId: assistantMsg.id,
+      untrusted: usedTools && Boolean(opts.networkEnabled),
     });
   }
 
@@ -860,6 +882,11 @@ function buildWorkSystemPrompt(chatId: number): string {
       lines.push('\nProject context:');
       facts.forEach((f) => lines.push(`- ${f.content}`));
     }
+
+    const skillsBlock = buildSkillsPromptBlock(chat.project_id);
+    if (skillsBlock) {
+      lines.push('\n' + skillsBlock);
+    }
   }
 
   return lines.length > 0 ? lines.join('\n') : '';
@@ -871,7 +898,10 @@ function buildWorkSystemPrompt(chatId: number): string {
  * folder set or a folder's read-only/read&write flag forces the session to be
  * recreated with the new access (folderAccess is fixed at session creation).
  */
-const workSessions = new Map<number, { sessionId: string; foldersKey: string; secure: boolean }>();
+const workSessions = new Map<
+  number,
+  { sessionId: string; foldersKey: string; secure: boolean; skillsKey: string }
+>();
 
 /**
  * Stable signature of the folders granted to a chat. Order-independent so the
@@ -885,6 +915,30 @@ function foldersSignature(folders?: WorkFolder[]): string {
       .sort((a, b) => a.p.localeCompare(b.p)),
   );
 }
+
+/**
+ * Stable signature of the active skills injected into a chat's session. Changes
+ * when a skill is accepted/edited/deleted (id+version), so the work session is
+ * recreated with the new skill set without a manual restart — same class of fix
+ * as folder-access / Work<->Secure mode changes.
+ */
+function skillsSignature(chatId: number): string {
+  const chat = chats.get(chatId);
+  if (!chat?.project_id) return '';
+  const idx = projectSkills.listForProject(chat.project_id);
+  if (idx.length === 0) return '';
+  return idx
+    .map((s) => `${s.id}:${s.version}`)
+    .sort()
+    .join(',');
+}
+
+/**
+ * Skill-review cadence for Work/Secure. Smaller than the Ask/Execute interval:
+ * these turns are agentic and tool-heavy, so each one is more likely to contain
+ * a reusable procedure worth distilling.
+ */
+const WORK_SKILL_REVIEW_INTERVAL = 4;
 
 /** Get the runtime sessionId for a chat (if active). */
 export function getWorkSessionId(chatId: number): string | undefined {
@@ -905,6 +959,8 @@ async function runWorkModeTurn(opts: {
   ttlDays?: number;
   /** Current user message id — history before it seeds the session context. */
   beforeMsgId?: number;
+  /** Original (stored) user text for skill review — without injected project prefix. */
+  reviewUserMessage?: string;
 }): Promise<void> {
   const { chatId, content, onEvent } = opts;
 
@@ -916,17 +972,23 @@ async function runWorkModeTurn(opts: {
   // ignored — the chat keeps running on the stale session.
   const wantSecure = !!opts.secure;
   const foldersKey = wantSecure ? '' : foldersSignature(opts.workFolders);
+  const skillsKey = skillsSignature(chatId);
   const existing = workSessions.get(chatId);
   if (
     existing &&
     (existing.secure !== wantSecure ||
-      (!wantSecure && existing.foldersKey !== foldersKey))
+      (!wantSecure && existing.foldersKey !== foldersKey) ||
+      existing.skillsKey !== skillsKey)
   ) {
     await stopWorkSession(existing.sessionId).catch(() => {});
     workSessions.delete(chatId);
-    const note = existing.secure !== wantSecure
-      ? `Mode changed — restarted the session in ${wantSecure ? 'Secure' : 'Work'} mode.`
-      : 'Folder access changed — restarted the work session with the new permissions.';
+    const note =
+      existing.secure !== wantSecure
+        ? `Mode changed — restarted the session in ${wantSecure ? 'Secure' : 'Work'} mode.`
+        : existing.skillsKey !== skillsKey &&
+            existing.foldersKey === foldersKey
+          ? 'Project skills changed — restarted the work session with the updated skills.'
+          : 'Folder access changed — restarted the work session with the new permissions.';
     const sys = messages.append(chatId, 'system', note, null);
     wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
   }
@@ -959,7 +1021,7 @@ async function runWorkModeTurn(opts: {
         key: `chat:${chatId}`,
         history,
       });
-      workSessions.set(chatId, { sessionId, foldersKey, secure: wantSecure });
+      workSessions.set(chatId, { sessionId, foldersKey, secure: wantSecure, skillsKey });
     } catch (err) {
       const note = `Work Mode runtime unavailable. (${err instanceof Error ? err.message : String(err)})`;
       const sys = messages.append(chatId, 'system', note, 'work-unavailable');
@@ -996,6 +1058,26 @@ async function runWorkModeTurn(opts: {
               opts.secure ? 'secure' : 'work',
             );
             wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });
+
+            // Procedural memory: review Work/Secure turns too. These are agentic
+            // and tool-capable by nature, so every completed turn counts as
+            // "substantive". Untrusted heuristic: a turn with network reach may
+            // have ingested external content (web/email/etc.). Throttled with a
+            // smaller interval than Ask/Execute. Fire-and-forget.
+            const chatNow = chats.get(chatId);
+            if (chatNow?.project_id != null && projects.get(chatNow.project_id)) {
+              scheduleProjectSkillReview({
+                chatId,
+                projectId: chatNow.project_id,
+                sharesToProject: Boolean(chatNow.shares_to_project),
+                substantive: true,
+                userMessage: opts.reviewUserMessage ?? content,
+                assistantText: accumulated,
+                assistantMessageId: assistantMsg.id,
+                untrusted: Boolean(opts.networkEnabled),
+                interval: WORK_SKILL_REVIEW_INTERVAL,
+              });
+            }
           }
           unsubscribe();
           resolve();

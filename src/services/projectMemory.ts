@@ -3,8 +3,9 @@
  * facts after each turn (when enabled), and compact when the fact table grows.
  */
 
-import { openclawWs } from './openclawWs';
 import { projectFacts, projects, chats, projectFactSuggestions, enrichFactsWithSourceChatTitles } from './store';
+import { buildSkillsPromptBlock } from './projectSkills';
+import { runSubtaskTurn } from './subtaskLlm';
 import { wsHub } from './wsHub';
 
 /** Rough token budget for the prepended project block (80/20 vs full window). */
@@ -18,14 +19,6 @@ const EXTRACT_BUDGET_MS = 90_000;
 const MAX_FACT_LINE_CHARS = 240;
 
 const compactingProjects = new Set<number>();
-
-/**
- * Sub-tasks (extract + compact) always run against the gateway's default
- * agent. Using whatever agent the chat is on (`openclaw/code`, etc.) made the
- * two pipelines inconsistent and risked specialised agents underperforming on
- * a plain text-extraction prompt. One agent, one behaviour.
- */
-const SUBTASK_AGENT_ID = 'main';
 
 function approxTokens(s: string): number {
   return Math.ceil(s.length / CHARS_PER_TOKEN_EST);
@@ -55,11 +48,20 @@ export function buildGatewayUserMessage(
 ): string {
   if (!projects.get(projectId)) return storedUserContent;
 
+  const skillsBlock = buildSkillsPromptBlock(projectId);
   const all = projectFacts.listByProject(projectId, 200);
-  if (all.length === 0) return storedUserContent;
+  // Nothing to inject — neither facts nor skills.
+  if (all.length === 0 && !skillsBlock) return storedUserContent;
+
+  const skillsPrefix = skillsBlock ? skillsBlock + '\n\n' : '';
+  if (all.length === 0) {
+    // Skills-only injection (no facts yet).
+    return `[Project context for this workspace. Treat as background only; respond in direct conversation to the user (their message is after the separator).]\n${skillsPrefix}---\n[User message]\n${storedUserContent}`;
+  }
 
   const prefixBase =
-    '[Project context — shared facts for this workspace. Treat as background only; respond in direct conversation to the user (their message is after the separator).]\n';
+    '[Project context — shared facts for this workspace. Treat as background only; respond in direct conversation to the user (their message is after the separator).]\n' +
+    skillsPrefix;
   const suffix = '\n---\n[User message]\n' + storedUserContent;
   const budget = Math.max(
     200,
@@ -159,33 +161,13 @@ function buildExtractPrompt(opts: {
   ].join('\n');
 }
 
-async function runThrowawayTurn(message: string): Promise<string> {
-  let sessionKey: string | null = null;
-  try {
-    const session = await openclawWs.createSession({ agentId: SUBTASK_AGENT_ID });
-    sessionKey = session.key;
-    let acc = '';
-    await openclawWs.runTurn({
-      sessionKey: session.key,
-      message,
-      onEvent: (ev) => {
-        if (ev.type === 'text-delta') acc += ev.text;
-        else if (ev.type === 'text-final') acc = ev.text || acc;
-      },
-    });
-    return acc;
-  } finally {
-    if (sessionKey) openclawWs.deleteSession(sessionKey).catch(() => {});
-  }
-}
-
 export async function extractFactsFromTurn(opts: {
   userMessage: string;
   assistantText: string;
   existingFacts: string[];
 }): Promise<string[]> {
   const raw = await Promise.race([
-    runThrowawayTurn(buildExtractPrompt(opts)),
+    runSubtaskTurn(buildExtractPrompt(opts), { maxTokens: 512 }),
     sleep<string>(EXTRACT_BUDGET_MS, ''),
   ]);
   if (raw == null || raw === '') return [];
@@ -214,7 +196,7 @@ export async function compactProjectFacts(projectId: number): Promise<void> {
     if (contents.length <= FACT_COMPACTION_THRESHOLD) return;
 
     const raw = await Promise.race([
-      runThrowawayTurn(buildCompactionPrompt(contents)),
+      runSubtaskTurn(buildCompactionPrompt(contents), { maxTokens: 1024 }),
       sleep<string>(EXTRACT_BUDGET_MS, ''),
     ]);
     if (raw == null || raw === '') return;

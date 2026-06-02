@@ -14,6 +14,7 @@ import type {
   Message,
   Project,
   ProjectFact,
+  ProjectSkill,
   QueuedMessage,
   ScheduledMessage,
   TaskWithSteps,
@@ -177,6 +178,31 @@ export type ServerMsg =
       suggestions: { id: number; content: string }[];
     }
   | { type: 'project-fact-suggestion-removed'; chatId: number; suggestionId: number }
+
+  /* ---- project skills (procedural memory) ---- */
+  | { type: 'project-skill-added'; projectId: number; skill: ProjectSkill }
+  | { type: 'project-skill-updated'; projectId: number; skill: ProjectSkill }
+  | { type: 'project-skill-deleted'; projectId: number; skillId: number }
+  /**
+   * After a turn, proposed skills the user can accept into project memory
+   * (confirm in chat). Card list carries summary fields only; the full body is
+   * fetched via REST when the user expands/edits — keeps WS frames small.
+   */
+  | {
+      type: 'project-skill-suggestions';
+      chatId: number;
+      projectId: number;
+      projectName: string;
+      suggestions: {
+        id: number;
+        kind: 'new' | 'patch';
+        name: string;
+        description: string;
+        untrusted: boolean;
+        targetSkillId: number | null;
+      }[];
+    }
+  | { type: 'project-skill-suggestion-removed'; chatId: number; suggestionId: number }
 
   /* ---- scheduled messages (Telegram-style send-later) ---- */
   | { type: 'scheduled-added'; chatId: number; scheduled: ScheduledMessage }

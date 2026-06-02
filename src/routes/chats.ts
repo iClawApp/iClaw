@@ -6,12 +6,15 @@ import {
   projects,
   projectFactSuggestions,
   projectFacts,
+  projectSkills,
+  projectSkillSuggestions,
   projectSecrets,
   secretUsableInChat,
   scheduledMessages,
   queuedMessages,
   tasks,
   enrichFactWithSourceChatTitle,
+  enrichSkillWithSourceChatTitle,
 } from '../services/store';
 import { persistIncomingAttachments, type IncomingAttachment } from '../services/uploads';
 import {
@@ -156,6 +159,127 @@ chatsRouter.post('/:id/fact-suggestions/:suggestionId/reject', (req, res) => {
   }
   projectFactSuggestions.remove(sid);
   wsHub.broadcastAll({ type: 'project-fact-suggestion-removed', chatId, suggestionId: sid });
+  res.type('application/json').json({ ok: true });
+});
+
+/* ---------------- project skill suggestions (inbox-gated) ---------------- */
+
+function parseTags(raw: unknown): string[] | null {
+  if (!Array.isArray(raw)) return null;
+  const tags = raw.filter((t): t is string => typeof t === 'string' && t.trim().length > 0);
+  return tags.length > 0 ? tags : null;
+}
+
+/** Pending project-skill suggestions for this chat (JSON, includes full bodies). */
+chatsRouter.get('/:id/skill-suggestions', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || !chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const suggestions = projectSkillSuggestions.listByChat(id);
+  const first = suggestions[0];
+  const projectName =
+    first != null ? (projects.get(first.project_id)?.name?.trim() ?? 'project') : null;
+  res.type('application/json').json({ suggestions, projectName });
+});
+
+chatsRouter.post('/:id/skill-suggestions/:suggestionId/accept', (req, res) => {
+  const chatId = Number(req.params.id);
+  const sid = Number(req.params.suggestionId);
+  if (!Number.isFinite(chatId) || !Number.isFinite(sid)) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+  const chat = chats.get(chatId);
+  const sug = projectSkillSuggestions.get(sid);
+  if (!chat || !sug || sug.chat_id !== chatId) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  if (!chat.project_id || chat.project_id !== sug.project_id) {
+    res.status(400).json({ error: 'project mismatch' });
+    return;
+  }
+
+  // Optional user edits submitted alongside the accept.
+  const name = typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name : sug.name;
+  const description =
+    typeof req.body?.description === 'string' && req.body.description.trim()
+      ? req.body.description
+      : sug.description;
+  const body = typeof req.body?.body === 'string' && req.body.body.trim() ? req.body.body : sug.body;
+  const tags = parseTags(req.body?.tags) ?? (sug.tags ? (JSON.parse(sug.tags) as string[]) : null);
+  const scope = req.body?.scope === 'global' ? 'global' : 'project';
+  const projectId = scope === 'global' ? null : sug.project_id;
+
+  try {
+    if (sug.kind === 'patch' && sug.target_skill_id != null && projectSkills.get(sug.target_skill_id)) {
+      projectSkills.update(sug.target_skill_id, { name, description, body, tags });
+      const updated = projectSkills.get(sug.target_skill_id)!;
+      projectSkillSuggestions.remove(sid);
+      wsHub.broadcastAll({
+        type: 'project-skill-updated',
+        projectId: updated.project_id ?? sug.project_id,
+        skill: enrichSkillWithSourceChatTitle(updated),
+      });
+      wsHub.broadcastAll({ type: 'project-skill-suggestion-removed', chatId, suggestionId: sid });
+      res.type('application/json').json({ skill: updated });
+      return;
+    }
+
+    // 'new' (or a patch whose target vanished). Same-scope name collision →
+    // treat as an update of the existing skill rather than a duplicate insert.
+    const existing = projectSkills.getByName(projectId, name);
+    if (existing) {
+      projectSkills.update(existing.id, { name, description, body, tags });
+      const updated = projectSkills.get(existing.id)!;
+      projectSkillSuggestions.remove(sid);
+      wsHub.broadcastAll({
+        type: 'project-skill-updated',
+        projectId: updated.project_id ?? sug.project_id,
+        skill: enrichSkillWithSourceChatTitle(updated),
+      });
+      wsHub.broadcastAll({ type: 'project-skill-suggestion-removed', chatId, suggestionId: sid });
+      res.type('application/json').json({ skill: updated });
+      return;
+    }
+
+    const skill = projectSkills.create({
+      projectId,
+      name,
+      description,
+      body,
+      tags,
+      sourceChatId: chatId,
+    });
+    projectSkillSuggestions.remove(sid);
+    wsHub.broadcastAll({
+      type: 'project-skill-added',
+      projectId: skill.project_id ?? sug.project_id,
+      skill: enrichSkillWithSourceChatTitle(skill),
+    });
+    wsHub.broadcastAll({ type: 'project-skill-suggestion-removed', chatId, suggestionId: sid });
+    res.type('application/json').json({ skill });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'accept failed' });
+  }
+});
+
+chatsRouter.post('/:id/skill-suggestions/:suggestionId/reject', (req, res) => {
+  const chatId = Number(req.params.id);
+  const sid = Number(req.params.suggestionId);
+  if (!Number.isFinite(chatId) || !Number.isFinite(sid)) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+  const sug = projectSkillSuggestions.get(sid);
+  if (!sug || sug.chat_id !== chatId) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  projectSkillSuggestions.remove(sid);
+  wsHub.broadcastAll({ type: 'project-skill-suggestion-removed', chatId, suggestionId: sid });
   res.type('application/json').json({ ok: true });
 });
 

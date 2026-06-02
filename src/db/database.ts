@@ -76,6 +76,45 @@ CREATE TABLE IF NOT EXISTS project_fact_suggestions (
 
 CREATE INDEX IF NOT EXISTS idx_fact_suggestions_chat ON project_fact_suggestions(chat_id, id);
 
+-- Active, accepted project skills (procedural memory). Stored as SKILL.md.
+-- The declarative half is project_facts; this is the procedural half.
+CREATE TABLE IF NOT EXISTS project_skills (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id     INTEGER REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = global skill
+  name           TEXT NOT NULL,            -- kebab-case, unique within scope
+  description    TEXT NOT NULL,            -- one-line summary (shown to user + prompt index)
+  body           TEXT NOT NULL,            -- full SKILL.md (frontmatter + procedure)
+  tags           TEXT,                     -- JSON array of strings (optional)
+  source_chat_id INTEGER REFERENCES chats(id) ON DELETE SET NULL,
+  usage_count    INTEGER NOT NULL DEFAULT 0,
+  version        INTEGER NOT NULL DEFAULT 1,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_skills_project ON project_skills(project_id, id);
+-- Uniqueness within a scope (project_id may be NULL for global). SQLite treats
+-- NULLs as distinct, so global uniqueness is also enforced in the store layer.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_scope_name
+  ON project_skills(project_id, name);
+
+-- Inbox: proposed skills awaiting user acceptance. Never active until accepted.
+CREATE TABLE IF NOT EXISTS project_skill_suggestions (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id           INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  chat_id              INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  kind                 TEXT NOT NULL DEFAULT 'new',     -- 'new' | 'patch'
+  target_skill_id      INTEGER REFERENCES project_skills(id) ON DELETE CASCADE,  -- for 'patch'
+  name                 TEXT NOT NULL,
+  description          TEXT NOT NULL,
+  body                 TEXT NOT NULL,          -- full proposed SKILL.md
+  tags                 TEXT,                   -- JSON array (optional)
+  untrusted            INTEGER NOT NULL DEFAULT 0,      -- 1 if source turn ingested untrusted content
+  assistant_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+  created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_skill_suggestions_chat ON project_skill_suggestions(chat_id, id);
+CREATE INDEX IF NOT EXISTS idx_skill_suggestions_project ON project_skill_suggestions(project_id, id);
+
 CREATE TABLE IF NOT EXISTS project_secrets (
   id                   INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id           INTEGER REFERENCES projects(id) ON DELETE CASCADE,

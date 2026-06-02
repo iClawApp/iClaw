@@ -1173,6 +1173,63 @@
     refreshProjectTabLabels(active || 'chats');
   }
 
+  function syncProjectSkillsTabCountFromDom() {
+    const root = document.querySelector('main.project-page[data-project-id]');
+    const btn = root?.querySelector('[data-project-tab="skills"]');
+    const ul = document.getElementById('skills-list');
+    if (!btn || !ul) return;
+    btn.setAttribute('data-tab-count', String(ul.querySelectorAll('li.skill').length));
+    const active = root.querySelector('.project-tab.is-active')?.getAttribute('data-project-tab');
+    refreshProjectTabLabels(active || 'chats');
+  }
+
+  /** Build a skill row matching `views/project.ejs` (WS-driven updates on project page). */
+  function buildSkillLi(s) {
+    const li = document.createElement('li');
+    li.className = 'skill';
+    li.dataset.skillId = String(s.id);
+    li.dataset.skillVersion = String(s.version != null ? s.version : 1);
+    const isGlobal = s.project_id == null;
+    const titleRaw =
+      s.source_chat_title != null && String(s.source_chat_title).trim() !== ''
+        ? String(s.source_chat_title).trim()
+        : 'Chat';
+    const head =
+      '<div class="project-row-head muted">' +
+      (isGlobal
+        ? '<span class="skill-scope-badge" title="Available to every project">Global</span>'
+        : '') +
+      (s.source_chat_id != null
+        ? '<a href="/chats/' +
+          s.source_chat_id +
+          '" class="project-chat-source">' +
+          escapeHtml(titleRaw) +
+          '</a>'
+        : '<span>—</span>') +
+      '</div>';
+    li.innerHTML =
+      head +
+      '<input class="skill-name" aria-label="Skill name" spellcheck="false" value="' +
+      escapeHtml(s.name || '') +
+      '" />' +
+      '<textarea class="skill-description" aria-label="Skill summary" rows="2">' +
+      escapeHtml(s.description || '') +
+      '</textarea>' +
+      '<details class="skill-body-details"><summary>View / edit procedure</summary>' +
+      '<textarea class="skill-body" aria-label="Skill procedure (SKILL.md)" rows="10">' +
+      escapeHtml(s.body || '') +
+      '</textarea></details>' +
+      '<div class="fact-meta">' +
+      '<button type="button" class="fact-delete skill-delete" aria-label="Remove skill">Remove</button></div>';
+    const nameEl = li.querySelector('.skill-name');
+    if (nameEl) nameEl.dataset.saved = String(s.name || '').trim();
+    const descEl = li.querySelector('.skill-description');
+    if (descEl) descEl.dataset.saved = String(s.description || '').trim();
+    const bodyEl = li.querySelector('.skill-body');
+    if (bodyEl) bodyEl.dataset.saved = String(s.body || '').trim();
+    return li;
+  }
+
   /** Build a secrets row matching `views/project.ejs` (WS-driven updates on project page). */
   function buildProjectSecretRowLi(secret) {
     const label = String(secret?.label ?? '');
@@ -1978,6 +2035,166 @@
   }
 
   // -------------------------------------------------------------------------
+  // skill suggestions (inbox-gated procedural memory) — chat cards
+  // Mirrors fact suggestions, but with no auto-reject: a skill is a standing
+  // instruction, so acceptance is always a deliberate user action.
+  // -------------------------------------------------------------------------
+
+  function existingSkillSuggestionIds() {
+    const ids = new Set();
+    if (!messagesEl) return ids;
+    messagesEl.querySelectorAll('.skill-suggestion-row[data-suggestion-id]').forEach((el) => {
+      const n = Number(el.dataset.suggestionId);
+      if (Number.isFinite(n)) ids.add(n);
+    });
+    return ids;
+  }
+
+  function removeSkillSuggestionRow(chatId, sid) {
+    if (!messagesEl || chatId !== activeChatId) return;
+    const row = messagesEl.querySelector(
+      '.skill-suggestion-row[data-suggestion-id="' + sid + '"]',
+    );
+    if (!row) return;
+    const card = row.closest('.skill-suggestions-card');
+    row.remove();
+    if (card && !card.querySelector('.skill-suggestion-row')) card.remove();
+  }
+
+  function buildSkillSuggestionRowHtml(s) {
+    const id = Number(s.id);
+    if (!Number.isFinite(id)) return '';
+    const kind = s.kind === 'patch' ? 'patch' : 'new';
+    const kindBadge =
+      kind === 'patch'
+        ? '<span class="skill-suggestion-badge skill-suggestion-badge--patch">Updates “' +
+          escapeHtml(s.targetName || s.name || 'skill') +
+          '”</span>'
+        : '<span class="skill-suggestion-badge skill-suggestion-badge--new">New skill</span>';
+    const untrustedBadge = s.untrusted
+      ? '<span class="skill-suggestion-badge skill-suggestion-badge--untrusted" title="Distilled from a turn that may have ingested untrusted external content — review carefully.">From untrusted content</span>'
+      : '';
+    return (
+      '<li class="skill-suggestion-row" data-suggestion-id="' +
+      id +
+      '" data-kind="' +
+      kind +
+      '" role="listitem">' +
+      '<div class="skill-suggestion-head">' +
+      kindBadge +
+      untrustedBadge +
+      '</div>' +
+      '<input class="skill-suggestion-name" aria-label="Skill name" spellcheck="false" value="' +
+      escapeHtml(s.name || '') +
+      '" />' +
+      '<textarea class="skill-suggestion-desc" aria-label="Skill summary" rows="2">' +
+      escapeHtml(s.description || '') +
+      '</textarea>' +
+      '<details class="skill-suggestion-bodywrap"><summary>Preview / edit procedure</summary>' +
+      '<textarea class="skill-suggestion-body" aria-label="Skill procedure (SKILL.md)" rows="10">' +
+      escapeHtml(s.body || '') +
+      '</textarea></details>' +
+      '<div class="skill-suggestion-controls">' +
+      '<label class="skill-suggestion-scope"><input type="checkbox" class="skill-suggestion-global" /> Save as global (all projects)</label>' +
+      '<div class="skill-suggestion-actions">' +
+      '<button type="button" class="skill-suggestion-btn skill-suggestion-reject" data-suggestion-id="' +
+      id +
+      '">Dismiss</button>' +
+      '<button type="button" class="skill-suggestion-btn skill-suggestion-accept" data-suggestion-id="' +
+      id +
+      '">Save skill</button>' +
+      '</div></div></li>'
+    );
+  }
+
+  function appendSkillSuggestionsCard(opts) {
+    if (!messagesEl) return;
+    const { projectId, chatId, suggestions, projectName } = opts;
+    if (!suggestions || suggestions.length === 0) return;
+    clearEmptyState();
+    const safeName = escapeHtml((projectName || '').trim() || 'project');
+    const rowsHtml = suggestions.map(buildSkillSuggestionRowHtml).filter(Boolean).join('');
+    if (!rowsHtml) return;
+
+    const pidEsc = String(projectId);
+    const cidEsc = String(chatId);
+    const existing = messagesEl.querySelector(
+      '.skill-suggestions-card[data-project-id="' + pidEsc + '"][data-chat-id="' + cidEsc + '"]',
+    );
+    if (existing) {
+      const ul = existing.querySelector('.skill-suggestions-list');
+      if (!ul) return;
+      const tpl = document.createElement('template');
+      tpl.innerHTML = rowsHtml.trim();
+      tpl.content.childNodes.forEach((n) => {
+        if (n.nodeType !== 1) return;
+        const el = n;
+        const sid = el.dataset.suggestionId;
+        if (!sid || ul.querySelector('.skill-suggestion-row[data-suggestion-id="' + sid + '"]'))
+          return;
+        ul.appendChild(el);
+      });
+      scrollToBottom();
+      return;
+    }
+
+    const card = document.createElement('div');
+    card.className = 'msg system skill-suggestions-card';
+    card.dataset.projectId = pidEsc;
+    card.dataset.chatId = cidEsc;
+    card.innerHTML =
+      '<div class="skill-suggestions-shell">' +
+      '<p class="skill-suggestions-lead">Learned a skill for «' +
+      safeName +
+      '». Save it to project memory?</p>' +
+      '<ul class="skill-suggestions-list" role="list">' +
+      rowsHtml +
+      '</ul></div>';
+    messagesAppendRoot().appendChild(card);
+    scrollToBottom();
+  }
+
+  async function loadPendingSkillSuggestions() {
+    if (activeChatId == null || !messagesEl) return;
+    try {
+      const res = await fetch(
+        '/chats/' + encodeURIComponent(activeChatId) + '/skill-suggestions',
+        { headers: { Accept: 'application/json' } },
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = Array.isArray(data.suggestions) ? data.suggestions : [];
+      if (list.length === 0) return;
+      const first = list[0];
+      const pid = first ? Number(first.project_id) : NaN;
+      if (!Number.isFinite(pid)) return;
+      const have = existingSkillSuggestionIds();
+      const fresh = list
+        .filter((s) => s && Number.isFinite(Number(s.id)) && !have.has(Number(s.id)))
+        .map((s) => ({
+          id: Number(s.id),
+          kind: s.kind === 'patch' ? 'patch' : 'new',
+          name: String(s.name ?? ''),
+          description: String(s.description ?? ''),
+          body: String(s.body ?? ''),
+          untrusted: !!s.untrusted,
+        }));
+      const pname =
+        typeof data.projectName === 'string' && data.projectName.trim()
+          ? data.projectName.trim()
+          : 'project';
+      appendSkillSuggestionsCard({
+        projectId: pid,
+        chatId: activeChatId,
+        projectName: pname,
+        suggestions: fresh,
+      });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // queue widget — shows only WAITING items (not the in-flight one)
   // -------------------------------------------------------------------------
 
@@ -2209,6 +2426,59 @@
             if (res.ok) removeFactSuggestionRow(activeChatId, sid);
           })
           .catch(() => {});
+        return;
+      }
+      const sAcc = e.target.closest('.skill-suggestion-accept');
+      const sRej = e.target.closest('.skill-suggestion-reject');
+      if (sAcc || sRej) {
+        const row = (sAcc || sRej).closest('.skill-suggestion-row');
+        const sid = Number((sAcc || sRej).dataset.suggestionId);
+        if (!Number.isFinite(sid) || activeChatId == null) return;
+        e.preventDefault();
+        if (sRej) {
+          fetch(
+            '/chats/' +
+              encodeURIComponent(activeChatId) +
+              '/skill-suggestions/' +
+              encodeURIComponent(sid) +
+              '/reject',
+            { method: 'POST', headers: { Accept: 'application/json' } },
+          )
+            .then((res) => {
+              if (res.ok) removeSkillSuggestionRow(activeChatId, sid);
+            })
+            .catch(() => {});
+          return;
+        }
+        // Accept — submit any inline edits + the scope choice.
+        const name = row?.querySelector('.skill-suggestion-name')?.value?.trim() || '';
+        const description = row?.querySelector('.skill-suggestion-desc')?.value?.trim() || '';
+        const body = row?.querySelector('.skill-suggestion-body')?.value?.trim() || '';
+        const global = !!row?.querySelector('.skill-suggestion-global')?.checked;
+        const payload = { scope: global ? 'global' : 'project' };
+        if (name) payload.name = name;
+        if (description) payload.description = description;
+        if (body) payload.body = body;
+        if (sAcc) sAcc.disabled = true;
+        fetch(
+          '/chats/' +
+            encodeURIComponent(activeChatId) +
+            '/skill-suggestions/' +
+            encodeURIComponent(sid) +
+            '/accept',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(payload),
+          },
+        )
+          .then((res) => {
+            if (res.ok) removeSkillSuggestionRow(activeChatId, sid);
+            else if (sAcc) sAcc.disabled = false;
+          })
+          .catch(() => {
+            if (sAcc) sAcc.disabled = false;
+          });
         return;
       }
       const status = e.target.closest('.stream-status.has-detail');
@@ -3163,6 +3433,7 @@
     if (
       el.classList.contains('streaming') ||
       el.classList.contains('fact-suggestions-card') ||
+      el.classList.contains('skill-suggestions-card') ||
       el.classList.contains('reasoning-block')
     ) {
       return null;
@@ -3372,6 +3643,7 @@
       if (activeChatId != null) {
         wsSend({ type: 'subscribe', chatId: activeChatId });
         loadPendingFactSuggestions();
+        loadPendingSkillSuggestions();
       }
       /* If the socket dropped while we had pending task-create records (or
        * was never up when the server emitted 'ready'), reconcile against the
@@ -3708,6 +3980,68 @@
       case 'project-fact-suggestion-removed':
         removeFactSuggestionRow(msg.chatId, msg.suggestionId);
         return;
+
+      case 'project-skill-suggestions': {
+        if (msg.chatId !== activeChatId) return;
+        const have = existingSkillSuggestionIds();
+        const fresh = (msg.suggestions || []).filter((s) => s && !have.has(Number(s.id)));
+        if (fresh.length === 0) return;
+        appendSkillSuggestionsCard({
+          projectId: msg.projectId,
+          chatId: msg.chatId,
+          projectName: typeof msg.projectName === 'string' ? msg.projectName : 'project',
+          suggestions: fresh,
+        });
+        return;
+      }
+
+      case 'project-skill-suggestion-removed':
+        removeSkillSuggestionRow(msg.chatId, msg.suggestionId);
+        return;
+
+      case 'project-skill-added': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        const ul = document.getElementById('skills-list');
+        if (!ul) return;
+        ul.querySelector('li.project-chats-empty')?.remove();
+        // Replace if a row with this id already exists (e.g. accept-as-update).
+        ul.querySelector('li.skill[data-skill-id="' + msg.skill.id + '"]')?.remove();
+        ul.insertBefore(buildSkillLi(msg.skill), ul.firstChild);
+        syncProjectSkillsTabCountFromDom();
+        return;
+      }
+
+      case 'project-skill-updated': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        const ul = document.getElementById('skills-list');
+        if (!ul) return;
+        const existing = ul.querySelector('li.skill[data-skill-id="' + msg.skill.id + '"]');
+        const fresh = buildSkillLi(msg.skill);
+        if (existing) existing.replaceWith(fresh);
+        else {
+          ul.querySelector('li.project-chats-empty')?.remove();
+          ul.insertBefore(fresh, ul.firstChild);
+        }
+        syncProjectSkillsTabCountFromDom();
+        return;
+      }
+
+      case 'project-skill-deleted': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        document
+          .querySelector('#skills-list li.skill[data-skill-id="' + msg.skillId + '"]')
+          ?.remove();
+        const ul = document.getElementById('skills-list');
+        if (ul && !ul.querySelector('li.skill')) {
+          const empty = document.createElement('li');
+          empty.className = 'project-chats-empty muted';
+          empty.textContent =
+            'No skills yet. Accept a skill suggestion in a chat for this project.';
+          ul.appendChild(empty);
+        }
+        syncProjectSkillsTabCountFromDom();
+        return;
+      }
 
       case 'project-created': {
         const arr = window.__ICLAW_PROJECTS__;
@@ -7493,6 +7827,70 @@
     );
   }
 
+  // -------------------------------------------------------------------------
+  // project page — skills list (fetch + WS sync from other tabs)
+  // -------------------------------------------------------------------------
+  const skillsListEl = document.getElementById('skills-list');
+  if (skillsListEl && projectPageId != null) {
+    skillsListEl
+      .querySelectorAll('.skill-name, .skill-description, .skill-body')
+      .forEach((el) => {
+        el.dataset.saved = el.value.trim();
+      });
+    skillsListEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.skill-delete');
+      if (!btn) return;
+      const li = btn.closest('li.skill');
+      const skillId = li?.dataset.skillId;
+      if (!skillId) return;
+      e.preventDefault();
+      fetch(
+        '/projects/' +
+          encodeURIComponent(projectPageId) +
+          '/skills/' +
+          encodeURIComponent(skillId) +
+          '/delete',
+        { method: 'POST', headers: { Accept: 'application/json' } },
+      ).catch(() => {});
+    });
+    skillsListEl.addEventListener(
+      'blur',
+      (e) => {
+        const el = e.target.closest('.skill-name, .skill-description, .skill-body');
+        if (!el || !skillsListEl.contains(el)) return;
+        const li = el.closest('li.skill');
+        const skillId = li?.dataset.skillId;
+        if (!skillId) return;
+        const next = el.value.trim();
+        if (!next) return;
+        if (next === (el.dataset.saved || '').trim()) return;
+        const field = el.classList.contains('skill-name')
+          ? 'name'
+          : el.classList.contains('skill-description')
+            ? 'description'
+            : 'body';
+        const payload = {};
+        payload[field] = next;
+        fetch(
+          '/projects/' +
+            encodeURIComponent(projectPageId) +
+            '/skills/' +
+            encodeURIComponent(skillId),
+          {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(payload),
+          },
+        )
+          .then((res) => {
+            if (res.ok) el.dataset.saved = next;
+          })
+          .catch(() => {});
+      },
+      true,
+    );
+  }
+
   function collapseProjectSecretRow(li) {
     li.classList.remove('project-secret-row--revealed');
     const preview = li.querySelector('.project-secret-reveal');
@@ -7632,6 +8030,7 @@
     const panels = {
       chats: document.getElementById('project-panel-chats'),
       memory: document.getElementById('project-panel-memory'),
+      skills: document.getElementById('project-panel-skills'),
       links: document.getElementById('project-panel-links'),
       files: document.getElementById('project-panel-files'),
       secrets: document.getElementById('project-panel-secrets'),
@@ -7640,6 +8039,7 @@
       !tabs.length ||
       !panels.chats ||
       !panels.memory ||
+      !panels.skills ||
       !panels.links ||
       !panels.files ||
       !panels.secrets
