@@ -871,7 +871,7 @@ function buildWorkSystemPrompt(chatId: number): string {
  * folder set or a folder's read-only/read&write flag forces the session to be
  * recreated with the new access (folderAccess is fixed at session creation).
  */
-const workSessions = new Map<number, { sessionId: string; foldersKey: string }>();
+const workSessions = new Map<number, { sessionId: string; foldersKey: string; secure: boolean }>();
 
 /**
  * Stable signature of the folders granted to a chat. Order-independent so the
@@ -908,16 +908,25 @@ async function runWorkModeTurn(opts: {
 }): Promise<void> {
   const { chatId, content, onEvent } = opts;
 
-  // Folder access is baked in at session creation. For Work Mode, if the folder
-  // set or any read-only flag changed since the active session was created, tear
-  // it down so it's recreated below with the new access. (Secure Mode doesn't
-  // mount the chosen folders, so its session is never recreated for this.)
-  const foldersKey = opts.secure ? '' : foldersSignature(opts.workFolders);
+  // Mode and folder access are baked in at session creation. Tear the session
+  // down (so it's recreated below) when either changed since it was created:
+  //   - the mode switched Work↔Secure, or
+  //   - (Work only) the folder set or a read-only/read&write flag changed.
+  // Without this, switching mode or toggling a folder in the UI is silently
+  // ignored — the chat keeps running on the stale session.
+  const wantSecure = !!opts.secure;
+  const foldersKey = wantSecure ? '' : foldersSignature(opts.workFolders);
   const existing = workSessions.get(chatId);
-  if (existing && !opts.secure && existing.foldersKey !== foldersKey) {
+  if (
+    existing &&
+    (existing.secure !== wantSecure ||
+      (!wantSecure && existing.foldersKey !== foldersKey))
+  ) {
     await stopWorkSession(existing.sessionId).catch(() => {});
     workSessions.delete(chatId);
-    const note = 'Folder access changed — restarted the work session with the new permissions.';
+    const note = existing.secure !== wantSecure
+      ? `Mode changed — restarted the session in ${wantSecure ? 'Secure' : 'Work'} mode.`
+      : 'Folder access changed — restarted the work session with the new permissions.';
     const sys = messages.append(chatId, 'system', note, null);
     wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
   }
@@ -950,7 +959,7 @@ async function runWorkModeTurn(opts: {
         key: `chat:${chatId}`,
         history,
       });
-      workSessions.set(chatId, { sessionId, foldersKey });
+      workSessions.set(chatId, { sessionId, foldersKey, secure: wantSecure });
     } catch (err) {
       const note = `Work Mode runtime unavailable. (${err instanceof Error ? err.message : String(err)})`;
       const sys = messages.append(chatId, 'system', note, 'work-unavailable');
