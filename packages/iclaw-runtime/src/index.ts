@@ -15,6 +15,7 @@ import http from 'node:http';
 
 import { createSession, getSession, deleteSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, sweepExpiredSessions, startContainerReaper, loadPersistedSessions } from './sessions.js';
 import { killOrphanContainers } from './secure-runner.js';
+import { killOrphanWorkContainers } from './work-container.js';
 
 const PORT = parseInt(process.env.ICLAW_RUNTIME_PORT || '7430', 10);
 const SECRET = process.env.ICLAW_RUNTIME_SECRET || '';
@@ -67,9 +68,20 @@ const server = http.createServer(async (req, res) => {
 
   // POST /sessions
   if (req.method === 'POST' && parts[0] === 'sessions' && parts.length === 1) {
-    const body = await readBody(req) as { allowedFolders?: string[]; model?: string; secure?: boolean; systemPrompt?: string; key?: string; history?: { role: string; content: string }[] };
+    const body = await readBody(req) as { allowedFolders?: string[]; folderAccess?: { path: string; readonly: boolean }[]; model?: string; secure?: boolean; systemPrompt?: string; key?: string; history?: { role: string; content: string }[] };
+    // folderAccess (when present) is the source of truth for per-folder read/
+    // write; derive allowedFolders paths from it so the two never drift.
+    const folderAccess = Array.isArray(body.folderAccess)
+      ? body.folderAccess
+          .filter((f) => f && typeof f.path === 'string' && f.path)
+          .map((f) => ({ path: f.path, readonly: f.readonly !== false }))
+      : undefined;
+    const allowedFolders = folderAccess
+      ? folderAccess.map((f) => f.path)
+      : (body.allowedFolders ?? []);
     const sessionId = createSession({
-      allowedFolders: body.allowedFolders ?? [],
+      allowedFolders,
+      folderAccess,
       model: body.model ?? DEFAULT_MODEL,
       apiKey: API_KEY,
       secure: body.secure ?? false,
@@ -147,6 +159,9 @@ if (restored > 0 || expired > 0) {
 killOrphanContainers()
   .then((n) => { if (n > 0) console.error(`[iclaw-runtime] killed ${n} orphan container(s)`); })
   .catch((err) => console.error('[iclaw-runtime] container cleanup failed', err));
+killOrphanWorkContainers()
+  .then((n) => { if (n > 0) console.error(`[iclaw-runtime] killed ${n} orphan work container(s)`); })
+  .catch((err) => console.error('[iclaw-runtime] work container cleanup failed', err));
 
 process.on('SIGTERM', () => { server.close(); process.exit(0); });
 process.on('SIGINT', () => { server.close(); process.exit(0); });

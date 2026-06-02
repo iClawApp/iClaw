@@ -12,6 +12,10 @@ export interface AgentOptions {
   apiKey: string;
   model: string;
   allowedFolders: string[];
+  /** Per-folder access levels. When omitted, all allowed folders are writable. */
+  folderAccess?: { path: string; readonly: boolean }[];
+  /** Shell backend for run_command (Docker sandbox). Omit to disable commands. */
+  runShell?: (command: string, cwd: string) => Promise<string>;
   systemPrompt?: string;
   onWriteApproval?: (filePath: string, content: string) => Promise<boolean>;
 }
@@ -32,6 +36,32 @@ Be concise. When writing files, always propose the change first in text before c
 Never access paths outside the allowed folders.`;
 
 /**
+ * Build the per-turn system message. The base rules and the folder-access
+ * summary are ALWAYS included so the model knows which folders are read-only
+ * (and won't waste calls writing to them); any host-supplied prompt (project
+ * context) is appended rather than replacing the base.
+ */
+function buildSystemPrompt(opts: AgentOptions): string {
+  const parts = [DEFAULT_SYSTEM];
+
+  const folders = opts.folderAccess?.length
+    ? opts.folderAccess
+    : opts.allowedFolders.map((path) => ({ path, readonly: false }));
+  if (folders.length) {
+    const lines = folders.map(
+      (f) => `- ${f.path} (${f.readonly ? 'READ-ONLY: you may read/list/search but NOT write or run commands here' : 'read & write'})`,
+    );
+    parts.push(
+      `\nFolders available this session:\n${lines.join('\n')}\n` +
+        `Writes and shell commands only work in read & write folders; respect this and tell the user if they ask to modify a read-only folder.`,
+    );
+  }
+
+  if (opts.systemPrompt?.trim()) parts.push(`\n${opts.systemPrompt.trim()}`);
+  return parts.join('\n');
+}
+
+/**
  * Run one user turn. Yields events as the agent works.
  * Handles multi-step tool loops automatically.
  */
@@ -47,11 +77,13 @@ export async function* runAgentTurn(
 
   const toolCtx: ToolContext = {
     allowedFolders: opts.allowedFolders,
+    folderAccess: opts.folderAccess,
+    runShell: opts.runShell,
     requestWriteApproval: opts.onWriteApproval ?? (async () => true),
   };
 
   const messages: Message[] = [
-    { role: 'system', content: opts.systemPrompt ?? DEFAULT_SYSTEM },
+    { role: 'system', content: buildSystemPrompt(opts) },
     ...history,
     { role: 'user', content: userMessage },
   ];

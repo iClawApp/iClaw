@@ -53,6 +53,12 @@ function request(
 
 export interface CreateSessionOptions {
   allowedFolders?: string[];
+  /**
+   * Per-folder access levels. When provided, the runtime enforces read-only
+   * folders (denies write_file / run_command under them) and derives the
+   * allowed-path list from it.
+   */
+  folderAccess?: { path: string; readonly: boolean }[];
   model?: string;
   secure?: boolean;
   systemPrompt?: string;
@@ -65,6 +71,7 @@ export interface CreateSessionOptions {
 /** Create a new Work Mode session. Returns sessionId. */
 export async function createWorkSession(opts: CreateSessionOptions = {}): Promise<string> {
   const body: Record<string, unknown> = { allowedFolders: opts.allowedFolders, secure: opts.secure };
+  if (opts.folderAccess?.length) body.folderAccess = opts.folderAccess;
   if (opts.model) body.model = opts.model;
   if (opts.systemPrompt) body.systemPrompt = opts.systemPrompt;
   if (opts.key) body.key = opts.key;

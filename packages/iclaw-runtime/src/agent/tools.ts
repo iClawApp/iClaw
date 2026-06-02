@@ -7,7 +7,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { validatePath, SecurityError } from './security.js';
+import { validatePath, isWriteAllowed, SecurityError } from './security.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -99,6 +99,20 @@ export type ToolName = 'list_files' | 'read_file' | 'search_files' | 'write_file
 
 export interface ToolContext {
   allowedFolders: string[];
+  /**
+   * Per-folder access levels (path + readonly flag). When provided, write_file
+   * is denied for paths under a read-only folder. When omitted (e.g. restored
+   * sessions) all allowed folders are treated as writable.
+   */
+  folderAccess?: { path: string; readonly: boolean }[];
+  /**
+   * Runs a shell command for run_command. Injected so the host never executes
+   * bash directly: Work Mode wires this to a Docker container with per-folder
+   * :ro/:rw mounts (the kernel enforces read-only). When omitted (no Docker),
+   * run_command is disabled and returns a guidance message — the strict
+   * fallback that keeps read-only an honest guarantee.
+   */
+  runShell?: (command: string, cwd: string) => Promise<string>;
   /** Called when agent wants to write — returns true if approved, false if rejected. */
   requestWriteApproval: (filePath: string, content: string) => Promise<boolean>;
 }
@@ -169,6 +183,10 @@ async function writeFile(args: Record<string, unknown>, ctx: ToolContext): Promi
   const filePath = validatePath(args.path as string, ctx.allowedFolders);
   const content = args.content as string;
 
+  if (ctx.folderAccess && !isWriteAllowed(filePath, ctx.folderAccess)) {
+    return `Write denied: "${filePath}" is in a read-only folder. Ask the user to grant read & write access to this folder.`;
+  }
+
   const approved = await ctx.requestWriteApproval(filePath, content);
   if (!approved) return `Write rejected by user: ${filePath}`;
 
@@ -178,13 +196,22 @@ async function writeFile(args: Record<string, unknown>, ctx: ToolContext): Promi
 }
 
 async function runCommand(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+  // Validate cwd is inside an allowed folder up front (clear error before we
+  // hand off to the sandbox, and the container only mounts allowed folders).
   const cwd = validatePath(args.cwd as string, ctx.allowedFolders);
   const command = args.command as string;
 
-  const { stdout, stderr } = await execFileAsync(
-    'bash', ['-c', command],
-    { cwd, timeout: COMMAND_TIMEOUT },
-  );
-  const out = [stdout, stderr].filter(Boolean).join('\n').trim();
-  return out || '(no output)';
+  // No sandbox available → run_command is disabled. We never fall back to host
+  // bash, because that can't enforce per-folder read-only. File tools still
+  // work (write_file is path-checked on the host).
+  if (!ctx.runShell) {
+    return 'run_command is unavailable. Shell commands run in a Docker sandbox, which needs both ' +
+      '(1) Docker installed and running, and (2) at least one folder explicitly selected for this chat. ' +
+      'Ask the user to start Docker and/or add a folder. Meanwhile read_file / search_files / write_file still work.';
+  }
+
+  // The sandbox mounts read-only folders as :ro, so the kernel — not us —
+  // rejects any write outside the read & write folders. Commands may freely
+  // read from read-only folders.
+  return ctx.runShell(command, cwd);
 }

@@ -162,14 +162,30 @@
     return 'iclaw:work-folders:no-project';
   }
 
+  // Folders are stored as { path, write }. Older clients stored bare path
+  // strings — migrate those to writable (their effective behavior at the time)
+  // so upgrading doesn't silently revoke access on existing folders. Newly
+  // added folders default to read-only (see addFolder / browse below).
   function getWorkFolders() {
-    try {
-      return JSON.parse(localStorage.getItem(workFoldersKey()) || '[]');
-    } catch { return []; }
+    let raw;
+    try { raw = JSON.parse(localStorage.getItem(workFoldersKey()) || '[]'); }
+    catch { return []; }
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((f) => (typeof f === 'string'
+        ? { path: f, write: true }
+        : (f && typeof f === 'object' && typeof f.path === 'string'
+          ? { path: f.path, write: f.write === true }
+          : null)))
+      .filter(Boolean);
   }
 
   function saveWorkFolders(folders) {
     try { localStorage.setItem(workFoldersKey(), JSON.stringify(folders)); } catch {}
+  }
+
+  function escAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   function renderWorkFoldersList() {
@@ -177,9 +193,15 @@
     const folders = getWorkFolders();
     workFoldersList.innerHTML = '';
     for (const f of folders) {
+      const p = escAttr(f.path);
       const li = document.createElement('li');
       li.className = 'work-folders-list__item';
-      li.innerHTML = `<span class="work-folders-list__path" title="${f}">${f}</span><button type="button" class="work-folders-list__remove" data-path="${f}" aria-label="Remove">×</button>`;
+      const label = f.write ? 'Read & write' : 'Read-only';
+      li.innerHTML =
+        `<span class="work-folders-list__path" title="${p}">${p}</span>` +
+        `<button type="button" class="work-folders-list__access" data-path="${p}" data-write="${f.write ? '1' : '0'}" ` +
+        `title="Click to toggle access">${label}</button>` +
+        `<button type="button" class="work-folders-list__remove" data-path="${p}" aria-label="Remove">×</button>`;
       workFoldersList.appendChild(li);
     }
     if (workFoldersCount) {
@@ -235,23 +257,36 @@
     });
 
     workFoldersList?.addEventListener('click', (e) => {
-      const btn = e.target.closest('.work-folders-list__remove');
-      if (!btn) return;
-      const path = btn.dataset.path;
-      const folders = getWorkFolders().filter((f) => f !== path);
-      saveWorkFolders(folders);
-      renderWorkFoldersList();
-    });
-
-    function addFolder() {
-      const val = workFoldersInput?.value.trim();
-      if (!val) return;
-      const folders = getWorkFolders();
-      if (!folders.includes(val)) {
-        folders.push(val);
+      const removeBtn = e.target.closest('.work-folders-list__remove');
+      if (removeBtn) {
+        const path = removeBtn.dataset.path;
+        saveWorkFolders(getWorkFolders().filter((f) => f.path !== path));
+        renderWorkFoldersList();
+        return;
+      }
+      const accessBtn = e.target.closest('.work-folders-list__access');
+      if (accessBtn) {
+        const path = accessBtn.dataset.path;
+        const folders = getWorkFolders().map((f) =>
+          f.path === path ? { ...f, write: !f.write } : f);
         saveWorkFolders(folders);
         renderWorkFoldersList();
       }
+    });
+
+    function addFolderPath(val) {
+      if (!val) return;
+      const folders = getWorkFolders();
+      if (!folders.some((f) => f.path === val)) {
+        // New folders default to read-only; user opts into write explicitly.
+        folders.push({ path: val, write: false });
+        saveWorkFolders(folders);
+        renderWorkFoldersList();
+      }
+    }
+
+    function addFolder() {
+      addFolderPath(workFoldersInput?.value.trim());
       if (workFoldersInput) workFoldersInput.value = '';
     }
 
@@ -266,14 +301,7 @@
         const res = await fetch('/api/pick-folder', { method: 'POST' });
         if (res.status === 204) return; // user cancelled
         const data = await res.json();
-        if (data.path) {
-          const folders = getWorkFolders();
-          if (!folders.includes(data.path)) {
-            folders.push(data.path);
-            saveWorkFolders(folders);
-            renderWorkFoldersList();
-          }
-        }
+        if (data.path) addFolderPath(data.path);
       } catch (e) {
         console.error('pick-folder failed', e);
       } finally {
@@ -4078,7 +4106,9 @@
     if (item.mode) payload.mode = item.mode;
     if (item.mode === 'work') {
       const wf = getWorkFolders ? getWorkFolders() : [];
-      if (wf.length > 0) payload.workFolders = wf;
+      if (wf.length > 0) {
+        payload.workFolders = wf.map((f) => ({ path: f.path, readonly: !f.write }));
+      }
     }
     if (item.mode === 'secure') {
       payload.networkEnabled = typeof getNetworkEnabled === 'function' ? getNetworkEnabled() : false;

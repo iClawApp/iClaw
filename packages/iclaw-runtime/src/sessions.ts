@@ -7,14 +7,25 @@ import { readdirSync, statSync } from 'node:fs';
 
 import { runAgentTurn, type Message } from './agent/loop.js';
 import type { AgentEvent } from './agent/loop.js';
+import { validateMountRoot } from './agent/security.js';
 import {
   runSecureTurn, createSecureWorkspace, destroySecureWorkspace,
   startContainer, stopContainer, isContainerRunning,
   writeSessionMeta, listPersistedWorkspaces,
 } from './secure-runner.js';
+import {
+  dockerAvailable, resolveWorkImage, startWorkContainer, execInWorkContainer,
+  type WorkMount,
+} from './work-container.js';
 
 export interface SessionOptions {
   allowedFolders: string[];
+  /**
+   * Per-folder access levels (path + readonly flag), parallel to allowedFolders.
+   * When omitted, every allowed folder is treated as writable. Used by Work Mode
+   * to enforce read-only folders; Secure Mode leaves it unset (workspace is RW).
+   */
+  folderAccess?: { path: string; readonly: boolean }[];
   model: string;
   apiKey: string;
   secure?: boolean;
@@ -44,6 +55,12 @@ interface Session {
    * the workspace dir outlives it either way.
    */
   secureContainer?: { name: string; networkEnabled: boolean; lastUsed: number; inUse: boolean };
+  /**
+   * Warm Work-Mode command sandbox, reused across turns (parallel to
+   * secureContainer — a session is exactly one mode). Holds the user's chosen
+   * folders bind-mounted :ro/:rw; only run_command runs inside it.
+   */
+  workContainer?: { name: string; lastUsed: number; inUse: boolean };
   /** Stable identity for reconnection across restarts. */
   key?: string;
   /** Last activity timestamp (ms). Updated on each message. */
@@ -185,6 +202,7 @@ export function sweepExpiredSessions(): number {
   for (const [id, session] of sessions) {
     if (session.ttlMs > 0 && now - session.lastActivity > session.ttlMs) {
       if (session.secureContainer) stopContainer(session.secureContainer.name);
+      if (session.workContainer) stopContainer(session.workContainer.name);
       if (session.secureWorkspaceDir) destroySecureWorkspace(session.secureWorkspaceDir);
       if (session.key) keyToId.delete(session.key);
       session.sseClient?.end();
@@ -208,6 +226,12 @@ export function reapIdleContainers(): number {
     if (c && !c.inUse && now - c.lastUsed > CONTAINER_IDLE_MS) {
       stopContainer(c.name);
       session.secureContainer = undefined;
+      reaped++;
+    }
+    const w = session.workContainer;
+    if (w && !w.inUse && now - w.lastUsed > CONTAINER_IDLE_MS) {
+      stopContainer(w.name);
+      session.workContainer = undefined;
       reaped++;
     }
   }
@@ -248,17 +272,53 @@ async function ensureSecureContainer(session: Session, networkEnabled: boolean):
   return name;
 }
 
-/** LRU-evict warm containers (excluding `keep`) until under the cap. */
+/**
+ * LRU-evict warm containers (excluding `keep`) until under the cap. Counts both
+ * Secure and Work sandboxes — a session has at most one, and both consume RAM.
+ */
 function evictWarmContainersIfNeeded(keep: Session): void {
-  // Never evict a container mid-turn.
-  const warm = [...sessions.values()].filter((s) => s !== keep && s.secureContainer && !s.secureContainer.inUse);
-  while (warm.length >= MAX_WARM_CONTAINERS) {
-    warm.sort((a, b) => (a.secureContainer!.lastUsed) - (b.secureContainer!.lastUsed));
-    const victim = warm.shift();
-    if (!victim?.secureContainer) break;
-    stopContainer(victim.secureContainer.name);
-    victim.secureContainer = undefined;
+  type Warm = { session: Session; kind: 'secure' | 'work'; name: string; lastUsed: number };
+  const warm: Warm[] = [];
+  for (const s of sessions.values()) {
+    if (s === keep) continue;
+    if (s.secureContainer && !s.secureContainer.inUse) {
+      warm.push({ session: s, kind: 'secure', name: s.secureContainer.name, lastUsed: s.secureContainer.lastUsed });
+    }
+    if (s.workContainer && !s.workContainer.inUse) {
+      warm.push({ session: s, kind: 'work', name: s.workContainer.name, lastUsed: s.workContainer.lastUsed });
+    }
   }
+  while (warm.length >= MAX_WARM_CONTAINERS) {
+    warm.sort((a, b) => a.lastUsed - b.lastUsed);
+    const victim = warm.shift();
+    if (!victim) break;
+    stopContainer(victim.name);
+    if (victim.kind === 'secure') victim.session.secureContainer = undefined;
+    else victim.session.workContainer = undefined;
+  }
+}
+
+/**
+ * Ensure the Work session has a running command sandbox with `mounts`. Reuses
+ * the warm container when alive; recreates it if it died. Throws (fail-closed)
+ * if Docker can't start it, so run_command surfaces the error instead of
+ * leaking to the host.
+ */
+async function ensureWorkContainer(session: Session, mounts: WorkMount[], image: string): Promise<string> {
+  const existing = session.workContainer;
+  if (existing && await isContainerRunning(existing.name)) {
+    existing.lastUsed = Date.now();
+    existing.inUse = true;
+    return existing.name;
+  }
+  if (existing) {
+    stopContainer(existing.name);
+    session.workContainer = undefined;
+  }
+  evictWarmContainersIfNeeded(session);
+  const name = await startWorkContainer(mounts, image);
+  session.workContainer = { name, lastUsed: Date.now(), inUse: true };
+  return name;
 }
 
 export function getSession(id: string): Session | undefined {
@@ -268,6 +328,7 @@ export function getSession(id: string): Session | undefined {
 export function deleteSession(id: string): void {
   const session = sessions.get(id);
   if (session?.secureContainer) stopContainer(session.secureContainer.name);
+  if (session?.workContainer) stopContainer(session.workContainer.name);
   if (session?.secureWorkspaceDir) {
     destroySecureWorkspace(session.secureWorkspaceDir);
   }
@@ -433,10 +494,43 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     return;
   }
 
+  // run_command runs in a Docker sandbox with per-folder :ro/:rw mounts so the
+  // kernel enforces read-only. Without Docker we leave runShell undefined →
+  // run_command is disabled (file tools still work). The container is created
+  // lazily on first command, so chat/read-only turns never spin one up.
+  //
+  // Only EXPLICITLY chosen folders are mounted — never the broad $HOME fallback
+  // (mounting all of home would expose ~/.ssh etc. to the shell). Each folder is
+  // validated against the secret deny-list and dropped (with a notice) if it
+  // names a sensitive root.
+  let runShell: ((command: string, cwd: string) => Promise<string>) | undefined;
+  if (session.opts.folderAccess?.length && await dockerAvailable()) {
+    const mounts: WorkMount[] = [];
+    for (const f of session.opts.folderAccess) {
+      try {
+        mounts.push({ path: validateMountRoot(f.path), readonly: f.readonly });
+      } catch (err) {
+        emit(session, {
+          type: 'error',
+          message: `Folder excluded from commands: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    }
+    if (mounts.length) {
+      const image = await resolveWorkImage();
+      runShell = async (command, cwd) => {
+        const name = await ensureWorkContainer(session, mounts, image);
+        return execInWorkContainer(name, command, cwd);
+      };
+    }
+  }
+
   const gen = runAgentTurn(session.history, content, {
     apiKey: session.opts.apiKey,
     model: session.opts.model,
     allowedFolders: session.opts.allowedFolders,
+    folderAccess: session.opts.folderAccess,
+    runShell,
     systemPrompt: session.opts.systemPrompt,
     onWriteApproval: async (filePath, fileContent) => {
       emit(session, { type: 'approval_request', changeId: randomUUID(), path: filePath, content: fileContent });
@@ -445,9 +539,17 @@ export async function sendMessage(sessionId: string, content: string, networkEna
   });
 
   let assistantText = '';
-  for await (const event of gen) {
-    emit(session, event);
-    if (event.type === 'text') assistantText += event.content;
+  try {
+    for await (const event of gen) {
+      emit(session, event);
+      if (event.type === 'text') assistantText += event.content;
+    }
+  } finally {
+    // Release the warm container so the idle reaper / LRU can free it.
+    if (session.workContainer) {
+      session.workContainer.inUse = false;
+      session.workContainer.lastUsed = Date.now();
+    }
   }
 
   if (assistantText) {

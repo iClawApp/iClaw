@@ -41,6 +41,16 @@ import {
 const DEFAULT_AGENT = 'openclaw/default';
 
 /**
+ * A folder granted to a Work Mode chat, with its access level. `readonly: true`
+ * means the agent may read/list/search but not write_file or run_command under
+ * it; `readonly: false` grants read & write. New folders default to read-only.
+ */
+export interface WorkFolder {
+  path: string;
+  readonly: boolean;
+}
+
+/**
  * OpenClaw session key currently executing an Execute turn for a chat. Lets
  * `abortChatRun` stop the right gateway run. Cleared in the runTurn `finally`.
  */
@@ -287,7 +297,7 @@ async function runTurnLocked(opts: {
   inlineSecrets?: InlineSecretWire[];
   /** 'ask' | 'execute'. Defaults to 'execute' for full back-compat. */
   mode?: ChatMode;
-  workFolders?: string[];
+  workFolders?: WorkFolder[];
   networkEnabled?: boolean;
   ttlDays?: number;
 }): Promise<void> {
@@ -746,8 +756,8 @@ export async function sendMessage(opts: {
   prePersistedAttachments?: MessageAttachment[];
   /** 'ask' | 'execute'. Defaults to 'execute' when omitted. */
   mode?: ChatMode;
-  /** Allowed folders for Work Mode. */
-  workFolders?: string[];
+  /** Allowed folders for Work Mode, each with a read-only / read&write flag. */
+  workFolders?: WorkFolder[];
   /** Network toggle for Secure Mode. */
   networkEnabled?: boolean;
   /** TTL in days for Secure Mode workspace. */
@@ -871,7 +881,7 @@ async function runWorkModeTurn(opts: {
   chatId: number;
   content: string;
   onEvent: (event: TurnEvent) => void;
-  workFolders?: string[];
+  workFolders?: WorkFolder[];
   secure?: boolean;
   networkEnabled?: boolean;
   ttlDays?: number;
@@ -884,8 +894,14 @@ async function runWorkModeTurn(opts: {
   let sessionId = workSessions.get(chatId);
   if (!sessionId) {
     try {
-      const allowedFolders = opts.workFolders?.length
-        ? opts.workFolders
+      // Per-folder access drives both the allowed-path list and read-only
+      // enforcement. Secure Mode ignores it (the sandbox workspace is the only
+      // mount); when no folders are chosen we fall back to HOME with write
+      // access, preserving prior behavior.
+      const hasFolders = !opts.secure && !!opts.workFolders?.length;
+      const folderAccess = hasFolders ? opts.workFolders : undefined;
+      const allowedFolders = hasFolders
+        ? opts.workFolders!.map((f) => f.path)
         : [process.env.HOME ?? ''].filter(Boolean);
       // Seed the (possibly restored) session with compacted prior history from
       // our DB, so context survives runtime restarts (older turns summarized).
@@ -894,6 +910,7 @@ async function runWorkModeTurn(opts: {
         : undefined;
       sessionId = await createWorkSession({
         allowedFolders,
+        folderAccess,
         secure: opts.secure,
         systemPrompt: buildWorkSystemPrompt(chatId),
         // Stable key → the chat reconnects to its persisted Secure workspace

@@ -8,13 +8,35 @@ import type { Server as HttpServer, IncomingMessage } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { chats } from '../services/store';
 import { wsHub } from '../services/wsHub';
-import { sendMessage, abortChatRun } from '../services/chatRunner';
+import { sendMessage, abortChatRun, type WorkFolder } from '../services/chatRunner';
 import { openclawWs } from '../services/openclawWs';
 import type { ClientMsg, ServerMsg } from '../types/protocol';
 import type { InlineSecretWire } from '../services/inlineSecrets';
 import { normalizeChatMode } from '../services/chatModes';
 
 const PATH = '/ws';
+
+/**
+ * Coerce the untrusted `workFolders` wire field into typed WorkFolder[]. Accepts
+ * either objects ({ path, readonly }) from the current client or bare path
+ * strings from older clients. Missing/unknown readonly defaults to true
+ * (read-only) — the safe default. Returns undefined when nothing valid is sent.
+ */
+function parseWorkFolders(raw: unknown): WorkFolder[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: WorkFolder[] = [];
+  for (const entry of raw) {
+    if (typeof entry === 'string') {
+      if (entry) out.push({ path: entry, readonly: true });
+    } else if (entry && typeof entry === 'object') {
+      const o = entry as Record<string, unknown>;
+      if (typeof o.path === 'string' && o.path) {
+        out.push({ path: o.path, readonly: o.readonly !== false });
+      }
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 function send(socket: WebSocket, msg: ServerMsg): void {
   wsHub.send(socket, msg);
@@ -96,9 +118,7 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
           ttlDays: typeof (msg as Record<string, unknown>).ttlDays === 'number'
             ? ((msg as Record<string, unknown>).ttlDays as number)
             : undefined,
-          workFolders: Array.isArray((msg as Record<string, unknown>).workFolders)
-            ? (((msg as Record<string, unknown>).workFolders as unknown[]).filter((f) => typeof f === 'string') as string[])
-            : undefined,
+          workFolders: parseWorkFolders((msg as Record<string, unknown>).workFolders),
         });
       } catch (err) {
         // Errors are already broadcast via chatRunner; nothing more to do.
