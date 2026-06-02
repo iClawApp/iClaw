@@ -116,6 +116,7 @@
       if (!item) return;
       setComposerMode(item.dataset.mode);
       closeComposerModeMenu();
+      if (typeof updateWorkFoldersButton === 'function') updateWorkFoldersButton();
       input?.focus();
     });
     document.addEventListener('click', (e) => {
@@ -216,12 +217,6 @@
     });
   }
 
-  // Show/hide folders button when mode changes
-  const _origSetComposerMode = setComposerMode;
-  function setComposerMode(mode, opts) {
-    _origSetComposerMode(mode, opts);
-    updateWorkFoldersButton();
-  }
   updateWorkFoldersButton();
 
   // -------------------------------------------------------------------------
