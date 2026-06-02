@@ -405,7 +405,7 @@ async function webFetch(args: Record<string, unknown>): Promise<string> {
   }
 }
 
-// ── web_search (Brave if keyed, else best-effort DuckDuckGo) ──────────────────
+// ── web_search (OpenRouter by default, DuckDuckGo as keyless fallback) ────────
 
 interface SearchHit { title: string; url: string; snippet: string }
 
@@ -413,19 +413,6 @@ function formatHits(query: string, hits: SearchHit[], provider: string): string 
   if (hits.length === 0) return `No results for "${query}".`;
   const lines = hits.map((h, i) => `${i + 1}. ${h.title}\n   ${h.url}${h.snippet ? `\n   ${h.snippet}` : ''}`);
   return `Web search (${provider}) — "${query}":\n\n${lines.join('\n\n')}`;
-}
-
-async function braveSearch(query: string, count: number, signal: AbortSignal): Promise<SearchHit[]> {
-  const key = process.env.ICLAW_SEARCH_API_KEY || '';
-  const u = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`;
-  const res = await fetch(u, { signal, headers: { Accept: 'application/json', 'X-Subscription-Token': key } });
-  if (!res.ok) throw new Error(`Brave HTTP ${res.status}`);
-  const data = await res.json() as { web?: { results?: { title?: string; url?: string; description?: string }[] } };
-  return (data.web?.results ?? []).slice(0, count).map((r) => ({
-    title: r.title ?? r.url ?? '(untitled)',
-    url: r.url ?? '',
-    snippet: (r.description ?? '').replace(/<[^>]+>/g, '').trim(),
-  }));
 }
 
 /**
@@ -489,19 +476,14 @@ async function webSearch(args: Record<string, unknown>): Promise<string> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), WEB_FETCH_TIMEOUT);
   try {
-    // 1) Brave — only if a power user opted in with a key.
-    if (process.env.ICLAW_SEARCH_API_KEY) {
-      try { return formatHits(query, await braveSearch(query, count, ctrl.signal), 'Brave'); }
-      catch { /* fall through */ }
-    }
-    // 2) OpenRouter web search — the zero-config default (reuses the chat key).
+    // 1) OpenRouter web search — the zero-config default (reuses the chat key).
     if (process.env.ICLAW_OPENROUTER_API_KEY) {
       try {
         const hits = await openRouterSearch(query, count, ctrl.signal);
         if (hits.length) return formatHits(query, hits, 'OpenRouter');
       } catch { /* fall through */ }
     }
-    // 3) Keyless last resort.
+    // 2) Keyless last resort.
     return formatHits(query, await duckDuckGoSearch(query, count, ctrl.signal), 'DuckDuckGo');
   } catch (err) {
     const msg = err instanceof Error && err.name === 'AbortError'
