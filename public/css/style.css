@@ -4761,6 +4761,7 @@ code {
 .composer-attach:active { transform: scale(0.94); }
 
 /* Work Mode folders button */
+.composer-work-folders[hidden] { display: none; }
 .composer-work-folders {
   flex: 0 0 auto;
   align-self: center;
