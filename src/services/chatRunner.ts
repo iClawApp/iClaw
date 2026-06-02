@@ -21,7 +21,7 @@ import {
   type ProcessedAttachment,
 } from './uploads';
 import type { ChatMode, Message, MessageAttachment } from '../types';
-import { applyModeToGatewayMessage, DEFAULT_MODE, getModeDef } from './chatModes';
+import { DEFAULT_MODE, getModeDef } from './chatModes';
 import { loadAskAgentId } from './config';
 import {
   expandStoredSecretPlaceholdersForGateway,
@@ -126,10 +126,12 @@ interface TurnTarget {
 }
 
 /**
- * Decide which session + message a turn uses based on its mode. Execute and
- * soft-Ask run on the chat's main session; hard-Ask runs on a throwaway session
- * bound to the tools-restricted ask agent (when that agent is configured and
- * present on the gateway).
+ * Decide which session + message a turn uses based on its mode. Execute runs on
+ * the chat's main session, message unchanged. Lightweight (Ask) runs on a
+ * throwaway session bound to the tools-restricted ask agent — the caller has
+ * already gated availability (see the fail-closed check in runTurnLocked), so
+ * here we just spin one up; a creation failure throws and surfaces as a
+ * turn-error rather than silently running with tools.
  */
 async function resolveTurnTarget(opts: {
   chatId: number;
@@ -140,25 +142,18 @@ async function resolveTurnTarget(opts: {
 }): Promise<TurnTarget> {
   const { chatId, mode, mainSessionKey, gatewayMessageBase, currentUserMsgId } = opts;
 
-  const wantsLightweight = getModeDef(mode).lightweight;
-  if (wantsLightweight && ASK_AGENT_ID && (await openclawWs.agentExists(ASK_AGENT_ID))) {
-    try {
-      const askSession = await openclawWs.createSession({ agentId: ASK_AGENT_ID });
-      return {
-        sessionKey: askSession.key,
-        message: buildAskContextMessage(chatId, currentUserMsgId, gatewayMessageBase),
-        ephemeralSessionKey: askSession.key,
-      };
-    } catch {
-      // Couldn't spin up the restricted session — degrade to soft Ask rather
-      // than failing the turn.
-    }
+  if (getModeDef(mode).lightweight) {
+    const askSession = await openclawWs.createSession({ agentId: ASK_AGENT_ID });
+    return {
+      sessionKey: askSession.key,
+      message: buildAskContextMessage(chatId, currentUserMsgId, gatewayMessageBase),
+      ephemeralSessionKey: askSession.key,
+    };
   }
 
-  // Execute → unchanged. Soft Ask → prompt-only preamble (no-op for execute).
   return {
     sessionKey: mainSessionKey,
-    message: applyModeToGatewayMessage(mode, gatewayMessageBase),
+    message: gatewayMessageBase,
     ephemeralSessionKey: null,
   };
 }
@@ -457,6 +452,28 @@ async function runTurnLocked(opts: {
       chatId,
       updatedAt: chatAfterUserMsg.updated_at,
     });
+  }
+
+  // HARD Ask gate (fail-closed). Ask must run on a tools-restricted agent so
+  // the model physically cannot use tools. If that agent isn't configured or
+  // present on the gateway, we REFUSE the turn instead of silently running a
+  // tool-capable turn behind a polite prompt. No prompt-only fallback.
+  if (getModeDef(mode).lightweight) {
+    const ready = Boolean(ASK_AGENT_ID) && (await openclawWs.agentExists(ASK_AGENT_ID));
+    if (!ready) {
+      const note = ASK_AGENT_ID
+        ? `Ask mode needs a tools-restricted agent "${ASK_AGENT_ID}" on the OpenClaw gateway, but it isn't configured. Add it to openclaw.json (see README → "Chat modes"), or switch to Execute. Not running this turn — Ask never runs with tools.`
+        : 'Ask mode is disabled (ICLAW_ASK_AGENT is empty). Switch to Execute, or configure a tools-restricted ask agent. Not running this turn.';
+      const sys = messages.append(chatId, 'system', note, 'ask-unavailable');
+      wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+      wsHub.broadcastAll({
+        type: 'turn-ended',
+        chatId,
+        title: chats.get(chatId)?.title ?? '',
+        aborted: false,
+      });
+      return;
+    }
   }
 
   // Title sub-request, in background, on first turn only.

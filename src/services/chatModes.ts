@@ -15,20 +15,18 @@
  *   legacy rows, older clients, scheduled messages, task runs — behaves
  *   exactly as before. `normalizeChatMode()` enforces this fallback.
  *
- * How Ask is enforced
- * --------------------
- * `lightweight: true` marks modes that should answer without heavy agent
- * execution. chatRunner turns that flag into one of two behaviors:
+ * How Ask is enforced (fail-closed)
+ * ---------------------------------
+ * `lightweight: true` marks modes that must answer without tool/agent
+ * execution. chatRunner enforces this HARD: a lightweight turn runs on a
+ * throwaway OpenClaw session bound to a tools-restricted agent (id from
+ * `ICLAW_ASK_AGENT`, default `ask`). The gateway enforces that agent's
+ * `tools.allow`/`deny`, so the model physically cannot use shell/file/browser
+ * tools.
  *
- *   1. HARD (preferred) — runs the turn on a throwaway OpenClaw session bound
- *      to a tools-restricted agent (id from `ICLAW_ASK_AGENT`, default `ask`).
- *      The gateway enforces that agent's `tools.allow`/`deny`, so the model
- *      physically cannot use shell/file/browser tools. Used automatically when
- *      that agent exists on the gateway.
- *   2. SOFT (fallback) — when no ask agent is configured/present, chatRunner
- *      prepends the `applyModeToGatewayMessage` instruction below to the normal
- *      session. Best-effort only: the model is asked not to use tools, but
- *      nothing enforces it.
+ * There is deliberately NO prompt-only fallback: if the restricted agent isn't
+ * configured/present, chatRunner refuses the turn (surfaces a system note) per
+ * `getModeDef(mode).lightweight`, rather than silently running with tools.
  *
  * A future option (not wired): for a true "no agent" answer, branch in
  * chatRunner on `getModeDef(mode).lightweight` and call an LLM client
@@ -140,23 +138,3 @@ export function getModeDef(mode: ChatMode): ChatModeDef {
   return findMode(mode) ?? findMode(DEFAULT_MODE)!;
 }
 
-/**
- * SOFT-Ask fallback: instruction prepended to lightweight-mode messages so the
- * agent answers without spinning up heavy tool/agent execution. Used only when
- * the HARD path (a tools-restricted ask agent) is unavailable. Returns the
- * message unchanged for Execute (and any non-lightweight mode) — Execute must
- * stay byte-for-byte identical to today's behavior.
- */
-const ASK_PREAMBLE = [
-  '[iClaw Ask mode]',
-  'The user is in "Ask" mode — a lightweight question, explanation, or planning request.',
-  'Answer directly from reasoning and knowledge. Avoid running shell commands, editing or',
-  'creating files, or driving the browser/other tools unless it is strictly required to answer.',
-  'Do not begin a long autonomous task; keep it conversational and concise.',
-  '',
-  '',
-].join('\n');
-
-export function applyModeToGatewayMessage(mode: ChatMode, message: string): string {
-  return getModeDef(mode).lightweight ? ASK_PREAMBLE + message : message;
-}

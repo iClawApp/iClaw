@@ -50,40 +50,37 @@ Modes are config-driven in [`src/services/chatModes.ts`](src/services/chatModes.
 (it also lists disabled placeholders — Research, Image, Safe Run — so new modes
 can be added without touching call sites or the DB; the column is plain `TEXT`).
 
-### Hard vs soft Ask
+### How Ask is enforced (fail-closed)
 
-Ask has two enforcement levels, picked automatically:
+Ask is enforced **hard**, not by prompting. Each Ask turn runs on a throwaway
+session bound to a **tools-restricted agent**; OpenClaw enforces that agent's
+tool policy, so the model **physically cannot** run shell/file/browser tools.
+The fresh session is seeded with a compact snapshot of the recent thread so Ask
+still sees prior context, and the reply lands in the same chat thread.
 
-- **Hard (preferred).** If a tools-restricted agent exists on the gateway, each
-  Ask turn runs on a throwaway session bound to that agent. OpenClaw enforces
-  the agent's tool policy, so the model **physically cannot** run shell/file/
-  browser tools. The fresh session is seeded with a compact snapshot of the
-  recent thread, so Ask still sees prior context, and the reply lands in the
-  same chat thread. Set the agent id with `ICLAW_ASK_AGENT` (default `ask`; set
-  empty/`off` to disable hard Ask).
+Required one-time gateway setup in `openclaw.json` — a read-only Ask agent
+(id from `ICLAW_ASK_AGENT`, default `ask`):
 
-  One-time gateway setup in `openclaw.json` (a read-only Ask agent):
+```json5
+{ agents: { list: [
+  { id: "main", default: true },
+  { id: "ask", name: "Ask",
+    tools: { allow: ["read", "web_search", "web_fetch", "memory_search", "memory_get"],
+             deny:  ["exec", "process", "write", "edit", "apply_patch", "browser", "gateway"] } }
+]}}
+```
 
-  ```json5
-  { agents: { list: [
-    { id: "main", default: true },
-    { id: "ask", name: "Ask",
-      tools: { allow: ["read", "web_search", "web_fetch", "memory_search", "memory_get"],
-               deny:  ["exec", "process", "write", "edit", "apply_patch", "browser", "gateway"] } }
-  ]}}
-  ```
-
-- **Soft (fallback).** If no such agent is present, Ask falls back to a prompt
-  prepended to the normal turn asking the model not to use tools
-  (`applyModeToGatewayMessage`). Best-effort only — not enforced. No error is
-  shown; the mode metadata is still preserved.
+**No prompt fallback.** If that agent isn't configured/present (or
+`ICLAW_ASK_AGENT` is empty), iClaw **refuses** the Ask turn with a system note
+rather than silently running a tool-capable turn. This is deliberate: Ask never
+runs with tools. Switch to Execute, or configure the agent.
 
 **Context both ways.** Execute→Ask works via the thread snapshot that seeds the
-Ask session. Ask→Execute works via `chat.inject`: after each hard-Ask turn a
-compact `[Ask]` note (the Q&A) is appended to the main session's transcript with
-no model run, so a later Execute turn ("ok, now do what we discussed") sees it.
-The note carries secret placeholders, not plaintext. (A fresh Ask session is
-created per Ask turn; this is fine but adds one `sessions.create` of latency.)
+Ask session. Ask→Execute works via `chat.inject`: after each Ask turn a compact
+`[Ask]` note (the Q&A) is appended to the main session's transcript with no
+model run, so a later Execute turn ("ok, now do what we discussed") sees it. The
+note carries secret placeholders, not plaintext. (A fresh Ask session is created
+per Ask turn — adds one `sessions.create` of latency.)
 
 A future option (not wired): for a true "no agent" answer, branch in
 `chatRunner` on `getModeDef(mode).lightweight` and call an LLM client
