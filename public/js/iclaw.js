@@ -126,6 +126,144 @@
       if (e.key === 'Escape' && !composerModeMenu.hidden) closeComposerModeMenu();
     });
   }
+
+  // -------------------------------------------------------------------------
+  // Speech-to-text (mic). Records via MediaRecorder, POSTs the clip to
+  // /api/stt, and inserts the returned transcript into the composer textarea.
+  // Only wired when the server rendered the button (OPENROUTER_API_KEY set).
+  // Click to start, click again to stop.
+  // -------------------------------------------------------------------------
+  const micBtn = document.getElementById('composer-mic-btn');
+  if (micBtn && navigator.mediaDevices && window.MediaRecorder) {
+    let mediaRecorder = null;
+    let mediaStream = null;
+    let micChunks = [];
+    let micRecording = false;
+
+    function setMicState(state) {
+      micBtn.dataset.state = state;
+      micBtn.setAttribute('aria-pressed', state === 'recording' ? 'true' : 'false');
+      micBtn.title =
+        state === 'recording'
+          ? 'Stop recording'
+          : state === 'busy'
+            ? 'Transcribing…'
+            : 'Record voice';
+    }
+
+    function pickMicMime() {
+      if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
+      const cands = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/mp4',
+        'audio/mpeg',
+      ];
+      return cands.find((t) => MediaRecorder.isTypeSupported(t)) || '';
+    }
+
+    function stopMicStream() {
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((t) => t.stop());
+        mediaStream = null;
+      }
+    }
+
+    function insertTranscript(text) {
+      if (!input || !text) return;
+      const cur = input.value || '';
+      const sep = cur && !/\s$/.test(cur) ? ' ' : '';
+      input.value = cur + sep + text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+      try {
+        input.setSelectionRange(input.value.length, input.value.length);
+      } catch (_) {}
+    }
+
+    async function transcribeBlob(blob) {
+      const res = await fetch('/api/stt', {
+        method: 'POST',
+        headers: { 'Content-Type': blob.type || 'audio/webm' },
+        body: blob,
+      });
+      if (!res.ok) {
+        let msg = 'HTTP ' + res.status;
+        try {
+          const j = await res.json();
+          if (j && j.error) msg = j.error;
+        } catch (_) {}
+        throw new Error(msg);
+      }
+      const j = await res.json();
+      return j && typeof j.text === 'string' ? j.text.trim() : '';
+    }
+
+    async function onMicStop() {
+      stopMicStream();
+      const type = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
+      const blob = new Blob(micChunks, { type });
+      micChunks = [];
+      if (!blob.size) {
+        setMicState('idle');
+        return;
+      }
+      setMicState('busy');
+      try {
+        const text = await transcribeBlob(blob);
+        if (text) insertTranscript(text);
+      } catch (err) {
+        window.alert(
+          'Transcription failed: ' + (err && err.message ? err.message : 'unknown error'),
+        );
+      } finally {
+        setMicState('idle');
+      }
+    }
+
+    async function startMicRecording() {
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (_) {
+        window.alert('Microphone access was blocked. Allow it in your browser to use voice input.');
+        return;
+      }
+      micChunks = [];
+      const mimeType = pickMicMime();
+      try {
+        mediaRecorder = mimeType
+          ? new MediaRecorder(mediaStream, { mimeType })
+          : new MediaRecorder(mediaStream);
+      } catch (_) {
+        mediaRecorder = new MediaRecorder(mediaStream);
+      }
+      mediaRecorder.addEventListener('dataavailable', (e) => {
+        if (e.data && e.data.size) micChunks.push(e.data);
+      });
+      mediaRecorder.addEventListener('stop', onMicStop);
+      mediaRecorder.start();
+      micRecording = true;
+      setMicState('recording');
+    }
+
+    function stopMicRecording() {
+      micRecording = false;
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try {
+          mediaRecorder.stop();
+        } catch (_) {}
+      }
+    }
+
+    micBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (micBtn.dataset.state === 'busy') return;
+      if (micRecording) stopMicRecording();
+      else startMicRecording();
+    });
+  }
+
   /** Clears timed reply-quote highlights in the transcript. */
   let replyJumpHighlightTimer = null;
   let replyJumpHighlightFadeTimer = null;

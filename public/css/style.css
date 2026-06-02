@@ -4760,6 +4760,54 @@ code {
 }
 .composer-attach:active { transform: scale(0.94); }
 
+/* Speech-to-text mic button — mirrors .composer-attach. Recording = red pulse;
+   busy (transcribing) swaps the mic for a spinner. */
+.composer-mic {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.composer-mic:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+.composer-mic:active { transform: scale(0.94); }
+.composer-mic__busy { display: none; }
+.composer-mic[data-state='recording'] {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  animation: composer-mic-pulse 1.2s ease-in-out infinite;
+}
+.composer-mic[data-state='recording']:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+.composer-mic[data-state='busy'] { cursor: progress; }
+.composer-mic[data-state='busy'] .composer-mic__idle { display: none; }
+.composer-mic[data-state='busy'] .composer-mic__busy {
+  display: inline-flex;
+  animation: composer-mic-spin 0.8s linear infinite;
+}
+@keyframes composer-mic-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes composer-mic-spin {
+  to { transform: rotate(360deg); }
+}
+
 .composer-attach-menu,
 .composer-secret-pick-menu {
   position: absolute;
