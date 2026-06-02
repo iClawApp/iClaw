@@ -92,7 +92,9 @@
         }
       });
     }
-    if (!opts || opts.persist !== false) {
+    // Never persist incognito as a chat's default mode — it's a transient,
+    // explicitly-entered surface, not a sticky preference.
+    if ((!opts || opts.persist !== false) && next !== 'incognito') {
       try { localStorage.setItem(MODE_STORAGE_KEY, next); } catch (_) {}
     }
     // Incognito: tint the surface + show the "nothing saved" banner, and start a
@@ -111,14 +113,18 @@
     return 'inc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
   }
 
-  /** Leave Incognito → restore the previous mode (chats + sidebar come back). */
+  /**
+   * Leave Incognito → return to wherever we came from (that chat + the sidebar
+   * come back). Incognito ran on a fresh ephemeral surface, so we just navigate
+   * back; the ephemeral conversation is discarded.
+   */
   function exitIncognito() {
-    const back = incognitoReturnMode && incognitoReturnMode !== 'incognito'
-      ? incognitoReturnMode
-      : composerModeDefault;
-    setComposerMode(back);
-    if (typeof updateComposerPlaceholder === 'function') updateComposerPlaceholder(getComposerMode());
-    if (typeof updateWorkFoldersButton === 'function') updateWorkFoldersButton();
+    let origin = '/';
+    try {
+      origin = sessionStorage.getItem('iclaw:incognito-origin') || '/';
+      sessionStorage.removeItem('iclaw:incognito-origin');
+    } catch (_) {}
+    window.location.assign(origin);
   }
 
   /** The fixed top-left × shown only in incognito. Created once, CSS toggles it. */
@@ -203,6 +209,14 @@
     let stored = null;
     try { stored = localStorage.getItem(MODE_STORAGE_KEY); } catch (_) {}
     setComposerMode(stored || composerModeDefault, { persist: false });
+    // Entered via "Incognito" elsewhere → ?mode=incognito on a fresh surface.
+    try {
+      const _qp = new URLSearchParams(window.location.search);
+      if (_qp.get('mode') === 'incognito' && composerModeIds.includes('incognito')) {
+        setComposerMode('incognito', { persist: false });
+        window.history.replaceState({}, '', window.location.pathname); // tidy the URL
+      }
+    } catch (_) {}
 
     composerModeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -224,6 +238,14 @@
     composerModeMenu.addEventListener('click', (e) => {
       const item = e.target.closest('.composer-mode-menu-item');
       if (!item) return;
+      // Incognito is a separate ephemeral surface, not a flag on the current
+      // chat: open a fresh blank chat instead of converting this one. Remember
+      // where we came from so the × can bring us back.
+      if (item.dataset.mode === 'incognito' && !document.body.classList.contains('incognito-mode')) {
+        try { sessionStorage.setItem('iclaw:incognito-origin', window.location.pathname + window.location.search); } catch (_) {}
+        window.location.assign('/?mode=incognito');
+        return;
+      }
       setComposerMode(item.dataset.mode);
       closeComposerModeMenu();
       updateComposerPlaceholder(item.dataset.mode);
