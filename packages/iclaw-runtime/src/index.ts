@@ -104,6 +104,16 @@ const server = http.createServer(async (req, res) => {
   json(res, 404, { error: 'not found' });
 });
 
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[iclaw-runtime] port ${PORT} already in use — waiting 3s and retrying`);
+    setTimeout(() => server.listen(PORT, '127.0.0.1'), 3000);
+  } else {
+    console.error('[iclaw-runtime] server error', err);
+    process.exit(1);
+  }
+});
+
 server.listen(PORT, '127.0.0.1', () => {
   console.error(`[iclaw-runtime] listening on port ${PORT}, model=${DEFAULT_MODEL}`);
 });
