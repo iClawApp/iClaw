@@ -23,6 +23,7 @@ import {
 import type { ChatMode, Message, MessageAttachment } from '../types';
 import { DEFAULT_MODE, getModeDef } from './chatModes';
 import { loadOpenRouterConfig } from './config';
+import { buildCompactedHistory } from './contextCompaction';
 import { createWorkSession, sendWorkMessage, subscribeWorkEvents } from './workRuntime';
 import {
   streamComplete,
@@ -52,11 +53,6 @@ const activeRunSessionKeys = new Map<number, string>();
  */
 const activeAskAborts = new Map<number, AbortController>();
 
-/** Recent prior-thread messages replayed to the (stateless) Ask call. */
-const ASK_CONTEXT_MAX_MESSAGES = 24;
-const ASK_CONTEXT_PER_MSG_CHARS = 800;
-const ASK_CONTEXT_TOTAL_CHARS = 12_000;
-
 const ASK_SYSTEM_PROMPT = [
   "You're answering in iClaw's lightweight Ask mode — explanation, planning, or a",
   'direct answer to a question. You have no tools and cannot run code, edit files,',
@@ -69,28 +65,14 @@ const ASK_SYSTEM_PROMPT = [
  * iClaw's own message store — includes BOTH prior Execute and Ask turns) as
  * proper role-tagged messages, then the current question last.
  */
-function buildAskMessages(
+async function buildAskMessages(
   chatId: number,
   currentUserMsgId: number,
   currentMessage: string,
-): OpenRouterMessage[] {
-  const prior = messages
-    .listByChat(chatId)
-    .filter((m) => m.id < currentUserMsgId && (m.role === 'user' || m.role === 'assistant'))
-    .slice(-ASK_CONTEXT_MAX_MESSAGES);
-
-  const history: OpenRouterMessage[] = [];
-  let total = 0;
-  for (const m of prior) {
-    let text = m.content.replace(/\s+$/, '');
-    if (!text) continue;
-    if (text.length > ASK_CONTEXT_PER_MSG_CHARS) {
-      text = text.slice(0, ASK_CONTEXT_PER_MSG_CHARS) + '…';
-    }
-    if (total + text.length > ASK_CONTEXT_TOTAL_CHARS) break;
-    history.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: text });
-    total += text.length;
-  }
+): Promise<OpenRouterMessage[]> {
+  // Compacted history: older turns are summarized (cheap model), recent ones
+  // kept verbatim — the chat is never truncated/cleared, only compressed.
+  const history = await buildCompactedHistory(chatId, currentUserMsgId);
 
   return [
     { role: 'system', content: ASK_SYSTEM_PROMPT },
@@ -542,7 +524,7 @@ async function runTurnLocked(opts: {
 
   // Work / Secure Mode — routes to iclaw-runtime, returns early.
   if (mode === 'work' || mode === 'secure') {
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays });
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }
@@ -566,7 +548,7 @@ async function runTurnLocked(opts: {
     try {
       gatewayAccumulated = await streamComplete({
         model: loadOpenRouterConfig().askModel,
-        messages: buildAskMessages(chatId, userMsg.id, gatewayMessageBase),
+        messages: await buildAskMessages(chatId, userMsg.id, gatewayMessageBase),
         signal: controller.signal,
         onDelta: (text) => onEvent({ type: 'text-delta', text }),
       });
@@ -893,6 +875,8 @@ async function runWorkModeTurn(opts: {
   secure?: boolean;
   networkEnabled?: boolean;
   ttlDays?: number;
+  /** Current user message id — history before it seeds the session context. */
+  beforeMsgId?: number;
 }): Promise<void> {
   const { chatId, content, onEvent } = opts;
 
@@ -903,10 +887,19 @@ async function runWorkModeTurn(opts: {
       const allowedFolders = opts.workFolders?.length
         ? opts.workFolders
         : [process.env.HOME ?? ''].filter(Boolean);
+      // Seed the (possibly restored) session with compacted prior history from
+      // our DB, so context survives runtime restarts (older turns summarized).
+      const history = opts.beforeMsgId
+        ? await buildCompactedHistory(chatId, opts.beforeMsgId)
+        : undefined;
       sessionId = await createWorkSession({
         allowedFolders,
         secure: opts.secure,
         systemPrompt: buildWorkSystemPrompt(chatId),
+        // Stable key → the chat reconnects to its persisted Secure workspace
+        // (and its running TTL) after a runtime restart.
+        key: `chat:${chatId}`,
+        history,
       });
       workSessions.set(chatId, sessionId);
     } catch (err) {
@@ -938,7 +931,12 @@ async function runWorkModeTurn(opts: {
           onEvent({ type: 'text-delta', text: event.content });
         } else if (event.type === 'done') {
           if (accumulated.trim()) {
-            const assistantMsg = messages.append(chatId, 'assistant', accumulated, null);
+            // Stamp the assistant row with the actual turn mode (secure/work),
+            // not the append() default of 'execute'. Keeps history + UI honest.
+            const assistantMsg = messages.append(
+              chatId, 'assistant', accumulated, null, null, null,
+              opts.secure ? 'secure' : 'work',
+            );
             wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });
           }
           unsubscribe();

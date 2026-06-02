@@ -324,35 +324,67 @@
 
   function formatTtlRemaining(ttlDays, lastActivity) {
     if (ttlDays === 0) return 'never expires';
-    const expiresAt = lastActivity + ttlDays * 86400_000;
+    // +15s demo buffer: holds the full day count for ~15s after each reset so
+    // users can see the countdown tick down (proof the TTL resets on activity).
+    const expiresAt = lastActivity + ttlDays * 86400_000 + 15_000;
     const remaining = expiresAt - Date.now();
     if (remaining <= 0) return 'expired';
     const days = Math.floor(remaining / 86400_000);
     const hours = Math.floor((remaining % 86400_000) / 3600_000);
+    const mins = Math.floor((remaining % 3600_000) / 60_000);
+    const secs = Math.floor((remaining % 60_000) / 1000);
+    // More than 2 days: show only days (no hours)
+    if (days > 2) return `expires in ${days}d`;
     if (days > 0) return `expires in ${days}d ${hours}h`;
-    return `expires in ${hours}h`;
+    if (hours > 0) return `expires in ${hours}h ${mins}m`;
+    if (mins > 0) return `expires in ${mins}m ${secs}s`;
+    return `expires in ${secs}s`;
+  }
+
+  // True when the secret hint UI is visible — it takes priority over the secure bar.
+  function secretUiVisible() {
+    const el = document.getElementById('composer-secret-ui');
+    return el && !el.hidden;
+  }
+
+  // Update only the TTL text (cheap, local — ticks every second).
+  function tickSecureTtl() {
+    if (!secureBar || secureBar.hidden) return;
+    const ttl = getSecureTtl();
+    if (secureTtlEl) secureTtlEl.textContent = formatTtlRemaining(ttl.ttlDays, ttl.lastActivity);
   }
 
   async function refreshSecureBar() {
     if (!secureBar) return;
     const mode = getComposerMode();
-    if (mode !== 'secure') { secureBar.hidden = true; return; }
-    secureBar.hidden = false;
-    if (!rawChatId) return;
-
-    const ttl = getSecureTtl();
-    if (secureTtlEl) secureTtlEl.textContent = formatTtlRemaining(ttl.ttlDays, ttl.lastActivity);
+    // Hide if not in Secure Mode, or if the secret UI is currently showing.
+    if (mode !== 'secure' || secretUiVisible() || !rawChatId) { secureBar.hidden = true; return; }
 
     try {
       const res = await fetch(`/chats/${rawChatId}/workspace-info`);
       const data = await res.json();
+      // Only surface the bar once a secure session actually exists — i.e. after
+      // the first message. Nothing is created on the host until then.
+      if (!data.active) { secureBar.hidden = true; return; }
+      secureBar.hidden = false;
+      tickSecureTtl();
       if (secureSizeEl) {
-        secureSizeEl.textContent = data.active && data.workspaceSize != null
-          ? formatBytes(data.workspaceSize)
-          : '';
+        // Only show a size once there's actually something in the workspace —
+        // "0 B" is noise.
+        const size = data.workspaceSize != null ? data.workspaceSize : 0;
+        if (size > 0) {
+          secureSizeEl.textContent = formatBytes(size);
+          secureSizeEl.hidden = false;
+        } else {
+          secureSizeEl.textContent = '';
+          secureSizeEl.hidden = true;
+        }
       }
-    } catch {}
+    } catch { secureBar.hidden = true; }
   }
+
+  // Live countdown — updates the TTL text every second.
+  setInterval(tickSecureTtl, 1000);
 
   secureChangeBtn?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -4055,7 +4087,9 @@
         const cur = getSecureTtl();
         payload.ttlDays = cur.ttlDays;
         saveSecureTtl(cur.ttlDays);
-        setTimeout(refreshSecureBar, 100);
+        // Session is created host-side during this turn; re-check a few times
+        // so the bar appears as soon as it exists (not before the first message).
+        [250, 800, 1600, 3000].forEach((d) => setTimeout(refreshSecureBar, d));
       }
     }
     if (item.replyTo) {
@@ -4653,6 +4687,14 @@
    * selection-only changes are correct without waiting for debounce.
    */
   function applyComposerSecretStripLayout() {
+    applyComposerSecretStripLayoutInner();
+    // Secret strip and the secure-workspace bar share the bottom row; whenever
+    // the strip's visibility changes, re-evaluate the bar so it yields to the
+    // strip ("Selection in message") and reappears once the strip is gone.
+    if (typeof refreshSecureBar === 'function') refreshSecureBar();
+  }
+
+  function applyComposerSecretStripLayoutInner() {
     if (!composerSecretUi) return;
     if (composerSecretModal && !composerSecretModal.hidden) {
       cancelComposerSelectionHintReveal();

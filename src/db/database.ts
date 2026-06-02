@@ -236,6 +236,17 @@ CREATE TABLE IF NOT EXISTS remote_access_state (
   updated_at  INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
 );
 
+-- Context compaction cache. One row per chat: a rolling summary of all turns
+-- up to (and including) up_to_message_id. Lets us feed the model
+-- [summary] + [recent verbatim] so a chat's context is never cleared, only
+-- compressed. Rebuilt incrementally as the chat grows.
+CREATE TABLE IF NOT EXISTS chat_summaries (
+  chat_id           INTEGER PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+  up_to_message_id  INTEGER NOT NULL,
+  summary           TEXT NOT NULL,
+  updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Robustness: any new message bumps the parent chat's updated_at so sidebar
 -- sorting is always correct even if a caller forgets the manual chats.touch().
 CREATE TRIGGER IF NOT EXISTS trg_chats_touch_on_message

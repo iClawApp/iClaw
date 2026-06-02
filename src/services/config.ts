@@ -53,6 +53,8 @@ export interface OpenRouterConfig {
   askModel: string;
   /** Model for chat-title generation (cheapest sensible default). */
   titleModel: string;
+  /** Cheap model for context compaction (summarizing old turns). */
+  summaryModel: string;
   /** Multimodal model used for speech-to-text transcription. */
   sttModel: string;
   /** OpenRouter app-attribution headers (optional, for rankings). */
@@ -78,10 +80,13 @@ export function loadOpenRouterConfig(): OpenRouterConfig {
   ).replace(/\/+$/, '');
   const askModel = process.env.ICLAW_ASK_MODEL?.trim() || 'google/gemini-2.5-flash';
   const titleModel = process.env.ICLAW_TITLE_MODEL?.trim() || 'google/gemini-2.5-flash';
+  // Cheap/fast model for compaction; overridable. Falls back to truncation if
+  // the call fails, so an invalid slug degrades gracefully.
+  const summaryModel = process.env.ICLAW_SUMMARY_MODEL?.trim() || 'google/gemini-2.5-flash-lite';
   const sttModel = process.env.ICLAW_STT_MODEL?.trim() || 'google/gemini-2.5-flash';
   const referer = process.env.OPENROUTER_REFERER?.trim() || 'https://iclaw.digital';
   const appTitle = process.env.OPENROUTER_APP_TITLE?.trim() || 'iClaw';
-  return { apiKey, baseUrl, askModel, titleModel, sttModel, referer, appTitle };
+  return { apiKey, baseUrl, askModel, titleModel, summaryModel, sttModel, referer, appTitle };
 }
 
 /** Persist the user's OpenRouter API key (from Settings). Empty/blank clears it. */

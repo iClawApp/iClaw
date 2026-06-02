@@ -56,6 +56,10 @@ export interface CreateSessionOptions {
   model?: string;
   secure?: boolean;
   systemPrompt?: string;
+  /** Stable identity (e.g. "chat:156") so a chat reconnects to its workspace. */
+  key?: string;
+  /** Compacted prior history to seed context (used after a restart). */
+  history?: { role: string; content: string }[];
 }
 
 /** Create a new Work Mode session. Returns sessionId. */
@@ -63,6 +67,8 @@ export async function createWorkSession(opts: CreateSessionOptions = {}): Promis
   const body: Record<string, unknown> = { allowedFolders: opts.allowedFolders, secure: opts.secure };
   if (opts.model) body.model = opts.model;
   if (opts.systemPrompt) body.systemPrompt = opts.systemPrompt;
+  if (opts.key) body.key = opts.key;
+  if (opts.history?.length) body.history = opts.history;
   const res = await request('POST', '/sessions', body);
   if (res.status !== 201) {
     throw new Error(`Failed to create work session: ${JSON.stringify(res.data)}`);

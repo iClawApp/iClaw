@@ -7410,17 +7410,20 @@ a.project-tab.project-tab--tasks:hover {
 
 /* ── Secure workspace bar ── */
 .secure-workspace-bar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: var(--thread-max-width);
   width: 100%;
-  margin: 0 auto;
-  padding: 0 20px 6px;
+  /* Match the secret UI's text inset (it sits at 20px + 2×space-2 from the
+     composer edge); the bar already lives inside the composer's 20px padding,
+     so only the extra 2×space-2 is needed here. */
+  padding: 0 calc(var(--space-2) * 2) 6px;
   font-size: var(--text-xs);
   color: var(--muted);
 }
 .secure-workspace-bar[hidden] { display: none; }
+.secure-workspace-bar__size[hidden] { display: none; }
 .secure-workspace-bar__sep { opacity: 0.4; }
 .secure-workspace-bar__change {
   border: none;
@@ -7433,4 +7436,11 @@ a.project-tab.project-tab--tasks:hover {
   padding: 0;
 }
 .secure-workspace-bar__change:hover { color: var(--text); }
-.secure-ttl-menu { bottom: auto; top: auto; min-width: 120px; }
+/* Pop up above the bar, anchored to it — never reflow the page. */
+.secure-ttl-menu {
+  top: auto;
+  bottom: calc(100% + 4px);
+  right: calc(var(--space-2) * 2);
+  left: auto;
+  min-width: 120px;
+}

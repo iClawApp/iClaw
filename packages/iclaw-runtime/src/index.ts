@@ -13,7 +13,8 @@
  */
 import http from 'node:http';
 
-import { createSession, getSession, deleteSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, sweepExpiredSessions } from './sessions.js';
+import { createSession, getSession, deleteSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, sweepExpiredSessions, startContainerReaper, loadPersistedSessions } from './sessions.js';
+import { killOrphanContainers } from './secure-runner.js';
 
 const PORT = parseInt(process.env.ICLAW_RUNTIME_PORT || '7430', 10);
 const SECRET = process.env.ICLAW_RUNTIME_SECRET || '';
@@ -66,13 +67,15 @@ const server = http.createServer(async (req, res) => {
 
   // POST /sessions
   if (req.method === 'POST' && parts[0] === 'sessions' && parts.length === 1) {
-    const body = await readBody(req) as { allowedFolders?: string[]; model?: string; secure?: boolean; systemPrompt?: string };
+    const body = await readBody(req) as { allowedFolders?: string[]; model?: string; secure?: boolean; systemPrompt?: string; key?: string; history?: { role: string; content: string }[] };
     const sessionId = createSession({
       allowedFolders: body.allowedFolders ?? [],
       model: body.model ?? DEFAULT_MODEL,
       apiKey: API_KEY,
       secure: body.secure ?? false,
       systemPrompt: body.systemPrompt,
+      key: body.key,
+      history: body.history,
     });
     return json(res, 201, { sessionId });
   }
@@ -131,6 +134,19 @@ setInterval(() => {
   const removed = sweepExpiredSessions();
   if (removed > 0) console.error(`[iclaw-runtime] swept ${removed} expired session(s)`);
 }, 3600_000).unref();
+
+// Reap idle Secure-Mode sandbox containers (keeps RAM in check across chats).
+startContainerReaper(30_000);
+
+// Restore persisted Secure sessions so workspaces + TTL survive restarts
+// (expired ones are deleted), then kill stray containers from the old process.
+const { restored, expired } = loadPersistedSessions();
+if (restored > 0 || expired > 0) {
+  console.error(`[iclaw-runtime] restored ${restored} secure session(s), deleted ${expired} expired`);
+}
+killOrphanContainers()
+  .then((n) => { if (n > 0) console.error(`[iclaw-runtime] killed ${n} orphan container(s)`); })
+  .catch((err) => console.error('[iclaw-runtime] container cleanup failed', err));
 
 process.on('SIGTERM', () => { server.close(); process.exit(0); });
 process.on('SIGINT', () => { server.close(); process.exit(0); });
