@@ -1,169 +1,112 @@
 /**
- * iClaw Runtime — main entry point.
+ * iClaw Runtime — Work Mode HTTP server.
  *
- * Forked from NanoClaw (MIT) — https://github.com/nanocoai/nanoclaw
- * Stripped to essentials: no Telegram/WhatsApp/Slack/Discord, no OneCLI,
- * OpenRouter-only, Docker container runner for Work Mode.
+ * Model-agnostic agent loop via OpenRouter.
+ * No Docker, no NanoClaw routing, no SQLite.
+ *
+ * API:
+ *   POST   /sessions                  → { sessionId }
+ *   POST   /sessions/:id/messages     → 202
+ *   GET    /sessions/:id/events       → SSE stream
+ *   DELETE /sessions/:id              → 200
+ *   GET    /health                    → 200
  */
-import path from 'path';
+import http from 'node:http';
 
-import { backfillContainerConfigs } from './backfill-container-configs.js';
-import { DATA_DIR } from './config.js';
-import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';
-import { migrateGroupsToClaudeLocal } from './claude-md-compose.js';
-import { initDb } from './db/connection.js';
-import { runMigrations } from './db/migrations/index.js';
-import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
-import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
-import { startHostSweep, stopHostSweep } from './host-sweep.js';
-import { routeInbound } from './router.js';
-import { log } from './log.js';
+import { createSession, getSession, deleteSession, attachSseClient, detachSseClient, sendMessage } from './sessions.js';
 
-import { ensureDefaultAgentGroup } from './iclaw-session.js';
-import {
-  registerResponseHandler,
-  getResponseHandlers,
-  onShutdown,
-  getShutdownCallbacks,
-  type ResponsePayload,
-  type ResponseHandler,
-} from './response-registry.js';
-export { registerResponseHandler, onShutdown };
-export type { ResponsePayload, ResponseHandler };
+const PORT = parseInt(process.env.ICLAW_RUNTIME_PORT || '7430', 10);
+const SECRET = process.env.ICLAW_RUNTIME_SECRET || '';
+const API_KEY = process.env.ICLAW_OPENROUTER_API_KEY || '';
+const DEFAULT_MODEL = process.env.ICLAW_MODEL || 'google/gemini-2.5-flash';
 
-async function dispatchResponse(payload: ResponsePayload): Promise<void> {
-  for (const handler of getResponseHandlers()) {
-    try {
-      const claimed = await handler(payload);
-      if (claimed) return;
-    } catch (err) {
-      log.error('Response handler threw', { questionId: payload.questionId, err });
-    }
+function authOk(req: http.IncomingMessage): boolean {
+  if (!SECRET) {
+    const addr = req.socket.remoteAddress ?? '';
+    return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
   }
-  log.warn('Unclaimed response', { questionId: payload.questionId, value: payload.value });
+  return req.headers['x-iclaw-token'] === SECRET;
 }
 
-// iClaw HTTP channel (only channel in this runtime — no Telegram/Slack/WhatsApp)
-import './channels/index.js';
+function json(res: http.ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(payload);
+}
 
-// Core modules: approvals + interactive
-import './modules/index.js';
-
-import type { ChannelAdapter, ChannelSetup } from './channels/adapter.js';
-import { initChannelAdapters, teardownChannelAdapters, getChannelAdapter } from './channels/channel-registry.js';
-
-async function main(): Promise<void> {
-  log.info('iClaw Runtime starting');
-
-  await enforceStartupBackoff();
-
-  const dbPath = path.join(DATA_DIR, 'v2.db');
-  const db = initDb(dbPath);
-  runMigrations(db);
-  log.info('DB ready', { path: dbPath });
-
-  backfillContainerConfigs();
-  migrateGroupsToClaudeLocal();
-  ensureDefaultAgentGroup();
-
-  ensureContainerRuntimeRunning();
-  cleanupOrphans();
-
-  await initChannelAdapters((adapter: ChannelAdapter): ChannelSetup => {
-    return {
-      onInbound(platformId, threadId, message) {
-        routeInbound({
-          channelType: adapter.channelType,
-          platformId,
-          threadId,
-          message: {
-            id: message.id,
-            kind: message.kind,
-            content: JSON.stringify(message.content),
-            timestamp: message.timestamp,
-            isMention: message.isMention,
-            isGroup: message.isGroup,
-          },
-        }).catch((err) => {
-          log.error('Failed to route inbound message', { channelType: adapter.channelType, err });
-        });
-      },
-      onInboundEvent(event) {
-        routeInbound(event).catch((err) => {
-          log.error('Failed to route inbound event', { err });
-        });
-      },
-      onMetadata(platformId, name, isGroup) {
-        log.info('Channel metadata', { channelType: adapter.channelType, platformId, name, isGroup });
-      },
-      onAction(questionId, selectedOption, userId) {
-        dispatchResponse({
-          questionId,
-          value: selectedOption,
-          userId,
-          channelType: adapter.channelType,
-          platformId: '',
-          threadId: null,
-        }).catch((err) => {
-          log.error('Failed to handle question response', { questionId, err });
-        });
-      },
-    };
+function readBody(req: http.IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      try { resolve(JSON.parse(raw || '{}')); }
+      catch { resolve({}); }
+    });
+    req.on('error', reject);
   });
-
-  const deliveryAdapter = {
-    async deliver(
-      channelType: string,
-      platformId: string,
-      threadId: string | null,
-      kind: string,
-      content: string,
-      files?: import('./channels/adapter.js').OutboundFile[],
-    ): Promise<string | undefined> {
-      const adapter = getChannelAdapter(channelType);
-      if (!adapter) {
-        log.warn('No adapter for channel type', { channelType });
-        return;
-      }
-      return adapter.deliver(platformId, threadId, { kind, content: JSON.parse(content), files });
-    },
-    async setTyping(channelType: string, platformId: string, threadId: string | null): Promise<void> {
-      const adapter = getChannelAdapter(channelType);
-      await adapter?.setTyping?.(platformId, threadId);
-    },
-  };
-  setDeliveryAdapter(deliveryAdapter);
-
-  startActiveDeliveryPoll();
-  startSweepDeliveryPoll();
-  startHostSweep();
-
-  log.info('iClaw Runtime running');
 }
 
-async function shutdown(signal: string): Promise<void> {
-  log.info('Shutdown signal received', { signal });
-  for (const cb of getShutdownCallbacks()) {
-    try {
-      await cb();
-    } catch (err) {
-      log.error('Shutdown callback threw', { err });
-    }
-  }
-  stopDeliveryPolls();
-  stopHostSweep();
-  try {
-    await teardownChannelAdapters();
-  } finally {
-    resetCircuitBreaker();
-    process.exit(0);
-  }
-}
+const server = http.createServer(async (req, res) => {
+  if (!authOk(req)) return json(res, 401, { error: 'unauthorized' });
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+  const url = new URL(req.url ?? '/', `http://localhost`);
+  const parts = url.pathname.split('/').filter(Boolean);
 
-main().catch((err) => {
-  log.fatal('Startup failed', { err });
-  process.exit(1);
+  // GET /health
+  if (req.method === 'GET' && parts[0] === 'health') {
+    return json(res, 200, { ok: true });
+  }
+
+  // POST /sessions
+  if (req.method === 'POST' && parts[0] === 'sessions' && parts.length === 1) {
+    const body = await readBody(req) as { allowedFolders?: string[]; model?: string };
+    const sessionId = createSession({
+      allowedFolders: body.allowedFolders ?? [],
+      model: body.model ?? DEFAULT_MODEL,
+      apiKey: API_KEY,
+    });
+    return json(res, 201, { sessionId });
+  }
+
+  // POST /sessions/:id/messages
+  if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'messages') {
+    const sessionId = parts[1];
+    if (!getSession(sessionId)) return json(res, 404, { error: 'session not found' });
+    const body = await readBody(req) as { content?: string };
+    if (!body.content?.trim()) return json(res, 400, { error: 'content required' });
+    // Fire-and-forget — streams via SSE
+    sendMessage(sessionId, body.content).catch(console.error);
+    return json(res, 202, { queued: true });
+  }
+
+  // GET /sessions/:id/events (SSE)
+  if (req.method === 'GET' && parts[0] === 'sessions' && parts[2] === 'events') {
+    const sessionId = parts[1];
+    if (!getSession(sessionId)) return json(res, 404, { error: 'session not found' });
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(': connected\n\n');
+    attachSseClient(sessionId, res);
+    req.on('close', () => detachSseClient(sessionId));
+    return;
+  }
+
+  // DELETE /sessions/:id
+  if (req.method === 'DELETE' && parts[0] === 'sessions' && parts.length === 2) {
+    deleteSession(parts[1]);
+    return json(res, 200, { stopped: true });
+  }
+
+  json(res, 404, { error: 'not found' });
 });
+
+server.listen(PORT, '127.0.0.1', () => {
+  console.error(`[iclaw-runtime] listening on port ${PORT}, model=${DEFAULT_MODEL}`);
+});
+
+process.on('SIGTERM', () => { server.close(); process.exit(0); });
+process.on('SIGINT', () => { server.close(); process.exit(0); });
