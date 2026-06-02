@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { kvGet, kvSet, kvDelete } from '../db/kv';
 
 export interface OpenClawConfig {
   baseUrl: string;
@@ -44,26 +45,66 @@ export function loadCloudShareBaseUrl(): string {
   return base;
 }
 
+export interface OpenRouterConfig {
+  /** Empty when unconfigured — gates Ask/STT and title routing. */
+  apiKey: string;
+  baseUrl: string;
+  /** Model for Ask turns. */
+  askModel: string;
+  /** Model for chat-title generation (cheapest sensible default). */
+  titleModel: string;
+  /** Multimodal model used for speech-to-text transcription. */
+  sttModel: string;
+  /** OpenRouter app-attribution headers (optional, for rankings). */
+  referer: string;
+  appTitle: string;
+}
+
+/** KV key under which the user's OpenRouter API key is stored (set in Settings). */
+const OPENROUTER_API_KEY_KV = 'openrouter.api_key';
+
 /**
- * OpenClaw agent id used for HARD "Ask" mode — a tools-restricted agent the
- * operator configures in `openclaw.json` (e.g. `tools.allow`/`deny`). When this
- * agent exists on the gateway, Ask turns run on a session bound to it, so the
- * model physically cannot use shell/file/browser tools.
+ * Direct OpenRouter access for the tool-less features (Ask, titles, STT).
  *
- *   - unset            → default 'ask'
- *   - set to a name    → use that agent id
- *   - set to empty / 0 / off / no / disabled → hard Ask disabled (falls back to
- *     the lightweight prompt-only Ask)
- *
- * Availability is still checked at runtime against `agents.list`; if the named
- * agent isn't present, iClaw silently uses the soft Ask fallback (no error).
+ * The API key is entered by the user in Settings and stored in the local DB
+ * (`iclaw_kv`) — NOT an env var. Models default to a cheap, fast, multimodal
+ * flash model; advanced users can still override per-feature via the optional
+ * `ICLAW_*_MODEL` env vars (undocumented).
  */
-export function loadAskAgentId(): string {
-  const raw = process.env.ICLAW_ASK_AGENT;
-  if (raw === undefined) return 'ask';
-  const v = raw.trim();
-  if (/^(|0|false|off|no|disabled)$/i.test(v)) return '';
-  return v;
+export function loadOpenRouterConfig(): OpenRouterConfig {
+  const apiKey = (kvGet(OPENROUTER_API_KEY_KV) ?? '').trim();
+  const baseUrl = (
+    process.env.OPENROUTER_BASE_URL?.trim() || 'https://openrouter.ai/api/v1'
+  ).replace(/\/+$/, '');
+  const askModel = process.env.ICLAW_ASK_MODEL?.trim() || 'google/gemini-2.0-flash';
+  const titleModel = process.env.ICLAW_TITLE_MODEL?.trim() || 'google/gemini-2.0-flash';
+  const sttModel = process.env.ICLAW_STT_MODEL?.trim() || 'google/gemini-2.0-flash';
+  const referer = process.env.OPENROUTER_REFERER?.trim() || 'https://iclaw.digital';
+  const appTitle = process.env.OPENROUTER_APP_TITLE?.trim() || 'iClaw';
+  return { apiKey, baseUrl, askModel, titleModel, sttModel, referer, appTitle };
+}
+
+/** Persist the user's OpenRouter API key (from Settings). Empty/blank clears it. */
+export function setOpenRouterApiKey(key: string): void {
+  const trimmed = key.trim();
+  if (trimmed) kvSet(OPENROUTER_API_KEY_KV, trimmed);
+  else kvDelete(OPENROUTER_API_KEY_KV);
+}
+
+/** Remove the stored OpenRouter API key (disconnect). */
+export function clearOpenRouterApiKey(): void {
+  kvDelete(OPENROUTER_API_KEY_KV);
+}
+
+/**
+ * A privacy-preserving display form of the stored key: keeps the `sk-or-`
+ * prefix and the last 4 chars, masks the middle. Empty string when unset.
+ */
+export function maskOpenRouterApiKey(): string {
+  const key = (kvGet(OPENROUTER_API_KEY_KV) ?? '').trim();
+  if (!key) return '';
+  if (key.length <= 12) return '••••' + key.slice(-2);
+  return key.slice(0, 7) + '••••••••' + key.slice(-4);
 }
 
 export function loadOpenClawConfig(): OpenClawConfig {

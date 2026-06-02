@@ -31,6 +31,7 @@ import {
   normalizeChatMode,
 } from '../services/chatModes';
 import { shouldShowSendHint } from '../services/sendHint';
+import { openRouterEnabled } from '../services/openRouter';
 
 export const chatsRouter: Router = Router();
 
@@ -187,6 +188,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
       sendHintShow: shouldShowSendHint(),
       chatModes: listSelectableModes(),
       defaultChatMode: DEFAULT_MODE,
+      sttEnabled: openRouterEnabled(),
     });
   } catch (err) {
     next(err);

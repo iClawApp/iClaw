@@ -41,51 +41,37 @@ Powered by [iClaw-cloud](https://github.com/iClawApp/iClaw-cloud) — defaults t
 
 The composer has a small mode selector. **Execute** (default) is the full agent —
 OpenClaw can use files, tools, shell, and the browser, exactly as before.
-**Ask** is for quick questions, explanations, and planning with no heavy agent
+**Ask** is for quick questions, explanations, and planning with no agent
 execution. The selected mode is stored per message (`messages.mode`) and rides
-along the whole `frontend → WS → chatRunner → OpenClaw` path. Missing/unknown
-modes fall back to `execute`, so old chats and older clients keep working.
+along the `frontend → WS → chatRunner` path. Missing/unknown modes fall back to
+`execute`, so old chats and older clients keep working.
 
 Modes are config-driven in [`src/services/chatModes.ts`](src/services/chatModes.ts)
 (it also lists disabled placeholders — Research, Image, Safe Run — so new modes
 can be added without touching call sites or the DB; the column is plain `TEXT`).
 
-### How Ask is enforced (fail-closed)
+### How Ask is tool-less
 
-Ask is enforced **hard**, not by prompting. Each Ask turn runs on a throwaway
-session bound to a **tools-restricted agent**; OpenClaw enforces that agent's
-tool policy, so the model **physically cannot** run shell/file/browser tools.
-The fresh session is seeded with a compact snapshot of the recent thread so Ask
-still sees prior context, and the reply lands in the same chat thread.
+Ask doesn't run an OpenClaw agent at all — it's a direct
+[OpenRouter](https://openrouter.ai) chat completion
+([`src/services/openRouter.ts`](src/services/openRouter.ts)) sent **without any
+`tools`**, so the model has nothing to call: no shell, no file edits, no
+browser. The recent thread (both prior Ask and Execute turns, read from iClaw's
+own store) is replayed as context so Ask isn't blind, and Stop aborts the HTTP
+stream.
 
-Required one-time gateway setup in `openclaw.json` — a read-only Ask agent
-(id from `ICLAW_ASK_AGENT`, default `ask`):
+Ask needs an OpenRouter key, added in **Settings → "Voice & Ask"** (stored in the
+local DB, not an env var; the page also shows live spend). The same key powers
+voice messages (speech-to-text) and cheap chat-title generation. Without it the
+composer **hides** the Ask option and the mic, any posted `ask` is treated as
+`execute`, and titles fall back to the OpenClaw path. The model defaults to
+`google/gemini-2.0-flash`.
 
-```json5
-{ agents: { list: [
-  { id: "main", default: true },
-  { id: "ask", name: "Ask",
-    tools: { allow: ["read", "web_search", "web_fetch", "memory_search", "memory_get"],
-             deny:  ["exec", "process", "write", "edit", "apply_patch", "browser", "gateway"] } }
-]}}
-```
-
-**No prompt fallback.** If that agent isn't configured/present (or
-`ICLAW_ASK_AGENT` is empty), iClaw **refuses** the Ask turn with a system note
-rather than silently running a tool-capable turn. This is deliberate: Ask never
-runs with tools. Switch to Execute, or configure the agent.
-
-**Context both ways.** Execute→Ask works via the thread snapshot that seeds the
-Ask session. Ask→Execute works via `chat.inject`: after each Ask turn a compact
-`[Ask]` note (the Q&A) is appended to the main session's transcript with no
+**Context both ways.** Execute→Ask works via the thread snapshot replayed to the
+Ask call. Ask→Execute works via `chat.inject`: after each Ask turn a compact
+`[Ask]` note (the Q&A) is appended to the chat's main OpenClaw session with no
 model run, so a later Execute turn ("ok, now do what we discussed") sees it. The
-note carries secret placeholders, not plaintext. (A fresh Ask session is created
-per Ask turn — adds one `sessions.create` of latency.)
-
-A future option (not wired): for a true "no agent" answer, branch in
-`chatRunner` on `getModeDef(mode).lightweight` and call an LLM client
-(OpenRouter/OpenAI) instead of `openclawWs.runTurn` — the mode is already
-persisted per message, so it needs no schema or UI change.
+note carries secret placeholders, not plaintext.
 
 ## Remote Access (alpha)
 

@@ -1,4 +1,6 @@
 import { openclawWs } from './openclawWs';
+import { complete, openRouterEnabled } from './openRouter';
+import { loadOpenRouterConfig } from './config';
 
 export const TITLE_LIMIT = 60;
 /**
@@ -87,7 +89,39 @@ function modelToAgentId(model: string): string {
   return model.startsWith('openclaw/') ? model.slice('openclaw/'.length) : model;
 }
 
-export async function suggestChatTitle(opts: {
+/**
+ * Cheap single-shot title via OpenRouter. Returns null on failure or a rejected
+ * suggestion so the caller can fall back to the OpenClaw path.
+ */
+async function suggestChatTitleViaOpenRouter(userMessage: string): Promise<string | null> {
+  try {
+    const cfg = loadOpenRouterConfig();
+    const text = await complete({
+      model: cfg.titleModel,
+      messages: [{ role: 'user', content: buildTitlePrompt(userMessage) }],
+      temperature: 0.3,
+      maxTokens: 32,
+    });
+    const cleaned = normalizeSuggestedTitle(text);
+    if (!cleaned) {
+      console.warn('[chatTitle] openrouter rejected suggestion:', JSON.stringify(text.slice(0, 120)));
+      return null;
+    }
+    return cleaned;
+  } catch (err) {
+    console.warn(
+      '[chatTitle] openrouter failed, will fall back to OpenClaw:',
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+/**
+ * Title via a throw-away OpenClaw agent session — the original path, kept as
+ * the fallback when OpenRouter is unconfigured (or its call failed).
+ */
+async function suggestChatTitleViaOpenClaw(opts: {
   model: string;
   userMessage: string;
 }): Promise<string | null> {
@@ -123,6 +157,23 @@ export async function suggestChatTitle(opts: {
       openclawWs.deleteSession(sessionKey).catch(() => {});
     }
   }
+}
+
+/**
+ * Suggest a chat title. Prefers OpenRouter (cheap, no agent run) when a key is
+ * configured; falls back to a throw-away OpenClaw session when OpenRouter is
+ * unconfigured or its call fails/returns an unusable suggestion.
+ */
+export async function suggestChatTitle(opts: {
+  model: string;
+  userMessage: string;
+}): Promise<string | null> {
+  if (openRouterEnabled()) {
+    const viaOpenRouter = await suggestChatTitleViaOpenRouter(opts.userMessage);
+    if (viaOpenRouter) return viaOpenRouter;
+    // null → OpenRouter unusable this time; fall through to OpenClaw.
+  }
+  return suggestChatTitleViaOpenClaw(opts);
 }
 
 /** Race title generation against a hard budget; null on timeout. */

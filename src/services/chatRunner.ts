@@ -22,7 +22,13 @@ import {
 } from './uploads';
 import type { ChatMode, Message, MessageAttachment } from '../types';
 import { DEFAULT_MODE, getModeDef } from './chatModes';
-import { loadAskAgentId } from './config';
+import { loadOpenRouterConfig } from './config';
+import {
+  streamComplete,
+  openRouterEnabled,
+  isOpenRouterFailure,
+  type OpenRouterMessage,
+} from './openRouter';
 import {
   expandStoredSecretPlaceholdersForGateway,
   resolveInlineSecretMarkersInContent,
@@ -33,66 +39,63 @@ import {
 const DEFAULT_AGENT = 'openclaw/default';
 
 /**
- * Agent id for HARD Ask mode (tools-restricted). Resolved once at import; the
- * empty string means hard Ask is disabled (operator opted out) and Ask always
- * uses the soft prompt-only fallback.
- */
-const ASK_AGENT_ID = loadAskAgentId();
-
-/**
- * Session key currently executing a turn for a chat. Lets `abortChatRun` stop
- * the right session even when a turn runs on an ephemeral Ask session instead
- * of the chat's stored main session. Cleared in the runTurn `finally`.
+ * OpenClaw session key currently executing an Execute turn for a chat. Lets
+ * `abortChatRun` stop the right gateway run. Cleared in the runTurn `finally`.
  */
 const activeRunSessionKeys = new Map<number, string>();
 
-/** Recent prior-thread lines fed to a fresh Ask session so it isn't blind. */
+/**
+ * AbortController for an in-flight Ask (OpenRouter) turn, keyed by chatId. Ask
+ * runs as a direct HTTP stream — not an OpenClaw run — so Stop aborts the fetch
+ * here rather than via `openclawWs.abortRun`. Cleared in the Ask `finally`.
+ */
+const activeAskAborts = new Map<number, AbortController>();
+
+/** Recent prior-thread messages replayed to the (stateless) Ask call. */
 const ASK_CONTEXT_MAX_MESSAGES = 24;
 const ASK_CONTEXT_PER_MSG_CHARS = 800;
 const ASK_CONTEXT_TOTAL_CHARS = 12_000;
 
+const ASK_SYSTEM_PROMPT = [
+  "You're answering in iClaw's lightweight Ask mode — explanation, planning, or a",
+  'direct answer to a question. You have no tools and cannot run code, edit files,',
+  "or browse: just answer clearly and concisely. Reply in the user's language.",
+].join('\n');
+
 /**
- * Build the message sent to a fresh (tools-restricted) Ask session. Because
- * that session has no native memory of this chat, we replay a compact snapshot
- * of the recent thread (read from iClaw's own message store, so it includes
- * BOTH prior Execute and Ask turns) ahead of the current question.
+ * Build the OpenRouter message array for an Ask turn. The OpenRouter call is
+ * stateless, so we replay a compact snapshot of the recent thread (read from
+ * iClaw's own message store — includes BOTH prior Execute and Ask turns) as
+ * proper role-tagged messages, then the current question last.
  */
-function buildAskContextMessage(
+function buildAskMessages(
   chatId: number,
   currentUserMsgId: number,
   currentMessage: string,
-): string {
+): OpenRouterMessage[] {
   const prior = messages
     .listByChat(chatId)
     .filter((m) => m.id < currentUserMsgId && (m.role === 'user' || m.role === 'assistant'))
     .slice(-ASK_CONTEXT_MAX_MESSAGES);
 
-  const lines: string[] = [];
+  const history: OpenRouterMessage[] = [];
   let total = 0;
   for (const m of prior) {
-    const who = m.role === 'assistant' ? 'Assistant' : 'User';
     let text = m.content.replace(/\s+$/, '');
+    if (!text) continue;
     if (text.length > ASK_CONTEXT_PER_MSG_CHARS) {
       text = text.slice(0, ASK_CONTEXT_PER_MSG_CHARS) + '…';
     }
-    const line = `${who}: ${text}`;
-    if (total + line.length > ASK_CONTEXT_TOTAL_CHARS) break;
-    lines.push(line);
-    total += line.length;
+    if (total + text.length > ASK_CONTEXT_TOTAL_CHARS) break;
+    history.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: text });
+    total += text.length;
   }
 
-  const header = [
-    '[iClaw Ask mode]',
-    "You're answering a question in a lightweight Ask mode — explanation, planning,",
-    'or a direct answer. Be concise. (Tool access is already restricted for this run.)',
-  ].join('\n');
-
-  const transcript =
-    lines.length > 0
-      ? `\n\nConversation so far:\n${lines.join('\n')}`
-      : '';
-
-  return `${header}${transcript}\n\nLatest message:\n${currentMessage}`;
+  return [
+    { role: 'system', content: ASK_SYSTEM_PROMPT },
+    ...history,
+    { role: 'user', content: currentMessage },
+  ];
 }
 
 /** Max chars kept from each side of the Ask exchange in the Execute bridge note. */
@@ -116,46 +119,6 @@ function buildAskBridgeNote(question: string, answer: string): string {
     '',
     `A: ${clip(answer, ASK_BRIDGE_ANSWER_CHARS)}`,
   ].join('\n');
-}
-
-interface TurnTarget {
-  sessionKey: string;
-  message: string;
-  /** Set when `sessionKey` is a throwaway Ask session to delete after the turn. */
-  ephemeralSessionKey: string | null;
-}
-
-/**
- * Decide which session + message a turn uses based on its mode. Execute runs on
- * the chat's main session, message unchanged. Lightweight (Ask) runs on a
- * throwaway session bound to the tools-restricted ask agent — the caller has
- * already gated availability (see the fail-closed check in runTurnLocked), so
- * here we just spin one up; a creation failure throws and surfaces as a
- * turn-error rather than silently running with tools.
- */
-async function resolveTurnTarget(opts: {
-  chatId: number;
-  mode: ChatMode;
-  mainSessionKey: string;
-  gatewayMessageBase: string;
-  currentUserMsgId: number;
-}): Promise<TurnTarget> {
-  const { chatId, mode, mainSessionKey, gatewayMessageBase, currentUserMsgId } = opts;
-
-  if (getModeDef(mode).lightweight) {
-    const askSession = await openclawWs.createSession({ agentId: ASK_AGENT_ID });
-    return {
-      sessionKey: askSession.key,
-      message: buildAskContextMessage(chatId, currentUserMsgId, gatewayMessageBase),
-      ephemeralSessionKey: askSession.key,
-    };
-  }
-
-  return {
-    sessionKey: mainSessionKey,
-    message: gatewayMessageBase,
-    ephemeralSessionKey: null,
-  };
 }
 
 /**
@@ -403,9 +366,8 @@ async function runTurnLocked(opts: {
     chat.project_id != null && projects.get(chat.project_id)
       ? buildGatewayUserMessage(gatewayBody, chat.project_id)
       : gatewayBody;
-  // The session + message for this turn are resolved AFTER the user row is
-  // persisted (Ask mode needs userMsg.id to seed prior-thread context). See
-  // resolveTurnTarget below. Execute stays byte-for-byte identical to before.
+  // The turn is dispatched AFTER the user row is persisted (Ask needs
+  // userMsg.id to seed prior-thread context). See the Ask/Execute branch below.
 
   // Persist user message + broadcast (stored text keeps placeholders only).
   const replyToRole =
@@ -454,26 +416,22 @@ async function runTurnLocked(opts: {
     });
   }
 
-  // HARD Ask gate (fail-closed). Ask must run on a tools-restricted agent so
-  // the model physically cannot use tools. If that agent isn't configured or
-  // present on the gateway, we REFUSE the turn instead of silently running a
-  // tool-capable turn behind a polite prompt. No prompt-only fallback.
-  if (getModeDef(mode).lightweight) {
-    const ready = Boolean(ASK_AGENT_ID) && (await openclawWs.agentExists(ASK_AGENT_ID));
-    if (!ready) {
-      const note = ASK_AGENT_ID
-        ? `Ask mode needs a tools-restricted agent "${ASK_AGENT_ID}" on the OpenClaw gateway, but it isn't configured. Add it to openclaw.json (see README → "Chat modes"), or switch to Execute. Not running this turn — Ask never runs with tools.`
-        : 'Ask mode is disabled (ICLAW_ASK_AGENT is empty). Switch to Execute, or configure a tools-restricted ask agent. Not running this turn.';
-      const sys = messages.append(chatId, 'system', note, 'ask-unavailable');
-      wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
-      wsHub.broadcastAll({
-        type: 'turn-ended',
-        chatId,
-        title: chats.get(chatId)?.title ?? '',
-        aborted: false,
-      });
-      return;
-    }
+  // Ask gate (fail-closed). Ask answers via OpenRouter with no tools wired. If
+  // OpenRouter isn't configured we REFUSE rather than silently routing a
+  // tool-capable OpenClaw agent turn. (The composer also hides Ask without a
+  // key — this covers a stale client or a direct API call.)
+  if (getModeDef(mode).lightweight && !openRouterEnabled()) {
+    const note =
+      'Ask mode needs OPENROUTER_API_KEY configured on iClaw. Set it (see .env.example / README → "Chat modes"), or switch to Execute. Not running this turn.';
+    const sys = messages.append(chatId, 'system', note, 'ask-unavailable');
+    wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+    wsHub.broadcastAll({
+      type: 'turn-ended',
+      chatId,
+      title: chats.get(chatId)?.title ?? '',
+      aborted: false,
+    });
+    return;
   }
 
   // Title sub-request, in background, on first turn only.
@@ -578,44 +536,53 @@ async function runTurnLocked(opts: {
     }
   };
 
-  // Resolve where this turn runs.
-  //   - Execute: the chat's own (main-agent) session, message unchanged.
-  //   - Ask, HARD: a throwaway session bound to the tools-restricted ask agent,
-  //     seeded with the recent thread so it isn't blind to prior turns. The
-  //     gateway enforces that agent's tool policy — the model physically can't
-  //     run shell/file/browser tools. Ask turns happen on a separate session, so
-  //     the main (Execute) session's native memory won't include them — see
-  //     README "Chat modes" for that v1 limitation.
-  //   - Ask, SOFT (no ask agent configured): main session + the prompt-only
-  //     "answer, don't execute" preamble (best-effort, not enforced).
-  const turn = await resolveTurnTarget({
-    chatId,
-    mode,
-    mainSessionKey: sessionKey,
-    gatewayMessageBase,
-    currentUserMsgId: userMsg.id,
-  });
-  activeRunSessionKeys.set(chatId, turn.sessionKey);
-
+  // Run the turn. Two backends:
+  //   - Ask (lightweight): a direct, tool-less OpenRouter completion. No agent,
+  //     no tools wired — the model can't touch files/shell/browser. Deltas
+  //     stream through the same `onEvent` path Execute uses; Stop aborts the
+  //     fetch via `activeAskAborts`. Attachments aren't forwarded in Ask v1
+  //     (text Q&A only). The Ask→Execute bridge below carries the exchange into
+  //     the chat's main OpenClaw session so a later Execute turn is aware of it.
+  //   - Execute: the chat's own main-agent OpenClaw session, full tools.
+  const isAsk = getModeDef(mode).lightweight;
   let gatewayAccumulated = '';
   let aborted = false;
   let authoritativeText: string | null = null;
-  try {
-    ({
-      text: gatewayAccumulated,
-      aborted,
-      authoritativeText,
-    } = await openclawWs.runTurn({
-      sessionKey: turn.sessionKey,
-      message: turn.message,
-      onEvent,
-      attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
-    }));
-  } finally {
-    activeRunSessionKeys.delete(chatId);
-    // Tear down the ephemeral ask session (best-effort; never block the turn).
-    if (turn.ephemeralSessionKey) {
-      void openclawWs.deleteSession(turn.ephemeralSessionKey).catch(() => {});
+
+  if (isAsk) {
+    const controller = new AbortController();
+    activeAskAborts.set(chatId, controller);
+    try {
+      gatewayAccumulated = await streamComplete({
+        model: loadOpenRouterConfig().askModel,
+        messages: buildAskMessages(chatId, userMsg.id, gatewayMessageBase),
+        signal: controller.signal,
+        onDelta: (text) => onEvent({ type: 'text-delta', text }),
+      });
+    } catch (err) {
+      // A user Stop aborts the fetch — treat as a normal aborted turn. The
+      // partial text already streamed via onEvent (into `assistantText`) is
+      // kept by the text-priority logic below. Anything else propagates.
+      if (controller.signal.aborted) aborted = true;
+      else throw err;
+    } finally {
+      activeAskAborts.delete(chatId);
+    }
+  } else {
+    activeRunSessionKeys.set(chatId, sessionKey);
+    try {
+      ({
+        text: gatewayAccumulated,
+        aborted,
+        authoritativeText,
+      } = await openclawWs.runTurn({
+        sessionKey,
+        message: gatewayMessageBase,
+        onEvent,
+        attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
+      }));
+    } finally {
+      activeRunSessionKeys.delete(chatId);
     }
   }
 
@@ -666,13 +633,13 @@ async function runTurnLocked(opts: {
     syncSidebarUnread(chatId);
   }
 
-  // Ask→Execute bridge. A hard-Ask turn ran on a throwaway session, so the
-  // chat's main (Execute) session has no native memory of it. Inject a compact
+  // Ask→Execute bridge. An Ask turn ran on OpenRouter, off to the side, so the
+  // chat's main OpenClaw (Execute) session has no memory of it. Inject a compact
   // note into the main session (no model run, zero cost) so a later Execute
   // turn — "ok, now do what we discussed" — sees the exchange. Best-effort:
   // never let a bridge failure affect the turn the user already got. Stored
   // content keeps secret placeholders, so nothing sensitive is injected.
-  if (turn.ephemeralSessionKey && assistantMsg && !aborted && finalText.trim()) {
+  if (isAsk && assistantMsg && !aborted && finalText.trim()) {
     const note = buildAskBridgeNote(storedUserContent, finalText);
     void openclawWs
       .injectMessage({ sessionKey, message: note, label: 'Ask' })
@@ -867,8 +834,13 @@ export async function sendMessage(opts: {
 }
 
 export async function abortChatRun(chatId: number): Promise<void> {
-  // Prefer the session actually running this turn — for a hard-Ask turn that's
-  // an ephemeral ask session, not the chat's stored main session.
+  // Ask runs on OpenRouter via fetch — abort the controller, not a gateway run.
+  const askAbort = activeAskAborts.get(chatId);
+  if (askAbort) {
+    askAbort.abort();
+    return;
+  }
+  // Execute: abort the OpenClaw run on the session actually executing this turn.
   const active = activeRunSessionKeys.get(chatId);
   if (active && active.startsWith('agent:')) {
     await openclawWs.abortRun(active);
