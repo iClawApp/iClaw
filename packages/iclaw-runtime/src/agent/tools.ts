@@ -428,6 +428,43 @@ async function braveSearch(query: string, count: number, signal: AbortSignal): P
   }));
 }
 
+/**
+ * Zero-config default: use OpenRouter's built-in web search via the SAME key the
+ * runtime already uses for chat — no separate search account/key to set up. The
+ * `web` plugin runs a search and the response carries `url_citation` annotations
+ * (title/url/snippet). Costs a small per-result fee on the user's existing
+ * OpenRouter credits.
+ */
+async function openRouterSearch(query: string, count: number, signal: AbortSignal): Promise<SearchHit[]> {
+  const key = process.env.ICLAW_OPENROUTER_API_KEY || '';
+  if (!key) throw new Error('no OpenRouter key');
+  const base = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
+  const model = process.env.ICLAW_SEARCH_MODEL || process.env.ICLAW_MODEL || 'google/gemini-2.5-flash';
+  const res = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    signal,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      model,
+      plugins: [{ id: 'web', max_results: count }],
+      messages: [{ role: 'user', content: `Find the most relevant, recent web results for: ${query}` }],
+    }),
+  });
+  if (!res.ok) throw new Error(`OpenRouter HTTP ${res.status}`);
+  const data = await res.json() as {
+    choices?: { message?: { annotations?: { type?: string; url_citation?: { url?: string; title?: string; content?: string } }[] } }[];
+  };
+  const anns = data.choices?.[0]?.message?.annotations ?? [];
+  return anns
+    .filter((a) => a.type === 'url_citation' && a.url_citation?.url)
+    .map((a) => ({
+      title: a.url_citation!.title || a.url_citation!.url!,
+      url: a.url_citation!.url!,
+      snippet: (a.url_citation!.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 300),
+    }))
+    .slice(0, count);
+}
+
 async function duckDuckGoSearch(query: string, count: number, signal: AbortSignal): Promise<SearchHit[]> {
   const u = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   const res = await fetch(u, { signal, headers: { 'User-Agent': 'Mozilla/5.0 iClaw-Incognito/1.0' } });
@@ -452,19 +489,25 @@ async function webSearch(args: Record<string, unknown>): Promise<string> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), WEB_FETCH_TIMEOUT);
   try {
+    // 1) Brave — only if a power user opted in with a key.
     if (process.env.ICLAW_SEARCH_API_KEY) {
-      try {
-        return formatHits(query, await braveSearch(query, count, ctrl.signal), 'Brave');
-      } catch {
-        // fall through to the keyless provider
-      }
+      try { return formatHits(query, await braveSearch(query, count, ctrl.signal), 'Brave'); }
+      catch { /* fall through */ }
     }
+    // 2) OpenRouter web search — the zero-config default (reuses the chat key).
+    if (process.env.ICLAW_OPENROUTER_API_KEY) {
+      try {
+        const hits = await openRouterSearch(query, count, ctrl.signal);
+        if (hits.length) return formatHits(query, hits, 'OpenRouter');
+      } catch { /* fall through */ }
+    }
+    // 3) Keyless last resort.
     return formatHits(query, await duckDuckGoSearch(query, count, ctrl.signal), 'DuckDuckGo');
   } catch (err) {
     const msg = err instanceof Error && err.name === 'AbortError'
       ? `timed out after ${WEB_FETCH_TIMEOUT / 1000}s`
       : err instanceof Error ? err.message : String(err);
-    return `Search failed for "${query}": ${msg}. (Set ICLAW_SEARCH_API_KEY for the Brave provider.)`;
+    return `Search failed for "${query}": ${msg}.`;
   } finally {
     clearTimeout(timer);
   }
