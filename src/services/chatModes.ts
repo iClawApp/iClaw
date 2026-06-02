@@ -1,5 +1,5 @@
 /**
- * Single source of truth for chat "modes" — the lightweight Ask vs. full
+ * Single source of truth for chat "modes" -the lightweight Ask vs. full
  * Execute distinction the composer offers, plus a place to grow future modes
  * (Research, Image, Safe Run) without hardcoding two modes everywhere *
  * Design notes
@@ -10,13 +10,13 @@
  *   live mode later = flip `enabled` and (if it needs a new union member)
  *   widen `ChatMode`. No DB migration is needed because the column is TEXT *
  * - `DEFAULT_MODE` is 'execute' so anything that doesn't specify a mode —
- *   legacy rows, older clients, scheduled messages, task runs — behaves
+ *   legacy rows, older clients, scheduled messages, task runs -behaves
  *   exactly as before. `normalizeChatMode()` enforces this fallback *
  * How Ask is enforced (tool-less by construction)
  * -----------------------------------------------
  * `lightweight: true` marks modes that answer WITHOUT a full OpenClaw agent
  * run. chatRunner routes a lightweight turn to a direct OpenRouter chat
- * completion (services/openRouter.ts) with NO `tools` field — so the model has
+ * completion (services/openRouter.ts) with NO `tools` field -so the model has
  * no shell/file/browser tools to call in the first place. After the answer,
  * chatRunner bridges the Q&A into the chat's main OpenClaw session via
  * `chat.inject` (zero-cost), so a later Execute turn is aware of it *
@@ -52,28 +52,28 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
   {
     id: 'ask',
     label: 'Ask',
-    description: 'Chat with AI — no access to your files or computer',
+    description: 'Chat with AI -no access to your files or computer',
     enabled: true,
     lightweight: true,
   },
   {
     id: 'work',
     label: 'Work',
-    description: 'AI edits files in folders you choose — you approve every change',
+    description: 'AI edits files in folders you choose -you approve every change',
     enabled: true,
     lightweight: false,
   },
   {
     id: 'secure',
     label: 'Secure',
-    description: 'Runs in a locked sandbox — safe for untrusted code or scripts',
+    description: 'Runs in a locked sandbox -safe for untrusted code or scripts',
     enabled: true,
     lightweight: false,
   },
   {
     id: 'execute',
     label: 'Execute',
-    description: 'Full access via OpenClaw — for complex tasks that need more power',
+    description: 'Full access via OpenClaw -for complex tasks that need more power',
     enabled: true,
     lightweight: false,
   },
@@ -115,7 +115,7 @@ function modeAvailable(def: ChatModeDef): boolean {
   return true;
 }
 
-/** Available modes only — feeds the composer selector (EJS locals / client). */
+/** Available modes only -feeds the composer selector (EJS locals / client). */
 export function listSelectableModes(): ChatModeDef[] {
   return CHAT_MODES.filter(modeAvailable);
 }
@@ -140,7 +140,7 @@ export function normalizeChatMode(raw: unknown): ChatMode {
   return DEFAULT_MODE;
 }
 
-/** Definition for a (normalized) mode — always defined for selectable modes. */
+/** Definition for a (normalized) mode -always defined for selectable modes. */
 export function getModeDef(mode: ChatMode): ChatModeDef {
   return findMode(mode) ?? findMode(DEFAULT_MODE)!;
 }
