@@ -128,6 +128,103 @@
   }
 
   // -------------------------------------------------------------------------
+  // Work Mode — folders picker
+  // -------------------------------------------------------------------------
+  const workFoldersBtn = document.getElementById('composer-work-folders-btn');
+  const workFoldersModal = document.getElementById('work-folders-modal');
+  const workFoldersList = document.getElementById('work-folders-list');
+  const workFoldersInput = document.getElementById('work-folders-input');
+  const workFoldersAddBtn = document.getElementById('work-folders-add-btn');
+  const workFoldersClose = document.getElementById('work-folders-close');
+  const workFoldersBackdrop = document.getElementById('work-folders-backdrop');
+  const workFoldersCount = document.getElementById('composer-work-folders-count');
+
+  function workFoldersKey() {
+    return rawChatId ? `iclaw:work-folders:${rawChatId}` : 'iclaw:work-folders:draft';
+  }
+
+  function getWorkFolders() {
+    try {
+      return JSON.parse(localStorage.getItem(workFoldersKey()) || '[]');
+    } catch { return []; }
+  }
+
+  function saveWorkFolders(folders) {
+    try { localStorage.setItem(workFoldersKey(), JSON.stringify(folders)); } catch {}
+  }
+
+  function renderWorkFoldersList() {
+    if (!workFoldersList) return;
+    const folders = getWorkFolders();
+    workFoldersList.innerHTML = '';
+    for (const f of folders) {
+      const li = document.createElement('li');
+      li.className = 'work-folders-list__item';
+      li.innerHTML = `<span class="work-folders-list__path" title="${f}">${f}</span><button type="button" class="work-folders-list__remove" data-path="${f}" aria-label="Remove">×</button>`;
+      workFoldersList.appendChild(li);
+    }
+    if (workFoldersCount) {
+      workFoldersCount.textContent = folders.length > 0 ? String(folders.length) : '';
+    }
+  }
+
+  function updateWorkFoldersButton() {
+    if (!workFoldersBtn) return;
+    const mode = getComposerMode();
+    workFoldersBtn.hidden = (mode !== 'work');
+    renderWorkFoldersList();
+  }
+
+  if (workFoldersBtn && workFoldersModal) {
+    workFoldersBtn.addEventListener('click', () => {
+      renderWorkFoldersList();
+      workFoldersModal.hidden = false;
+      workFoldersInput?.focus();
+    });
+
+    workFoldersList?.addEventListener('click', (e) => {
+      const btn = e.target.closest('.work-folders-list__remove');
+      if (!btn) return;
+      const path = btn.dataset.path;
+      const folders = getWorkFolders().filter((f) => f !== path);
+      saveWorkFolders(folders);
+      renderWorkFoldersList();
+    });
+
+    function addFolder() {
+      const val = workFoldersInput?.value.trim();
+      if (!val) return;
+      const folders = getWorkFolders();
+      if (!folders.includes(val)) {
+        folders.push(val);
+        saveWorkFolders(folders);
+        renderWorkFoldersList();
+      }
+      if (workFoldersInput) workFoldersInput.value = '';
+    }
+
+    workFoldersAddBtn?.addEventListener('click', addFolder);
+    workFoldersInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); addFolder(); }
+    });
+
+    const closeModal = () => { workFoldersModal.hidden = true; };
+    workFoldersClose?.addEventListener('click', closeModal);
+    workFoldersBackdrop?.addEventListener('click', closeModal);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !workFoldersModal.hidden) closeModal();
+    });
+  }
+
+  // Show/hide folders button when mode changes
+  const _origSetComposerMode = setComposerMode;
+  function setComposerMode(mode, opts) {
+    _origSetComposerMode(mode, opts);
+    updateWorkFoldersButton();
+  }
+  updateWorkFoldersButton();
+
+  // -------------------------------------------------------------------------
   // Speech-to-text (mic). Records via MediaRecorder, POSTs the clip to
   // /api/stt, and inserts the returned transcript into the composer textarea.
   // Only wired when the server rendered the button (OPENROUTER_API_KEY set).
@@ -3791,6 +3888,10 @@
       content: item.content,
     };
     if (item.mode) payload.mode = item.mode;
+    if (item.mode === 'work') {
+      const wf = getWorkFolders ? getWorkFolders() : [];
+      if (wf.length > 0) payload.workFolders = wf;
+    }
     if (item.replyTo) {
       payload.replyTo = {
         messageId: item.replyTo.messageId,

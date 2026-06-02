@@ -92,6 +92,9 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
           incomingAttachments: msg.attachments,
           inlineSecrets,
           mode: normalizeChatMode((msg as { mode?: unknown }).mode),
+          workFolders: Array.isArray((msg as Record<string, unknown>).workFolders)
+            ? (((msg as Record<string, unknown>).workFolders as unknown[]).filter((f) => typeof f === 'string') as string[])
+            : undefined,
         });
       } catch (err) {
         // Errors are already broadcast via chatRunner; nothing more to do.

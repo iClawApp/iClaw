@@ -305,6 +305,7 @@ async function runTurnLocked(opts: {
   inlineSecrets?: InlineSecretWire[];
   /** 'ask' | 'execute'. Defaults to 'execute' for full back-compat. */
   mode?: ChatMode;
+  workFolders?: string[];
 }): Promise<void> {
   const {
     chatId,
@@ -539,7 +540,7 @@ async function runTurnLocked(opts: {
 
   // Work Mode — routes to iclaw-runtime, returns early.
   if (mode === 'work') {
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent });
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }
@@ -761,6 +762,8 @@ export async function sendMessage(opts: {
   prePersistedAttachments?: MessageAttachment[];
   /** 'ask' | 'execute'. Defaults to 'execute' when omitted. */
   mode?: ChatMode;
+  /** Allowed folders for Work Mode. */
+  workFolders?: string[];
 }): Promise<{ chatId: number }> {
   let chatId = opts.chatId;
   let isFirstTurn = false;
@@ -807,6 +810,7 @@ export async function sendMessage(opts: {
         prePersistedAttachments: opts.prePersistedAttachments,
         inlineSecrets: opts.inlineSecrets,
         mode: opts.mode,
+        workFolders: opts.workFolders,
       }),
     );
   } catch (err) {
@@ -852,6 +856,7 @@ async function runWorkModeTurn(opts: {
   chatId: number;
   content: string;
   onEvent: (event: TurnEvent) => void;
+  workFolders?: string[];
 }): Promise<void> {
   const { chatId, content, onEvent } = opts;
 
@@ -859,8 +864,9 @@ async function runWorkModeTurn(opts: {
   let sessionId = workSessions.get(chatId);
   if (!sessionId) {
     try {
-      // TODO: pass allowedFolders from project settings
-      const allowedFolders = [process.env.HOME ?? ''].filter(Boolean);
+      const allowedFolders = opts.workFolders?.length
+        ? opts.workFolders
+        : [process.env.HOME ?? ''].filter(Boolean);
       sessionId = await createWorkSession({ allowedFolders });
       workSessions.set(chatId, sessionId);
     } catch (err) {

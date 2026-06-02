@@ -8,6 +8,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
+import { kvGet } from '../db/kv';
 
 const RUNTIME_DIR = path.resolve(__dirname, '../../packages/iclaw-runtime');
 const RUNTIME_ENTRY = path.join(RUNTIME_DIR, 'src/index.ts');
@@ -26,11 +27,17 @@ function runtimeInstalled(): boolean {
 function spawnRuntime(): void {
   if (stopping || !runtimeInstalled()) return;
 
-  // tsx should be available — it's a devDependency of the root package
+  // Pass OpenRouter key from iClaw's DB into the runtime environment
+  const openRouterKey = (kvGet('openrouter.api_key') ?? '').trim();
+  const runtimeEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...(openRouterKey ? { ICLAW_OPENROUTER_API_KEY: openRouterKey } : {}),
+  };
+
   child = spawn('npx', ['tsx', RUNTIME_ENTRY], {
     cwd: RUNTIME_DIR,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env },
+    env: runtimeEnv,
   });
 
   child.stdout?.on('data', (chunk: Buffer) => {

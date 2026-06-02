@@ -4760,6 +4760,120 @@ code {
 }
 .composer-attach:active { transform: scale(0.94); }
 
+/* Work Mode folders button */
+.composer-work-folders {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.composer-work-folders:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+.composer-work-folders__count {
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 14px;
+  text-align: center;
+}
+
+/* Work folders modal */
+.work-folders-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 80px;
+}
+.work-folders-modal[hidden] { display: none; }
+.work-folders-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+}
+.work-folders-modal__panel {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  width: min(480px, 94vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+.work-folders-modal__head { display: flex; flex-direction: column; gap: 4px; }
+.work-folders-modal__title { margin: 0; font-size: var(--text-base); font-weight: 600; }
+.work-folders-modal__hint { margin: 0; font-size: var(--text-sm); }
+.work-folders-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.work-folders-list:empty::before {
+  content: 'No folders added yet';
+  color: var(--muted);
+  font-size: var(--text-sm);
+  display: block;
+  padding: 4px 0;
+}
+.work-folders-list__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: var(--text-sm);
+  font-family: monospace;
+}
+.work-folders-list__path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-folders-list__remove {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 16px;
+  line-height: 1;
+}
+.work-folders-list__remove:hover { color: var(--text); }
+.work-folders-add {
+  display: flex;
+  gap: 8px;
+}
+.work-folders-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-family: monospace;
+}
+.work-folders-input:focus { outline: none; border-color: var(--accent); }
+.work-folders-modal__actions { display: flex; justify-content: flex-end; }
+
 /* Speech-to-text mic button — mirrors .composer-attach. Recording = red pulse;
    busy (transcribing) swaps the mic for a spinner. */
 .composer-mic {

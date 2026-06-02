@@ -142,6 +142,20 @@
       aria-label="Choose secret"
       hidden
     ></div>
+    <!-- Work Mode folders button — shown only when mode=work -->
+    <button
+      type="button"
+      class="composer-work-folders"
+      id="composer-work-folders-btn"
+      aria-label="Work Mode folders"
+      title="Configure allowed folders for Work Mode"
+      hidden
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+      </svg>
+      <span class="composer-work-folders__count" id="composer-work-folders-count"></span>
+    </button>
     <button
       type="button"
       class="composer-attach"
@@ -363,3 +377,29 @@
       </div>
     </div>
   </div>
+
+<!-- Work Mode folders modal -->
+<div class="work-folders-modal" id="work-folders-modal" hidden>
+  <div class="work-folders-modal__backdrop" id="work-folders-backdrop"></div>
+  <div class="work-folders-modal__panel" role="dialog" aria-modal="true" aria-labelledby="work-folders-title">
+    <header class="work-folders-modal__head">
+      <h3 class="work-folders-modal__title" id="work-folders-title">Work Mode folders</h3>
+      <p class="work-folders-modal__hint muted">AI can only read and write inside these folders.</p>
+    </header>
+    <ul class="work-folders-list" id="work-folders-list"></ul>
+    <div class="work-folders-add">
+      <input
+        type="text"
+        id="work-folders-input"
+        class="work-folders-input"
+        placeholder="/Users/you/projects/my-app"
+        spellcheck="false"
+        autocomplete="off"
+      />
+      <button type="button" class="btn btn--primary btn--sm" id="work-folders-add-btn">Add</button>
+    </div>
+    <div class="work-folders-modal__actions">
+      <button type="button" class="btn btn--ghost btn--sm" id="work-folders-close">Done</button>
+    </div>
+  </div>
+</div>

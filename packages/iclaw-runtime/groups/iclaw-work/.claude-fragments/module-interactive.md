@@ -1,0 +1,1 @@
+/app/src/mcp-tools/interactive.instructions.md
