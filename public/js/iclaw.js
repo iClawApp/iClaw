@@ -142,7 +142,9 @@
   const workFoldersCount = document.getElementById('composer-work-folders-count');
 
   function workFoldersKey() {
-    return rawChatId ? `iclaw:work-folders:${rawChatId}` : 'iclaw:work-folders:draft';
+    const pid = messagesEl?.dataset.projectId;
+    if (pid) return `iclaw:work-folders:project:${pid}`;
+    return 'iclaw:work-folders:no-project';
   }
 
   function getWorkFolders() {
@@ -465,6 +467,7 @@
       } else {
         messagesEl.dataset.projectId = '';
       }
+      if (typeof updateWorkFoldersButton === 'function') updateWorkFoldersButton();
     }
     history.replaceState(null, '', '/chats/' + id);
     // Migrate mode from the draft fallback key to the per-chat key
