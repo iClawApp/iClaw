@@ -7506,6 +7506,8 @@ body.incognito-mode .col-main {
 }
 .incognito-exit:hover { background: color-mix(in srgb, var(--text) 20%, var(--sidebar-bg, transparent)); }
 body.incognito-mode .incognito-exit { display: inline-flex; }
+/* Make room for the × so it doesn't sit on top of the chat title. */
+body.incognito-mode .chat-header { padding-left: 58px; }
 
 .incognito-banner {
   display: flex;
