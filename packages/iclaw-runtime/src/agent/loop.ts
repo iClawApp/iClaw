@@ -36,6 +36,9 @@ export type AgentEvent =
 
 export type Message = OpenAI.Chat.ChatCompletionMessageParam;
 
+/** Max tool-call rounds per turn before we stop (env-tunable for long tasks). */
+const MAX_ROUNDS = Math.max(1, Number(process.env.ICLAW_MAX_ROUNDS) || 40);
+
 /** Turn a provider/SDK error into a concise, user-facing message. */
 function describeApiError(err: unknown): string {
   const e = err as {
@@ -61,6 +64,9 @@ write_file only for new files or full rewrites.
 Be concise and act directly: when a change is needed, just call the tool. The user sees
 and approves every write in the UI, so do NOT paste file contents into your reply
 beforehand or ask "is this correct?" — only narrate briefly what you changed after.
+Work efficiently — each tool call is one step and steps are limited. Chain related shell
+commands into a single run_command with && instead of one per step, and don't repeat
+exploratory commands you've already run.
 Never access paths outside the allowed folders.`;
 
 const INCOGNITO_SYSTEM = `You are a private, READ-ONLY research assistant running in Incognito mode.
@@ -148,8 +154,8 @@ export async function* runAgentTurn(
     { role: 'user', content: userMessage },
   ];
 
-  // Max tool-call rounds to prevent infinite loops
-  for (let round = 0; round < 20; round++) {
+  // Max tool-call rounds to prevent infinite loops (env-tunable: ICLAW_MAX_ROUNDS).
+  for (let round = 0; round < MAX_ROUNDS; round++) {
     let textBuffer = '';
     const toolCallBuffers: Record<string, { name: string; arguments: string }> = {};
 
@@ -251,5 +257,5 @@ export async function* runAgentTurn(
     // Continue loop — model will see tool results and respond
   }
 
-  yield { type: 'error', message: 'Agent loop exceeded maximum rounds' };
+  yield { type: 'error', message: `Reached the step limit (${MAX_ROUNDS} tool rounds). Send "continue" to keep going, or raise ICLAW_MAX_ROUNDS.` };
 }

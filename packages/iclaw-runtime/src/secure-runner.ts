@@ -25,6 +25,8 @@ const execFileAsync = promisify(execFile);
 // /workspace/.tools (no root).
 const CONTAINER_IMAGE = process.env.ICLAW_SECURE_IMAGE || 'iclaw-secure:latest';
 const CONTAINER_TIMEOUT = 30_000;
+/** Max tool-call rounds per turn (env-tunable for long multi-step tasks). */
+const MAX_ROUNDS = Math.max(1, Number(process.env.ICLAW_MAX_ROUNDS) || 40);
 
 export type SecureEvent = AgentEvent;
 
@@ -248,6 +250,8 @@ export async function* runSecureTurn(
       systemPrompt: opts.systemPrompt ??
         `You are running in a secure isolated sandbox.
 You can run commands and read/write files in /workspace only.
+Work efficiently — each tool call is one step and steps are limited. Chain related
+shell commands into a single run_command with && (e.g. \`git clone <url> repo && cd repo && pip install -r requirements.txt\`) instead of one command per step, and don't re-run exploratory commands you've already seen.
 Preinstalled CLIs: git, rg (ripgrep), jq, curl, node, unzip/zip, less, tree.
 You can install more tools yourself, no root needed${networkEnabled ? '' : ' (requires network, which is currently OFF — ask the user to enable it)'}: download a static binary into /workspace/.tools/bin (already on PATH) with curl, or run \`npm i -g <pkg>\`. Self-installed tools live in the workspace, so they persist across turns and are removed automatically when the workspace expires.
 Network is ${networkEnabled ? 'enabled' : 'disabled'}.${
@@ -292,7 +296,7 @@ async function* runSecureAgentLoop(
     { role: 'user', content: userMessage },
   ];
 
-  for (let round = 0; round < 20; round++) {
+  for (let round = 0; round < MAX_ROUNDS; round++) {
     let textBuffer = '';
     const toolCallBuffers: Record<string, { name: string; arguments: string }> = {};
 
@@ -378,5 +382,5 @@ async function* runSecureAgentLoop(
     }
   }
 
-  yield { type: 'error', message: 'Agent loop exceeded maximum rounds' };
+  yield { type: 'error', message: `Reached the step limit (${MAX_ROUNDS} tool rounds). Send "continue" to keep going, or raise ICLAW_MAX_ROUNDS.` };
 }
