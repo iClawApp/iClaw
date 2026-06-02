@@ -85,6 +85,7 @@ export async function complete(opts: ChatCompletionOpts): Promise<string> {
         model,
         messages: opts.messages,
         stream: false,
+        thinking: { type: 'disabled' },
         ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
         ...(opts.maxTokens != null ? { max_tokens: opts.maxTokens } : {}),
       }),
@@ -125,6 +126,8 @@ export async function streamComplete(opts: StreamCompletionOpts): Promise<string
         model,
         messages: opts.messages,
         stream: true,
+        // Disable extended thinking — Ask mode is for quick answers, not deep reasoning
+        thinking: { type: 'disabled' },
         ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
         ...(opts.maxTokens != null ? { max_tokens: opts.maxTokens } : {}),
       }),
