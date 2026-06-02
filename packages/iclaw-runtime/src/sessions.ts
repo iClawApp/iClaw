@@ -87,6 +87,9 @@ const MAX_WARM_CONTAINERS = 4;
 // bounded context instead of growing unbounded. Tunable via env.
 const HISTORY_COMPACT_TRIGGER = Number(process.env.ICLAW_HISTORY_COMPACT_TRIGGER) || 40;
 const HISTORY_KEEP_RECENT = Number(process.env.ICLAW_HISTORY_KEEP_RECENT) || 16;
+// Also compact by SIZE, not just message count: a few big messages bloat the
+// resent context as much as many small ones. ~24k chars ≈ ~6k tokens.
+const HISTORY_COMPACT_CHARS = Number(process.env.ICLAW_HISTORY_COMPACT_CHARS) || 24_000;
 const SUMMARY_MODEL = process.env.ICLAW_SUMMARY_MODEL || 'google/gemini-2.5-flash-lite';
 const OPENROUTER_BASE = process.env.OPENROUTER_BASE_URL?.replace(/\/+$/, '') || 'https://openrouter.ai/api/v1';
 const SUMMARY_SYSTEM =
@@ -422,10 +425,23 @@ async function summarizeMessages(apiKey: string, msgs: Message[]): Promise<strin
  * sessions that live for hours without a restart. Best-effort — leaves history
  * untouched if summarization fails.
  */
+function historyChars(h: Message[]): number {
+  let n = 0;
+  for (const m of h) {
+    n += typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content ?? '').length;
+  }
+  return n;
+}
+
 async function compactHistoryIfNeeded(session: Session): Promise<void> {
-  if (session.history.length <= HISTORY_COMPACT_TRIGGER) return;
-  const recent = session.history.slice(-HISTORY_KEEP_RECENT);
-  const older = session.history.slice(0, -HISTORY_KEEP_RECENT);
+  const h = session.history;
+  // Trigger on message count OR total size — whichever hits first.
+  const over = h.length > HISTORY_COMPACT_TRIGGER || historyChars(h) > HISTORY_COMPACT_CHARS;
+  if (!over) return;
+  // Need enough older messages to make folding worthwhile.
+  if (h.length <= HISTORY_KEEP_RECENT + 1) return;
+  const recent = h.slice(-HISTORY_KEEP_RECENT);
+  const older = h.slice(0, -HISTORY_KEEP_RECENT);
   const summary = await summarizeMessages(session.opts.apiKey, older);
   if (!summary) return;
   session.history = [
