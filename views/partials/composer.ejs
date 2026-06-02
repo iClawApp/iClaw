@@ -351,15 +351,17 @@
   <div class="work-folders-modal__backdrop" id="work-folders-backdrop"></div>
   <div class="work-folders-modal__panel" role="dialog" aria-modal="true" aria-labelledby="work-folders-title">
     <header class="work-folders-modal__head">
-      <h3 class="work-folders-modal__title" id="work-folders-title">Work Mode folders</h3>
-      <p class="work-folders-modal__hint muted">AI can only read and write inside these folders</p>
+      <div class="work-folders-modal__head-row">
+        <div>
+          <h3 class="work-folders-modal__title" id="work-folders-title">Work Mode folders</h3>
+          <p class="work-folders-modal__hint muted">AI can only read and write inside these folders</p>
+        </div>
+        <button type="button" class="btn btn--primary btn--sm" id="work-folders-browse-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          Browse
+        </button>
+      </div>
     </header>
     <ul class="work-folders-list" id="work-folders-list"></ul>
-    <div class="work-folders-add">
-      <button type="button" class="btn btn--primary btn--sm" id="work-folders-browse-btn">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        Browse…
-      </button>
-    </div>
   </div>
 </div>

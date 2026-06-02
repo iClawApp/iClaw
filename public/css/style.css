@@ -4780,9 +4780,15 @@ code {
   gap: 12px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.2);
 }
-.work-folders-modal__head { display: flex; flex-direction: column; gap: 4px; }
+.work-folders-modal__head { }
+.work-folders-modal__head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
 .work-folders-modal__title { margin: 0; font-size: var(--text-base); font-weight: 600; }
-.work-folders-modal__hint { margin: 0; font-size: var(--text-sm); }
+.work-folders-modal__hint { margin: 4px 0 0; font-size: var(--text-sm); }
 .work-folders-list {
   list-style: none;
   margin: 0;
