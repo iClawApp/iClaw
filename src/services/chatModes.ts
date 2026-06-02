@@ -1,20 +1,17 @@
 /**
  * Single source of truth for chat "modes" — the lightweight Ask vs. full
  * Execute distinction the composer offers, plus a place to grow future modes
- * (Research, Image, Safe Run) without hardcoding two modes everywhere.
- *
+ * (Research, Image, Safe Run) without hardcoding two modes everywhere *
  * Design notes
  * ------------
  * - The wire/DB value is a plain string. The TS union (`ChatMode` in
  *   ../types) only names the two LIVE modes; the catalog below can list
  *   `enabled: false` placeholders for modes we haven't built yet. Adding a
  *   live mode later = flip `enabled` and (if it needs a new union member)
- *   widen `ChatMode`. No DB migration is needed because the column is TEXT.
- *
+ *   widen `ChatMode`. No DB migration is needed because the column is TEXT *
  * - `DEFAULT_MODE` is 'execute' so anything that doesn't specify a mode —
  *   legacy rows, older clients, scheduled messages, task runs — behaves
- *   exactly as before. `normalizeChatMode()` enforces this fallback.
- *
+ *   exactly as before. `normalizeChatMode()` enforces this fallback *
  * How Ask is enforced (tool-less by construction)
  * -----------------------------------------------
  * `lightweight: true` marks modes that answer WITHOUT a full OpenClaw agent
@@ -22,14 +19,12 @@
  * completion (services/openRouter.ts) with NO `tools` field — so the model has
  * no shell/file/browser tools to call in the first place. After the answer,
  * chatRunner bridges the Q&A into the chat's main OpenClaw session via
- * `chat.inject` (zero-cost), so a later Execute turn is aware of it.
- *
+ * `chat.inject` (zero-cost), so a later Execute turn is aware of it *
  * Availability is config-driven: Ask requires `OPENROUTER_API_KEY`. Without it,
  * `listSelectableModes`/`isSelectableMode` drop Ask from the composer and
  * coerce any posted 'ask' to Execute; chatRunner also refuses a lightweight
  * turn defensively. Titles fall back to OpenClaw, but Ask never silently runs
- * on a tool-capable agent.
- */
+ * on a tool-capable agent */
 
 import type { ChatMode } from '../types';
 import { openRouterEnabled } from './openRouter';
@@ -45,16 +40,14 @@ export interface ChatModeDef {
   enabled: boolean;
   /**
    * True when the mode answers without a full agent run. chatRunner routes
-   * these to OpenRouter (tool-less); availability requires OPENROUTER_API_KEY.
-   */
+   * these to OpenRouter (tool-less); availability requires OPENROUTER_API_KEY   */
   lightweight: boolean;
 }
 
 /**
  * The full catalog. Order here is the order shown in the UI. Disabled entries
  * are intentionally kept so the selector and any future router can enumerate
- * the roadmap without scattering string literals across the codebase.
- */
+ * the roadmap without scattering string literals across the codebase */
 export const CHAT_MODES: readonly ChatModeDef[] = [
   {
     id: 'ask',
@@ -113,8 +106,7 @@ export const ENABLED_MODE_IDS: readonly string[] = CHAT_MODES.filter(
  * A mode is available when it's enabled AND its backend is reachable. Lightweight
  * (Ask) modes run on OpenRouter, so they're hidden unless a key is configured —
  * this is what keeps Ask out of the composer (and coerces posted 'ask' →
- * 'execute') when OpenRouter is unconfigured.
- */
+ * 'execute') when OpenRouter is unconfigured */
 function modeAvailable(def: ChatModeDef): boolean {
   if (!def.enabled) return false;
   if (def.lightweight && !openRouterEnabled()) return false;
@@ -140,8 +132,7 @@ export function isSelectableMode(id: string): boolean {
 
 /**
  * Coerce any untrusted input (query body, WS frame, DB row) into a valid,
- * currently-selectable `ChatMode`. Unknown, disabled, or missing → DEFAULT_MODE.
- */
+ * currently-selectable `ChatMode`. Unknown, disabled, or missing → DEFAULT_MODE */
 export function normalizeChatMode(raw: unknown): ChatMode {
   if (typeof raw !== 'string') return DEFAULT_MODE;
   const id = raw.trim().toLowerCase();
