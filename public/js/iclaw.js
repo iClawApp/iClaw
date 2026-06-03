@@ -110,10 +110,20 @@
   // so the user switches mode instead of typing into a dead end.
   const composerExecOverlay = document.getElementById('composer-exec-overlay');
 
-  /** True only when OpenClaw is actually connected (badge 'ok'). */
+  // Live "is the gateway usable for Full Power" flag. Seeded from the server
+  // (the gateway badge exists only on the new-chat header, so fall back to the
+  // composer form's data-gateway-ok on chat pages), then kept current by
+  // applyGatewayStatus on every status change.
+  let gatewayOk = (function seedGatewayOk() {
+    const badge = document.getElementById('gateway-badge');
+    if (badge) return badge.classList.contains('ok');
+    if (form && form.dataset.gatewayOk != null) return form.dataset.gatewayOk !== '0';
+    return true; // no signal → don't block
+  })();
+
+  /** True only when OpenClaw is reachable for Full Power (Execute). */
   function isExecuteAvailable() {
-    const b = document.getElementById('gateway-badge');
-    return !b || b.classList.contains('ok'); // no badge → don't block
+    return gatewayOk;
   }
 
   /** Reflect gateway availability on the Full Power option + the input overlay. */
@@ -4568,6 +4578,11 @@
     const offline = status === 'down' || status === 'shutdown';
     setGatewayOfflineBannerVisible(offline);
 
+    // Keep Full Power gating current on every page, even those without the badge
+    // (chat view). Must run BEFORE the no-badge early return below.
+    gatewayOk = status === 'ok';
+    if (typeof syncExecuteAvailability === 'function') syncExecuteAvailability();
+
     if (!badge) return;
     badge.classList.remove('ok', 'down', 'degraded', 'shutdown');
     if (status === 'ok') {
@@ -4585,8 +4600,6 @@
     }
     const baseUrl = badge.dataset.baseUrl || '';
     badge.title = baseUrl;
-    // Gateway state changed → re-evaluate the Full Power option / input overlay.
-    if (typeof syncExecuteAvailability === 'function') syncExecuteAvailability();
   }
 
   (function initGatewayOfflineBanner() {

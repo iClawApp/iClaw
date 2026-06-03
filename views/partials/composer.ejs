@@ -57,7 +57,13 @@
   const _initialModeDef =
     _modes.find(function (m) { return m.id === _initialMode; }) || _defaultModeDef;
 %>
-<form id="send-form" class="composer">
+<%
+  // Whether Full Power (Execute → OpenClaw) is usable right now. Stamped here so
+  // the JS gating works on every composer surface (the gateway badge only exists
+  // on the new-chat header). Defaults to available when a render path omits it.
+  const _gatewayOk = typeof gatewayOk !== 'undefined' ? !!gatewayOk : true;
+%>
+<form id="send-form" class="composer" data-gateway-ok="<%= _gatewayOk ? '1' : '0' %>">
   <div id="composer-reply-bar" class="composer-reply-bar" hidden>
     <div class="composer-reply-bar-inner">
       <span class="composer-reply-accent" aria-hidden="true"></span>

@@ -332,6 +332,9 @@ chatsRouter.get('/:id', async (req, res, next) => {
       defaultChatMode: defaultComposerMode(),
       chatCurrentMode,
       sttEnabled: openRouterEnabled(),
+      // Full Power (Execute) needs the gateway; agents.list succeeding implies it's
+      // reachable. Seeds the composer's Full Power gating (no badge on this page).
+      gatewayOk: !agentsError,
     });
   } catch (err) {
     next(err);
