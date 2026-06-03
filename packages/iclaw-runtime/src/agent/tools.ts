@@ -23,6 +23,9 @@ const WEB_FETCH_MAX_CHARS = 20_000;
 const MAX_FILE_READ_CHARS = Number(process.env.ICLAW_MAX_FILE_READ) || 16_000;
 const MAX_CMD_OUTPUT_CHARS = Number(process.env.ICLAW_MAX_CMD_OUTPUT) || 8_000;
 const MAX_LIST_ENTRIES = Number(process.env.ICLAW_MAX_LIST_ENTRIES) || 200;
+// search_files: cap matching lines returned per file so a high-frequency term
+// can't dump a whole file into history.
+const MAX_MATCH_LINES_PER_FILE = Number(process.env.ICLAW_MAX_MATCH_LINES) || 30;
 
 // Cheap-model summarizer (read_summary, web_fetch summarize). Moves the cost of
 // reading big content onto a cheap model; the expensive model + history only
@@ -31,6 +34,43 @@ const SUMMARY_MODEL = process.env.ICLAW_SUMMARY_MODEL || 'google/gemini-2.5-flas
 const SUMMARY_MAX_INPUT_CHARS = Number(process.env.ICLAW_SUMMARY_MAX_INPUT) || 60_000;
 
 export const TOOL_OUTPUT_MAX_CHARS = MAX_CMD_OUTPUT_CHARS;
+
+/**
+ * Compress raw command output before it lands in history (rtk-inspired, but
+ * generic + lossless-for-signal — no per-command filters that could hide a
+ * failing test or an error the agent needs). Runs BEFORE clampMiddle so the cap
+ * keeps real content instead of progress-bar/ANSI noise. Four safe passes:
+ *   1. strip ANSI escape codes (colours, cursor moves) — pure noise to a model,
+ *      and confirmed present in real run_command output (e.g. "\x1b[95m…\x1b[0m");
+ *   2. collapse carriage-return progress lines to their final state (npm/pip/
+ *      docker/git "Downloading 12%…100%" → just the last frame);
+ *   3. dedupe runs of ≥3 identical consecutive lines into one + "(×N)";
+ *   4. squeeze 3+ blank lines down to one.
+ */
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
+
+export function compressCommandOutput(s: string): string {
+  if (!s) return s;
+  let text = s.replace(ANSI_RE, '');
+  // Carriage-return progress: keep only what survives the last \r on each line.
+  text = text
+    .split('\n')
+    .map((line) => (line.includes('\r') ? line.slice(line.lastIndexOf('\r') + 1) : line))
+    .join('\n');
+  // Dedupe runs of ≥3 identical, non-blank consecutive lines into one + "(×N)".
+  const lines = text.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; ) {
+    let j = i + 1;
+    while (j < lines.length && lines[j] === lines[i]) j++;
+    const run = j - i;
+    if (run >= 3 && lines[i].trim()) out.push(`${lines[i]}  …(×${run})`);
+    else for (let k = i; k < j; k++) out.push(lines[k]);
+    i = j;
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n');
+}
 
 /** Keep the head and tail of long output (errors are usually at the end). */
 export function clampMiddle(s: string, max: number): string {
@@ -402,14 +442,21 @@ async function searchFiles(args: Record<string, unknown>, ctx: ToolContext): Pro
     const files = stdout.trim().split('\n').filter(Boolean).slice(0, 20);
     if (files.length === 0) return 'No matches found.';
 
-    // Show context lines for first 5 matches
+    // Show matching lines for the first 5 files. Cap matches PER FILE (-m) so a
+    // file with thousands of hits can't dump itself into history (resent every
+    // round), and clamp the combined output as a backstop.
     const results: string[] = [];
     for (const file of files.slice(0, 5)) {
-      const { stdout: ctx2 } = await execFileAsync('grep', ['-n', query, file], { timeout: 5000 }).catch(() => ({ stdout: '' }));
-      results.push(`${file}:\n${ctx2.trim()}`);
+      const { stdout: ctx2 } = await execFileAsync(
+        'grep', ['-n', '-m', String(MAX_MATCH_LINES_PER_FILE), query, file], { timeout: 5000 },
+      ).catch(() => ({ stdout: '' }));
+      const trimmed = ctx2.trim();
+      const lineCount = trimmed ? trimmed.split('\n').length : 0;
+      const more = lineCount >= MAX_MATCH_LINES_PER_FILE ? `\n…[more matches — refine the query]` : '';
+      results.push(`${file}:\n${trimmed}${more}`);
     }
     if (files.length > 5) results.push(`...and ${files.length - 5} more files`);
-    return results.join('\n\n');
+    return clampMiddle(results.join('\n\n'), MAX_CMD_OUTPUT_CHARS);
   } catch {
     return 'No matches found.';
   }
@@ -493,8 +540,9 @@ async function runCommand(args: Record<string, unknown>, ctx: ToolContext): Prom
   // rejects any write outside the read & write folders. Commands may freely
   // read from read-only folders.
   const out = await ctx.runShell(command, cwd);
-  // Cap verbose output (test runs, build logs) so it doesn't flood history.
-  return clampMiddle(out, MAX_CMD_OUTPUT_CHARS);
+  // Compress noise (ANSI, progress bars, repeated lines) THEN cap verbose output
+  // (test runs, build logs) so the cap keeps real signal, not flooding history.
+  return clampMiddle(compressCommandOutput(out), MAX_CMD_OUTPUT_CHARS);
 }
 
 // ── web_fetch (read-only research) ────────────────────────────────────────────

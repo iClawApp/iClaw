@@ -68,16 +68,24 @@ function describeApiError(err: unknown): string {
 }
 
 // Mid-turn compaction budget: once the in-flight message array passes this many
-// chars, stub out all but the last few tool outputs (they're already acted on;
-// the model can re-run a tool if it truly needs the data again).
-const INTURN_COMPACT_CHARS = Number(process.env.ICLAW_INTURN_COMPACT_CHARS) || 32_000;
+// chars, stub out all but a few tool outputs (they're already acted on; the model
+// can re-run a tool if it truly needs the data again). Lowered to 16k — recent
+// work turns plateau around 15–20k, so a 32k gate almost never fired and the
+// whole history was resent every round (O(n²) tokens). Like Hermes' compressor we
+// keep the FIRST few tool outputs (early task context) as well as the last few.
+const INTURN_COMPACT_CHARS = Number(process.env.ICLAW_INTURN_COMPACT_CHARS) || 16_000;
 const INTURN_KEEP_TOOL_MSGS = Number(process.env.ICLAW_INTURN_KEEP_TOOL_MSGS) || 6;
+const INTURN_KEEP_FIRST_TOOL_MSGS = Number(process.env.ICLAW_INTURN_KEEP_FIRST_TOOL_MSGS) || 2;
 
 /**
  * Shrink old tool-result messages in-place when the turn's context grows too
  * large. Keeps message structure (assistant↔tool pairing + tool_call_ids) intact
  * for API validity — only replaces stale tool *content* with a short stub. No
  * extra model call. Shared by the Work/Incognito loop and the Sandbox loop.
+ *
+ * Protects the first `INTURN_KEEP_FIRST_TOOL_MSGS` and last `INTURN_KEEP_TOOL_MSGS`
+ * tool outputs; only the middle gets stubbed (mirrors Hermes' protect_first_n /
+ * protect_last_n).
  */
 export function shrinkOldToolOutputs(messages: Message[]): void {
   let total = 0;
@@ -86,8 +94,9 @@ export function shrinkOldToolOutputs(messages: Message[]): void {
 
   const toolIdx: number[] = [];
   for (let i = 0; i < messages.length; i++) if (messages[i].role === 'tool') toolIdx.push(i);
-  const stubCount = toolIdx.length - INTURN_KEEP_TOOL_MSGS;
-  for (let k = 0; k < stubCount; k++) {
+  const keepFirst = INTURN_KEEP_FIRST_TOOL_MSGS;
+  const keepLast = INTURN_KEEP_TOOL_MSGS;
+  for (let k = keepFirst; k < toolIdx.length - keepLast; k++) {
     const i = toolIdx[k];
     const content = (messages[i] as { content?: unknown }).content;
     if (typeof content === 'string' && content.length > 160) {
@@ -97,6 +106,59 @@ export function shrinkOldToolOutputs(messages: Message[]): void {
       } as Message;
     }
   }
+}
+
+/**
+ * Prompt caching (#2): mark the static prefix (system prompt + tool schemas) with
+ * an OpenRouter/Anthropic `cache_control: ephemeral` breakpoint so it isn't re-
+ * billed at full price on every round. The system block is the one guaranteed-
+ * stable prefix every round (tools ride with it), so one breakpoint there caches
+ * ~1.2k tokens of overhead per round. OpenRouter strips the hint for providers
+ * that don't support it (e.g. DeepSeek already caches automatically), so this is
+ * safe across models. Off only when ICLAW_PROMPT_CACHE=off.
+ *
+ * Returns a NEW array (doesn't mutate `messages`) with the system content
+ * converted to the parts form Anthropic needs for a cache breakpoint.
+ */
+export function withPromptCaching(messages: Message[]): Message[] {
+  if (process.env.ICLAW_PROMPT_CACHE === 'off') return messages;
+  const i = messages.findIndex((m) => m.role === 'system');
+  if (i === -1) return messages;
+  const sys = messages[i];
+  if (typeof sys.content !== 'string' || !sys.content) return messages;
+  const out = messages.slice();
+  out[i] = {
+    role: 'system',
+    content: [
+      { type: 'text', text: sys.content, cache_control: { type: 'ephemeral' } },
+    ],
+  } as unknown as Message;
+  return out;
+}
+
+/**
+ * Tool-loop guardrail (#5): a turn can waste rounds (and tokens) re-issuing the
+ * SAME tool call with identical args — a stuck model retrying a failed read, or
+ * looping. Track call signatures; once one repeats past the limit, short-circuit
+ * with a nudge instead of executing it again (mirrors Hermes' tool_loop_guardrails).
+ */
+const TOOL_REPEAT_LIMIT = Math.max(1, Number(process.env.ICLAW_TOOL_REPEAT_LIMIT) || 3);
+
+export function makeToolGuard(): { check(name: string, rawArgs: string): string | null } {
+  const counts = new Map<string, number>();
+  return {
+    check(name: string, rawArgs: string): string | null {
+      const sig = `${name}:${rawArgs}`;
+      const n = (counts.get(sig) ?? 0) + 1;
+      counts.set(sig, n);
+      if (n > TOOL_REPEAT_LIMIT) {
+        return `Guardrail: you've already called ${name} with these exact arguments ${n - 1} times this turn ` +
+          `and got the same result. Not running it again. Change the arguments, try a different tool, ` +
+          `or tell the user what's blocking you.`;
+      }
+      return null;
+    },
+  };
 }
 
 const DEFAULT_SYSTEM = `Work Mode: read/search/edit/create files in the selected folders, run shell commands, and research the web (web_search then web_fetch).
@@ -198,6 +260,7 @@ export async function* runAgentTurn(
   let turnCached = 0;
   const dumpTurnId = newTurnId();
   const dumpMode = opts.incognito ? 'incognito' : 'work';
+  const guard = makeToolGuard();
 
   // Max tool-call rounds to prevent infinite loops (env-tunable: ICLAW_MAX_ROUNDS).
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -217,7 +280,7 @@ export async function* runAgentTurn(
       stream = await client.chat.completions.create(
         {
           model: opts.model,
-          messages,
+          messages: withPromptCaching(messages),
           tools: tools as unknown as OpenAI.Chat.ChatCompletionTool[],
           tool_choice: 'auto',
           stream: true,
@@ -316,7 +379,9 @@ export async function* runAgentTurn(
 
       yield { type: 'tool_start', name: tc.name, input: parsedArgs };
 
-      const result = await executeTool(tc.name as ToolName, parsedArgs, toolCtx);
+      // Guardrail: refuse to re-run an identical call that's already looping.
+      const blocked = guard.check(tc.name, tc.arguments);
+      const result = blocked ?? (await executeTool(tc.name as ToolName, parsedArgs, toolCtx));
 
       yield { type: 'tool_result', name: tc.name, result };
       while (pendingNotes.length) yield { type: 'note', note: pendingNotes.shift()! };

@@ -18,7 +18,7 @@ import { promisify } from 'node:util';
 
 import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
 import type { SavingsNote } from './agent/tools.js';
-import { shrinkOldToolOutputs } from './agent/loop.js';
+import { shrinkOldToolOutputs, withPromptCaching, makeToolGuard } from './agent/loop.js';
 import { dumpPrompt, newTurnId } from './agent/prompt-dump.js';
 
 const execFileAsync = promisify(execFile);
@@ -288,7 +288,7 @@ async function* runSecureAgentLoop(
   networkEnabled: boolean,
 ): AsyncGenerator<SecureEvent> {
   const OpenAI = (await import('openai')).default;
-  const { TOOL_DEFINITIONS, ANALYZE_LINK_TOOL, analyzeLink, clampMiddle, TOOL_OUTPUT_MAX_CHARS } =
+  const { TOOL_DEFINITIONS, ANALYZE_LINK_TOOL, analyzeLink, clampMiddle, compressCommandOutput, TOOL_OUTPUT_MAX_CHARS } =
     await import('./agent/tools.js');
 
   // analyze_link is appended (not part of core TOOL_DEFINITIONS) and runs its
@@ -312,6 +312,7 @@ async function* runSecureAgentLoop(
   let turnTokens = 0;
   let turnCached = 0;
   const dumpTurnId = newTurnId();
+  const guard = makeToolGuard();
   for (let round = 0; round < MAX_ROUNDS; round++) {
     // User pressed Stop between rounds → end cleanly (partial text already sent).
     if (opts.signal?.aborted) {
@@ -329,7 +330,7 @@ async function* runSecureAgentLoop(
       stream = await client.chat.completions.create(
         {
           model: opts.model,
-          messages,
+          messages: withPromptCaching(messages),
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           tools: tools as any,
           tool_choice: 'auto',
@@ -404,8 +405,11 @@ async function* runSecureAgentLoop(
       yield { type: 'tool_start', name: tc.name, input: args };
 
       let result: string;
-      if (tc.name === 'run_command') {
-        result = clampMiddle(await execInContainer(containerName, String(args.command ?? '')), TOOL_OUTPUT_MAX_CHARS);
+      const blocked = guard.check(tc.name, tc.arguments);
+      if (blocked) {
+        result = blocked;
+      } else if (tc.name === 'run_command') {
+        result = clampMiddle(compressCommandOutput(await execInContainer(containerName, String(args.command ?? ''))), TOOL_OUTPUT_MAX_CHARS);
       } else if (tc.name === 'write_file') {
         result = writeToWorkspace(workspaceDir, String(args.path ?? 'file.txt'), String(args.content ?? ''));
       } else if (tc.name === 'edit_file') {
