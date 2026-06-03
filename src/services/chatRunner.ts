@@ -934,12 +934,13 @@ async function runWorkModeTurn(opts: {
           onEvent({ type: 'text-delta', text: event.content });
         } else if (event.type === 'note') {
           // A tool delivered a cheap summary instead of the full content — surface
-          // the saving as a persistent chat note (rendered like other system rows).
+          // the saving as a friendly, jargon-free chat note (rendered like other
+          // system rows). Plain language: just the % and a thank-you.
           const n = event.note;
           const text =
-            `💸 Saved ~${n.savedPct}% cost — read the ${n.source} ` +
-            `(${n.fullChars.toLocaleString()} chars) and handed the model just the gist ` +
-            `(${n.deliveredChars.toLocaleString()} chars).`;
+            `💸 iClaw saved you ~${n.savedPct}% in cost while reading that link — ` +
+            `we pulled out just the important parts instead of the whole thing. ` +
+            `Thanks for being with us 💛`;
           const sys = messages.append(chatId, 'system', text, 'savings');
           wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
         } else if (event.type === 'done') {
