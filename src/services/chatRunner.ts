@@ -932,6 +932,16 @@ async function runWorkModeTurn(opts: {
         if (event.type === 'text') {
           accumulated += event.content;
           onEvent({ type: 'text-delta', text: event.content });
+        } else if (event.type === 'note') {
+          // A tool delivered a cheap summary instead of the full content — surface
+          // the saving as a persistent chat note (rendered like other system rows).
+          const n = event.note;
+          const text =
+            `💸 Saved ~${n.savedPct}% cost — read the ${n.source} ` +
+            `(${n.fullChars.toLocaleString()} chars) and handed the model just the gist ` +
+            `(${n.deliveredChars.toLocaleString()} chars).`;
+          const sys = messages.append(chatId, 'system', text, 'savings');
+          wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
         } else if (event.type === 'done') {
           if (accumulated.trim()) {
             // Stamp the assistant row with the actual turn mode (secure/work),

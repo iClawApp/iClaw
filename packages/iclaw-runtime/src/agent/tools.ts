@@ -246,6 +246,24 @@ export type ToolName =
   | 'list_files' | 'read_file' | 'read_summary' | 'search_files' | 'write_file' | 'edit_file'
   | 'run_command' | 'web_fetch' | 'web_search' | 'analyze_link';
 
+/**
+ * A token/cost saving worth surfacing in the chat. Emitted when a tool fed the
+ * main model a cheap SUMMARY instead of the full extracted content (e.g.
+ * analyze_link summary mode reads a long video transcript but hands the model
+ * only the gist). The loop forwards it as a `note` event → a chat system note.
+ */
+export interface SavingsNote {
+  kind: 'analyze_link';
+  /** Short human label for the source, e.g. "YouTube transcript". */
+  source: string;
+  /** Whole-percent of content NOT sent to the main model (1 - delivered/full). */
+  savedPct: number;
+  /** Chars of extracted content (what the model would have ingested otherwise). */
+  fullChars: number;
+  /** Chars actually delivered to the model (the summary). */
+  deliveredChars: number;
+}
+
 // ── Tool context (injected per-session) ──────────────────────────────────────
 
 export interface ToolContext {
@@ -285,6 +303,11 @@ export interface ToolContext {
   readAnywhere?: boolean;
   /** Called when agent wants to write — returns true if approved, false if rejected. */
   requestWriteApproval: (filePath: string, content: string) => Promise<boolean>;
+  /**
+   * Optional sink for a user-visible "saved N% cost" note (analyze_link summary
+   * mode). The agent loop wires this to forward a `note` event to the chat.
+   */
+  onNote?: (note: SavingsNote) => void;
 }
 
 /** Folders to validate reads against — empty (anywhere) for Incognito. */
@@ -314,7 +337,7 @@ export async function executeTool(
         if (!ctx.linkSandbox) {
           return 'analyze_link needs a sandbox container (Docker), which is unavailable here. Use web_fetch/web_search instead.';
         }
-        return await analyzeLink(args, { runInSandbox: ctx.linkSandbox, networkEnabled: true });
+        return await analyzeLink(args, { runInSandbox: ctx.linkSandbox, networkEnabled: true, onNote: ctx.onNote });
       default: return `Unknown tool: ${name}`;
     }
   } catch (err) {
@@ -680,6 +703,10 @@ async function webSearch(args: Record<string, unknown>): Promise<string> {
 const ANALYZE_LINK_FULL_MAX_CHARS = Number(process.env.ICLAW_ANALYZE_LINK_MAX) || 16_000;
 // Subtitle language priority (yt-dlp glob syntax). Tunable; first available wins.
 const ANALYZE_LINK_SUB_LANGS = process.env.ICLAW_ANALYZE_LINK_LANGS || 'en.*,uk.*';
+// Only surface a "saved N%" note when the win is real: the transcript is at
+// least this long AND we trimmed at least this fraction. Avoids noise on clips.
+const ANALYZE_LINK_SAVINGS_MIN_CHARS = 2_000;
+const ANALYZE_LINK_SAVINGS_MIN_PCT = 25;
 
 /** Single-quote a string for safe embedding in a bash command. */
 function shQuote(s: string): string {
@@ -777,7 +804,11 @@ function buildYouTubeSubsCommand(videoId: string, url: string): string {
  */
 export async function analyzeLink(
   args: Record<string, unknown>,
-  deps: { runInSandbox: (command: string) => Promise<string>; networkEnabled: boolean },
+  deps: {
+    runInSandbox: (command: string) => Promise<string>;
+    networkEnabled: boolean;
+    onNote?: (note: SavingsNote) => void;
+  },
 ): Promise<string> {
   const url = String(args.url ?? '').trim();
   if (!/^https?:\/\/\S+$/i.test(url)) return 'analyze_link needs an absolute http(s) URL.';
@@ -826,5 +857,23 @@ export async function analyzeLink(
   }
 
   const summary = await summarizeText(transcript, purpose);
+
+  // Cost win: the main model ingests this short summary instead of the whole
+  // transcript (which it would also re-read every subsequent round). Surface the
+  // saving as a chat note. Char-count is a transparent token proxy; gate on a
+  // real win so we don't post noise for tiny clips.
+  if (deps.onNote && transcript.length >= ANALYZE_LINK_SAVINGS_MIN_CHARS && summary.length < transcript.length) {
+    const savedPct = Math.round((1 - summary.length / transcript.length) * 100);
+    if (savedPct >= ANALYZE_LINK_SAVINGS_MIN_PCT) {
+      deps.onNote({
+        kind: 'analyze_link',
+        source: 'video transcript',
+        savedPct,
+        fullChars: transcript.length,
+        deliveredChars: summary.length,
+      });
+    }
+  }
+
   return `${header}Transcript summary${purpose ? ` (focus: ${purpose})` : ''}:\n\n${summary}`;
 }

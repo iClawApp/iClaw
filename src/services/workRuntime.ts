@@ -111,9 +111,21 @@ export async function abortWorkSession(sessionId: string): Promise<void> {
   await request('POST', `/sessions/${sessionId}/abort`);
 }
 
+/** A "saved N% cost" note from the runtime (e.g. analyze_link summary mode). */
+export interface RuntimeSavingsNote {
+  kind: string;
+  /** Short human label for the source, e.g. "video transcript". */
+  source: string;
+  /** Whole-percent of content not sent to the main model. */
+  savedPct: number;
+  fullChars: number;
+  deliveredChars: number;
+}
+
 export type WorkEvent =
   | { type: 'text'; content: string }
   | { type: 'tool'; name: string; input?: unknown }
+  | { type: 'note'; note: RuntimeSavingsNote }
   | { type: 'done'; tokens?: number; cached?: number }
   | { type: 'error'; message: string };
 

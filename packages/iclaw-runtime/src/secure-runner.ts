@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 
 import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
+import type { SavingsNote } from './agent/tools.js';
 import { shrinkOldToolOutputs } from './agent/loop.js';
 import { dumpPrompt, newTurnId } from './agent/prompt-dump.js';
 
@@ -294,6 +295,9 @@ async function* runSecureAgentLoop(
   // network work INSIDE this container, so it respects the same network gate.
   const tools = [...TOOL_DEFINITIONS, ANALYZE_LINK_TOOL];
 
+  // Buffer for analyze_link savings notes, flushed as `note` events per tool call.
+  const savingsNotes: SavingsNote[] = [];
+
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey: opts.apiKey,
@@ -417,12 +421,14 @@ async function* runSecureAgentLoop(
         result = await analyzeLink(args, {
           runInSandbox: (command) => execInContainer(containerName, command),
           networkEnabled,
+          onNote: (note) => savingsNotes.push(note),
         });
       } else {
         result = `Tool not available in secure mode: ${tc.name}`;
       }
 
       yield { type: 'tool_result', name: tc.name, result };
+      while (savingsNotes.length) yield { type: 'note', note: savingsNotes.shift()! };
       messages.push({ role: 'tool', tool_call_id: `call_${i}`, content: result });
     }
     shrinkOldToolOutputs(messages); // mid-turn compaction (see loop.ts)

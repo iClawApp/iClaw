@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, executeTool, type ToolContext, type ToolName } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, executeTool, type ToolContext, type ToolName, type SavingsNote } from './tools.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 
 export interface AgentOptions {
@@ -40,6 +40,7 @@ export type AgentEvent =
   | { type: 'text'; content: string }
   | { type: 'tool_start'; name: string; input: unknown }
   | { type: 'tool_result'; name: string; result: string }
+  | { type: 'note'; note: SavingsNote }
   | { type: 'approval_request'; changeId: string; path: string; content: string }
   | { type: 'done'; tokens?: number; cached?: number }
   | { type: 'error'; message: string };
@@ -157,6 +158,9 @@ export async function* runAgentTurn(
     apiKey: opts.apiKey,
   });
 
+  // A tool may emit a savings note mid-call (analyze_link). Collect it here and
+  // flush as a `note` event right after the tool_result it belongs to.
+  const pendingNotes: SavingsNote[] = [];
   const toolCtx: ToolContext = {
     allowedFolders: opts.allowedFolders,
     folderAccess: opts.folderAccess,
@@ -165,6 +169,7 @@ export async function* runAgentTurn(
     readOnly: opts.incognito,
     readAnywhere: opts.incognito,
     requestWriteApproval: opts.onWriteApproval ?? (async () => true),
+    onNote: (note) => pendingNotes.push(note),
   };
 
   // Per-mode tool set. Incognito is read-only, so don't ship write_file/edit_file
@@ -314,6 +319,7 @@ export async function* runAgentTurn(
       const result = await executeTool(tc.name as ToolName, parsedArgs, toolCtx);
 
       yield { type: 'tool_result', name: tc.name, result };
+      while (pendingNotes.length) yield { type: 'note', note: pendingNotes.shift()! };
 
       messages.push({
         role: 'tool',
