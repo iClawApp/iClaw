@@ -3,7 +3,8 @@
  */
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, statSync, readFileSync, copyFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 import { runAgentTurn, type Message } from './agent/loop.js';
 import type { AgentEvent } from './agent/loop.js';
@@ -45,6 +46,18 @@ export interface SessionOptions {
    * clobbers a live session's accumulated context.
    */
   history?: { role: string; content: string }[];
+}
+
+/**
+ * A file the user dropped into the chat, forwarded from the host. `path` is the
+ * absolute on-disk location of the persisted upload (the runtime shares the
+ * host filesystem), so the runtime can read it directly — to stage it into a
+ * Secure workspace, grant Work read access, or base64 an image for vision.
+ */
+export interface RuntimeAttachment {
+  path: string;
+  mimeType: string;
+  fileName: string;
 }
 
 interface Session {
@@ -465,7 +478,67 @@ async function compactHistoryIfNeeded(session: Session): Promise<void> {
   ];
 }
 
-export async function sendMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number): Promise<void> {
+/**
+ * Make dropped files usable by this turn's agent, and describe them to the model.
+ *
+ *  - Images → base64 data URLs returned in `images`, shown as vision blocks so
+ *    the model literally sees them (e.g. a screenshot).
+ *  - Other files → made readable, then pointed at by path in `noticeText`:
+ *      · Secure: copied into the workspace dir (appears at /workspace/<name>).
+ *      · Work/Incognito: the file already lives on the host; we grant the
+ *        session read access to its folder and give the model the absolute path.
+ *
+ * `noticeText` is appended to the user's message so the model KNOWS a file was
+ * attached (the bug being fixed: previously the agent had no idea) and how to
+ * reach it. Best-effort per file — a failure to stage one is reported inline,
+ * never throws.
+ */
+function stageAttachments(
+  session: Session,
+  attachments: RuntimeAttachment[] | undefined,
+): { noticeText: string; images: string[] } {
+  if (!attachments?.length) return { noticeText: '', images: [] };
+  const images: string[] = [];
+  const lines: string[] = [];
+
+  for (const att of attachments) {
+    if (att.mimeType.startsWith('image/')) {
+      try {
+        const b64 = readFileSync(att.path).toString('base64');
+        images.push(`data:${att.mimeType};base64,${b64}`);
+        lines.push(`- "${att.fileName}" — image, shown to you directly in this message.`);
+        continue;
+      } catch {
+        // Fall through and treat it as a regular file (path notice only).
+      }
+    }
+
+    if (session.opts.secure && session.secureWorkspaceDir) {
+      const safe = basename(att.fileName) || basename(att.path);
+      try {
+        copyFileSync(att.path, join(session.secureWorkspaceDir, safe));
+        lines.push(`- "${att.fileName}" (${att.mimeType}) — in /workspace; read_file (path "${safe}") only if you need its contents.`);
+      } catch (err) {
+        lines.push(`- "${att.fileName}" — could not be staged (${err instanceof Error ? err.message : String(err)}).`);
+      }
+    } else {
+      // Work / Incognito read the host filesystem directly. Grant this session
+      // read access to the upload's folder so validatePath lets read_file in.
+      const dir = dirname(att.path);
+      if (!session.opts.allowedFolders.includes(dir)) {
+        session.opts.allowedFolders = [...session.opts.allowedFolders, dir];
+      }
+      lines.push(`- "${att.fileName}" (${att.mimeType}) — available at "${att.path}"; read_file it only if you need its contents.`);
+    }
+  }
+
+  const noticeText = lines.length
+    ? `\n\n[The user attached ${attachments.length} file(s) to THIS message:\n${lines.join('\n')}\nUse them if relevant to the request.]`
+    : '';
+  return { noticeText, images };
+}
+
+export async function sendMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number, attachments?: RuntimeAttachment[]): Promise<void> {
   const session = sessions.get(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
 
@@ -488,6 +561,12 @@ export async function sendMessage(sessionId: string, content: string, networkEna
   const abort = new AbortController();
   session.abort = abort;
 
+  // Make any dropped files reachable + tell the model about them. `messageText`
+  // (content + notice) is what goes to the model AND into history, so follow-up
+  // turns remember a file was shared; `images` ride as vision blocks for one turn.
+  const { noticeText, images } = stageAttachments(session, attachments);
+  const messageText = content + noticeText;
+
   if (session.opts.secure) {
     const workspaceDir = session.secureWorkspaceDir!;
     const netEnabled = session.opts.networkEnabled ?? false;
@@ -504,7 +583,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
 
     const secureGen = runSecureTurn(
       session.history.map((m) => ({ role: m.role as string, content: String(m.content) })),
-      content,
+      messageText,
       {
         apiKey: session.opts.apiKey,
         model: session.opts.model,
@@ -513,6 +592,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
         networkEnabled: netEnabled,
         systemPrompt: session.opts.systemPrompt,
         signal: abort.signal,
+        images,
       },
     );
     let assistantText = '';
@@ -531,7 +611,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
       if (session.abort === abort) session.abort = undefined;
     }
     if (assistantText) {
-      session.history.push({ role: 'user', content });
+      session.history.push({ role: 'user', content: messageText });
       session.history.push({ role: 'assistant', content: assistantText });
     }
     return;
@@ -583,7 +663,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     }
   }
 
-  const gen = runAgentTurn(session.history, content, {
+  const gen = runAgentTurn(session.history, messageText, {
     apiKey: session.opts.apiKey,
     model: session.opts.model,
     allowedFolders: session.opts.allowedFolders,
@@ -593,6 +673,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     incognito,
     systemPrompt: session.opts.systemPrompt,
     signal: abort.signal,
+    images,
     onWriteApproval: async (filePath, fileContent) => {
       emit(session, { type: 'approval_request', changeId: randomUUID(), path: filePath, content: fileContent });
       return true;
@@ -615,7 +696,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
   }
 
   if (assistantText) {
-    session.history.push({ role: 'user', content });
+    session.history.push({ role: 'user', content: messageText });
     session.history.push({ role: 'assistant', content: assistantText });
   }
 }

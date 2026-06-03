@@ -16,6 +16,7 @@ import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 
+import type OpenAI from 'openai';
 import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
 import type { SavingsNote } from './agent/tools.js';
 import { shrinkOldToolOutputs, withPromptCaching, makeToolGuard } from './agent/loop.js';
@@ -240,6 +241,8 @@ export async function* runSecureTurn(
     networkEnabled?: boolean;
     systemPrompt?: string;
     signal?: AbortSignal;
+    /** Image data URLs for dropped files — shown to the model as vision blocks. */
+    images?: string[];
   },
 ): AsyncGenerator<SecureEvent> {
   const networkEnabled = opts.networkEnabled ?? false;
@@ -252,6 +255,7 @@ export async function* runSecureTurn(
       model: opts.model,
       allowedFolders: [opts.workspaceDir],
       signal: opts.signal,
+      images: opts.images,
       systemPrompt: opts.systemPrompt ??
         `You are running in a secure isolated sandbox.
 You can run commands and read/write files in /workspace only.
@@ -303,10 +307,21 @@ async function* runSecureAgentLoop(
     apiKey: opts.apiKey,
   });
 
+  // Dropped images → multimodal user message (text + vision blocks), seen once.
+  const userMsg: OpenAI.Chat.ChatCompletionUserMessageParam = opts.images?.length
+    ? {
+        role: 'user',
+        content: [
+          { type: 'text', text: userMessage },
+          ...opts.images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+        ],
+      }
+    : { role: 'user', content: userMessage };
+
   const messages: Message[] = [
     { role: 'system', content: opts.systemPrompt ?? 'You are a helpful assistant in a secure sandbox.' },
     ...history,
-    { role: 'user', content: userMessage },
+    userMsg,
   ];
 
   let turnTokens = 0;

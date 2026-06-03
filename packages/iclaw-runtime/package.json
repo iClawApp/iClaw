@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@vscode/ripgrep": "^1.18.0",
     "openai": "^6.41.0"
   },
   "devDependencies": {

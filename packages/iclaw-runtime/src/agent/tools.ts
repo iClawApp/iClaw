@@ -6,8 +6,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createRequire } from 'node:module';
 
 import { validatePath, isWriteAllowed, SecurityError } from './security.js';
+
+// Bundled ripgrep binary — shipped as a dependency so it's ALWAYS present (no
+// per-host "is rg installed?" branching, no grep fallback). We drive it with
+// our own ignore list (below), so it works the same with or without git.
+// @vscode/ripgrep is CommonJS with no type declarations, so pull rgPath through
+// createRequire rather than an ESM import (avoids the export-shape mismatch).
+const { rgPath } = createRequire(import.meta.url)('@vscode/ripgrep') as { rgPath: string };
 
 const execFileAsync = promisify(execFile);
 
@@ -26,6 +34,20 @@ const MAX_LIST_ENTRIES = Number(process.env.ICLAW_MAX_LIST_ENTRIES) || 200;
 // search_files: cap matching lines returned per file so a high-frequency term
 // can't dump a whole file into history.
 const MAX_MATCH_LINES_PER_FILE = Number(process.env.ICLAW_MAX_MATCH_LINES) || 30;
+
+// Directories to never descend into when searching. Different stacks bury huge
+// generated trees in different places (JS node_modules, Rust target, Python
+// .venv/__pycache__, Java .gradle, …); scanning them is what made unscoped
+// searches time out. This is OUR list, fed to ripgrep as ignore globs, so it
+// applies whether or not the user has git. ripgrep additionally skips binary
+// files (videos/photos/archives/office docs) and follows no symlinks — exactly
+// the behaviour a non-technical user's media-heavy folders need.
+// Override the whole set with ICLAW_SEARCH_EXCLUDE_DIRS (comma-separated).
+const SEARCH_EXCLUDE_DIRS = (process.env.ICLAW_SEARCH_EXCLUDE_DIRS
+  ? process.env.ICLAW_SEARCH_EXCLUDE_DIRS.split(',').map((s) => s.trim()).filter(Boolean)
+  : ['node_modules', '.git', '.svn', '.hg', '.cache', '.next', '.nuxt', 'dist', 'build',
+     'out', 'target', 'vendor', '.venv', 'venv', '.tox', '__pycache__', '.mypy_cache',
+     '.pytest_cache', '.gradle', '.idea', 'Pods', '.terraform', '.tools']);
 
 // Cheap-model summarizer (read_summary, web_fetch summarize). Moves the cost of
 // reading big content onto a cheap model; the expensive model + history only
@@ -113,15 +135,16 @@ export const TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'search_files',
-      description: 'Recursively search files for a string.',
+      description: 'Find files. To LOCATE a file by its name (e.g. "where is config.json?"), pass "name" — it returns just the matching paths, cheaply. To search file CONTENTS, pass "query". Omit "path" to cover ALL folders you have access to in one call — do that instead of searching them one by one.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'Directory to search' },
-          query: { type: 'string', description: 'String to find' },
-          filePattern: { type: 'string', description: 'Optional glob, e.g. "*.ts"' },
+          path: { type: 'string', description: 'Directory to search. Omit to search every accessible folder in one call.' },
+          name: { type: 'string', description: 'Locate files by NAME or fragment (case-insensitive), returning paths only. Use this to find where a file lives — not "query".' },
+          query: { type: 'string', description: 'Search file CONTENTS for this string. Use "name" instead when you just want to locate a file.' },
+          filePattern: { type: 'string', description: 'Optional glob to limit which files "query" searches, e.g. "*.ts"' },
         },
-        required: ['path', 'query'],
+        required: [],
       },
     },
   },
@@ -432,34 +455,129 @@ async function readSummary(args: Record<string, unknown>, ctx: ToolContext): Pro
 }
 
 async function searchFiles(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
-  const dir = validatePath(args.path as string, readFolders(ctx));
-  const query = args.query as string;
+  const query = (args.query as string | undefined) ?? '';
+  const name = (args.name as string | undefined)?.trim();
   const pattern = (args.filePattern as string | undefined) ?? '';
+  const rawPath = (args.path as string | undefined)?.trim();
 
-  const grepArgs = ['-r', '--include', pattern || '*', '-l', '-m', '1', query, dir];
-  try {
-    const { stdout } = await execFileAsync('grep', grepArgs, { timeout: COMMAND_TIMEOUT });
-    const files = stdout.trim().split('\n').filter(Boolean).slice(0, 20);
-    if (files.length === 0) return 'No matches found.';
-
-    // Show matching lines for the first 5 files. Cap matches PER FILE (-m) so a
-    // file with thousands of hits can't dump itself into history (resent every
-    // round), and clamp the combined output as a backstop.
-    const results: string[] = [];
-    for (const file of files.slice(0, 5)) {
-      const { stdout: ctx2 } = await execFileAsync(
-        'grep', ['-n', '-m', String(MAX_MATCH_LINES_PER_FILE), query, file], { timeout: 5000 },
-      ).catch(() => ({ stdout: '' }));
-      const trimmed = ctx2.trim();
-      const lineCount = trimmed ? trimmed.split('\n').length : 0;
-      const more = lineCount >= MAX_MATCH_LINES_PER_FILE ? `\n…[more matches — refine the query]` : '';
-      results.push(`${file}:\n${trimmed}${more}`);
-    }
-    if (files.length > 5) results.push(`...and ${files.length - 5} more files`);
-    return clampMiddle(results.join('\n\n'), MAX_CMD_OUTPUT_CHARS);
-  } catch {
-    return 'No matches found.';
+  if (!name && !query) {
+    return 'Provide "name" to locate a file by its name, or "query" to search file contents.';
   }
+
+  // Resolve the search roots. With an explicit path, validate it lies inside the
+  // allowed folders (unchanged). WITHOUT one, sweep EVERY allowed folder in a
+  // single ripgrep call — a Work chat can grant many folders, and making the
+  // model search them one-by-one burns rounds and bloats context. ripgrep takes
+  // multiple path args, so all folders are covered in one process.
+  // (Incognito reads anywhere and has no fixed root set, so it still needs an
+  // explicit path — there's no sane "search the whole disk" default.)
+  let roots: string[];
+  if (rawPath) {
+    try {
+      roots = [validatePath(rawPath, readFolders(ctx))];
+    } catch (e) {
+      // Don't just bounce the model with a bare error — point it at the cheap
+      // fix (omit path → all allowed folders) so it doesn't waste a round
+      // guessing another path.
+      if (e instanceof SecurityError) {
+        const allowed = readFolders(ctx);
+        return `Security error: ${e.message}. Tip: omit "path" to search every allowed folder at once` +
+          `${allowed.length ? ` (${allowed.join(', ')})` : ''}.`;
+      }
+      throw e;
+    }
+  } else {
+    const allowed = readFolders(ctx);
+    if (allowed.length === 0) {
+      return 'Provide a "path" to search — no folder is granted to search across.';
+    }
+    roots = allowed;
+  }
+
+  const excludeGlobs = SEARCH_EXCLUDE_DIRS.flatMap((d) => ['-g', `!**/${d}/**`]);
+
+  // NAME mode: locate files by filename across all roots and return paths only —
+  // no content, no per-line context. This is the right primitive for "where is
+  // file X" (a content grep for a filename matches every log/trace that mentions
+  // it, dumping huge irrelevant lines). `rg --files` lists files honouring our
+  // excludes; --iglob filters by name (case-insensitive, friendlier for users).
+  if (name) {
+    const glob = /[*?]/.test(name) ? name : `*${name}*`;
+    const fileArgs = ['--files', '--hidden', '--no-messages', ...excludeGlobs, '--iglob', glob, '--', ...roots];
+    let out = '';
+    try {
+      ({ stdout: out } = await execFileAsync(rgPath, fileArgs, { timeout: COMMAND_TIMEOUT, maxBuffer: 8 * 1024 * 1024 }));
+    } catch (err) {
+      const e = err as { killed?: boolean; signal?: string; stdout?: string };
+      if (e.killed || e.signal === 'SIGTERM' || e.signal === 'SIGKILL') {
+        return 'Search did not finish in time (the tree is large). This is NOT a confirmation that the file is missing — search a more specific subfolder.';
+      }
+      out = e.stdout ?? '';
+    }
+    const found = out.trim().split('\n').filter(Boolean).slice(0, 40);
+    if (found.length === 0) return 'No files found with that name.';
+    const more = out.trim().split('\n').filter(Boolean).length > 40 ? '\n…[more — narrow the name]' : '';
+    return found.join('\n') + more;
+  }
+
+  // CONTENT mode: find the files that contain `query`. ripgrep skips binary
+  // files (videos / photos / archives / office docs) and never follows symlinks
+  // for free; we pass our own exclude list as ignore globs so generated/
+  // dependency trees are pruned with or without git. This keeps the search fast
+  // and — paired with the honest timeout below — truthful (an unscoped grep over
+  // a 40GB+ tree used to time out, misreported as "No matches found", i.e. a
+  // false "file doesn't exist").
+  // --hidden searches dotfiles too (rg still always skips .git); -F = literal
+  // (plain substring); --max-filesize guards against slurping a giant file.
+  const rgArgs = ['--hidden', '--no-messages', '-l', '-F', '-m', '1',
+    '--max-filesize', `${MAX_FILE_BYTES}`,
+    ...(pattern ? ['-g', pattern] : []),
+    ...excludeGlobs,
+    '--', query, ...roots];
+
+  let stdout = '';
+  try {
+    ({ stdout } = await execFileAsync(rgPath, rgArgs, { timeout: COMMAND_TIMEOUT, maxBuffer: 8 * 1024 * 1024 }));
+  } catch (err) {
+    const e = err as { killed?: boolean; signal?: string; code?: number; stdout?: string };
+    // CRITICAL: a timeout/kill is NOT "no matches". Say so explicitly so the
+    // model narrows the search instead of telling the user the file is absent.
+    if (e.killed || e.signal === 'SIGTERM' || e.signal === 'SIGKILL') {
+      return (
+        `Search did not finish in time (the tree is large` +
+        `${pattern ? '' : ' and no filePattern was given, so every file was scanned'}). ` +
+        `This is NOT a confirmation that the file is missing. Narrow it: search a more ` +
+        `specific subfolder, or pass filePattern (e.g. "*.sh").`
+      );
+    }
+    // ripgrep exits 1 on no matches, 2 on partial read errors (matches on
+    // readable files may still be in stdout). Keep whatever it printed.
+    stdout = e.stdout ?? '';
+  }
+
+  const files = stdout.trim().split('\n').filter(Boolean).slice(0, 20);
+  if (files.length === 0) return 'No matches found.';
+
+  // Show matching lines for the first 5 files. Cap matches PER FILE (-m) so a
+  // file with thousands of hits can't dump itself into history (resent every
+  // round), and clamp the combined output as a backstop.
+  const results: string[] = [];
+  for (const file of files.slice(0, 5)) {
+    // --max-columns caps each match LINE's length: minified JS / JSON / log
+    // (.jsonl trace) files can have single lines tens of thousands of chars
+    // long, and dumping even a few of them blew the token budget. -preview keeps
+    // a short head of the line instead of omitting it outright.
+    const { stdout: ctx2 } = await execFileAsync(
+      rgPath, ['-n', '--no-messages', '-F', '-m', String(MAX_MATCH_LINES_PER_FILE),
+        '--max-columns', '200', '--max-columns-preview', '--', query, file], { timeout: 5000 },
+    ).catch(() => ({ stdout: '' }));
+    const trimmed = ctx2.trim();
+    const lineCount = trimmed ? trimmed.split('\n').length : 0;
+    const more = lineCount >= MAX_MATCH_LINES_PER_FILE ? `\n…[more matches — refine the query]` : '';
+    results.push(`${file}:\n${trimmed}${more}`);
+  }
+  if (files.length > 5) results.push(`...and ${files.length - 5} more files`);
+  return clampMiddle(results.join('\n\n'), MAX_CMD_OUTPUT_CHARS);
 }
 
 async function writeFile(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {

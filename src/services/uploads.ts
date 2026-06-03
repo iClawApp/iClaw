@@ -198,6 +198,32 @@ export function persistIncomingAttachments(
 }
 
 /**
+ * Resolve persisted attachments to absolute on-disk paths for the iclaw-runtime
+ * (Work/Secure/Incognito). The runtime shares the host filesystem, so it reads
+ * the file directly — no base64 roundtrip. Rows with an unexpected URL are
+ * skipped (rather than thrown) so one bad attachment can't sink the whole turn.
+ */
+export function runtimeAttachmentsFromPersisted(
+  chatId: number,
+  persisted: MessageAttachment[],
+): { path: string; mimeType: string; fileName: string }[] {
+  if (!persisted.length) return [];
+  const chatDir = join(resolveUploadsRoot(), String(chatId));
+  const prefix = `/uploads/${chatId}/`;
+  const out: { path: string; mimeType: string; fileName: string }[] = [];
+  for (const att of persisted) {
+    const url = att.url || '';
+    if (!url.startsWith(prefix)) continue;
+    out.push({
+      path: join(chatDir, basename(url)),
+      mimeType: att.mimeType || 'application/octet-stream',
+      fileName: att.fileName || 'attachment',
+    });
+  }
+  return out;
+}
+
+/**
  * Rebuild OpenClaw gateway attachment payloads from rows already on disk
  * (queued messages persist files at enqueue time).
  */

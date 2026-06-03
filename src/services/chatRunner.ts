@@ -19,6 +19,7 @@ import { wsHub } from './wsHub';
 import {
   gatewayAttachmentsFromPersisted,
   persistIncomingAttachments,
+  runtimeAttachmentsFromPersisted,
   type IncomingAttachment,
   type ProcessedAttachment,
 } from './uploads';
@@ -454,9 +455,12 @@ async function runTurnLocked(opts: {
     }
   };
 
-  // Work / Secure Mode — routes to iclaw-runtime, returns early.
+  // Work / Secure Mode — routes to iclaw-runtime, returns early. Forward dropped
+  // files so the runtime agent can read them (Work) / stage them (Secure) and
+  // see images — otherwise the model has no idea a file was attached.
   if (mode === 'work' || mode === 'secure') {
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent });
+    const runtimeAttachments = runtimeAttachmentsFromPersisted(chatId, persistedAttachments);
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }
@@ -847,6 +851,8 @@ async function runWorkModeTurn(opts: {
   beforeMsgId?: number;
   /** Original (stored) user text for skill review — without injected project prefix. */
   reviewUserMessage?: string;
+  /** Dropped files (absolute host paths) to forward to the runtime agent. */
+  attachments?: { path: string; mimeType: string; fileName: string }[];
 }): Promise<void> {
   const { chatId, content, onEvent } = opts;
 
@@ -917,7 +923,7 @@ async function runWorkModeTurn(opts: {
   }
 
   try {
-    await sendWorkMessage(sessionId, content, opts.networkEnabled, opts.ttlDays);
+    await sendWorkMessage(sessionId, content, opts.networkEnabled, opts.ttlDays, opts.attachments);
   } catch (err) {
     // Session may have expired — retry with a fresh one
     workSessions.delete(chatId);

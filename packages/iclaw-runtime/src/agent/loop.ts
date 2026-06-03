@@ -30,6 +30,12 @@ export interface AgentOptions {
    */
   incognito?: boolean;
   systemPrompt?: string;
+  /**
+   * Image data URLs (`data:<mime>;base64,…`) for THIS turn's user message —
+   * files the user dropped into the chat. Sent once as vision blocks so the
+   * model literally sees them; NOT stored in history (one-shot, expensive).
+   */
+  images?: string[];
   onWriteApproval?: (filePath: string, content: string) => Promise<boolean>;
   /** Abort the in-flight turn (user pressed Stop). Stops the model stream and
    *  ends the loop cleanly between rounds. */
@@ -248,10 +254,24 @@ export async function* runAgentTurn(
     ...(opts.linkSandbox ? [ANALYZE_LINK_TOOL] : []),
   ];
 
+  // When the user dropped image(s), send the turn's user message as a
+  // multimodal content array (text + image blocks) so a vision model sees them.
+  // History keeps only the text form (the caller stores `userMessage`), so the
+  // images aren't re-sent every round.
+  const userMsg: OpenAI.Chat.ChatCompletionUserMessageParam = opts.images?.length
+    ? {
+        role: 'user',
+        content: [
+          { type: 'text', text: userMessage },
+          ...opts.images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+        ],
+      }
+    : { role: 'user', content: userMessage };
+
   const messages: Message[] = [
     { role: 'system', content: buildSystemPrompt(opts) },
     ...history,
-    { role: 'user', content: userMessage },
+    userMsg,
   ];
 
   // Token usage across all rounds (dev-mode display). `turnCached` = how many

@@ -16,7 +16,7 @@
  */
 import http from 'node:http';
 
-import { createSession, getSession, deleteSession, abortSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, sweepExpiredSessions, startContainerReaper, loadPersistedSessions } from './sessions.js';
+import { createSession, getSession, deleteSession, abortSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, sweepExpiredSessions, startContainerReaper, loadPersistedSessions, type RuntimeAttachment } from './sessions.js';
 import { killOrphanContainers } from './secure-runner.js';
 import { killOrphanWorkContainers } from './work-container.js';
 
@@ -100,9 +100,16 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'messages') {
     const sessionId = parts[1];
     if (!getSession(sessionId)) return json(res, 404, { error: 'session not found' });
-    const body = await readBody(req) as { content?: string; networkEnabled?: boolean; ttlDays?: number };
+    const body = await readBody(req) as { content?: string; networkEnabled?: boolean; ttlDays?: number; attachments?: RuntimeAttachment[] };
     if (!body.content?.trim()) return json(res, 400, { error: 'content required' });
-    sendMessage(sessionId, body.content, body.networkEnabled, body.ttlDays).catch(console.error);
+    const attachments = Array.isArray(body.attachments)
+      ? body.attachments.filter(
+          (a): a is RuntimeAttachment =>
+            !!a && typeof a.path === 'string' && !!a.path &&
+            typeof a.mimeType === 'string' && typeof a.fileName === 'string',
+        )
+      : undefined;
+    sendMessage(sessionId, body.content, body.networkEnabled, body.ttlDays, attachments).catch(console.error);
     return json(res, 202, { queued: true });
   }
 

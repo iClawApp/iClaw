@@ -86,11 +86,19 @@ export async function createWorkSession(opts: CreateSessionOptions = {}): Promis
   return (res.data as { sessionId: string }).sessionId;
 }
 
+/** A dropped file forwarded to the runtime: absolute host path + metadata. */
+export interface RuntimeAttachmentInput {
+  path: string;
+  mimeType: string;
+  fileName: string;
+}
+
 /** Send a user message to a work session. */
-export async function sendWorkMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number): Promise<void> {
+export async function sendWorkMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number, attachments?: RuntimeAttachmentInput[]): Promise<void> {
   const body: Record<string, unknown> = { content };
   if (networkEnabled !== undefined) body.networkEnabled = networkEnabled;
   if (ttlDays !== undefined) body.ttlDays = ttlDays;
+  if (attachments?.length) body.attachments = attachments;
   const res = await request('POST', `/sessions/${sessionId}/messages`, body);
   if (res.status !== 202) {
     throw new Error(`Failed to send work message: ${JSON.stringify(res.data)}`);
