@@ -83,6 +83,11 @@
       </svg>
       <span>Drop file here</span>
     </div>
+    <!-- Shown when Full Power (OpenClaw) is the selected mode but the gateway is
+         off — disables the input the same way the drop overlay does. -->
+    <div class="composer-exec-overlay" id="composer-exec-overlay" aria-hidden="true">
+      <span>OpenClaw is off. Turn it on, or switch mode.</span>
+    </div>
     <input type="file" id="composer-file-input" class="composer-file-input" multiple hidden />
     <!-- menus stay here so JS can position them relative to the field -->
     <div id="composer-attach-menu" class="menu composer-attach-menu" role="menu" aria-label="Attachments" hidden>

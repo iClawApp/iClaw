@@ -5090,6 +5090,43 @@ code {
   transition: opacity 0.12s ease;
 }
 
+/* Full Power selected while OpenClaw is off: cover the input with a message,
+ * same treatment as the drag-drop overlay. */
+.composer-exec-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 16px;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--text) 6%, var(--surface));
+  color: var(--muted);
+  font-size: 0.95em;
+  font-weight: 500;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 2;
+}
+.composer.is-exec-disabled .composer-exec-overlay { opacity: 1; }
+.composer.is-exec-disabled .composer-field > :not(.composer-exec-overlay) {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* Full Power menu item when the gateway is unreachable: muted, still clickable
+ * (selecting it surfaces the input overlay that explains why). */
+.composer-mode-menu-item.is-unavailable {
+  opacity: 0.5;
+}
+.composer-mode-menu-item.is-unavailable .menu-item__title::after {
+  content: ' · needs OpenClaw';
+  font-weight: 400;
+  color: var(--muted);
+}
+
 /* ---------- Message attachments (persisted user uploads) ---------- */
 
 .msg-attachments {

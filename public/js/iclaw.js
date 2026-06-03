@@ -100,6 +100,39 @@
     // Incognito: tint the surface + show the "nothing saved" banner, and start a
     // fresh ephemeral session each time the mode is (re)entered.
     if (typeof syncIncognitoSurface === 'function') syncIncognitoSurface(next);
+    syncExecuteAvailability();
+  }
+
+  // ── Full Power (Execute) gating ───────────────────────────────────────────
+  // Execute routes to the OpenClaw gateway; the runtime modes don't. When the
+  // gateway is off we mute the Full Power option and, if it's the selected mode,
+  // cover the input with an explanation (same treatment as the drag-drop overlay)
+  // so the user switches mode instead of typing into a dead end.
+  const composerExecOverlay = document.getElementById('composer-exec-overlay');
+
+  /** True only when OpenClaw is actually connected (badge 'ok'). */
+  function isExecuteAvailable() {
+    const b = document.getElementById('gateway-badge');
+    return !b || b.classList.contains('ok'); // no badge → don't block
+  }
+
+  /** Reflect gateway availability on the Full Power option + the input overlay. */
+  function syncExecuteAvailability() {
+    const avail = isExecuteAvailable();
+    if (composerModeMenu) {
+      const execItem = composerModeMenu.querySelector(
+        '.composer-mode-menu-item[data-mode="execute"]',
+      );
+      if (execItem) execItem.classList.toggle('is-unavailable', !avail);
+    }
+    const blocked = !avail && getComposerMode() === 'execute';
+    if (form) form.classList.toggle('is-exec-disabled', blocked);
+    if (composerExecOverlay) {
+      composerExecOverlay.setAttribute('aria-hidden', blocked ? 'false' : 'true');
+    }
+    if (input) input.disabled = blocked;
+    const sb = document.getElementById('composer-send-btn');
+    if (sb) sb.disabled = blocked;
   }
 
   // ── Incognito (ephemeral, never persisted) ────────────────────────────────
@@ -4552,6 +4585,8 @@
     }
     const baseUrl = badge.dataset.baseUrl || '';
     badge.title = baseUrl;
+    // Gateway state changed → re-evaluate the Full Power option / input overlay.
+    if (typeof syncExecuteAvailability === 'function') syncExecuteAvailability();
   }
 
   (function initGatewayOfflineBanner() {
@@ -5819,6 +5854,12 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (startedOnDraft && !draftProjectLocked) return;
+      // Full Power needs OpenClaw — don't send into a dead gateway. The input is
+      // already disabled in this state; this is the belt-and-braces guard.
+      if (getComposerMode() === 'execute' && !isExecuteAvailable()) {
+        syncExecuteAvailability();
+        return;
+      }
       // If the schedule menu was just opened by a long-press, the bubbling
       // click on the send button would otherwise submit a regular message.
       if (scheduleMenuJustOpened || isScheduleMenuOpen()) {

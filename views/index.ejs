@@ -112,7 +112,7 @@
 
       <section class="queue" id="queue" aria-live="polite"></section>
 
-      <% if (!agentsError) { %>
+      <% if (!agentsError || openRouterReady) { %>
       <div id="draft-composer-wrap" class="draft-composer-wrap" hidden>
         <%- include('partials/composer') %>
       </div>
