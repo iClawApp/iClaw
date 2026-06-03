@@ -60,7 +60,7 @@
       id="draft-body"
     >
       <div class="draft-pick-stage" id="draft-pick-stage">
-        <% if (agentsError) { %>
+        <% if (agentsError && !openRouterReady) { %>
         <%- include('partials/gatewayError', { agentsError, gatewayUp, openclawBaseUrl }) %>
         <% } else { %>
         <section

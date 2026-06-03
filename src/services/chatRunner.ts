@@ -249,7 +249,6 @@ async function runTurnLocked(opts: {
   } = opts;
   const mode: ChatMode = opts.mode ?? DEFAULT_MODE;
   const chat = chats.get(chatId)!;
-  const sessionKey = await ensureSession(chatId);
   const projectId = chat.project_id ?? null;
 
   let storedUserContent = content;
@@ -463,6 +462,10 @@ async function runTurnLocked(opts: {
   }
 
   // Execute: the chat's own main-agent OpenClaw session, full tools.
+  // Provision the gateway session lazily, HERE — so Work / Safe work / Incognito
+  // chats (which use iclaw-runtime, not the gateway) can start and run even when
+  // OpenClaw is unreachable, as long as an OpenRouter key is configured.
+  const sessionKey = await ensureSession(chatId);
   let gatewayAccumulated = '';
   let aborted = false;
   let authoritativeText: string | null = null;
