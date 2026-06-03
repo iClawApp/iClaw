@@ -316,15 +316,47 @@ export type ToolName =
  * only the gist). The loop forwards it as a `note` event → a chat system note.
  */
 export interface SavingsNote {
-  kind: 'analyze_link';
+  /** Which tool produced the saving — drives the chat-note wording. */
+  kind: 'analyze_link' | 'read_file' | 'read_summary' | 'run_command' | 'search';
   /** Short human label for the source, e.g. "YouTube transcript". */
   source: string;
-  /** Whole-percent of content NOT sent to the main model (1 - delivered/full). */
-  savedPct: number;
-  /** Chars of extracted content (what the model would have ingested otherwise). */
-  fullChars: number;
-  /** Chars actually delivered to the model (the summary). */
-  deliveredChars: number;
+  /**
+   * Whole-percent of content NOT sent to the main model (1 - delivered/full).
+   * Present only when we actually hold BOTH numbers as a byproduct of normal
+   * work (read_file/read_summary/run_command/analyze_link). Omitted for `search`,
+   * where ripgrep trims long lines but never reports how many bytes it dropped —
+   * so we surface a quantity-free "trimmed oversized output" note instead of a
+   * fabricated percentage.
+   */
+  savedPct?: number;
+  /** Chars the model would have ingested otherwise (full). */
+  fullChars?: number;
+  /** Chars actually delivered to the model. */
+  deliveredChars?: number;
+}
+
+// Only post a "saved you X%" note when the win is real and worth mentioning —
+// a tiny truncation isn't worth a chat row. Both gates must pass.
+const SAVINGS_MIN_FULL_CHARS = 4_000;
+const SAVINGS_MIN_PCT = 30;
+
+/**
+ * Emit a "saved you X%" note IFF we already hold both the full and delivered
+ * sizes (zero extra work — just a subtraction) and the saving clears the gates.
+ * Used by read_file / read_summary / run_command truncation. Never fabricates a
+ * baseline; if the numbers aren't both in hand, the caller simply doesn't call.
+ */
+function emitTruncationSaving(
+  ctx: ToolContext,
+  kind: SavingsNote['kind'],
+  source: string,
+  fullChars: number,
+  deliveredChars: number,
+): void {
+  if (!ctx.onNote || fullChars < SAVINGS_MIN_FULL_CHARS || deliveredChars >= fullChars) return;
+  const savedPct = Math.round((1 - deliveredChars / fullChars) * 100);
+  if (savedPct < SAVINGS_MIN_PCT) return;
+  ctx.onNote({ kind, source, savedPct, fullChars, deliveredChars });
 }
 
 // ── Tool context (injected per-session) ──────────────────────────────────────
@@ -435,6 +467,9 @@ async function readFile(args: Record<string, unknown>, ctx: ToolContext): Promis
   }
   const content = fs.readFileSync(filePath, 'utf-8');
   if (content.length > MAX_FILE_READ_CHARS) {
+    // We already read the whole file; handing the model only the head is a real,
+    // free-to-measure saving (full = content.length, delivered = the cap).
+    emitTruncationSaving(ctx, 'read_file', path.basename(filePath), content.length, MAX_FILE_READ_CHARS);
     return content.slice(0, MAX_FILE_READ_CHARS) +
       `\n\n…[truncated: showing first ${MAX_FILE_READ_CHARS.toLocaleString()} of ${content.length.toLocaleString()} chars. Use search_files for specific content, or read_summary for the gist.]`;
   }
@@ -450,6 +485,8 @@ async function readSummary(args: Record<string, unknown>, ctx: ToolContext): Pro
   const content = fs.readFileSync(filePath, 'utf-8');
   if (!content.trim()) return '(empty file)';
   const summary = await summarizeText(content, args.focus ? String(args.focus) : undefined);
+  // Model ingests the short summary instead of the full file — both sizes in hand.
+  emitTruncationSaving(ctx, 'read_summary', path.basename(filePath), content.length, summary.length);
   return `Summary of ${path.basename(filePath)} (${content.length.toLocaleString()} chars). ` +
     `Call read_file for the exact content if you need to edit it.\n\n${summary}`;
 }
@@ -562,6 +599,7 @@ async function searchFiles(args: Record<string, unknown>, ctx: ToolContext): Pro
   // file with thousands of hits can't dump itself into history (resent every
   // round), and clamp the combined output as a backstop.
   const results: string[] = [];
+  let trimmedLines = 0; // long match lines ripgrep clamped (markers it printed)
   for (const file of files.slice(0, 5)) {
     // --max-columns caps each match LINE's length: minified JS / JSON / log
     // (.jsonl trace) files can have single lines tens of thousands of chars
@@ -571,12 +609,19 @@ async function searchFiles(args: Record<string, unknown>, ctx: ToolContext): Pro
       rgPath, ['-n', '--no-messages', '-F', '-m', String(MAX_MATCH_LINES_PER_FILE),
         '--max-columns', '200', '--max-columns-preview', '--', query, file], { timeout: 5000 },
     ).catch(() => ({ stdout: '' }));
+    trimmedLines += (ctx2.match(/\[\.\.\. omitted end of long line\]/g) || []).length;
     const trimmed = ctx2.trim();
     const lineCount = trimmed ? trimmed.split('\n').length : 0;
     const more = lineCount >= MAX_MATCH_LINES_PER_FILE ? `\n…[more matches — refine the query]` : '';
     results.push(`${file}:\n${trimmed}${more}`);
   }
   if (files.length > 5) results.push(`...and ${files.length - 5} more files`);
+  // Qualitative saving: ripgrep never tells us HOW MANY bytes it dropped from a
+  // long line, only that it did. So when several oversized lines were trimmed we
+  // post a quantity-free note (no fabricated %), gated so it's not noise.
+  if (ctx.onNote && trimmedLines >= 2) {
+    ctx.onNote({ kind: 'search', source: 'your files' });
+  }
   return clampMiddle(results.join('\n\n'), MAX_CMD_OUTPUT_CHARS);
 }
 
@@ -660,7 +705,11 @@ async function runCommand(args: Record<string, unknown>, ctx: ToolContext): Prom
   const out = await ctx.runShell(command, cwd);
   // Compress noise (ANSI, progress bars, repeated lines) THEN cap verbose output
   // (test runs, build logs) so the cap keeps real signal, not flooding history.
-  return clampMiddle(compressCommandOutput(out), MAX_CMD_OUTPUT_CHARS);
+  const delivered = clampMiddle(compressCommandOutput(out), MAX_CMD_OUTPUT_CHARS);
+  // The command's full output is already in hand; if we capped it, that's a real
+  // saving (the model would otherwise ingest all of it, every round).
+  emitTruncationSaving(ctx, 'run_command', 'command output', out.length, delivered.length);
+  return delivered;
 }
 
 // ── web_fetch (read-only research) ────────────────────────────────────────────

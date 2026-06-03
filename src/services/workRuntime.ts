@@ -124,10 +124,10 @@ export interface RuntimeSavingsNote {
   kind: string;
   /** Short human label for the source, e.g. "video transcript". */
   source: string;
-  /** Whole-percent of content not sent to the main model. */
-  savedPct: number;
-  fullChars: number;
-  deliveredChars: number;
+  /** Whole-percent saved. Absent for quantity-free notes (search line-trimming). */
+  savedPct?: number;
+  fullChars?: number;
+  deliveredChars?: number;
 }
 
 export type WorkEvent =

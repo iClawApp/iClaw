@@ -935,6 +935,10 @@ async function runWorkModeTurn(opts: {
 
   await new Promise<void>((resolve) => {
     let accumulated = '';
+    // Savings notes arrive mid-stream (when a tool truncates), but we want them
+    // rendered BELOW the assistant's reply, not above it. So buffer them and
+    // flush as system rows only after the assistant row is appended on `done`.
+    const savingsTexts: string[] = [];
     const unsubscribe = subscribeWorkEvents(
       sessionId!,
       (event) => {
@@ -942,15 +946,20 @@ async function runWorkModeTurn(opts: {
           accumulated += event.content;
           onEvent({ type: 'text-delta', text: event.content });
         } else if (event.type === 'note') {
-          // A tool delivered a cheap summary instead of the full content — surface
-          // the saving as a friendly, jargon-free chat note (rendered like other
-          // system rows). Plain language: just the % and a thank-you.
+          // A tool gave the model less than the full content — surface the saving
+          // as a friendly, plain-language chat note (no jargon: no "tokens",
+          // "output", "command"). When we have a real measured percentage we show
+          // it; otherwise (search line-trimming, where ripgrep never reports how
+          // much it dropped) we stay quantity-free rather than invent a number.
+          // The "ніж звичайні помічники" framing is a category claim anchored to
+          // the naive approach (load the whole file) — never a per-competitor
+          // benchmark, which we don't measure.
           const n = event.note;
           const text =
-            `iClaw saved you ${n.savedPct}% in cost while reading that link. ` +
-            `Thanks for being with us 💚`;
-          const sys = messages.append(chatId, 'system', text, 'savings');
-          wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+            typeof n.savedPct === 'number'
+              ? `iClaw обробив це на ${n.savedPct}% економніше, ніж звичайні помічники 💚`
+              : `iClaw обробив це економніше, ніж звичайні помічники 💚`;
+          if (!savingsTexts.includes(text)) savingsTexts.push(text); // dedupe within a turn
         } else if (event.type === 'done') {
           if (accumulated.trim()) {
             // Stamp the assistant row with the actual turn mode (secure/work),
@@ -981,6 +990,11 @@ async function runWorkModeTurn(opts: {
                 interval: WORK_SKILL_REVIEW_INTERVAL,
               });
             }
+          }
+          // Now that the reply row exists, drop the savings note(s) UNDER it.
+          for (const text of savingsTexts) {
+            const sys = messages.append(chatId, 'system', text, 'savings');
+            wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
           }
           unsubscribe();
           resolve();
