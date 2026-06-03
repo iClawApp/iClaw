@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, executeTool, type ToolContext, type ToolName } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, executeTool, type ToolContext, type ToolName } from './tools.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 
 export interface AgentOptions {
@@ -17,6 +17,12 @@ export interface AgentOptions {
   folderAccess?: { path: string; readonly: boolean }[];
   /** Shell backend for run_command (Docker sandbox). Omit to disable commands. */
   runShell?: (command: string, cwd: string) => Promise<string>;
+  /**
+   * Sandbox backend for analyze_link (yt-dlp). Runs in the session's container
+   * so yt-dlp never parses untrusted data on the host. Omit to drop the tool
+   * (no Docker → analyze_link not offered, falls back to web_fetch/web_search).
+   */
+  linkSandbox?: (command: string) => Promise<string>;
   /**
    * Incognito (read-only, ephemeral): file reads are unrestricted (read
    * anywhere; secrets still refused), write_file is disabled, run_command is
@@ -155,6 +161,7 @@ export async function* runAgentTurn(
     allowedFolders: opts.allowedFolders,
     folderAccess: opts.folderAccess,
     runShell: opts.runShell,
+    linkSandbox: opts.linkSandbox,
     readOnly: opts.incognito,
     readAnywhere: opts.incognito,
     requestWriteApproval: opts.onWriteApproval ?? (async () => true),
@@ -167,7 +174,12 @@ export async function* runAgentTurn(
   const fileTools = opts.incognito
     ? TOOL_DEFINITIONS.filter((t) => t.function.name !== 'write_file' && t.function.name !== 'edit_file')
     : TOOL_DEFINITIONS;
-  const tools = [...fileTools, READ_SUMMARY_TOOL, WEB_FETCH_TOOL, WEB_SEARCH_TOOL];
+  // analyze_link (yt-dlp in the session container) is offered only when a
+  // sandbox backend is wired (Docker up). Without it, the model uses web_fetch.
+  const tools = [
+    ...fileTools, READ_SUMMARY_TOOL, WEB_FETCH_TOOL, WEB_SEARCH_TOOL,
+    ...(opts.linkSandbox ? [ANALYZE_LINK_TOOL] : []),
+  ];
 
   const messages: Message[] = [
     { role: 'system', content: buildSystemPrompt(opts) },

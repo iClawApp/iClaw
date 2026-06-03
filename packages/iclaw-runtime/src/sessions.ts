@@ -550,9 +550,12 @@ export async function sendMessage(sessionId: string, content: string, networkEna
   // kernel rejects all writes, matching the read-only contract.
   const incognito = !!session.opts.incognito;
   let runShell: ((command: string, cwd: string) => Promise<string>) | undefined;
-  if (session.opts.folderAccess?.length && await dockerAvailable()) {
+  let linkSandbox: ((command: string) => Promise<string>) | undefined;
+  if (await dockerAvailable()) {
+    // Validate the explicitly-chosen folders into bind mounts (empty when none
+    // selected — analyze_link still gets a network-only container).
     const mounts: WorkMount[] = [];
-    for (const f of session.opts.folderAccess) {
+    for (const f of session.opts.folderAccess ?? []) {
       try {
         mounts.push({ path: validateMountRoot(f.path), readonly: incognito ? true : f.readonly });
       } catch (err) {
@@ -562,8 +565,17 @@ export async function sendMessage(sessionId: string, content: string, networkEna
         });
       }
     }
+    const image = await resolveWorkImage();
+    // analyze_link runs yt-dlp inside the session's container (warm-reused, so
+    // yt-dlp self-installs once) — never on the host. Offered even with no
+    // folders: the container then has no bind mounts, only network. Runs at "/"
+    // since the helper command writes to its own /workspace scratch paths.
+    linkSandbox = async (command) => {
+      const name = await ensureWorkContainer(session, mounts, image);
+      return execInWorkContainer(name, command, '/');
+    };
+    // run_command needs a real folder to operate in, so it stays gated on mounts.
     if (mounts.length) {
-      const image = await resolveWorkImage();
       runShell = async (command, cwd) => {
         const name = await ensureWorkContainer(session, mounts, image);
         return execInWorkContainer(name, command, cwd);
@@ -577,6 +589,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     allowedFolders: session.opts.allowedFolders,
     folderAccess: session.opts.folderAccess,
     runShell,
+    linkSandbox,
     incognito,
     systemPrompt: session.opts.systemPrompt,
     signal: abort.signal,

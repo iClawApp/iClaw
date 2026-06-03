@@ -244,7 +244,7 @@ export const ANALYZE_LINK_TOOL = {
 
 export type ToolName =
   | 'list_files' | 'read_file' | 'read_summary' | 'search_files' | 'write_file' | 'edit_file'
-  | 'run_command' | 'web_fetch' | 'web_search';
+  | 'run_command' | 'web_fetch' | 'web_search' | 'analyze_link';
 
 // ── Tool context (injected per-session) ──────────────────────────────────────
 
@@ -264,6 +264,13 @@ export interface ToolContext {
    * fallback that keeps read-only an honest guarantee.
    */
   runShell?: (command: string, cwd: string) => Promise<string>;
+  /**
+   * Runs an analyze_link helper command inside the session's sandbox container
+   * (warm-reused; yt-dlp self-installs once). Injected so yt-dlp — which parses
+   * untrusted YouTube data — never runs on the host. Omitted when no Docker →
+   * analyze_link returns a guidance message.
+   */
+  linkSandbox?: (command: string) => Promise<string>;
   /**
    * Incognito (read-only): write_file is denied outright (nothing ever hits
    * disk), and run_command is only reachable via a read-only sandbox.
@@ -303,6 +310,11 @@ export async function executeTool(
       case 'run_command': return await runCommand(args, ctx);
       case 'web_fetch': return await webFetch(args);
       case 'web_search': return await webSearch(args);
+      case 'analyze_link':
+        if (!ctx.linkSandbox) {
+          return 'analyze_link needs a sandbox container (Docker), which is unavailable here. Use web_fetch/web_search instead.';
+        }
+        return await analyzeLink(args, { runInSandbox: ctx.linkSandbox, networkEnabled: true });
       default: return `Unknown tool: ${name}`;
     }
   } catch (err) {
