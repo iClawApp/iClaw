@@ -466,19 +466,21 @@ async function runTurnLocked(opts: {
   let gatewayAccumulated = '';
   let aborted = false;
   let authoritativeText: string | null = null;
+  let turnUsage: { tokens: number | null; cached: number | null } = { tokens: null, cached: null };
 
   activeRunSessionKeys.set(chatId, sessionKey);
   try {
-    ({
-      text: gatewayAccumulated,
-      aborted,
-      authoritativeText,
-    } = await openclawWs.runTurn({
+    const turn = await openclawWs.runTurn({
       sessionKey,
       message: gatewayMessageBase,
       onEvent,
       attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
-    }));
+    });
+    gatewayAccumulated = turn.text;
+    aborted = turn.aborted;
+    authoritativeText = turn.authoritativeText;
+    // `usage` is absent from older stubs/mocks — keep the null default then.
+    if (turn.usage) turnUsage = turn.usage;
   } finally {
     activeRunSessionKeys.delete(chatId);
   }
@@ -520,7 +522,12 @@ async function runTurnLocked(opts: {
   const skipAssistant = aborted && finalText.trim().length === 0;
   const assistantMsg = skipAssistant
     ? null
-    : messages.append(chatId, 'assistant', finalText, aborted ? 'aborted' : null);
+    : messages.append(
+        chatId, 'assistant', finalText, aborted ? 'aborted' : null, null, null,
+        // Stamp the execute (OpenClaw) mode + dev-mode token usage resolved from
+        // the gateway history slice, mirroring the Work/Secure path.
+        'execute', turnUsage.tokens, turnUsage.cached,
+      );
   if (assistantMsg) {
     wsHub.broadcastToChat(chatId, {
       type: 'message-appended',

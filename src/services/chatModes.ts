@@ -62,8 +62,8 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
   },
   {
     id: 'secure',
-    label: 'Sandbox',
-    description: 'Runs in a locked sandbox - safe for untrusted code or scripts',
+    label: 'Safe work & Internet research',
+    description: 'Locked sandbox - safely run untrusted code and research the web, isolated from your system',
     enabled: true,
     runtimeBacked: true,
     ephemeral: false,

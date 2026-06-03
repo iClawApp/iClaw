@@ -37,41 +37,29 @@ Hit **Share** in any chat to get an encrypted link. The chat is encrypted in you
 
 Powered by [iClaw-cloud](https://github.com/iClawApp/iClaw-cloud) — defaults to `https://app.iclaw.digital`.
 
-## Chat modes (Ask / Execute)
+## Chat modes
 
-The composer has a small mode selector. **Execute** (default) is the full agent —
-OpenClaw can use files, tools, shell, and the browser, exactly as before.
-**Ask** is for quick questions, explanations, and planning with no agent
-execution. The selected mode is stored per message (`messages.mode`) and rides
-along the `frontend → WS → chatRunner` path. Missing/unknown modes fall back to
-`execute`, so old chats and older clients keep working.
+The composer has a small mode selector. The selected mode is stored per message
+(`messages.mode`) and rides the `frontend → WS → chatRunner` path. Missing/unknown
+modes fall back to `execute`, so old chats and older clients keep working. Modes
+are config-driven in [`src/services/chatModes.ts`](src/services/chatModes.ts) (the
+catalog also lists disabled placeholders so new modes can be added without
+touching call sites or the DB — the column is plain `TEXT`).
 
-Modes are config-driven in [`src/services/chatModes.ts`](src/services/chatModes.ts)
-(it also lists disabled placeholders — Research, Image, Safe Run — so new modes
-can be added without touching call sites or the DB; the column is plain `TEXT`).
+| Mode | What it does | Backend |
+| --- | --- | --- |
+| **Full Power** (default) | The full OpenClaw agent — files, tools, shell, browser. | OpenClaw Gateway |
+| **Work** | AI edits files in folders you pick; you approve every change. | iClaw runtime |
+| **Safe work & Internet research** | Locked Docker sandbox — run untrusted code and research the web, isolated from your system. | iClaw runtime |
+| **Incognito** | Private, read-only research — reads files & the web, never writes, nothing saved. | iClaw runtime |
 
-### How Ask is tool-less
-
-Ask doesn't run an OpenClaw agent at all — it's a direct
-[OpenRouter](https://openrouter.ai) chat completion
-([`src/services/openRouter.ts`](src/services/openRouter.ts)) sent **without any
-`tools`**, so the model has nothing to call: no shell, no file edits, no
-browser. The recent thread (both prior Ask and Execute turns, read from iClaw's
-own store) is replayed as context so Ask isn't blind, and Stop aborts the HTTP
-stream.
-
-Ask needs an OpenRouter key, added in **Settings → "Voice & Ask"** (stored in the
-local DB, not an env var; the page also shows live spend). The same key powers
-voice messages (speech-to-text) and cheap chat-title generation. Without it the
-composer **hides** the Ask option and the mic, any posted `ask` is treated as
-`execute`, and titles fall back to the OpenClaw path. The model defaults to
-`google/gemini-2.0-flash`.
-
-**Context both ways.** Execute→Ask works via the thread snapshot replayed to the
-Ask call. Ask→Execute works via `chat.inject`: after each Ask turn a compact
-`[Ask]` note (the Q&A) is appended to the chat's main OpenClaw session with no
-model run, so a later Execute turn ("ok, now do what we discussed") sees it. The
-note carries secret placeholders, not plaintext.
+**Full Power** routes to the gateway exactly as before. The other three run on
+the bundled **iClaw runtime** (`packages/iclaw-runtime`): the agent loop runs on
+the host and reaches [OpenRouter](https://openrouter.ai), while tool/shell
+execution is isolated in a per-turn Docker sandbox. They therefore need **Docker**
+running and an **OpenRouter key** (Settings); without either they're unavailable
+and the composer falls back to Full Power. See [AGENTS.md](AGENTS.md) for the
+runtime architecture.
 
 ## Remote Access (alpha)
 

@@ -1,1 +1,0 @@
-/app/src/mcp-tools/self-mod.instructions.md

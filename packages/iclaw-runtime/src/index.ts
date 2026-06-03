@@ -1,8 +1,10 @@
 /**
- * iClaw Runtime — Work Mode HTTP server.
+ * iClaw Runtime — HTTP server for the Work / Safe work / Incognito modes.
  *
- * Model-agnostic agent loop via OpenRouter.
- * No Docker, no NanoClaw routing, no SQLite.
+ * Model-agnostic agent loop runs HERE on the host (via OpenRouter); tool/shell
+ * execution is isolated in a per-turn Docker sandbox (secure-runner.ts /
+ * work-container.ts). No SQLite — sessions live in memory + the secure-mode
+ * workspace dir under ~/.iclaw/secure.
  *
  * API:
  *   POST   /sessions                  → { sessionId }

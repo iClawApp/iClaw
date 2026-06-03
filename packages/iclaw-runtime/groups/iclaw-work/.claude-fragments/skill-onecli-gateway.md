@@ -1,1 +1,0 @@
-/app/skills/onecli-gateway/instructions.md

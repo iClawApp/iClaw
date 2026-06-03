@@ -1,33 +1,40 @@
 # syntax=docker/dockerfile:1.7
-# iClaw Secure-Mode sandbox image (slim).
+# iClaw sandbox image — the SINGLE image shared by Safe work and Work mode.
 #
 # A long-lived `sleep` container the host docker-execs into, one turn at a time
-# (see src/secure-runner.ts). Ships a small, high-value CLI toolset (~10MB over
-# the node base). Browsing (Chromium + agent-browser, ~870MB) was removed to keep
-# the image lean — the agent reaches the web via `curl` instead.
+# (Safe work: src/secure-runner.ts) or bind-mounts the user's folders into for
+# `run_command` (Work: src/work-container.ts → resolveWorkImage prefers this tag).
 #
-# The agent can self-install more tools at runtime WITHOUT root into
-# /workspace/.tools (on PATH), which lives in the bind-mounted, TTL-reaped
-# workspace, so installs persist across container restarts and auto-delete when
-# the workspace expires.
+# Toolset is curated 80/20: the ~20% of CLIs that ~80% of agent turns reach for,
+# and nothing heavy. Deliberately EXCLUDED: a browser (Chromium + agent-browser
+# ~870MB — web access is via curl/wget, and our search runs a different path),
+# language toolchains/compilers, and other large runtimes. The agent self-installs
+# the long tail at runtime WITHOUT root into /workspace/.tools (on PATH), which
+# lives in the bind-mounted, TTL-reaped workspace — installs persist across
+# container restarts within a session and auto-delete when the workspace expires.
+# For a heavier base (e.g. a Go/Rust toolchain), point ICLAW_WORK_IMAGE at a
+# custom image instead of bloating this shared one.
 #
 # Built via container/build-secure.sh → tag `iclaw-secure:latest`.
 # Runs as the non-root `node` user.
 
 FROM node:22-slim
 
-# High-value CLIs. curl + ca-certificates also power web access and non-root
-# self-installs (downloading static binaries). git is baked in (not apt-installed
-# at runtime) because the container runs as non-root `node` and is recreated after
-# idle reap — a runtime `apt install git` can't work and wouldn't persist anyway.
-# Keep in sync with the Work-mode image (container/Dockerfile), which also ships git.
+# Curated 80/20 CLIs. curl/wget + ca-certificates power web access and non-root
+# self-installs (downloading static binaries). git, python3 and an editor cover
+# the bulk of real agent work. All baked in (not apt-installed at runtime)
+# because the container runs as non-root `node` and is recreated after idle reap
+# — a runtime `apt install` can't work and wouldn't persist anyway.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        wget \
         git \
         ripgrep \
+        python3 \
+        nano \
         unzip \
         zip \
         xz-utils \

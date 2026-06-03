@@ -31,10 +31,13 @@ const COMMAND_TIMEOUT = Number(process.env.ICLAW_WORK_COMMAND_TIMEOUT) || 60_000
 // `docker run` auto-pulls the image on first use; allow time for that.
 const START_TIMEOUT = Number(process.env.ICLAW_WORK_START_TIMEOUT) || 300_000;
 
-// Slim, zero-maintenance default: a public image that already ships bash, git
-// and node. Resolved lazily — see resolveWorkImage().
-const SLIM_IMAGE = process.env.ICLAW_WORK_SLIM_IMAGE || 'node:22';
-const SECURE_IMAGE = process.env.ICLAW_SECURE_IMAGE || 'iclaw-secure:latest';
+// The shared iClaw sandbox image — ONE image for both Safe work and Work mode
+// (container/secure-sandbox.Dockerfile, 80/20 toolset). Resolved lazily.
+const SANDBOX_IMAGE = process.env.ICLAW_SECURE_IMAGE || 'iclaw-secure:latest';
+// Last-resort fallback when the shared image hasn't been built yet: a public
+// base that already ships bash, git and node, so Work still runs (with a leaner
+// toolset) on a fresh checkout. Auto-pulled by `docker run`.
+const FALLBACK_IMAGE = process.env.ICLAW_WORK_SLIM_IMAGE || 'node:22';
 
 export interface WorkMount {
   path: string;
@@ -67,20 +70,26 @@ async function imageExists(image: string): Promise<boolean> {
 
 /**
  * Pick the image for Work Mode commands. Order:
- *   1. ICLAW_WORK_IMAGE — explicit override (e.g. a python/go toolchain).
- *   2. iclaw-secure:latest if already built — zero extra download.
- *   3. Slim public default (node:22) — pulled on first run.
+ *   1. ICLAW_WORK_IMAGE — explicit override (e.g. a heavier python/go toolchain).
+ *   2. The shared sandbox image (iclaw-secure:latest) — the canonical choice,
+ *      identical to what Safe work uses, so one build serves both modes.
+ *   3. Fallback public base (node:22) only when the shared image isn't built —
+ *      logged as a warning so the leaner toolset isn't a silent surprise.
  * Cached after the first resolve.
  */
 export async function resolveWorkImage(): Promise<string> {
   if (resolvedImage) return resolvedImage;
   if (process.env.ICLAW_WORK_IMAGE) {
     resolvedImage = process.env.ICLAW_WORK_IMAGE;
-  } else if (await imageExists(SECURE_IMAGE)) {
-    log.info('Work Mode reusing existing secure image for commands', { image: SECURE_IMAGE });
-    resolvedImage = SECURE_IMAGE;
+  } else if (await imageExists(SANDBOX_IMAGE)) {
+    resolvedImage = SANDBOX_IMAGE;
   } else {
-    resolvedImage = SLIM_IMAGE;
+    log.warn(
+      'Shared sandbox image not built — Work Mode falling back to a leaner base. ' +
+        'Build it with `npm run build:secure-image` for the full toolset.',
+      { fallback: FALLBACK_IMAGE, sandbox: SANDBOX_IMAGE },
+    );
+    resolvedImage = FALLBACK_IMAGE;
   }
   return resolvedImage;
 }

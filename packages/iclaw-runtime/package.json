@@ -1,7 +1,7 @@
 {
   "name": "@iclaw/runtime",
   "version": "0.1.0",
-  "description": "iClaw Work Mode runtime — lightweight NanoClaw fork, OpenRouter-only, browser-first.",
+  "description": "iClaw agent runtime — agent loop on the host, Docker sandbox per turn (Work / Safe work / Incognito), OpenRouter-only.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -12,13 +12,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "better-sqlite3": "^11.3.0",
-    "cron-parser": "5.5.0",
-    "kleur": "^4.1.5",
     "openai": "^6.41.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

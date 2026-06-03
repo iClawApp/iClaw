@@ -14,9 +14,16 @@ import { gatewayWs, type RawGatewayFrame } from './gatewayWs';
 import { toolActivityLabel, lifecycleActivityLabel } from './toolLabels';
 import {
   extractAssistantText,
+  extractTurnUsage,
   resolveFromHistorySlice,
   sliceFromLastUser,
 } from './turnReply';
+
+/** Token usage for one turn, resolved from the gateway history slice. */
+export interface TurnUsage {
+  tokens: number | null;
+  cached: number | null;
+}
 
 // ---------- shapes ---------------------------------------------------------
 
@@ -39,6 +46,8 @@ export interface HistoryMessage {
   timestamp?: number;
   toolName?: string;
   isError?: boolean;
+  /** Per-message token usage (assistant rows) — powers the dev-mode badge. */
+  usage?: unknown;
 }
 
 export type TurnEvent =
@@ -121,7 +130,9 @@ const HISTORY_FETCH_LIMIT = 1000;
 const HISTORY_FETCH_RETRIES = 3;
 const HISTORY_FETCH_RETRY_DELAY_MS = 150;
 
-async function fetchAuthoritativeFromHistory(sessionKey: string): Promise<string | null> {
+async function fetchAuthoritativeFromHistory(
+  sessionKey: string,
+): Promise<{ text: string | null; usage: TurnUsage }> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < HISTORY_FETCH_RETRIES; attempt++) {
     try {
@@ -129,8 +140,12 @@ async function fetchAuthoritativeFromHistory(sessionKey: string): Promise<string
         'chat.history',
         { sessionKey, limit: HISTORY_FETCH_LIMIT },
       );
-      const resolved = resolveFromHistorySlice(sliceFromLastUser(res.messages ?? []));
-      return resolved.trim().length > 0 ? resolved : null;
+      const slice = sliceFromLastUser(res.messages ?? []);
+      const resolved = resolveFromHistorySlice(slice);
+      return {
+        text: resolved.trim().length > 0 ? resolved : null,
+        usage: extractTurnUsage(slice),
+      };
     } catch (err) {
       lastErr = err;
       if (attempt < HISTORY_FETCH_RETRIES - 1) {
@@ -144,7 +159,7 @@ async function fetchAuthoritativeFromHistory(sessionKey: string): Promise<string
     'attempts:',
     lastErr instanceof Error ? lastErr.message : String(lastErr),
   );
-  return null;
+  return { text: null, usage: { tokens: null, cached: null } };
 }
 
 function pickAuthoritativeReplyText(opts: {
@@ -440,6 +455,12 @@ export const openclawWs = {
      * `null` on abort or when nothing usable was found.
      */
     authoritativeText: string | null;
+    /**
+     * Token usage for this turn, summed across the assistant rows of the
+     * `chat.history` slice. `{ null, null }` on abort or when the gateway
+     * reported no usage (powers the dev-mode token badge — see chatRunner).
+     */
+    usage: TurnUsage;
   }> {
     let runId: string | null = null;
     let accumulatedText = '';
@@ -761,10 +782,12 @@ export const openclawWs = {
 
     // Canonical reply: transcript/history first, then last `chat:final`, then stream.
     let authoritativeText: string | null = null;
+    let usage: TurnUsage = { tokens: null, cached: null };
     if (!wasAborted) {
       const fromHistory = await fetchAuthoritativeFromHistory(opts.sessionKey);
+      usage = fromHistory.usage;
       authoritativeText = pickAuthoritativeReplyText({
-        fromHistory,
+        fromHistory: fromHistory.text,
         fromTranscript: transcriptAssistantText,
         fromLastFinal: lastFinalText || accumulatedText,
       });
@@ -775,6 +798,7 @@ export const openclawWs = {
       text: lastFinalText || accumulatedText,
       aborted: wasAborted,
       authoritativeText,
+      usage,
     };
   },
 };
