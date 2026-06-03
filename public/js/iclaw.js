@@ -108,7 +108,7 @@
   // gateway is off we mute the Full Power option and, if it's the selected mode,
   // cover the input with an explanation (same treatment as the drag-drop overlay)
   // so the user switches mode instead of typing into a dead end.
-  const composerExecOverlay = document.getElementById('composer-exec-overlay');
+  const composerExecMsg = document.getElementById('composer-exec-msg');
 
   // Live "is the gateway usable for Full Power" flag. Seeded from the server
   // (the gateway badge exists only on the new-chat header, so fall back to the
@@ -137,8 +137,8 @@
     }
     const blocked = !avail && getComposerMode() === 'execute';
     if (form) form.classList.toggle('is-exec-disabled', blocked);
-    if (composerExecOverlay) {
-      composerExecOverlay.setAttribute('aria-hidden', blocked ? 'false' : 'true');
+    if (composerExecMsg) {
+      composerExecMsg.setAttribute('aria-hidden', blocked ? 'false' : 'true');
     }
     if (input) input.disabled = blocked;
     const sb = document.getElementById('composer-send-btn');
