@@ -938,9 +938,8 @@ async function runWorkModeTurn(opts: {
           // system rows). Plain language: just the % and a thank-you.
           const n = event.note;
           const text =
-            `💸 iClaw saved you ~${n.savedPct}% in cost while reading that link — ` +
-            `we pulled out just the important parts instead of the whole thing. ` +
-            `Thanks for being with us 💛`;
+            `iClaw saved you ${n.savedPct}% in cost while reading that link. ` +
+            `Thanks for being with us 💚`;
           const sys = messages.append(chatId, 'system', text, 'savings');
           wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
         } else if (event.type === 'done') {
