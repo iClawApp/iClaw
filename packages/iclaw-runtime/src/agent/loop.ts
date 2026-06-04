@@ -172,6 +172,15 @@ Prefer edit_file over rewriting whole files. For a large file you only need the 
 Be efficient: chain shell steps with && in one call, don't repeat commands. Never go outside the allowed folders.
 Keep replies short — don't echo back long file listings or file contents; summarize in a line or two.`;
 
+/**
+ * System-install policy (Section 3): the agent must not change the user's
+ * computer. Shared by Work and Safe prompts. run_command runs in an isolated
+ * sandbox, so installs there are harmless AND don't reach the host — which is
+ * exactly why we say it in the prompt rather than guarding run_command (a guard
+ * would wrongly block legitimate in-sandbox installs).
+ */
+export const HOST_INSTALL_POLICY = `System changes (important): your run_command runs in an isolated sandbox, so installing tools there is fine for the task but does NOT install anything on the user's actual computer. Never attempt or claim to make host system changes — installing Python, Node, Git, Docker, Homebrew or system packages on their machine, or editing their PATH. If a task genuinely needs something installed on their computer, tell them it changes their system, give the official install command or link, and ask them to run it themselves.`;
+
 const INCOGNITO_SYSTEM = `Incognito: private, READ-ONLY research. You can read files anywhere, search, run a read-only shell in the selected folders, and use web_search/web_fetch.
 You CANNOT write — never claim you saved or changed anything. This chat is ephemeral: nothing is stored. Be concise; put findings in your reply.`;
 
@@ -200,7 +209,7 @@ function buildSystemPrompt(opts: AgentOptions): string {
     return parts.join('\n');
   }
 
-  const parts = [identityLine(opts.model), DEFAULT_SYSTEM];
+  const parts = [identityLine(opts.model), DEFAULT_SYSTEM, HOST_INSTALL_POLICY];
 
   const folders = opts.folderAccess?.length
     ? opts.folderAccess

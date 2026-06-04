@@ -19,7 +19,7 @@ import { promisify } from 'node:util';
 import type OpenAI from 'openai';
 import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
 import type { SavingsNote } from './agent/tools.js';
-import { shrinkOldToolOutputs, withPromptCaching, makeToolGuard } from './agent/loop.js';
+import { shrinkOldToolOutputs, withPromptCaching, makeToolGuard, HOST_INSTALL_POLICY } from './agent/loop.js';
 import { dumpPrompt, newTurnId } from './agent/prompt-dump.js';
 
 const execFileAsync = promisify(execFile);
@@ -264,7 +264,8 @@ Network is ${networkEnabled ? 'enabled' : 'disabled'}.${
         'Use mode:"summary" with a short purpose by default to save tokens; mode:"full" only when you need exact wording.'
       : ''
   }
-Be concise.`;
+Be concise.
+${HOST_INSTALL_POLICY}`;
   const systemPrompt = opts.systemPrompt?.trim()
     ? `${secureBasePrompt}\n\n${opts.systemPrompt.trim()}`
     : secureBasePrompt;
