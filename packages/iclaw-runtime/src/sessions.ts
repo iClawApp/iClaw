@@ -16,7 +16,7 @@ import {
 } from './secure-runner.js';
 import {
   dockerAvailable, resolveWorkImage, startWorkContainer, execInWorkContainer,
-  type WorkMount,
+  toWorkMounts, type WorkMount,
 } from './work-container.js';
 
 export interface SessionOptions {
@@ -633,11 +633,12 @@ export async function sendMessage(sessionId: string, content: string, networkEna
   let linkSandbox: ((command: string) => Promise<string>) | undefined;
   if (await dockerAvailable()) {
     // Validate the explicitly-chosen folders into bind mounts (empty when none
-    // selected — analyze_link still gets a network-only container).
-    const mounts: WorkMount[] = [];
+    // selected — analyze_link still gets a network-only container). Each allowed
+    // folder is validated, then mapped to a normalized /work/<n> container path.
+    const validated: { path: string; readonly: boolean }[] = [];
     for (const f of session.opts.folderAccess ?? []) {
       try {
-        mounts.push({ path: validateMountRoot(f.path), readonly: incognito ? true : f.readonly });
+        validated.push({ path: validateMountRoot(f.path), readonly: incognito ? true : f.readonly });
       } catch (err) {
         emit(session, {
           type: 'error',
@@ -645,6 +646,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
         });
       }
     }
+    const mounts: WorkMount[] = toWorkMounts(validated);
     const image = await resolveWorkImage();
     // analyze_link runs yt-dlp inside the session's container (warm-reused, so
     // yt-dlp self-installs once) — never on the host. Offered even with no
@@ -652,13 +654,15 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     // since the helper command writes to its own /workspace scratch paths.
     linkSandbox = async (command) => {
       const name = await ensureWorkContainer(session, mounts, image);
-      return execInWorkContainer(name, command, '/');
+      return execInWorkContainer(name, command, '/', { mounts });
     };
     // run_command needs a real folder to operate in, so it stays gated on mounts.
     if (mounts.length) {
       runShell = async (command, cwd) => {
         const name = await ensureWorkContainer(session, mounts, image);
-        return execInWorkContainer(name, command, cwd);
+        // scan: report created/modified/deleted files after the command so the
+        // user sees exactly what changed inside their allowed folders.
+        return execInWorkContainer(name, command, cwd, { mounts, scan: true });
       };
     }
   }
