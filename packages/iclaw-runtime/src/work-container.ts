@@ -11,9 +11,13 @@
  * folder is bind-mounted at its SAME absolute path with `:ro` (read-only) or
  * `:rw` (read & write) per the folder's access level. The kernel then enforces
  * read-only — any write into a `:ro` mount fails with "Read-only file system",
- * and folders we never mounted are simply invisible. Same-path mounting keeps
- * the paths the model uses identical inside and outside the container (works on
- * Linux and Docker Desktop for macOS; Windows path translation is a follow-up).
+ * and folders we never mounted are simply invisible. On Linux and Docker
+ * Desktop for macOS we same-path mount, so the paths the model uses are
+ * identical inside and outside the container. On Windows the container is still
+ * Linux, so host drive paths (`C:\Users\foo`) are translated to their container
+ * equivalents (`/c/Users/foo`) for the mount target, working dir, and any host
+ * roots the model references in a command — see hostToContainerPath /
+ * translateCommandPaths.
  *
  * When Docker is unavailable, `run_command` is disabled (strict fallback) —
  * file tools still work, so read-only stays an honest guarantee.
@@ -42,6 +46,55 @@ const FALLBACK_IMAGE = process.env.ICLAW_WORK_SLIM_IMAGE || 'node:22';
 export interface WorkMount {
   path: string;
   readonly: boolean;
+}
+
+/**
+ * Translate a host absolute path to the path it is mounted at INSIDE the Linux
+ * container.
+ *
+ * On macOS/Linux this is the identity — we same-path mount, so the paths the
+ * model uses are identical inside and outside the container. On Windows the
+ * container is still Linux, so a drive path like `C:\Users\foo` is not a valid
+ * mount target or working dir. Docker Desktop's convention maps it to
+ * `/c/Users/foo` (drive letter lowercased, backslashes → forward slashes), so
+ * we mount each folder there and run commands against that path.
+ *
+ * The mount SOURCE stays the native host path: the Docker CLI recognises the
+ * `X:\` drive prefix in `-v`, so only the target needs translating.
+ */
+export function hostToContainerPath(
+  hostPath: string,
+  plat: NodeJS.Platform = process.platform,
+): string {
+  if (plat !== 'win32') return hostPath;
+  const drive = /^([A-Za-z]):[\\/](.*)$/.exec(hostPath);
+  if (drive) {
+    const rest = drive[2].replace(/\\/g, '/');
+    return `/${drive[1].toLowerCase()}/${rest}`;
+  }
+  // Already POSIX-ish, or a UNC path we can't map — best-effort slash normalize.
+  return hostPath.replace(/\\/g, '/');
+}
+
+/**
+ * Rewrite Windows drive paths inside a shell command to their container paths.
+ *
+ * The model only ever sees host (Windows) paths — file tools return them and
+ * the allowed folders are Windows paths — so a `run_command` it emits will
+ * reference `C:\Users\foo\...`. Backslash separators don't work in the Linux
+ * sandbox, so every absolute drive-path token (`X:\…` or `X:/…`) is converted
+ * whole to its `/x/…` container form. We stop the token at whitespace, quotes,
+ * and shell metacharacters so a path can't swallow the rest of the command.
+ * Identity on non-Windows.
+ */
+export function translateCommandPaths(
+  command: string,
+  plat: NodeJS.Platform = process.platform,
+): string {
+  if (plat !== 'win32') return command;
+  return command.replace(/[A-Za-z]:[\\/][^\s"'`&|;<>()]*/g, (m) =>
+    hostToContainerPath(m, plat),
+  );
 }
 
 let dockerOk: boolean | null = null;
@@ -103,7 +156,9 @@ export async function startWorkContainer(mounts: WorkMount[], image: string): Pr
   const name = `${WORK_PREFIX}${randomUUID().slice(0, 8)}`;
   const mountArgs: string[] = [];
   for (const m of mounts) {
-    mountArgs.push('-v', `${m.path}:${m.path}:${m.readonly ? 'ro' : 'rw'}`);
+    // Source = native host path (Docker CLI handles the `X:\` drive prefix);
+    // target = translated container path (same-path on macOS/Linux).
+    mountArgs.push('-v', `${m.path}:${hostToContainerPath(m.path)}:${m.readonly ? 'ro' : 'rw'}`);
   }
   // Default working dir: first writable folder, else the first mount.
   const home = mounts.find((m) => !m.readonly) ?? mounts[0];
@@ -115,7 +170,7 @@ export async function startWorkContainer(mounts: WorkMount[], image: string): Pr
       '--memory', process.env.ICLAW_WORK_MEMORY || '768m',
       '--cpus', process.env.ICLAW_WORK_CPUS || '1',
       ...mountArgs,
-      ...(home ? ['--workdir', home.path] : []),
+      ...(home ? ['--workdir', hostToContainerPath(home.path)] : []),
       image,
       'sleep', '86400',
     ], { timeout: START_TIMEOUT });
@@ -128,11 +183,21 @@ export async function startWorkContainer(mounts: WorkMount[], image: string): Pr
   return name;
 }
 
-/** Execute a command inside a Work container, with cwd set to a mounted path. */
-export async function execInWorkContainer(name: string, command: string, cwd: string): Promise<string> {
+/**
+ * Execute a command inside a Work container, with cwd set to a mounted path.
+ * On Windows the cwd and any host drive paths in the command are translated to
+ * their container equivalents; a no-op on macOS/Linux (same-path mounting).
+ */
+export async function execInWorkContainer(
+  name: string,
+  command: string,
+  cwd: string,
+): Promise<string> {
+  const containerCwd = hostToContainerPath(cwd);
+  const containerCmd = translateCommandPaths(command);
   try {
     const { stdout, stderr } = await execFileAsync(
-      'docker', ['exec', '--workdir', cwd, name, 'bash', '-lc', command],
+      'docker', ['exec', '--workdir', containerCwd, name, 'bash', '-lc', containerCmd],
       { timeout: COMMAND_TIMEOUT },
     );
     return [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)';
