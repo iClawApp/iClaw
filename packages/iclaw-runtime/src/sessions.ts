@@ -75,8 +75,8 @@ interface Session {
   pending: AgentEvent[];
   /** Persistent workspace dir for Secure Mode (survives container restarts). */
   secureWorkspaceDir?: string;
-  /** Safe Mode: true once `copyFolders` have been ingested (once per session). */
-  ingested?: boolean;
+  /** Safe Mode: folder paths already copied into the workspace (ingest once each). */
+  ingestedFolders?: Set<string>;
   /**
    * Warm Secure-Mode sandbox container, reused across turns. Recreated only
    * when the network setting changes or after the container is reaped for idle;
@@ -547,13 +547,21 @@ function stageAttachments(
   return { noticeText, images };
 }
 
-export async function sendMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number, attachments?: RuntimeAttachment[]): Promise<void> {
+export async function sendMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number, attachments?: RuntimeAttachment[], copyFolders?: string[]): Promise<void> {
   const session = sessions.get(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
 
   // Reset TTL countdown on activity
   session.lastActivity = Date.now();
   if (ttlDays !== undefined) session.ttlMs = ttlDays <= 0 ? 0 : ttlDays * 86400_000;
+
+  // Safe Mode: merge in any folders the user added since the session started, so
+  // a mid-chat addition gets copied into the sandbox on this turn (not silently
+  // dropped). The ingest step below copies only the not-yet-ingested ones.
+  if (copyFolders?.length && session.opts.secure) {
+    const merged = new Set([...(session.opts.copyFolders ?? []), ...copyFolders]);
+    session.opts.copyFolders = [...merged];
+  }
 
   // Per-message network override
   if (networkEnabled !== undefined && session.opts.secure) {
@@ -580,25 +588,24 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     const workspaceDir = session.secureWorkspaceDir!;
     const netEnabled = session.opts.networkEnabled ?? false;
 
-    // First turn: COPY the user's chosen folders into the isolated workspace —
-    // Safe Mode works on a copy, so the originals are never touched. Done once;
-    // the summary is prepended to the turn so the model knows what's in
+    // COPY the user's chosen folders into the isolated workspace — Safe Mode
+    // works on a copy, so the originals are never touched. Each folder is copied
+    // once (tracked in ingestedFolders), so folders added mid-chat are picked up
+    // on the next turn. The summary is prepended so the model knows what's in
     // /workspace and tells the user their files are unchanged.
     let turnText = messageText;
-    if (!session.ingested) {
-      session.ingested = true;
-      const sources: IngestSource[] = (session.opts.copyFolders ?? []).map((p) => ({
-        kind: 'folder',
-        path: p,
-      }));
-      if (sources.length) {
-        const results = await ingestSources(workspaceDir, sources);
-        for (const r of results) {
-          if (!r.ok) emit(session, { type: 'error', message: `Sandbox ingest: ${r.source} — ${r.error}` });
-        }
-        const summary = describeIngest(results);
-        if (summary) turnText = `${summary}\n\n${messageText}`;
+    const ingested = (session.ingestedFolders ??= new Set<string>());
+    const pending = (session.opts.copyFolders ?? []).filter((p) => !ingested.has(p));
+    if (pending.length) {
+      // Mark up front so a failed copy isn't retried every turn.
+      for (const p of pending) ingested.add(p);
+      const sources: IngestSource[] = pending.map((p) => ({ kind: 'folder', path: p }));
+      const results = await ingestSources(workspaceDir, sources);
+      for (const r of results) {
+        if (!r.ok) emit(session, { type: 'error', message: `Sandbox ingest: ${r.source} — ${r.error}` });
       }
+      const summary = describeIngest(results);
+      if (summary) turnText = `${summary}\n\n${messageText}`;
     }
 
     // Warm reuse: get (or lazily start) the session's sandbox container.

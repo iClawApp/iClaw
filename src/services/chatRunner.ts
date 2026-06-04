@@ -947,8 +947,14 @@ async function runWorkModeTurn(opts: {
     }
   }
 
+  // Safe Mode: forward the current folder selection every turn so folders added
+  // mid-chat get copied into the live sandbox (the runtime ingests new ones only).
+  const turnCopyFolders =
+    opts.secure && opts.workFolders?.length
+      ? opts.workFolders.map((f) => f.path)
+      : undefined;
   try {
-    await sendWorkMessage(sessionId, content, opts.networkEnabled, opts.ttlDays, opts.attachments);
+    await sendWorkMessage(sessionId, content, opts.networkEnabled, opts.ttlDays, opts.attachments, turnCopyFolders);
   } catch (err) {
     // Session may have expired — retry with a fresh one
     workSessions.delete(chatId);

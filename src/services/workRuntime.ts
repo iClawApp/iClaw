@@ -100,11 +100,14 @@ export interface RuntimeAttachmentInput {
 }
 
 /** Send a user message to a work session. */
-export async function sendWorkMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number, attachments?: RuntimeAttachmentInput[]): Promise<void> {
+export async function sendWorkMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number, attachments?: RuntimeAttachmentInput[], copyFolders?: string[]): Promise<void> {
   const body: Record<string, unknown> = { content };
   if (networkEnabled !== undefined) body.networkEnabled = networkEnabled;
   if (ttlDays !== undefined) body.ttlDays = ttlDays;
   if (attachments?.length) body.attachments = attachments;
+  // Safe Mode: lets the runtime copy folders the user added mid-chat into the
+  // sandbox on this turn (ignored in Work Mode / by non-secure sessions).
+  if (copyFolders?.length) body.copyFolders = copyFolders;
   const res = await request('POST', `/sessions/${sessionId}/messages`, body);
   if (res.status !== 202) {
     throw new Error(`Failed to send work message: ${JSON.stringify(res.data)}`);
