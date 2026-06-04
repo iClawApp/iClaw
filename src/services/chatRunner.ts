@@ -898,6 +898,12 @@ async function runWorkModeTurn(opts: {
       const allowedFolders = hasFolders
         ? opts.workFolders!.map((f) => f.path)
         : [process.env.HOME ?? ''].filter(Boolean);
+      // Safe Mode: the folders the user picked are COPIED into the isolated
+      // sandbox (originals untouched), not bind-mounted live like Work Mode.
+      const copyFolders =
+        opts.secure && opts.workFolders?.length
+          ? opts.workFolders.map((f) => f.path)
+          : undefined;
       // Seed the (possibly restored) session with compacted prior history from
       // our DB, so context survives runtime restarts (older turns summarized).
       const history = opts.beforeMsgId
@@ -906,6 +912,7 @@ async function runWorkModeTurn(opts: {
       sessionId = await createWorkSession({
         allowedFolders,
         folderAccess,
+        copyFolders,
         secure: opts.secure,
         systemPrompt: buildWorkSystemPrompt(chatId),
         // Stable key → the chat reconnects to its persisted Secure workspace

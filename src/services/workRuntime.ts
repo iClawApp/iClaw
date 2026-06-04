@@ -59,6 +59,11 @@ export interface CreateSessionOptions {
    * allowed-path list from it.
    */
   folderAccess?: { path: string; readonly: boolean }[];
+  /**
+   * Safe Mode only: host folders to COPY into the sandbox workspace (originals
+   * never touched). Ignored in Work Mode, which bind-mounts folders live.
+   */
+  copyFolders?: string[];
   model?: string;
   secure?: boolean;
   /** Incognito: read-only, read-anywhere, web_fetch enabled. Mutually exclusive with secure. */
@@ -75,6 +80,7 @@ export async function createWorkSession(opts: CreateSessionOptions = {}): Promis
   const body: Record<string, unknown> = { allowedFolders: opts.allowedFolders, secure: opts.secure };
   if (opts.incognito) body.incognito = true;
   if (opts.folderAccess?.length) body.folderAccess = opts.folderAccess;
+  if (opts.copyFolders?.length) body.copyFolders = opts.copyFolders;
   if (opts.model) body.model = opts.model;
   if (opts.systemPrompt) body.systemPrompt = opts.systemPrompt;
   if (opts.key) body.key = opts.key;

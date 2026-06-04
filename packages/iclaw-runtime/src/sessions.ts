@@ -18,6 +18,7 @@ import {
   dockerAvailable, resolveWorkImage, startWorkContainer, execInWorkContainer,
   toWorkMounts, type WorkMount,
 } from './work-container.js';
+import { ingestSources, describeIngest, type IngestSource } from './secure-ingest.js';
 
 export interface SessionOptions {
   allowedFolders: string[];
@@ -27,6 +28,12 @@ export interface SessionOptions {
    * to enforce read-only folders; Secure Mode leaves it unset (workspace is RW).
    */
   folderAccess?: { path: string; readonly: boolean }[];
+  /**
+   * Safe Mode only: host folders to COPY into the sandbox workspace on the first
+   * turn (originals never touched). Realizes "I added a folder and it got copied
+   * into the sandbox" — distinct from Work Mode's live bind mounts.
+   */
+  copyFolders?: string[];
   model: string;
   apiKey: string;
   secure?: boolean;
@@ -68,6 +75,8 @@ interface Session {
   pending: AgentEvent[];
   /** Persistent workspace dir for Secure Mode (survives container restarts). */
   secureWorkspaceDir?: string;
+  /** Safe Mode: true once `copyFolders` have been ingested (once per session). */
+  ingested?: boolean;
   /**
    * Warm Secure-Mode sandbox container, reused across turns. Recreated only
    * when the network setting changes or after the container is reaped for idle;
@@ -571,6 +580,27 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     const workspaceDir = session.secureWorkspaceDir!;
     const netEnabled = session.opts.networkEnabled ?? false;
 
+    // First turn: COPY the user's chosen folders into the isolated workspace —
+    // Safe Mode works on a copy, so the originals are never touched. Done once;
+    // the summary is prepended to the turn so the model knows what's in
+    // /workspace and tells the user their files are unchanged.
+    let turnText = messageText;
+    if (!session.ingested) {
+      session.ingested = true;
+      const sources: IngestSource[] = (session.opts.copyFolders ?? []).map((p) => ({
+        kind: 'folder',
+        path: p,
+      }));
+      if (sources.length) {
+        const results = await ingestSources(workspaceDir, sources);
+        for (const r of results) {
+          if (!r.ok) emit(session, { type: 'error', message: `Sandbox ingest: ${r.source} — ${r.error}` });
+        }
+        const summary = describeIngest(results);
+        if (summary) turnText = `${summary}\n\n${messageText}`;
+      }
+    }
+
     // Warm reuse: get (or lazily start) the session's sandbox container.
     // Fail-closed — if Docker can't start it, surface an error, don't run.
     let containerName: string;
@@ -583,7 +613,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
 
     const secureGen = runSecureTurn(
       session.history.map((m) => ({ role: m.role as string, content: String(m.content) })),
-      messageText,
+      turnText,
       {
         apiKey: session.opts.apiKey,
         model: session.opts.model,
@@ -611,7 +641,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
       if (session.abort === abort) session.abort = undefined;
     }
     if (assistantText) {
-      session.history.push({ role: 'user', content: messageText });
+      session.history.push({ role: 'user', content: turnText });
       session.history.push({ role: 'assistant', content: assistantText });
     }
     return;
