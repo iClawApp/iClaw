@@ -752,6 +752,59 @@
     refreshSecureBar();
   });
 
+  // Export the sandbox out to a host folder (default ~/Downloads). Read-only —
+  // copies the sandbox contents to a fresh place, touches nothing of the user's.
+  const secureExportBtn = document.getElementById('secure-workspace-export');
+  secureExportBtn?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!rawChatId) return;
+    secureExportBtn.disabled = true;
+    const prev = secureExportBtn.textContent;
+    secureExportBtn.textContent = 'Exporting…';
+    try {
+      const res = await fetch(`/chats/${rawChatId}/export-sandbox`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: '{}',
+      });
+      const data = await res.json();
+      if (data && data.ok) alert(`Exported ${data.files != null ? data.files + ' files' : 'sandbox'} to:\n${data.path}`);
+      else alert(`Export failed: ${(data && data.error) || 'unknown error'}`);
+    } catch { alert('Export failed.'); }
+    secureExportBtn.disabled = false;
+    secureExportBtn.textContent = prev || 'Export';
+  });
+
+  // Apply: copy the sandbox's new/changed files back to the ORIGINAL folders.
+  // This writes to the user's real files, so it's confirmed and additive only.
+  const secureApplyBtn = document.getElementById('secure-workspace-apply');
+  secureApplyBtn?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!rawChatId) return;
+    if (!confirm('Apply the sandbox\'s new and changed files back to your original folders? Existing files may be overwritten; nothing is deleted.')) return;
+    secureApplyBtn.disabled = true;
+    const prev = secureApplyBtn.textContent;
+    secureApplyBtn.textContent = 'Applying…';
+    try {
+      const res = await fetch(`/chats/${rawChatId}/apply-sandbox`, {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      });
+      const data = await res.json();
+      const results = (data && data.results) || [];
+      if (results.length === 0) {
+        alert('Nothing to apply — no folders were copied into this sandbox.');
+      } else {
+        const lines = results.map((r) => r.ok
+          ? `• ${r.source}: ${(r.applied && r.applied.length) || 0} file(s)`
+          : `✗ ${r.source}: ${r.error}`);
+        alert('Applied changes:\n' + lines.join('\n'));
+      }
+    } catch { alert('Apply failed.'); }
+    secureApplyBtn.disabled = false;
+    secureApplyBtn.textContent = prev || 'Apply changes';
+  });
+
   // Destroy the sandbox: deletes the copied workspace + container. The next
   // message starts a fresh sandbox (re-copying any selected folders).
   const secureDestroyBtn = document.getElementById('secure-workspace-destroy');

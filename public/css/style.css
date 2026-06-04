@@ -7538,6 +7538,19 @@ a.project-tab.project-tab--tasks:hover {
   padding: 0;
 }
 .secure-workspace-bar__change:hover { color: var(--text); }
+.secure-workspace-bar__action {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  margin-left: 8px;
+}
+.secure-workspace-bar__action:hover { color: var(--text); }
+.secure-workspace-bar__action:disabled { opacity: 0.6; cursor: default; text-decoration: none; }
 .secure-workspace-bar__destroy {
   border: none;
   background: transparent;

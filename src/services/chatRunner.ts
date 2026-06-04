@@ -26,7 +26,7 @@ import {
 import type { ChatMode, Message, MessageAttachment } from '../types';
 import { DEFAULT_MODE } from './chatModes';
 import { buildCompactedHistory } from './contextCompaction';
-import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession, abortWorkSession } from './workRuntime';
+import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession, abortWorkSession, exportSandbox, applySandboxChanges, type ExportResult, type ApplyResult } from './workRuntime';
 import {
   expandStoredSecretPlaceholdersForGateway,
   resolveInlineSecretMarkersInContent,
@@ -851,6 +851,20 @@ export async function destroyWorkSession(chatId: number): Promise<boolean> {
     /* best-effort — the map is already cleared, so a stale session just TTLs out. */
   }
   return true;
+}
+
+/** Export a chat's Safe sandbox to a host folder. */
+export async function exportChatSandbox(chatId: number, destDir?: string): Promise<ExportResult> {
+  const sessionId = workSessions.get(chatId)?.sessionId;
+  if (!sessionId) return { ok: false, error: 'no active sandbox for this chat' };
+  return exportSandbox(sessionId, destDir);
+}
+
+/** Apply a chat's Safe sandbox changes back to the original folders. */
+export async function applyChatSandboxChanges(chatId: number): Promise<ApplyResult[]> {
+  const sessionId = workSessions.get(chatId)?.sessionId;
+  if (!sessionId) return [];
+  return applySandboxChanges(sessionId);
 }
 
 /**
