@@ -836,6 +836,24 @@ export function getWorkSessionId(chatId: number): string | undefined {
 }
 
 /**
+ * Destroy a chat's Work/Safe runtime session — stops the container AND deletes
+ * the workspace (the Safe sandbox copy and anything in it). Backs the
+ * "Destroy sandbox" button. The map entry is cleared so the next turn starts a
+ * fresh session (re-ingesting any selected folders for Safe Mode).
+ */
+export async function destroyWorkSession(chatId: number): Promise<boolean> {
+  const sessionId = workSessions.get(chatId)?.sessionId;
+  workSessions.delete(chatId);
+  if (!sessionId) return false;
+  try {
+    await stopWorkSession(sessionId);
+  } catch {
+    /* best-effort — the map is already cleared, so a stale session just TTLs out. */
+  }
+  return true;
+}
+
+/**
  * Route a Work Mode turn to iclaw-runtime.
  * Reuses the session across turns to preserve conversation history.
  */

@@ -752,6 +752,27 @@
     refreshSecureBar();
   });
 
+  // Destroy the sandbox: deletes the copied workspace + container. The next
+  // message starts a fresh sandbox (re-copying any selected folders).
+  const secureDestroyBtn = document.getElementById('secure-workspace-destroy');
+  secureDestroyBtn?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!rawChatId) return;
+    if (!confirm('Destroy this sandbox? The copied files and anything created in it are deleted. Your original files are untouched.')) return;
+    secureDestroyBtn.disabled = true;
+    const prev = secureDestroyBtn.textContent;
+    secureDestroyBtn.textContent = 'Destroying…';
+    try {
+      await fetch(`/chats/${rawChatId}/destroy-workspace`, {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      });
+    } catch { /* best-effort */ }
+    secureDestroyBtn.disabled = false;
+    secureDestroyBtn.textContent = prev || 'Destroy';
+    refreshSecureBar();
+  });
+
   document.addEventListener('click', (e) => {
     if (secureTtlMenu && !secureTtlMenu.hidden && !secureChangeBtn?.contains(e.target) && !secureTtlMenu.contains(e.target)) {
       secureTtlMenu.hidden = true;

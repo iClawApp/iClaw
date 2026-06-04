@@ -27,7 +27,7 @@ import { openclawWs } from '../services/openclawWs';
 import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
-import { sendMessage, getWorkSessionId } from '../services/chatRunner';
+import { sendMessage, getWorkSessionId, destroyWorkSession } from '../services/chatRunner';
 import { getWorkspaceInfo } from '../services/workRuntime';
 import {
   defaultComposerMode,
@@ -1101,4 +1101,16 @@ chatsRouter.get('/:id/workspace-info', async (req, res) => {
   if (!sessionId) return res.json({ active: false });
   const info = await getWorkspaceInfo(sessionId);
   res.json({ active: true, sessionId, ...info });
+});
+
+/**
+ * POST /chats/:id/destroy-workspace — tear down the chat's Safe/Work sandbox:
+ * stops the container and deletes the workspace (the Safe-mode copy and all of
+ * its contents). The next message starts a fresh sandbox.
+ */
+chatsRouter.post('/:id/destroy-workspace', async (req, res) => {
+  const chatId = Number(req.params.id);
+  if (!Number.isFinite(chatId)) return res.status(400).json({ error: 'bad chat id' });
+  const destroyed = await destroyWorkSession(chatId);
+  res.json({ destroyed });
 });
