@@ -291,7 +291,9 @@ chatsRouter.get('/:id', async (req, res, next) => {
     const id = Number(req.params.id);
     const chat = chats.get(id);
     if (!chat) {
-      res.status(404).send('chat not found');
+      // Stale link / deleted chat → send the user home instead of a dead-end
+      // 404 page. Keeps navigation friendly for non-technical users.
+      res.redirect('/');
       return;
     }
     if (chats.markRead(id)) wsHub.broadcastAll({ type: 'chat-read', chatId: id });

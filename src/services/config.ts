@@ -101,6 +101,23 @@ export function clearOpenRouterApiKey(): void {
   kvDelete(OPENROUTER_API_KEY_KV);
 }
 
+/** KV key recording that the user has been through (or skipped) the welcome flow. */
+const ONBOARDING_DONE_KV = 'onboarding.done';
+
+/**
+ * Has the first-run welcome flow been completed (or explicitly skipped)?
+ * This is the sole gate for showing /welcome — independent of whether a key is
+ * set, so a user can dismiss the screen and still configure things later.
+ */
+export function isOnboardingDone(): boolean {
+  return kvGet(ONBOARDING_DONE_KV) === '1';
+}
+
+/** Mark the welcome flow complete so it never shows again (unless reset). */
+export function setOnboardingDone(): void {
+  kvSet(ONBOARDING_DONE_KV, '1');
+}
+
 /**
  * A privacy-preserving display form of the stored key: keeps the `sk-or-`
  * prefix and the last 4 chars, masks the middle. Empty string when unset.

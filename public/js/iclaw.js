@@ -1046,8 +1046,34 @@
           : initSel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       const card = projectPickEl.querySelector('.project-pick-card[data-project-id="' + esc + '"]');
       if (card) queueMicrotask(() => void commitDraftFromCard(card));
+    } else if (draftBody?.dataset.autoNone === '1') {
+      // First-ever chat: skip the "Choose a project" step so a new user lands
+      // straight on the welcome greeting + composer (No project).
+      const card = projectPickEl.querySelector('.project-pick-card--none');
+      if (card) queueMicrotask(() => void commitDraftFromCard(card));
     }
   }
+
+  // Welcome-card suggestion chips: drop the text into the composer and send it,
+  // so a non-technical user gets going with one click.
+  function initWelcomeChips() {
+    const card = document.getElementById('welcome-card');
+    if (!card) return;
+    card.addEventListener('click', (e) => {
+      const chip = e.target.closest('.welcome-chip');
+      if (!chip) return;
+      const prompt = chip.getAttribute('data-prompt') || chip.textContent || '';
+      const ta = document.getElementById('composer-input');
+      const form = document.getElementById('send-form');
+      if (!ta || !form) return;
+      ta.value = prompt;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      if (typeof form.requestSubmit === 'function') form.requestSubmit();
+      else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    });
+  }
+
+  initWelcomeChips();
 
   initDraftProjectPick();
   // serializes turns per chat too, so this is just for the visible label
@@ -1877,6 +1903,10 @@
   function appendStreamingAssistant() {
     if (!messagesEl) return null;
     clearEmptyState();
+    // First turn of a chat can be a cold start (model/Docker warming up, 20–60s).
+    // Say "Warming up…" instead of "Thinking…" so the wait reads as honest setup,
+    // not a hang. Detected by the absence of any prior assistant message.
+    const isFirstTurn = !messagesAppendRoot()?.querySelector('.msg.assistant');
     const div = document.createElement('div');
     div.className = 'msg assistant streaming stream-waiting';
     div.innerHTML =
@@ -1885,7 +1915,7 @@
       '<div class="msg-body stream-body"></div>';
     messagesAppendRoot().appendChild(div);
     const st = div.querySelector('.stream-status');
-    if (st) setStreamStatusLabel(st, 'Thinking…');
+    if (st) setStreamStatusLabel(st, isFirstTurn ? 'Warming up…' : 'Thinking…');
     scrollToBottom();
     return div;
   }

@@ -7862,3 +7862,304 @@ body.incognito-mode .composer-mode-btn__label {
   line-height: 1.5;
   resize: vertical;
 }
+
+/* -------------------------------------------------------------------------- */
+/* First-run welcome / onboarding (views/welcome.ejs)                          */
+/* Apple "setup sheet" feel: one centered card, large title, calm monochrome. */
+/* -------------------------------------------------------------------------- */
+
+.onb {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-9);
+  background: var(--bg);
+}
+
+.onb-card-shell {
+  position: relative;
+  width: 100%;
+  max-width: 30rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-10);
+  text-align: center;
+}
+
+.onb-step { animation: onb-fade 0.18s ease; }
+
+@keyframes onb-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.onb-logo {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-size: var(--text-lg);
+  color: var(--muted);
+  margin-bottom: var(--space-7);
+}
+
+.onb-title {
+  font-size: 1.6rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--space-4);
+  color: var(--text);
+}
+
+.onb-sub {
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--muted);
+  margin: 0 auto var(--space-9);
+  max-width: 26rem;
+}
+
+/* Big tappable option rows (Apple list-row style) */
+.onb-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-7);
+  margin-bottom: var(--space-5);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+.onb-option:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--text) 28%, var(--border));
+  box-shadow: var(--shadow-md);
+}
+.onb-option:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.onb-option--disabled,
+.onb-option:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.onb-option-main { display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
+.onb-option-name {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.onb-option-desc { font-size: var(--text-sm); line-height: 1.45; color: var(--muted); }
+
+.onb-option-chevron {
+  font-size: 1.5rem;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.onb-badge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--text) 7%, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 1px var(--space-4);
+}
+
+.onb-skip {
+  display: inline-block;
+  margin-top: var(--space-5);
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  padding: var(--space-4);
+}
+.onb-skip:hover { color: var(--text); text-decoration: underline; }
+
+.onb-back {
+  position: absolute;
+  top: var(--space-7);
+  left: var(--space-7);
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.onb-back:hover { color: var(--text); }
+
+/* Key step */
+.onb-steps {
+  text-align: left;
+  margin: var(--space-8) auto var(--space-9);
+  padding-left: 1.25rem;
+  max-width: 26rem;
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+.onb-steps li { margin-bottom: var(--space-4); }
+.onb-steps a { color: var(--info); }
+
+.onb-key-form {
+  display: flex;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.onb-key-input {
+  flex: 1;
+  font-family: var(--mono-font, ui-monospace, monospace);
+  font-size: var(--text-sm);
+  padding: var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+}
+.onb-key-input:focus-visible { outline: none; box-shadow: var(--focus-ring); border-color: color-mix(in srgb, var(--text) 28%, var(--border)); }
+.onb-key-submit { white-space: nowrap; }
+
+.onb-key-error { color: var(--danger); font-size: var(--text-sm); margin: 0 0 var(--space-4); line-height: 1.45; }
+.onb-key-error.is-warn { color: var(--warn); }
+.onb-key-note { color: var(--muted); font-size: var(--text-xs); margin: 0; }
+
+/* Honest background-prep line */
+.onb-prep[hidden] { display: none; }
+.onb-prep {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  margin-top: var(--space-9);
+  padding-top: var(--space-7);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+.onb-prep-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-circle);
+  background: var(--warn);
+  animation: onb-pulse 1.2s ease-in-out infinite;
+}
+.onb-prep-dot.is-done {
+  background: var(--ok);
+  animation: none;
+}
+@keyframes onb-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 1; }
+}
+
+@media (max-width: 32rem) {
+  .onb { padding: 0; align-items: stretch; }
+  .onb-card-shell {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    max-width: none;
+    padding: var(--space-10) var(--space-8);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 100dvh;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* First-chat conversational welcome (views/index.ejs draft thread)           */
+/* Reads like the assistant's own first message: avatar + bubble + chips.     */
+/* -------------------------------------------------------------------------- */
+
+.welcome-card {
+  /* Overrides .empty-state (center + nowrap + narrow) — this is a left-aligned,
+     wrapping message bubble, not a one-line hint. */
+  display: flex;
+  gap: var(--space-6);
+  align-items: flex-start;
+  width: 100%;
+  max-width: var(--thread-max-width);
+  box-sizing: border-box;
+  margin: var(--space-10) auto var(--space-9);
+  padding: 0 var(--space-7);
+  text-align: left;
+  white-space: normal;
+  animation: onb-fade 0.2s ease;
+}
+
+.welcome-avatar {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-circle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--surface);
+  background: var(--accent);
+}
+
+.welcome-bubble {
+  flex: 1;
+  min-width: 0;
+  color: var(--msg-prose, var(--text));
+  font-size: var(--text-base);
+  line-height: 1.55;
+}
+.welcome-bubble p { margin: 0 0 var(--space-5); }
+.welcome-greeting { font-weight: 650; font-size: var(--text-lg); color: var(--text); }
+/* Extra breathing room below the lead — reads like a blank line before the list. */
+.welcome-lead { color: var(--text); margin-bottom: var(--space-9); }
+.welcome-reassure { color: var(--muted); font-size: var(--text-sm); }
+
+.welcome-list {
+  list-style: disc;
+  margin: 0 0 var(--space-6);
+  padding-left: 1.25em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.welcome-list li {
+  /* Same size as the lead line above it. */
+  line-height: 1.5;
+  color: var(--text);
+  padding-left: 0.25em;
+}
+
+.welcome-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+.welcome-chip {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--text-sm);
+  padding: var(--space-4) var(--space-6);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+.welcome-chip:hover {
+  border-color: color-mix(in srgb, var(--text) 28%, var(--border));
+  background: var(--hover);
+  box-shadow: var(--shadow-sm);
+}
+.welcome-chip:focus-visible { outline: none; box-shadow: var(--focus-ring); }

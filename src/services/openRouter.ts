@@ -248,6 +248,54 @@ export async function transcribeAudio(opts: {
   return (json?.choices?.[0]?.message?.content ?? '').trim();
 }
 
+export interface KeyValidation {
+  /** The key authenticates against OpenRouter. */
+  valid: boolean;
+  /** USD remaining if known; null when unlimited/unknown. */
+  remaining: number | null;
+  /** Optional key label from OpenRouter. */
+  label?: string;
+  /** Machine-readable reason when invalid: 'empty' | 'unauthorized' | 'http' | 'network'. */
+  reason?: string;
+}
+
+/**
+ * Validate an OpenRouter key WITHOUT storing it — used by onboarding/Settings to
+ * catch a dead, mistyped, or zero-balance key before it silently breaks the
+ * first chat. Hits `/auth/key` (cheap, no completion spend) with the candidate
+ * key and reports validity + remaining credit. Network failures are reported as
+ * `valid: false, reason: 'network'` so the UI can say "couldn't verify" rather
+ * than wrongly rejecting a good key.
+ */
+export async function validateKey(key: string, signal?: AbortSignal): Promise<KeyValidation> {
+  const trimmed = key.trim();
+  if (!trimmed) return { valid: false, remaining: null, reason: 'empty' };
+
+  const cfg = loadOpenRouterConfig();
+  const headers = buildHeaders(trimmed, cfg.referer, cfg.appTitle);
+
+  let res: Response;
+  try {
+    res = await fetch(`${cfg.baseUrl}/auth/key`, { headers, signal });
+  } catch {
+    return { valid: false, remaining: null, reason: 'network' };
+  }
+  if (res.status === 401 || res.status === 403) {
+    return { valid: false, remaining: null, reason: 'unauthorized' };
+  }
+  if (!res.ok) return { valid: false, remaining: null, reason: 'http' };
+
+  const j = (await res.json().catch(() => null)) as {
+    data?: { label?: string; usage?: number; limit?: number | null; limit_remaining?: number | null };
+  } | null;
+  const d = j?.data ?? {};
+  const usage = Number(d.usage ?? 0);
+  const limit = d.limit == null ? null : Number(d.limit);
+  const remaining =
+    d.limit_remaining == null ? (limit != null ? Math.max(limit - usage, 0) : null) : Number(d.limit_remaining);
+  return { valid: true, remaining, label: d.label };
+}
+
 export interface OpenRouterUsage {
   /** USD spent so far on this key/account. */
   usage: number;

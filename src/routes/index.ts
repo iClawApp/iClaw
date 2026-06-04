@@ -8,10 +8,37 @@ import { chatStatus } from '../services/chatStatus';
 import { shouldShowSendHint } from '../services/sendHint';
 import { defaultComposerMode, listSelectableModes } from '../services/chatModes';
 import { openRouterEnabled, transcribeAudio, isOpenRouterFailure } from '../services/openRouter';
+import { isOnboardingDone, setOnboardingDone } from '../services/config';
+import { startOnboardingPrep, getOnboardingEnv } from '../services/onboardingEnv';
 
 const execFileAsync = promisify(execFile);
 
 export const indexRouter: Router = Router();
+
+/**
+ * First-run welcome screen. Shown until the user picks a power source (or skips)
+ * — gated solely on the `onboarding.done` flag so it never reappears after.
+ * Starts the background environment prep (Docker probe + image pre-pull) so the
+ * slow download happens while the user reads the copy / pastes their key.
+ */
+indexRouter.get('/welcome', (_req, res) => {
+  startOnboardingPrep();
+  res.render('welcome', {
+    title: 'Welcome to iClaw',
+    hasKey: openRouterEnabled(),
+  });
+});
+
+/** Honest background-prep status for the welcome progress line. */
+indexRouter.get('/api/onboarding/status', (_req, res) => {
+  res.json(getOnboardingEnv());
+});
+
+/** Finish (or skip) onboarding — flips the flag so /welcome never shows again. */
+indexRouter.post('/api/onboarding/complete', (_req, res) => {
+  setOnboardingDone();
+  res.json({ ok: true });
+});
 
 /** Native OS folder picker — opens system dialog, returns selected path. */
 indexRouter.post('/api/pick-folder', async (_req, res) => {
@@ -96,6 +123,20 @@ indexRouter.post(
 );
 
 indexRouter.get('/', async (req, res) => {
+  // First run: render the welcome flow in place of the empty chat. Rendered
+  // (not redirected) so `/` stays 200 — the CLI/instance readiness probe in
+  // startup.ts checks for a 200 that contains "iClaw".
+  if (!isOnboardingDone()) {
+    // Power users who already configured a key (env/prior run) shouldn't see
+    // the welcome at all — mark it done and fall through to the app.
+    if (openRouterEnabled()) {
+      setOnboardingDone();
+    } else {
+      startOnboardingPrep();
+      return res.render('welcome', { title: 'Welcome to iClaw', hasKey: openRouterEnabled() });
+    }
+  }
+
   const list = chats.list();
   const allProjects = projects.list();
 
@@ -110,6 +151,9 @@ indexRouter.get('/', async (req, res) => {
 
   res.render('index', {
     chats: list,
+    // First-ever empty state → show the conversational welcome (and skip the
+    // project picker) instead of dropping a non-technical user into a blank chat.
+    isFirstChat: list.length === 0,
     allProjects,
     hasAnyTasks: tasks.hasAny(),
     taskStatusSignals: tasks.statusSignals(),

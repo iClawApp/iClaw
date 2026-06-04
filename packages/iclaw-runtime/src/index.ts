@@ -23,7 +23,8 @@ import { killOrphanWorkContainers } from './work-container.js';
 const PORT = parseInt(process.env.ICLAW_RUNTIME_PORT || '7430', 10);
 const SECRET = process.env.ICLAW_RUNTIME_SECRET || '';
 const API_KEY = process.env.ICLAW_OPENROUTER_API_KEY || '';
-const DEFAULT_MODEL = process.env.ICLAW_MODEL || 'google/gemini-2.5-flash';
+// Default agent model. Override per-install via ICLAW_MODEL in .env.
+const DEFAULT_MODEL = process.env.ICLAW_MODEL || 'deepseek/deepseek-v4-flash';
 
 function authOk(req: http.IncomingMessage): boolean {
   if (!SECRET) {

@@ -17,7 +17,8 @@ import {
   setOpenRouterApiKey,
   clearOpenRouterApiKey,
 } from '../services/config';
-import { openRouterEnabled, fetchUsage, isOpenRouterFailure } from '../services/openRouter';
+import { openRouterEnabled, fetchUsage, isOpenRouterFailure, validateKey } from '../services/openRouter';
+import { runtimeProcess } from '../services/runtimeProcess';
 
 export const settingsRouter = Router();
 
@@ -64,6 +65,25 @@ settingsRouter.get('/settings/remote-access', (_req, res) => {
   });
 });
 
+/**
+ * Validate a key WITHOUT saving it — onboarding (and Settings) calls this before
+ * committing, so a dead/zero-balance key is caught up front instead of in chat.
+ */
+settingsRouter.post('/api/openrouter/validate', async (req, res) => {
+  const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
+  if (!key) {
+    res.status(400).json({ valid: false, reason: 'empty' });
+    return;
+  }
+  try {
+    const result = await validateKey(key);
+    res.json(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(502).json({ valid: false, reason: 'network', error: msg });
+  }
+});
+
 /** Save / update the OpenRouter API key. Takes effect on the next page load. */
 settingsRouter.post('/api/openrouter/key', (req, res) => {
   const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
@@ -78,12 +98,18 @@ settingsRouter.post('/api/openrouter/key', (req, res) => {
     return;
   }
   setOpenRouterApiKey(key);
+  // The runtime reads the key from the DB only at spawn — restart it so Work /
+  // Safe / Incognito modes work immediately after onboarding, without an app
+  // restart.
+  runtimeProcess.restart();
   res.json({ ok: true, maskedKey: maskOpenRouterApiKey() });
 });
 
 /** Disconnect — remove the stored key. */
 settingsRouter.delete('/api/openrouter/key', (_req, res) => {
   clearOpenRouterApiKey();
+  // Drop the key from the running runtime too.
+  runtimeProcess.restart();
   res.json({ ok: true });
 });
 

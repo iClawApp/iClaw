@@ -77,7 +77,8 @@ projectsRouter.get('/:id', (req, res) => {
   const id = Number(req.params.id);
   const project = projects.get(id);
   if (!project) {
-    res.status(404).send('project not found');
+    // Stale link / deleted project → home, not a dead-end 404 page.
+    res.redirect('/');
     return;
   }
   const linkGroups = listProjectLinkGroups(id);
@@ -187,7 +188,8 @@ projectsRouter.get('/:id/secrets/:secretId/value', (req, res) => {
 projectsRouter.post('/:id/delete', (req, res) => {
   const id = Number(req.params.id);
   if (!projects.get(id)) {
-    res.status(404).send('project not found');
+    // Already gone → mirror the success path back to the projects list.
+    res.redirect('/projects');
     return;
   }
   const detachedChatIds = chats.listByProject(id).map((c) => c.id);

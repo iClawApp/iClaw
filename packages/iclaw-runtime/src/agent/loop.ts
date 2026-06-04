@@ -181,9 +181,14 @@ You CANNOT write — never claim you saved or changed anything. This chat is eph
  * (and won't waste calls writing to them); any host-supplied prompt (project
  * context) is appended rather than replacing the base.
  */
+/** One-line identity so the model doesn't hallucinate being Claude/GPT. */
+function identityLine(model: string): string {
+  return `You are iClaw, a private AI assistant${model ? `, powered by ${model}` : ''}. If asked what you are, say exactly that — never claim to be ChatGPT, Claude, Gemini or any other product.`;
+}
+
 function buildSystemPrompt(opts: AgentOptions): string {
   if (opts.incognito) {
-    const parts = [INCOGNITO_SYSTEM];
+    const parts = [identityLine(opts.model), INCOGNITO_SYSTEM];
     if (opts.allowedFolders.length) {
       parts.push(
         `\nShell folders (read-only): ${opts.allowedFolders.join(', ')}. File reads aren't limited to these; secrets are always refused.`,
@@ -195,7 +200,7 @@ function buildSystemPrompt(opts: AgentOptions): string {
     return parts.join('\n');
   }
 
-  const parts = [DEFAULT_SYSTEM];
+  const parts = [identityLine(opts.model), DEFAULT_SYSTEM];
 
   const folders = opts.folderAccess?.length
     ? opts.folderAccess

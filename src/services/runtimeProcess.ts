@@ -88,6 +88,23 @@ export const runtimeProcess = {
     }
   },
 
+  /**
+   * Restart so the runtime picks up a changed OpenRouter key (the key is read
+   * from the DB at spawn and passed via env — a running runtime can't see a key
+   * added/changed later, e.g. during onboarding). Safe to call even if the
+   * runtime isn't running yet: it just starts it.
+   */
+  restart(): void {
+    if (!runtimeInstalled()) return;
+    this.stop();
+    // Brief gap so port 7430 frees before respawn (the runtime also self-retries
+    // on a busy port, so this is just to avoid the noisy "port in use" log).
+    setTimeout(() => {
+      stopping = false;
+      spawnRuntime();
+    }, 500).unref();
+  },
+
   get running(): boolean {
     return child !== null && !stopping;
   },
