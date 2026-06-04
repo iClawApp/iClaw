@@ -44,6 +44,14 @@ export interface ChatModeDef {
   runtimeBacked: boolean;
   /** Ephemeral, never-persisted conversation (incognito). */
   ephemeral: boolean;
+  /**
+   * Mode is unusable without a running Docker daemon. Safe work IS the Docker
+   * sandbox, so it fails closed without it. Work/Incognito only LOSE shell
+   * commands (run_command) — their file tools run on the host — so they stay
+   * usable and are NOT marked here; the UI shows a softer "shell needs Docker"
+   * hint for them instead of disabling the mode.
+   */
+  requiresDocker: boolean;
 }
 
 /**
@@ -59,6 +67,7 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
     enabled: true,
     runtimeBacked: true,
     ephemeral: false,
+    requiresDocker: false,
   },
   {
     id: 'secure',
@@ -67,6 +76,7 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
     enabled: true,
     runtimeBacked: true,
     ephemeral: false,
+    requiresDocker: true,
   },
   {
     id: 'execute',
@@ -75,6 +85,7 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
     enabled: true,
     runtimeBacked: false,
     ephemeral: false,
+    requiresDocker: false,
   },
   // Set apart at the bottom (the composer renders a divider before any
   // `ephemeral` mode) — it's a distinct, off-the-record surface.
@@ -85,6 +96,7 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
     enabled: true,
     runtimeBacked: true,
     ephemeral: true,
+    requiresDocker: false,
   },
   // --- Planned modes (not selectable yet) -------------------------------
   {
@@ -94,6 +106,7 @@ export const CHAT_MODES: readonly ChatModeDef[] = [
     enabled: false,
     runtimeBacked: false,
     ephemeral: false,
+    requiresDocker: false,
   },
 ] as const;
 

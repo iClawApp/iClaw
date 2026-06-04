@@ -111,6 +111,22 @@
       <div class="composer-exec-msg" id="composer-exec-msg" aria-hidden="true">
         OpenClaw is off. Turn it on, or switch mode below.
       </div>
+      <!-- Replaces the textarea when a Docker-required mode (Safe work) is
+           selected but Docker isn't running. The Install/Start button text and
+           action are set by syncDockerAvailability in iclaw.js. -->
+      <div class="composer-docker-msg" id="composer-docker-msg" aria-hidden="true">
+        <span id="composer-docker-msg-text">Safe work needs Docker.</span>
+        <button type="button" class="composer-docker-btn" id="composer-docker-action">Install Docker</button>
+        <span class="composer-docker-size" id="composer-docker-size"></span>
+        <span class="composer-docker-or">or switch mode below.</span>
+      </div>
+    </div>
+
+    <!-- Soft, non-blocking hint for Work/Incognito when Docker is off: file
+         edits still work on the host, only shell (run_command) is unavailable. -->
+    <div class="composer-docker-note" id="composer-docker-note" hidden>
+      <span id="composer-docker-note-text">Shell commands need Docker — file edits work without it.</span>
+      <button type="button" class="composer-docker-note-btn" id="composer-docker-note-action">Install Docker</button>
     </div>
 
     <!-- Toolbar — bottom row -->
@@ -153,7 +169,7 @@
           <div id="composer-mode-menu" class="menu composer-mode-menu" role="menu" aria-label="Message mode" hidden>
             <% _modes.forEach(function (m) { %>
             <% if (m.ephemeral) { %><div class="composer-mode-menu-sep" role="separator" aria-hidden="true"></div><% } %>
-            <button type="button" class="menu-item composer-mode-menu-item" role="menuitemradio" data-mode="<%= m.id %>" aria-checked="<%= m.id === _initialMode ? 'true' : 'false' %>">
+            <button type="button" class="menu-item composer-mode-menu-item" role="menuitemradio" data-mode="<%= m.id %>" data-requires-docker="<%= m.requiresDocker ? '1' : '0' %>" aria-checked="<%= m.id === _initialMode ? 'true' : 'false' %>">
               <span class="menu-item__title"><%= m.label %></span>
               <span class="composer-mode-menu-item__desc"><%= m.description %></span>
             </button>

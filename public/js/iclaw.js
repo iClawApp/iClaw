@@ -101,6 +101,7 @@
     // fresh ephemeral session each time the mode is (re)entered.
     if (typeof syncIncognitoSurface === 'function') syncIncognitoSurface(next);
     syncExecuteAvailability();
+    if (typeof syncDockerAvailability === 'function') syncDockerAvailability();
   }
 
   // ── Full Power (Execute) gating ───────────────────────────────────────────
@@ -109,6 +110,21 @@
   // cover the input with an explanation (same treatment as the drag-drop overlay)
   // so the user switches mode instead of typing into a dead end.
   const composerExecMsg = document.getElementById('composer-exec-msg');
+
+  // ── Docker gating (Work shell + Safe-work sandbox) ────────────────────────
+  // Safe work IS the Docker sandbox → blocked outright when Docker is off.
+  // Work/Incognito keep working (file tools run on the host); they only lose
+  // run_command, so they get a soft hint instead of a block. Seeded from the
+  // server-rendered form flag, then kept live by polling /api/docker/status.
+  const composerDockerMsg = document.getElementById('composer-docker-msg');
+  const composerDockerNote = document.getElementById('composer-docker-note');
+  let dockerState = 'unknown';
+  // Don't block before the first probe resolves (mirrors the gateway "no signal
+  // → don't block" rule) — avoids a flash of the Safe-work overlay on load when
+  // Docker is actually fine. Strict (=== 'ready') once a real status arrives.
+  let dockerReady = true;
+  let dockerSizeHint = '';
+  let dockerPollTimer = null;
 
   // Live "is the gateway usable for Full Power" flag. Seeded from the server via
   // the composer form's data-gateway-ok, then kept current by applyGatewayStatus
@@ -137,10 +153,148 @@
     if (composerExecMsg) {
       composerExecMsg.setAttribute('aria-hidden', blocked ? 'false' : 'true');
     }
+    refreshComposerInputDisabled();
+  }
+
+  /**
+   * The composer input is disabled while ANY blocking overlay is up — Full
+   * Power with OpenClaw off, or a Docker-required mode with Docker off. Both
+   * overlays cover the textarea, so the send target would be hidden anyway;
+   * disabling input + send keeps keyboard submit from firing into nothing.
+   */
+  function refreshComposerInputDisabled() {
+    const blocked = !!(
+      form &&
+      (form.classList.contains('is-exec-disabled') ||
+        form.classList.contains('is-docker-disabled'))
+    );
     if (input) input.disabled = blocked;
     const sb = document.getElementById('composer-send-btn');
     if (sb) sb.disabled = blocked;
   }
+
+  /** True when the given mode can't run without a Docker daemon (Safe work). */
+  function modeRequiresDocker(mode) {
+    if (!composerModeMenu) return false;
+    const item = composerModeMenu.querySelector(
+      '.composer-mode-menu-item[data-mode="' + mode + '"]',
+    );
+    return !!item && item.dataset.requiresDocker === '1';
+  }
+
+  /** Modes whose file tools run on the host — only run_command needs Docker. */
+  function modeUsesShell(mode) {
+    return mode === 'work' || mode === 'incognito';
+  }
+
+  /**
+   * Reflect Docker readiness: grey out Docker-required modes in the menu, put a
+   * blocking overlay on the input when such a mode is selected, and show a soft
+   * "shell needs Docker" hint for Work/Incognito. No-op shape until the first
+   * status poll resolves.
+   */
+  function syncDockerAvailability() {
+    if (composerModeMenu) {
+      composerModeMenu.querySelectorAll('.composer-mode-menu-item').forEach((el) => {
+        if (el.dataset.requiresDocker === '1') {
+          el.classList.toggle('is-unavailable', !dockerReady);
+        }
+      });
+    }
+    const mode = getComposerMode();
+    const blocked = !dockerReady && modeRequiresDocker(mode);
+    if (form) form.classList.toggle('is-docker-disabled', blocked);
+    if (composerDockerMsg) {
+      composerDockerMsg.setAttribute('aria-hidden', blocked ? 'false' : 'true');
+    }
+    // Soft hint: Work/Incognito with Docker off (but not while the blocking
+    // overlay is already up for a Docker-required mode).
+    if (composerDockerNote) {
+      composerDockerNote.hidden = !(!dockerReady && modeUsesShell(mode) && !blocked);
+    }
+    applyDockerActionLabels();
+    refreshComposerInputDisabled();
+  }
+
+  /** Button copy reflects whether Docker is missing (Install) or just idle (Start). */
+  function applyDockerActionLabels() {
+    const installing = dockerState === 'installing';
+    const starting = dockerState === 'starting';
+    const needsInstall = dockerState === 'missing';
+    let label = needsInstall ? 'Install Docker' : 'Start Docker';
+    if (installing) label = 'Installing Docker…';
+    else if (starting) label = 'Starting Docker…';
+    const busy = installing || starting;
+
+    const mainBtn = document.getElementById('composer-docker-action');
+    const noteBtn = document.getElementById('composer-docker-note-action');
+    [mainBtn, noteBtn].forEach((b) => {
+      if (!b) return;
+      b.textContent = label;
+      b.disabled = busy;
+    });
+    const sizeEl = document.getElementById('composer-docker-size');
+    if (sizeEl) sizeEl.textContent = needsInstall && !busy && dockerSizeHint ? dockerSizeHint : '';
+    const noteText = document.getElementById('composer-docker-note-text');
+    if (noteText) {
+      noteText.textContent = busy
+        ? (installing ? 'Setting up Docker…' : 'Starting Docker…')
+        : 'Shell commands need Docker — file edits work without it.';
+    }
+  }
+
+  function applyDockerState(next, sizeHint) {
+    dockerState = next || 'unknown';
+    dockerReady = dockerState === 'ready';
+    if (typeof sizeHint === 'string' && sizeHint) dockerSizeHint = sizeHint;
+    syncDockerAvailability();
+  }
+
+  function pollDockerStatus(opts) {
+    fetch('/api/docker/status', { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        applyDockerState(data.state, data.sizeHint);
+        // Keep polling only while a start/install is in flight; otherwise the
+        // state is settled and the next change is user-driven (button click).
+        if (dockerState === 'installing' || dockerState === 'starting') {
+          dockerPollTimer = setTimeout(() => pollDockerStatus(opts), 2500);
+        }
+      })
+      .catch(() => {
+        if (opts && opts.keepAlive) dockerPollTimer = setTimeout(() => pollDockerStatus(opts), 4000);
+      });
+  }
+
+  function triggerDockerAction() {
+    // Missing → install (which also starts); installed-but-idle → just start.
+    const endpoint = dockerState === 'missing' ? '/api/docker/install' : '/api/docker/start';
+    // Optimistic transient state so the button shows progress immediately.
+    applyDockerState(dockerState === 'missing' ? 'installing' : 'starting', dockerSizeHint);
+    fetch(endpoint, { method: 'POST', headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.state) applyDockerState(data.state, dockerSizeHint);
+        if (dockerPollTimer) clearTimeout(dockerPollTimer);
+        pollDockerStatus({ keepAlive: true });
+      })
+      .catch(() => {
+        // Endpoint failed (e.g. non-localhost) — re-probe so the UI is honest.
+        if (dockerPollTimer) clearTimeout(dockerPollTimer);
+        pollDockerStatus({});
+      });
+  }
+
+  (function initDockerGate() {
+    const mainBtn = document.getElementById('composer-docker-action');
+    const noteBtn = document.getElementById('composer-docker-note-action');
+    if (mainBtn) mainBtn.addEventListener('click', triggerDockerAction);
+    if (noteBtn) noteBtn.addEventListener('click', triggerDockerAction);
+    syncDockerAvailability();
+    // First real status read; thereafter polling only runs during an action.
+    pollDockerStatus({});
+  })();
 
   // ── Incognito (ephemeral, never persisted) ────────────────────────────────
   // The conversation lives only in this tab: messages render locally, the turn
