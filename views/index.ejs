@@ -44,14 +44,6 @@
         <span class="header-tool-label">Stop</span>
       </button>
 
-      <span
-        class="gateway <%= gatewayStatus %>"
-        id="gateway-badge"
-        data-base-url="<%= openclawBaseUrl %>"
-        title="<%= openclawBaseUrl %>"
-      >
-        OpenClaw: <%= gatewayStatus === 'ok' ? 'connected' : (gatewayStatus === 'degraded' ? 'unreachable' : 'off') %>
-      </span>
       </div>
     </header>
 
@@ -137,7 +129,7 @@
 
       <% if (!agentsError || openRouterReady) { %>
       <div id="draft-composer-wrap" class="draft-composer-wrap" hidden>
-        <%- include('partials/composer') %>
+        <%- include('partials/composer', { gatewayOk: gatewayStatus === 'ok' }) %>
       </div>
       <% } %>
     </div>

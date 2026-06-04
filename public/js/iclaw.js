@@ -110,13 +110,10 @@
   // so the user switches mode instead of typing into a dead end.
   const composerExecMsg = document.getElementById('composer-exec-msg');
 
-  // Live "is the gateway usable for Full Power" flag. Seeded from the server
-  // (the gateway badge exists only on the new-chat header, so fall back to the
-  // composer form's data-gateway-ok on chat pages), then kept current by
-  // applyGatewayStatus on every status change.
+  // Live "is the gateway usable for Full Power" flag. Seeded from the server via
+  // the composer form's data-gateway-ok, then kept current by applyGatewayStatus
+  // on every status change.
   let gatewayOk = (function seedGatewayOk() {
-    const badge = document.getElementById('gateway-badge');
-    if (badge) return badge.classList.contains('ok');
     if (form && form.dataset.gatewayOk != null) return form.dataset.gatewayOk !== '0';
     return true; // no signal → don't block
   })();
@@ -4600,7 +4597,6 @@
   }
 
   function applyGatewayStatus(status, detail) {
-    const badge = document.getElementById('gateway-badge');
     // "degraded" (gateway answered /health but the WS RPC can't get through)
     // gets its own in-page banner on the home/projects pages, so the sidebar
     // "Start OpenClaw" banner is reserved for a genuinely-offline gateway —
@@ -4608,38 +4604,14 @@
     const offline = status === 'down' || status === 'shutdown';
     setGatewayOfflineBannerVisible(offline);
 
-    // Keep Full Power gating current on every page, even those without the badge
-    // (chat view). Must run BEFORE the no-badge early return below.
+    // Keep Full Power gating current on every page.
     gatewayOk = status === 'ok';
     if (typeof syncExecuteAvailability === 'function') syncExecuteAvailability();
-
-    if (!badge) return;
-    badge.classList.remove('ok', 'down', 'degraded', 'shutdown');
-    if (status === 'ok') {
-      badge.classList.add('ok');
-      badge.textContent = 'OpenClaw: connected';
-    } else if (status === 'degraded') {
-      badge.classList.add('degraded');
-      badge.textContent = 'OpenClaw: unreachable';
-    } else if (status === 'shutdown') {
-      badge.classList.add('shutdown');
-      badge.textContent = 'OpenClaw: shutting down';
-    } else {
-      badge.classList.add('down');
-      badge.textContent = 'OpenClaw: off';
-    }
-    const baseUrl = badge.dataset.baseUrl || '';
-    badge.title = baseUrl;
   }
 
   (function initGatewayOfflineBanner() {
-    const badge = document.getElementById('gateway-badge');
     // Only a genuinely-offline gateway shows the sidebar "Start OpenClaw" banner.
     // "degraded" is handled by the in-page banner instead.
-    if (badge && badge.classList.contains('down')) {
-      setGatewayOfflineBannerVisible(true);
-      return;
-    }
     if (!gatewayBanner) return;
     void fetch('/api/gateway/status', { headers: { Accept: 'application/json' } })
       .then((res) => (res.ok ? res.json() : null))

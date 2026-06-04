@@ -1067,28 +1067,6 @@ code {
   --_btn-bg-hover: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
-.gateway {
-  font-size: 0.72rem;
-  padding: 4px 9px;
-  border-radius: 6px;
-  background: var(--msg-user-fill);
-  border: 1px solid var(--msg-user-stroke);
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-.gateway.ok { color: var(--ok); border-color: var(--ok-border); }
-.gateway.down { color: var(--down); border-color: var(--down-soft-border); }
-.gateway.degraded {
-  color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) 40%, var(--border));
-  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
-}
-.gateway.shutdown {
-  color: var(--down);
-  border-color: color-mix(in srgb, var(--down) 55%, var(--border));
-  background: color-mix(in srgb, var(--down) 8%, var(--surface));
-  font-weight: 600;
-}
 
 /* ---------- Welcome / empty ---------- */
 
@@ -7197,13 +7175,6 @@ a.project-tab.project-tab--tasks:hover {
     min-height: 40px;
     padding: 0;
     border-radius: 12px;
-  }
-
-  .draft-header .gateway {
-    flex-shrink: 0;
-    max-width: none;
-    white-space: nowrap;
-    font-size: 0.72rem;
   }
 
   .project-header {
