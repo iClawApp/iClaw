@@ -5104,9 +5104,8 @@ code {
 .composer-docker-size { color: var(--muted); font-weight: 400; opacity: 0.8; }
 .composer-docker-or { color: var(--muted); font-weight: 400; }
 
-/* Inline call-to-action buttons for installing/starting Docker. */
-.composer-docker-btn,
-.composer-docker-note-btn {
+/* Inline call-to-action button for installing Docker (Safe overlay). */
+.composer-docker-btn {
   appearance: none;
   border: 1px solid var(--border);
   background: var(--msg-user-fill);
@@ -5118,21 +5117,8 @@ code {
   border-radius: 6px;
   cursor: pointer;
 }
-.composer-docker-btn:hover,
-.composer-docker-note-btn:hover { border-color: var(--ok-border); }
-.composer-docker-btn:disabled,
-.composer-docker-note-btn:disabled { opacity: 0.6; cursor: default; }
-
-/* Soft, non-blocking hint for Work/Incognito when Docker is off. */
-.composer-docker-note {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px 4px 0;
-  color: var(--muted);
-  font-size: 0.86em;
-}
+.composer-docker-btn:hover { border-color: var(--ok-border); }
+.composer-docker-btn:disabled { opacity: 0.6; cursor: default; }
 
 /* Mode menu item muted while its backend is unreachable: still clickable
  * (selecting it surfaces the input overlay that explains why). The suffix is

@@ -111,18 +111,13 @@
   // so the user switches mode instead of typing into a dead end.
   const composerExecMsg = document.getElementById('composer-exec-msg');
 
-  // ── Docker gating (Work shell + Safe-work sandbox) ────────────────────────
-  // Safe work IS the Docker sandbox → blocked outright when Docker is off.
-  // Work/Incognito keep working (file tools run on the host); they only lose
-  // run_command, so they get a soft hint instead of a block. Seeded from the
-  // server-rendered form flag, then kept live by polling /api/docker/status.
+  // ── Docker gating (Safe-work sandbox) ─────────────────────────────────────
+  // We only block Safe work when Docker is NOT INSTALLED ('missing'). When it's
+  // merely stopped, the runtime starts it on demand the moment a task needs it
+  // (and auto-stops it when idle), so we don't block or nag. Work/Incognito are
+  // never blocked — file tools run on the host, run_command starts Docker lazily.
   const composerDockerMsg = document.getElementById('composer-docker-msg');
-  const composerDockerNote = document.getElementById('composer-docker-note');
   let dockerState = 'unknown';
-  // Don't block before the first probe resolves (mirrors the gateway "no signal
-  // → don't block" rule) — avoids a flash of the Safe-work overlay on load when
-  // Docker is actually fine. Strict (=== 'ready') once a real status arrives.
-  let dockerReady = true;
   let dockerSizeHint = '';
   let dockerPollTimer = null;
 
@@ -182,35 +177,28 @@
     return !!item && item.dataset.requiresDocker === '1';
   }
 
-  /** Modes whose file tools run on the host — only run_command needs Docker. */
-  function modeUsesShell(mode) {
-    return mode === 'work' || mode === 'incognito';
-  }
-
   /**
-   * Reflect Docker readiness: grey out Docker-required modes in the menu, put a
-   * blocking overlay on the input when such a mode is selected, and show a soft
-   * "shell needs Docker" hint for Work/Incognito. No-op shape until the first
-   * status poll resolves.
+   * Reflect Docker state. We only BLOCK when Docker is genuinely unusable —
+   * i.e. not installed ('missing') — and only for a mode that can't run without
+   * it (Safe work). When Docker is merely stopped we don't block or nag: the
+   * runtime starts it on demand the moment a task needs it (and auto-stops it
+   * when idle). Work/Incognito are never blocked — their file tools run on the
+   * host and run_command starts Docker lazily. No-op until the first poll.
    */
   function syncDockerAvailability() {
+    const missing = dockerState === 'missing';
     if (composerModeMenu) {
       composerModeMenu.querySelectorAll('.composer-mode-menu-item').forEach((el) => {
         if (el.dataset.requiresDocker === '1') {
-          el.classList.toggle('is-unavailable', !dockerReady);
+          el.classList.toggle('is-unavailable', missing);
         }
       });
     }
     const mode = getComposerMode();
-    const blocked = !dockerReady && modeRequiresDocker(mode);
+    const blocked = missing && modeRequiresDocker(mode);
     if (form) form.classList.toggle('is-docker-disabled', blocked);
     if (composerDockerMsg) {
       composerDockerMsg.setAttribute('aria-hidden', blocked ? 'false' : 'true');
-    }
-    // Soft hint: Work/Incognito with Docker off (but not while the blocking
-    // overlay is already up for a Docker-required mode).
-    if (composerDockerNote) {
-      composerDockerNote.hidden = !(!dockerReady && modeUsesShell(mode) && !blocked);
     }
     applyDockerActionLabels();
     refreshComposerInputDisabled();
@@ -227,25 +215,16 @@
     const busy = installing || starting;
 
     const mainBtn = document.getElementById('composer-docker-action');
-    const noteBtn = document.getElementById('composer-docker-note-action');
-    [mainBtn, noteBtn].forEach((b) => {
-      if (!b) return;
-      b.textContent = label;
-      b.disabled = busy;
-    });
+    if (mainBtn) {
+      mainBtn.textContent = label;
+      mainBtn.disabled = busy;
+    }
     const sizeEl = document.getElementById('composer-docker-size');
     if (sizeEl) sizeEl.textContent = needsInstall && !busy && dockerSizeHint ? dockerSizeHint : '';
-    const noteText = document.getElementById('composer-docker-note-text');
-    if (noteText) {
-      noteText.textContent = busy
-        ? (installing ? 'Setting up Docker…' : 'Starting Docker…')
-        : 'Shell commands need Docker — file edits work without it.';
-    }
   }
 
   function applyDockerState(next, sizeHint) {
     dockerState = next || 'unknown';
-    dockerReady = dockerState === 'ready';
     if (typeof sizeHint === 'string' && sizeHint) dockerSizeHint = sizeHint;
     syncDockerAvailability();
   }
@@ -288,9 +267,7 @@
 
   (function initDockerGate() {
     const mainBtn = document.getElementById('composer-docker-action');
-    const noteBtn = document.getElementById('composer-docker-note-action');
     if (mainBtn) mainBtn.addEventListener('click', triggerDockerAction);
-    if (noteBtn) noteBtn.addEventListener('click', triggerDockerAction);
     syncDockerAvailability();
     // First real status read; thereafter polling only runs during an action.
     pollDockerStatus({});

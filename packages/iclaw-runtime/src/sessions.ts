@@ -15,13 +15,14 @@ import {
   writeSessionMeta, listPersistedWorkspaces,
 } from './secure-runner.js';
 import {
-  dockerAvailable, resolveWorkImage, startWorkContainer, execInWorkContainer,
+  resolveWorkImage, startWorkContainer, execInWorkContainer,
   toWorkMounts, type WorkMount,
 } from './work-container.js';
 import { ingestSources, describeIngest, type IngestSource } from './secure-ingest.js';
 import {
   exportWorkspace, applyChanges, type ExportResult, type ApplyResult,
 } from './secure-export.js';
+import { ensureDockerForTask, markDockerUse } from './docker-lifecycle.js';
 
 export interface SessionOptions {
   allowedFolders: string[];
@@ -625,6 +626,17 @@ export async function sendMessage(sessionId: string, content: string, networkEna
       if (summary) turnText = `${summary}\n\n${messageText}`;
     }
 
+    // A Safe turn IS the sandbox, so it needs Docker now — start it ourselves if
+    // it's down (it'll auto-stop when idle). Only fail if it's missing/unstartable.
+    if (!(await ensureDockerForTask())) {
+      emit(session, {
+        type: 'error',
+        message: 'Safe work needs Docker, which isn’t running and couldn’t be started automatically. Install or start Docker, then try again.',
+      });
+      return;
+    }
+    markDockerUse();
+
     // Warm reuse: get (or lazily start) the session's sandbox container.
     // Fail-closed — if Docker can't start it, surface an error, don't run.
     let containerName: string;
@@ -685,40 +697,55 @@ export async function sendMessage(sessionId: string, content: string, networkEna
   const incognito = !!session.opts.incognito;
   let runShell: ((command: string, cwd: string) => Promise<string>) | undefined;
   let linkSandbox: ((command: string) => Promise<string>) | undefined;
-  if (await dockerAvailable()) {
-    // Validate the explicitly-chosen folders into bind mounts (empty when none
-    // selected — analyze_link still gets a network-only container). Each allowed
-    // folder is validated, then mapped to a normalized /work/<n> container path.
-    const validated: { path: string; readonly: boolean }[] = [];
-    for (const f of session.opts.folderAccess ?? []) {
-      try {
-        validated.push({ path: validateMountRoot(f.path), readonly: incognito ? true : f.readonly });
-      } catch (err) {
-        emit(session, {
-          type: 'error',
-          message: `Folder excluded from commands: ${err instanceof Error ? err.message : String(err)}`,
-        });
-      }
+
+  // Validate the explicitly-chosen folders into bind mounts (empty when none
+  // selected). This is host-only (no Docker needed), so it always runs.
+  const validated: { path: string; readonly: boolean }[] = [];
+  for (const f of session.opts.folderAccess ?? []) {
+    try {
+      validated.push({ path: validateMountRoot(f.path), readonly: incognito ? true : f.readonly });
+    } catch (err) {
+      emit(session, {
+        type: 'error',
+        message: `Folder excluded from commands: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
-    const mounts: WorkMount[] = toWorkMounts(validated);
+  }
+  const mounts: WorkMount[] = toWorkMounts(validated);
+
+  // We DON'T gate on Docker being up. Docker is started lazily inside the tool,
+  // the first moment a task actually needs it (ensureDockerForTask) — so pure
+  // file-edit / read-only turns never touch Docker, and the user is never nagged
+  // to start it up front. If Docker is missing or can't be started, the tool
+  // returns a guidance message and file tools still work.
+  const ensureSandbox = async (): Promise<boolean> => {
+    if (!(await ensureDockerForTask())) return false;
+    markDockerUse();
+    return true;
+  };
+  // analyze_link runs yt-dlp inside the session's container (warm-reused, so
+  // yt-dlp self-installs once) — never on the host. Offered even with no folders
+  // (network-only container). Runs at "/" (it writes to its own scratch paths).
+  linkSandbox = async (command) => {
+    if (!(await ensureSandbox())) {
+      return 'analyze_link needs a Docker sandbox, which isn’t running and couldn’t be started. Use web_fetch/web_search instead.';
+    }
     const image = await resolveWorkImage();
-    // analyze_link runs yt-dlp inside the session's container (warm-reused, so
-    // yt-dlp self-installs once) — never on the host. Offered even with no
-    // folders: the container then has no bind mounts, only network. Runs at "/"
-    // since the helper command writes to its own /workspace scratch paths.
-    linkSandbox = async (command) => {
+    const name = await ensureWorkContainer(session, mounts, image);
+    return execInWorkContainer(name, command, '/', { mounts });
+  };
+  // run_command needs a real folder to operate in, so it stays gated on mounts.
+  if (mounts.length) {
+    runShell = async (command, cwd) => {
+      if (!(await ensureSandbox())) {
+        return 'run_command needs a Docker sandbox. Docker isn’t running and couldn’t be started automatically — start (or install) Docker and try again. File read/write tools still work without it.';
+      }
+      const image = await resolveWorkImage();
       const name = await ensureWorkContainer(session, mounts, image);
-      return execInWorkContainer(name, command, '/', { mounts });
+      // scan: report created/modified/deleted files after the command so the
+      // user sees exactly what changed inside their allowed folders.
+      return execInWorkContainer(name, command, cwd, { mounts, scan: true });
     };
-    // run_command needs a real folder to operate in, so it stays gated on mounts.
-    if (mounts.length) {
-      runShell = async (command, cwd) => {
-        const name = await ensureWorkContainer(session, mounts, image);
-        // scan: report created/modified/deleted files after the command so the
-        // user sees exactly what changed inside their allowed folders.
-        return execInWorkContainer(name, command, cwd, { mounts, scan: true });
-      };
-    }
   }
 
   const gen = runAgentTurn(session.history, messageText, {

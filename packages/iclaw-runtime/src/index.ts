@@ -18,6 +18,7 @@ import http from 'node:http';
 
 import { createSession, getSession, deleteSession, abortSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, exportSessionWorkspace, applySessionChanges, sweepExpiredSessions, startContainerReaper, loadPersistedSessions, type RuntimeAttachment } from './sessions.js';
 import { killOrphanContainers } from './secure-runner.js';
+import { startDockerIdleReaper } from './docker-lifecycle.js';
 import { killOrphanWorkContainers } from './work-container.js';
 
 const PORT = parseInt(process.env.ICLAW_RUNTIME_PORT || '7430', 10);
@@ -192,6 +193,10 @@ setInterval(() => {
 
 // Reap idle Secure-Mode sandbox containers (keeps RAM in check across chats).
 startContainerReaper(30_000);
+
+// Stop a Docker daemon WE started once it's idle and container-free (never
+// touches a daemon the user started, nor one with running containers).
+startDockerIdleReaper();
 
 // Restore persisted Secure sessions so workspaces + TTL survive restarts
 // (expired ones are deleted), then kill stray containers from the old process.
