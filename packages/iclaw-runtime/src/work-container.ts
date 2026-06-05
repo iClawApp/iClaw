@@ -319,15 +319,42 @@ export async function execInWorkContainer(
 
 /** Bare `docker exec` — returns combined stdout/stderr (or the error text). */
 async function rawExec(name: string, command: string, cwd: string): Promise<string> {
+  const dev = process.env.ICLAW_DEV_MODE === 'true';
+  const startedAt = Date.now();
   try {
     const { stdout, stderr } = await execFileAsync(
       'docker', ['exec', '--workdir', cwd, name, 'bash', '-lc', command],
       { timeout: COMMAND_TIMEOUT },
     );
-    return [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)';
+    const out = [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)';
+    if (dev) log.info('run_command', { cwd, code: 0, ms: Date.now() - startedAt, bytes: out.length, cmd: command });
+    return out;
   } catch (err: unknown) {
-    const e = err as { stdout?: string; stderr?: string; message?: string };
-    return [e.stdout, e.stderr, e.message].filter(Boolean).join('\n').trim() || 'Error';
+    const e = err as { stdout?: string; stderr?: string; message?: string; killed?: boolean; signal?: string; code?: number };
+    // execFile rejects on a non-zero exit AND on the timeout kill — tell them
+    // apart: a SIGTERM/SIGKILL with `killed` is OUR timeout firing, not the
+    // command exiting on its own.
+    const timedOut = Boolean(e.killed) || e.signal === 'SIGTERM' || e.signal === 'SIGKILL';
+    const partial = [e.stdout, e.stderr].filter(Boolean).join('\n').trim();
+    if (dev) {
+      log.warn('run_command failed', {
+        cwd, ms: Date.now() - startedAt, timedOut,
+        killed: Boolean(e.killed), signal: e.signal ?? null, code: e.code ?? null,
+        bytes: partial.length, cmd: command,
+      });
+    }
+    // CRITICAL (not dev-gated): a timeout kill must be visible to the MODEL.
+    // Otherwise it reads the near-empty output of a hung command (e.g. an
+    // `npm install` with no container network) as "ran fine, did nothing" and
+    // misdiagnoses it as a permissions/sandbox bug — exactly what happened in
+    // practice. State plainly that the command was killed and did NOT finish.
+    if (timedOut) {
+      return (partial ? partial + '\n\n' : '') +
+        `[command killed after ${Math.round(COMMAND_TIMEOUT / 1000)}s — it timed out and did NOT finish. ` +
+        `Most likely it hung on the network (npm/pip/git/curl with no connectivity in this sandbox) or on an ` +
+        `interactive prompt. Do not assume anything it was downloading or building completed.]`;
+    }
+    return partial || e.message || 'Error';
   }
 }
 

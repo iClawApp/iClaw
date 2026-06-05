@@ -2490,18 +2490,30 @@
     if (card && !card.querySelector('.skill-suggestion-row')) card.remove();
   }
 
+  // "handle-sandbox-network" → "Handle sandbox network": a readable title from
+  // the kebab slug, used until/unless the server sends a friendlier s.title.
+  function humanizeSkillName(name) {
+    const s = String(name || '').replace(/[-_]+/g, ' ').trim();
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+  }
+
+  // A non-technical person sees ONE plain sentence + two buttons. Everything
+  // technical (kebab name, full procedure, "all projects", provenance) is folded
+  // into a collapsed «Деталі» block — still in the DOM, so the accept handler
+  // reads the same fields whether or not it's ever opened.
   function buildSkillSuggestionRowHtml(s) {
     const id = Number(s.id);
     if (!Number.isFinite(id)) return '';
     const kind = s.kind === 'patch' ? 'patch' : 'new';
-    const kindBadge =
+    const humanTitle =
+      (s.title && String(s.title).trim()) || humanizeSkillName(s.name) || 'це';
+    const updatesLine =
       kind === 'patch'
-        ? '<span class="skill-suggestion-badge skill-suggestion-badge--patch">Updates “' +
-          escapeHtml(s.targetName || s.name || 'skill') +
-          '”</span>'
-        : '<span class="skill-suggestion-badge skill-suggestion-badge--new">New skill</span>';
-    const untrustedBadge = s.untrusted
-      ? '<span class="skill-suggestion-badge skill-suggestion-badge--untrusted" title="Distilled from a turn that may have ingested untrusted external content — review carefully.">From untrusted content</span>'
+        ? '<div class="skill-suggestion-updates">Доповнює те, що вже вмію</div>'
+        : '';
+    // Provenance kept — but as a quiet ⓘ, not a red "untrusted" badge.
+    const infoIcon = s.untrusted
+      ? '<span class="skill-suggestion-info" tabindex="0" role="img" aria-label="Підказано з матеріалу, що міг містити зовнішній вміст — перевір у «Деталях»" title="Підказано з матеріалу, що міг містити зовнішній (недовірений) вміст. Переглянь «Деталі», перш ніж зберігати.">&#9432;</span>'
       : '';
     return (
       '<li class="skill-suggestion-row" data-suggestion-id="' +
@@ -2509,30 +2521,39 @@
       '" data-kind="' +
       kind +
       '" role="listitem">' +
-      '<div class="skill-suggestion-head">' +
-      kindBadge +
-      untrustedBadge +
+      '<div class="skill-suggestion-simple">' +
+      '<div class="skill-suggestion-title">' +
+      escapeHtml(humanTitle) +
+      infoIcon +
       '</div>' +
+      (s.description
+        ? '<div class="skill-suggestion-summary">' + escapeHtml(s.description) + '</div>'
+        : '') +
+      updatesLine +
+      '</div>' +
+      '<details class="skill-suggestion-advanced"><summary>Деталі</summary>' +
+      '<label class="skill-suggestion-field"><span class="skill-suggestion-field-label">Назва</span>' +
       '<input class="skill-suggestion-name" aria-label="Skill name" spellcheck="false" value="' +
       escapeHtml(s.name || '') +
-      '" />' +
+      '" /></label>' +
+      '<label class="skill-suggestion-field"><span class="skill-suggestion-field-label">Опис</span>' +
       '<textarea class="skill-suggestion-desc" aria-label="Skill summary" rows="2">' +
       escapeHtml(s.description || '') +
-      '</textarea>' +
-      '<details class="skill-suggestion-bodywrap"><summary>Preview / edit procedure</summary>' +
+      '</textarea></label>' +
+      '<label class="skill-suggestion-field"><span class="skill-suggestion-field-label">Що саме робити</span>' +
       '<textarea class="skill-suggestion-body" aria-label="Skill procedure (SKILL.md)" rows="10">' +
       escapeHtml(s.body || '') +
-      '</textarea></details>' +
-      '<div class="skill-suggestion-controls">' +
-      '<label class="skill-suggestion-scope"><input type="checkbox" class="skill-suggestion-global" /> Save as global (all projects)</label>' +
+      '</textarea></label>' +
+      '<label class="skill-suggestion-scope"><input type="checkbox" class="skill-suggestion-global" /> Використовувати в усіх проєктах</label>' +
+      '</details>' +
       '<div class="skill-suggestion-actions">' +
       '<button type="button" class="skill-suggestion-btn skill-suggestion-reject" data-suggestion-id="' +
       id +
-      '">Dismiss</button>' +
+      '">Не треба</button>' +
       '<button type="button" class="skill-suggestion-btn skill-suggestion-accept" data-suggestion-id="' +
       id +
-      '">Save skill</button>' +
-      '</div></div></li>'
+      '">Запам\'ятати</button>' +
+      '</div></li>'
     );
   }
 
@@ -2573,9 +2594,9 @@
     card.dataset.chatId = cidEsc;
     card.innerHTML =
       '<div class="skill-suggestions-shell">' +
-      '<p class="skill-suggestions-lead">Learned a skill for «' +
+      '<p class="skill-suggestions-lead">💡 Запам\'ятати це для «' +
       safeName +
-      '». Save it to project memory?</p>' +
+      '», щоб наступного разу зробити швидше?</p>' +
       '<ul class="skill-suggestions-list" role="list">' +
       rowsHtml +
       '</ul></div>';
@@ -4220,6 +4241,17 @@
               body.classList.remove('stream-body');
               body.innerHTML = renderMarkdown(msg.message.content || '');
               decorateMessageBody(body);
+            }
+            // Inline images the agent surfaced via show_image. The streaming
+            // bubble only built a text body, so append the attachments block here
+            // (the non-streaming appendMessage path already includes it). Reload
+            // renders them the same way, from msg.attachments.
+            if (Array.isArray(msg.message.attachments) && msg.message.attachments.length) {
+              target.querySelector('.msg-attachments-finalized')?.remove();
+              const wrap = document.createElement('div');
+              wrap.className = 'msg-attachments-finalized';
+              wrap.innerHTML = attachmentsHtml(msg.message.attachments);
+              target.appendChild(wrap);
             }
             applyTokenBadge(target, msg.message.tokens, msg.message.cached_tokens);
             currentStreamEl = null;

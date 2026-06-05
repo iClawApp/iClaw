@@ -10,9 +10,9 @@
  * This allows changing network settings per message while preserving files.
  */
 import { execFile } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, chmodSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, chmodSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, basename } from 'node:path';
+import { join, basename, resolve, extname, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 
@@ -20,6 +20,7 @@ import type OpenAI from 'openai';
 import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
 import type { SavingsNote } from './agent/tools.js';
 import { shrinkOldToolOutputs, withPromptCaching, makeToolGuard, HOST_INSTALL_POLICY } from './agent/loop.js';
+import { log } from './log.js';
 import { INSTALL_LABEL } from './install-id.js';
 import { dumpPrompt, newTurnId } from './agent/prompt-dump.js';
 
@@ -186,15 +187,38 @@ export async function isContainerRunning(containerName: string): Promise<boolean
 
 /** Execute a command inside the sandbox container. */
 async function execInContainer(containerName: string, command: string): Promise<string> {
+  const dev = process.env.ICLAW_DEV_MODE === 'true';
+  const startedAt = Date.now();
   try {
     const { stdout, stderr } = await execFileAsync(
       'docker', ['exec', containerName, 'bash', '-c', command],
       { timeout: CONTAINER_TIMEOUT },
     );
-    return [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)';
+    const out = [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)';
+    if (dev) log.info('secure run_command', { code: 0, ms: Date.now() - startedAt, bytes: out.length, cmd: command });
+    return out;
   } catch (err: unknown) {
-    const e = err as { stdout?: string; stderr?: string; message?: string };
-    return [e.stdout, e.stderr, e.message].filter(Boolean).join('\n').trim() || 'Error';
+    const e = err as { stdout?: string; stderr?: string; message?: string; killed?: boolean; signal?: string; code?: number };
+    const timedOut = Boolean(e.killed) || e.signal === 'SIGTERM' || e.signal === 'SIGKILL';
+    const partial = [e.stdout, e.stderr].filter(Boolean).join('\n').trim();
+    if (dev) {
+      log.warn('secure run_command failed', {
+        ms: Date.now() - startedAt, timedOut,
+        killed: Boolean(e.killed), signal: e.signal ?? null, code: e.code ?? null,
+        bytes: partial.length, cmd: command,
+      });
+    }
+    // Not dev-gated: a timeout kill must reach the MODEL. In Secure Mode the
+    // sandbox is `--network none` unless the user enables it, so a `curl`/`git`
+    // hang here is the common case — say so instead of returning empty text the
+    // model misreads as a clean run.
+    if (timedOut) {
+      return (partial ? partial + '\n\n' : '') +
+        `[command killed after ${Math.round(CONTAINER_TIMEOUT / 1000)}s — it timed out and did NOT finish. ` +
+        `Likely a network hang (this sandbox has no internet unless the user turns the network toggle ON) ` +
+        `or an interactive prompt. Do not assume it completed.]`;
+    }
+    return partial || e.message || 'Error';
   }
 }
 
@@ -306,15 +330,22 @@ async function* runSecureAgentLoop(
   networkEnabled: boolean,
 ): AsyncGenerator<SecureEvent> {
   const OpenAI = (await import('openai')).default;
-  const { TOOL_DEFINITIONS, ANALYZE_LINK_TOOL, analyzeLink, clampMiddle, compressCommandOutput, TOOL_OUTPUT_MAX_CHARS } =
+  const { TOOL_DEFINITIONS, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, analyzeLink, clampMiddle, compressCommandOutput, TOOL_OUTPUT_MAX_CHARS } =
     await import('./agent/tools.js');
 
   // analyze_link is appended (not part of core TOOL_DEFINITIONS) and runs its
   // network work INSIDE this container, so it respects the same network gate.
-  const tools = [...TOOL_DEFINITIONS, ANALYZE_LINK_TOOL];
+  // show_image lets the agent surface an image it produced in /workspace.
+  const tools = [...TOOL_DEFINITIONS, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL];
 
   // Buffer for analyze_link savings notes, flushed as `note` events per tool call.
   const savingsNotes: SavingsNote[] = [];
+  // Buffer for show_image requests, flushed as `image` events per tool call.
+  const pendingImages: { path: string; mime: string; fileName: string; bytes: number }[] = [];
+  const SECURE_IMAGE_MIME: Record<string, string> = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+  };
 
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
@@ -342,6 +373,9 @@ async function* runSecureAgentLoop(
   let turnCached = 0;
   const dumpTurnId = newTurnId();
   const guard = makeToolGuard();
+  // Paragraph break for the first text of a post-tool round, so streamed
+  // segments across a tool boundary don't glue (see loop.ts for the full story).
+  let pendingSeparator = '';
   for (let round = 0; round < MAX_ROUNDS; round++) {
     // User pressed Stop between rounds → end cleanly (partial text already sent).
     if (opts.signal?.aborted) {
@@ -387,6 +421,10 @@ async function* runSecureAgentLoop(
         finishReason = choice.finish_reason ?? finishReason;
         const delta = choice.delta;
         if (delta.content) {
+          if (pendingSeparator) {
+            yield { type: 'text', content: pendingSeparator };
+            pendingSeparator = '';
+          }
           textBuffer += delta.content;
           yield { type: 'text', content: delta.content };
         }
@@ -456,14 +494,43 @@ async function* runSecureAgentLoop(
           networkEnabled,
           onNote: (note) => savingsNotes.push(note),
         });
+      } else if (tc.name === 'show_image') {
+        // The workspace dir IS the host side of the container's /workspace mount,
+        // so an image written there (by run_command or write_file) is already on
+        // disk here. Resolve within the workspace (no ../ escape), then queue it.
+        const rel = String(args.path ?? '').replace(/^\/workspace\/?/, '');
+        const full = resolve(workspaceDir, rel);
+        if (full !== workspaceDir && !full.startsWith(workspaceDir + sep)) {
+          result = 'show_image: the path must stay inside /workspace.';
+        } else {
+          const ext = extname(full).toLowerCase();
+          const mime = SECURE_IMAGE_MIME[ext];
+          let st: ReturnType<typeof statSync> | null = null;
+          try { st = statSync(full); } catch { st = null; }
+          if (!mime) {
+            result = `show_image supports image files only (png/jpg/gif/webp/svg); got "${ext || 'no extension'}".`;
+          } else if (!st || !st.isFile() || st.size === 0) {
+            result = `No such image file: ${rel || String(args.path ?? '')}`;
+          } else if (st.size > 20 * 1024 * 1024) {
+            result = `Image too large to display (${st.size.toLocaleString()} bytes; max ${(20 * 1024 * 1024).toLocaleString()}).`;
+          } else {
+            pendingImages.push({ path: full, mime, fileName: basename(full), bytes: st.size });
+            result = `Displayed ${basename(full)} to the user in the chat.`;
+          }
+        }
       } else {
         result = `Tool not available in secure mode: ${tc.name}`;
       }
 
       yield { type: 'tool_result', name: tc.name, result };
       while (savingsNotes.length) yield { type: 'note', note: savingsNotes.shift()! };
+      while (pendingImages.length) {
+        const im = pendingImages.shift()!;
+        yield { type: 'image', path: im.path, mime: im.mime, fileName: im.fileName, bytes: im.bytes };
+      }
       messages.push({ role: 'tool', tool_call_id: `call_${i}`, content: result });
     }
+    if (textBuffer && !/\n\s*$/.test(textBuffer)) pendingSeparator = '\n\n';
     shrinkOldToolOutputs(messages); // mid-turn compaction (see loop.ts)
   }
 

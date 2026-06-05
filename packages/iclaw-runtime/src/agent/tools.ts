@@ -264,6 +264,33 @@ export const WEB_SEARCH_TOOL = {
 } as const;
 
 /**
+ * show_image — display an image file to the user INLINE in the chat.
+ *
+ * Kept OUT of TOOL_DEFINITIONS and appended by the loop (like the web tools).
+ * Use after creating or locating an image the user should actually SEE — a
+ * chart, diagram, QR code, screenshot, rendered figure. The path must be a real
+ * image file inside one of the allowed folders.
+ */
+export const SHOW_IMAGE_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'show_image',
+    description:
+      'Display an image FILE to the user inline in the chat. Use right after you create or find an image ' +
+      'the user should see (a chart/plot, diagram, QR code, screenshot, rendered figure). Pass the path to a ' +
+      'PNG/JPG/GIF/WebP/SVG inside an allowed folder. Do NOT use for text output — only real image files.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Path to the image file (PNG/JPG/GIF/WebP/SVG) inside an allowed folder.' },
+        caption: { type: 'string', description: 'Optional short caption shown with the image.' },
+      },
+      required: ['path'],
+    },
+  },
+} as const;
+
+/**
  * analyze_link — extract the *content* behind a URL (not the raw HTML).
  *
  * Kept OUT of TOOL_DEFINITIONS and appended by the loop, like the web tools.
@@ -307,7 +334,16 @@ export const ANALYZE_LINK_TOOL = {
 
 export type ToolName =
   | 'list_files' | 'read_file' | 'read_summary' | 'search_files' | 'write_file' | 'edit_file'
-  | 'run_command' | 'web_fetch' | 'web_search' | 'analyze_link';
+  | 'run_command' | 'web_fetch' | 'web_search' | 'analyze_link' | 'show_image';
+
+/** A host image the agent asked to display inline (via show_image). */
+export interface ImageRef {
+  /** Absolute HOST path of the image (already inside an allowed folder). */
+  path: string;
+  mime: string;
+  fileName: string;
+  bytes: number;
+}
 
 /**
  * A token/cost saving worth surfacing in the chat. Emitted when a tool fed the
@@ -403,6 +439,12 @@ export interface ToolContext {
    * mode). The agent loop wires this to forward a `note` event to the chat.
    */
   onNote?: (note: SavingsNote) => void;
+  /**
+   * Optional sink for show_image: an image file (already validated to live
+   * inside an allowed folder) the agent wants displayed inline in the chat. The
+   * loop wires this to emit an `image` event the host turns into an attachment.
+   */
+  onImage?: (image: ImageRef) => void;
 }
 
 /** Folders to validate reads against — empty (anywhere) for Incognito. */
@@ -428,6 +470,7 @@ export async function executeTool(
       case 'run_command': return await runCommand(args, ctx);
       case 'web_fetch': return await webFetch(args);
       case 'web_search': return await webSearch(args);
+      case 'show_image': return showImage(args, ctx);
       case 'analyze_link':
         if (!ctx.linkSandbox) {
           return 'analyze_link needs a sandbox container (Docker), which is unavailable here. Use web_fetch/web_search instead.';
@@ -643,6 +686,47 @@ async function writeFile(args: Record<string, unknown>, ctx: ToolContext): Promi
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, 'utf-8');
   return `Written: ${filePath}`;
+}
+
+const SHOW_IMAGE_MIME: Record<string, string> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+};
+const SHOW_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+
+/**
+ * show_image: hand the host an image file (inside an allowed folder) to render
+ * inline in the chat. Path is validated against allowedFolders exactly like
+ * write_file — so the model must pass the HOST path it was given for the folder,
+ * not a container `/work/N` path. We only signal (via ctx.onImage); the host
+ * copies it into the chat's uploads and attaches it to the reply.
+ */
+function showImage(args: Record<string, unknown>, ctx: ToolContext): string {
+  const raw = args.path;
+  if (typeof raw !== 'string' || !raw.trim()) return 'show_image needs a "path" to an image file.';
+  let filePath: string;
+  try {
+    filePath = validatePath(raw, ctx.allowedFolders);
+  } catch (e) {
+    if (e instanceof SecurityError) {
+      return `Security error: ${e.message}. Pass the image's path inside an allowed folder` +
+        `${ctx.allowedFolders.length ? ` (${ctx.allowedFolders.join(', ')})` : ''} — not a /work/N container path.`;
+    }
+    throw e;
+  }
+  const ext = path.extname(filePath).toLowerCase();
+  const mime = SHOW_IMAGE_MIME[ext];
+  if (!mime) return `show_image supports image files only (png/jpg/gif/webp/svg); got "${ext || 'no extension'}".`;
+  let st: fs.Stats;
+  try { st = fs.statSync(filePath); } catch { return `No such file: ${filePath}`; }
+  if (!st.isFile()) return `Not a file: ${filePath}`;
+  if (st.size === 0) return `That image file is empty: ${filePath}`;
+  if (st.size > SHOW_IMAGE_MAX_BYTES) {
+    return `Image too large to display (${st.size.toLocaleString()} bytes; max ${SHOW_IMAGE_MAX_BYTES.toLocaleString()}).`;
+  }
+  if (!ctx.onImage) return 'Showing images inline is not available in this mode.';
+  ctx.onImage({ path: filePath, mime, fileName: path.basename(filePath), bytes: st.size });
+  return `Displayed ${path.basename(filePath)} to the user in the chat.`;
 }
 
 async function editFile(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {

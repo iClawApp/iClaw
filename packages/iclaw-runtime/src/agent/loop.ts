@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, executeTool, type ToolContext, type ToolName, type SavingsNote } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, executeTool, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 
 export interface AgentOptions {
@@ -47,6 +47,7 @@ export type AgentEvent =
   | { type: 'tool_start'; name: string; input: unknown }
   | { type: 'tool_result'; name: string; result: string }
   | { type: 'note'; note: SavingsNote }
+  | { type: 'image'; path: string; mime: string; fileName: string; bytes: number }
   | { type: 'approval_request'; changeId: string; path: string; content: string }
   | { type: 'done'; tokens?: number; cached?: number }
   | { type: 'error'; message: string };
@@ -243,6 +244,7 @@ export async function* runAgentTurn(
   // A tool may emit a savings note mid-call (analyze_link). Collect it here and
   // flush as a `note` event right after the tool_result it belongs to.
   const pendingNotes: SavingsNote[] = [];
+  const pendingImages: ImageRef[] = [];
   const toolCtx: ToolContext = {
     allowedFolders: opts.allowedFolders,
     folderAccess: opts.folderAccess,
@@ -252,6 +254,7 @@ export async function* runAgentTurn(
     readAnywhere: opts.incognito,
     requestWriteApproval: opts.onWriteApproval ?? (async () => true),
     onNote: (note) => pendingNotes.push(note),
+    onImage: (image) => pendingImages.push(image),
   };
 
   // Per-mode tool set. Incognito is read-only, so don't ship write_file/edit_file
@@ -265,6 +268,9 @@ export async function* runAgentTurn(
   // sandbox backend is wired (Docker up). Without it, the model uses web_fetch.
   const tools = [
     ...fileTools, READ_SUMMARY_TOOL, WEB_FETCH_TOOL, WEB_SEARCH_TOOL,
+    // show_image lets the agent surface a real image file inline. Not in
+    // Incognito — that turn is ephemeral, so there's no message to attach to.
+    ...(opts.incognito ? [] : [SHOW_IMAGE_TOOL]),
     ...(opts.linkSandbox ? [ANALYZE_LINK_TOOL] : []),
   ];
 
@@ -295,6 +301,12 @@ export async function* runAgentTurn(
   const dumpTurnId = newTurnId();
   const dumpMode = opts.incognito ? 'incognito' : 'work';
   const guard = makeToolGuard();
+
+  // Paragraph break to insert before the FIRST text of a round that follows a
+  // tool call. The model streams a fresh sentence each round ("…the repo" →
+  // run_command → "Oh, the repo is there!"); consumers concatenate text deltas
+  // raw, so without this the two segments glue into "…the repoOh, the repo…".
+  let pendingSeparator = '';
 
   // Max tool-call rounds to prevent infinite loops (env-tunable: ICLAW_MAX_ROUNDS).
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -352,6 +364,12 @@ export async function* runAgentTurn(
 
         // Text content
         if (delta.content) {
+          // First text after a tool round → emit the paragraph break so this
+          // new segment doesn't fuse onto the previous round's last word.
+          if (pendingSeparator) {
+            yield { type: 'text', content: pendingSeparator };
+            pendingSeparator = '';
+          }
           textBuffer += delta.content;
           yield { type: 'text', content: delta.content };
         }
@@ -419,6 +437,10 @@ export async function* runAgentTurn(
 
       yield { type: 'tool_result', name: tc.name, result };
       while (pendingNotes.length) yield { type: 'note', note: pendingNotes.shift()! };
+      while (pendingImages.length) {
+        const im = pendingImages.shift()!;
+        yield { type: 'image', path: im.path, mime: im.mime, fileName: im.fileName, bytes: im.bytes };
+      }
 
       messages.push({
         role: 'tool',
@@ -426,6 +448,11 @@ export async function* runAgentTurn(
         content: result,
       });
     }
+    // This round spoke before calling tools, and didn't end on a newline — the
+    // next round's text is a separate thought, so arm a paragraph break for it.
+    // (Leave a previously-armed break intact for tool-only rounds with no text.)
+    if (textBuffer && !/\n\s*$/.test(textBuffer)) pendingSeparator = '\n\n';
+
     // Mid-turn compaction: on a long multi-round task the accumulated tool
     // outputs would be resent every round (O(n²) tokens). Stub out old ones.
     shrinkOldToolOutputs(messages);

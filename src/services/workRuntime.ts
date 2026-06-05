@@ -143,6 +143,7 @@ export type WorkEvent =
   | { type: 'text'; content: string }
   | { type: 'tool'; name: string; input?: unknown }
   | { type: 'note'; note: RuntimeSavingsNote }
+  | { type: 'image'; path: string; mime: string; fileName: string; bytes: number }
   | { type: 'done'; tokens?: number; cached?: number }
   | { type: 'error'; message: string };
 

@@ -7829,6 +7829,86 @@ body.incognito-mode .composer-mode-btn__label {
   color: var(--text);
 }
 
+/* Simplified card: one plain title + summary; everything technical is folded
+   into the «Деталі» <details> below. */
+.skill-suggestion-simple {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.skill-suggestion-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.skill-suggestion-summary {
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.skill-suggestion-updates {
+  align-self: flex-start;
+  margin-top: 2px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: color-mix(in srgb, #c9a227 90%, var(--text));
+}
+
+.skill-suggestion-info {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  cursor: help;
+  opacity: 0.7;
+}
+.skill-suggestion-info:hover,
+.skill-suggestion-info:focus { opacity: 1; }
+
+/* The fold. Closed by default — non-technical users never need to open it. */
+.skill-suggestion-advanced > summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 2px 0;
+  user-select: none;
+  list-style: none;
+}
+.skill-suggestion-advanced > summary::-webkit-details-marker { display: none; }
+.skill-suggestion-advanced > summary::before { content: '⋯ '; }
+.skill-suggestion-advanced[open] > summary::before { content: '▾ '; }
+
+.skill-suggestion-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.skill-suggestion-advanced[open] { gap: 8px; }
+
+.skill-suggestion-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.skill-suggestion-field-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+}
+
+/* Actions are a direct row child now; right-align them. */
+.skill-suggestion-row > .skill-suggestion-actions {
+  justify-content: flex-end;
+}
+
 /* Project page — skills list (mirrors .fact). */
 .project-chats > li.skill {
   margin: 0;

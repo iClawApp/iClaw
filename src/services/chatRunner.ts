@@ -19,10 +19,13 @@ import { wsHub } from './wsHub';
 import {
   gatewayAttachmentsFromPersisted,
   persistIncomingAttachments,
+  persistAgentImage,
   runtimeAttachmentsFromPersisted,
   type IncomingAttachment,
   type ProcessedAttachment,
 } from './uploads';
+import { resolve as resolvePath, sep as pathSep, join as joinPath } from 'node:path';
+import { homedir } from 'node:os';
 import type { ChatMode, Message, MessageAttachment } from '../types';
 import { DEFAULT_MODE } from './chatModes';
 import { buildCompactedHistory } from './contextCompaction';
@@ -867,6 +870,24 @@ export async function applyChatSandboxChanges(chatId: number): Promise<ApplyResu
   return applySandboxChanges(sessionId);
 }
 
+/** Secure workspaces live here (mirrors the runtime's SECURE_DATA_DIR default). */
+const SECURE_WORKSPACE_ROOT = process.env.ICLAW_SECURE_DATA_DIR || joinPath(homedir(), '.iclaw', 'secure');
+
+/**
+ * Defense-in-depth for show_image: the runtime already validates the image is
+ * inside an allowed folder before emitting the event, but the host independently
+ * re-checks the absolute path lies under a root this chat legitimately controls
+ * — its granted Work folders, or (Secure) the runtime's workspace root — before
+ * copying anything into the chat's uploads.
+ */
+function imagePathAllowed(hostPath: string, opts: { workFolders?: WorkFolder[]; secure?: boolean }): boolean {
+  const abs = resolvePath(hostPath);
+  const roots: string[] = [];
+  if (opts.secure) roots.push(resolvePath(SECURE_WORKSPACE_ROOT));
+  for (const f of opts.workFolders ?? []) roots.push(resolvePath(f.path));
+  return roots.some((root) => abs === root || abs.startsWith(root + pathSep));
+}
+
 /**
  * Route a Work Mode turn to iclaw-runtime.
  * Reuses the session across turns to preserve conversation history.
@@ -980,6 +1001,9 @@ async function runWorkModeTurn(opts: {
 
   await new Promise<void>((resolve) => {
     let accumulated = '';
+    // Images the agent surfaced via show_image this turn — attached to the reply
+    // row so they render inline (on `done`, and again from the DB on reload).
+    const turnAttachments: MessageAttachment[] = [];
     // Savings notes arrive mid-stream (when a tool truncates), but we want them
     // rendered BELOW the assistant's reply, not above it. So buffer them and
     // flush as system rows only after the assistant row is appended on `done`.
@@ -1005,13 +1029,23 @@ async function runWorkModeTurn(opts: {
               ? `iClaw обробив це на ${n.savedPct}% економніше, ніж звичайні помічники 💚`
               : `iClaw обробив це економніше, ніж звичайні помічники 💚`;
           if (!savingsTexts.includes(text)) savingsTexts.push(text); // dedupe within a turn
+        } else if (event.type === 'image') {
+          // show_image: copy the agent's image (already on the host — a Work
+          // bind-mount or a Secure workspace) into this chat's uploads and queue
+          // it as an attachment. Re-validate the path host-side before touching
+          // the file; silently skip anything that fails (never break the turn).
+          if (imagePathAllowed(event.path, opts)) {
+            const att = persistAgentImage(chatId, event.path);
+            if (att) turnAttachments.push(att);
+          }
         } else if (event.type === 'done') {
-          if (accumulated.trim()) {
+          if (accumulated.trim() || turnAttachments.length > 0) {
             // Stamp the assistant row with the actual turn mode (secure/work),
             // not the append() default of 'execute'. Keeps history + UI honest.
             // `tokens` powers the dev-mode usage badge (null when not reported).
             const assistantMsg = messages.append(
-              chatId, 'assistant', accumulated, null, null, null,
+              chatId, 'assistant', accumulated, null, null,
+              turnAttachments.length > 0 ? turnAttachments : null,
               opts.secure ? 'secure' : 'work', event.tokens ?? null, event.cached ?? null,
             );
             wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });
