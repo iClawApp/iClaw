@@ -32,6 +32,7 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 
 import { log } from './log.js';
+import { INSTALL_LABEL } from './install-id.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -236,12 +237,29 @@ export async function startWorkContainer(mounts: WorkMount[], image: string): Pr
   // Default working dir: first writable folder, else the first mount.
   const home = mounts.find((m) => !m.readonly) ?? mounts[0];
 
+  // Run the command process as the HOST user, so files it creates in the user's
+  // real (bind-mounted) folders are owned by the user — not root or the image's
+  // uid 1000. Without this, run_command output in a :rw folder lands root-owned
+  // and the user can't edit/delete it (visible on Linux; macOS Docker Desktop
+  // remaps ownership so it's hidden there). Skip when we'd add no value or can't:
+  // running as root already (uid 0), already matching the image user (1000), or
+  // Windows (getuid undefined). HOME=/tmp gives the now-nameless uid a writable
+  // home for tool caches (npm, git) since /home/node isn't writable by it.
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  const userArgs =
+    uid != null && uid !== 0 && uid !== 1000
+      ? ['--user', `${uid}:${gid ?? uid}`, '-e', 'HOME=/tmp']
+      : [];
+
   try {
     await execFileAsync('docker', [
       'run', '--rm', '-d',
       '--name', name,
+      '--label', INSTALL_LABEL,
       '--memory', process.env.ICLAW_WORK_MEMORY || '768m',
       '--cpus', process.env.ICLAW_WORK_CPUS || '1',
+      ...userArgs,
       ...mountArgs,
       ...(home ? ['--workdir', home.containerPath] : []),
       image,
@@ -398,8 +416,10 @@ function renderChangeReport(
 /** Kill Work containers orphaned by a previous runtime process. */
 export async function killOrphanWorkContainers(): Promise<number> {
   try {
+    // Scope to THIS install's Work containers: name prefix AND install label are
+    // ANDed, so a second iClaw install never reaps ours (nor we theirs).
     const { stdout } = await execFileAsync(
-      'docker', ['ps', '-aq', '--filter', `name=${WORK_PREFIX}`],
+      'docker', ['ps', '-aq', '--filter', `name=${WORK_PREFIX}`, '--filter', `label=${INSTALL_LABEL}`],
       { timeout: 10_000 },
     );
     const ids = stdout.split('\n').map((s) => s.trim()).filter(Boolean);

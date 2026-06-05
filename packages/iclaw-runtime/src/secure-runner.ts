@@ -20,6 +20,7 @@ import type OpenAI from 'openai';
 import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
 import type { SavingsNote } from './agent/tools.js';
 import { shrinkOldToolOutputs, withPromptCaching, makeToolGuard, HOST_INSTALL_POLICY } from './agent/loop.js';
+import { INSTALL_LABEL } from './install-id.js';
 import { dumpPrompt, newTurnId } from './agent/prompt-dump.js';
 
 const execFileAsync = promisify(execFile);
@@ -110,8 +111,10 @@ export function listPersistedWorkspaces(): { dir: string; meta: SessionMeta | nu
  */
 export async function killOrphanContainers(): Promise<number> {
   try {
+    // Scope to THIS install's Secure containers (name AND install label) so a
+    // second iClaw install can't reap ours.
     const { stdout } = await execFileAsync(
-      'docker', ['ps', '-aq', '--filter', `name=${SECURE_PREFIX}`],
+      'docker', ['ps', '-aq', '--filter', `name=${SECURE_PREFIX}`, '--filter', `label=${INSTALL_LABEL}`],
       { timeout: 10_000 },
     );
     const ids = stdout.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -143,6 +146,7 @@ export async function startContainer(workspaceDir: string, networkEnabled: boole
     await execFileAsync('docker', [
       'run', '--rm', '-d',
       '--name', containerName,
+      '--label', INSTALL_LABEL,
       ...networkArgs,
       // No browser any more, so the default 64MB /dev/shm is fine and 512MB is
       // plenty of headroom for shell/node tasks. Tunable via env.
