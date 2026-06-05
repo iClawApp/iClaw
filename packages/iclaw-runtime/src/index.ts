@@ -18,7 +18,7 @@ import http from 'node:http';
 
 import { createSession, getSession, deleteSession, abortSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, exportSessionWorkspace, applySessionChanges, sweepExpiredSessions, startContainerReaper, loadPersistedSessions, type RuntimeAttachment } from './sessions.js';
 import { killOrphanContainers } from './secure-runner.js';
-import { startDockerIdleReaper } from './docker-lifecycle.js';
+import { startDockerIdleReaper, stopDockerOnShutdown } from './docker-lifecycle.js';
 import { killOrphanWorkContainers } from './work-container.js';
 
 const PORT = parseInt(process.env.ICLAW_RUNTIME_PORT || '7430', 10);
@@ -211,5 +211,20 @@ killOrphanWorkContainers()
   .then((n) => { if (n > 0) console.error(`[iclaw-runtime] killed ${n} orphan work container(s)`); })
   .catch((err) => console.error('[iclaw-runtime] work container cleanup failed', err));
 
-process.on('SIGTERM', () => { server.close(); process.exit(0); });
-process.on('SIGINT', () => { server.close(); process.exit(0); });
+let shuttingDown = false;
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  // Stop a Docker daemon WE started if it's idle/container-free (capped so a
+  // hung Docker can't block the exit). No-op when we don't own it or a
+  // container is still up — the durable marker is left for the next runtime.
+  try {
+    await stopDockerOnShutdown();
+  } catch {
+    /* best-effort */
+  }
+  server.close();
+  process.exit(0);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

@@ -201,6 +201,32 @@ export function startDockerIdleReaper(): void {
   }, REAPER_INTERVAL).unref();
 }
 
+let shutdownStopDone = false;
+
+/**
+ * On graceful shutdown, stop a Docker daemon WE started if it's container-free —
+ * so quitting iClaw doesn't leave our daemon running. Skipped (fast exit, no
+ * churn) when we don't own it, or when any container is up (a warm sandbox from
+ * a task that just ran, or the user's own work): in that case the durable marker
+ * is left behind so the next runtime can stop it later. Hard-capped so a hung
+ * Docker can't block the exit.
+ */
+export async function stopDockerOnShutdown(maxMs = 8_000): Promise<void> {
+  if (shutdownStopDone) return;
+  shutdownStopDone = true;
+  if (ownedSince() == null) return; // not ours → leave it
+  await Promise.race([
+    (async () => {
+      const n = await runningContainerCount();
+      if (n !== 0) return; // containers up → don't kill work; marker persists
+      log.info('Shutting down — stopping the idle Docker iClaw started');
+      await quitDocker();
+      clearOwned();
+    })(),
+    sleep(maxMs),
+  ]);
+}
+
 /** Test/inspection helper. */
 export function _state(): { owned: boolean; ownedSince: number | null } {
   return { owned: ownedSince() != null, ownedSince: ownedSince() };
