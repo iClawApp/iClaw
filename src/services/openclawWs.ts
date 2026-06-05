@@ -14,9 +14,16 @@ import { gatewayWs, type RawGatewayFrame } from './gatewayWs';
 import { toolActivityLabel, lifecycleActivityLabel } from './toolLabels';
 import {
   extractAssistantText,
+  extractTurnUsage,
   resolveFromHistorySlice,
   sliceFromLastUser,
 } from './turnReply';
+
+/** Token usage for one turn, resolved from the gateway history slice. */
+export interface TurnUsage {
+  tokens: number | null;
+  cached: number | null;
+}
 
 // ---------- shapes ---------------------------------------------------------
 
@@ -39,6 +46,8 @@ export interface HistoryMessage {
   timestamp?: number;
   toolName?: string;
   isError?: boolean;
+  /** Per-message token usage (assistant rows) — powers the dev-mode badge. */
+  usage?: unknown;
 }
 
 export type TurnEvent =
@@ -121,7 +130,9 @@ const HISTORY_FETCH_LIMIT = 1000;
 const HISTORY_FETCH_RETRIES = 3;
 const HISTORY_FETCH_RETRY_DELAY_MS = 150;
 
-async function fetchAuthoritativeFromHistory(sessionKey: string): Promise<string | null> {
+async function fetchAuthoritativeFromHistory(
+  sessionKey: string,
+): Promise<{ text: string | null; usage: TurnUsage }> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < HISTORY_FETCH_RETRIES; attempt++) {
     try {
@@ -129,8 +140,12 @@ async function fetchAuthoritativeFromHistory(sessionKey: string): Promise<string
         'chat.history',
         { sessionKey, limit: HISTORY_FETCH_LIMIT },
       );
-      const resolved = resolveFromHistorySlice(sliceFromLastUser(res.messages ?? []));
-      return resolved.trim().length > 0 ? resolved : null;
+      const slice = sliceFromLastUser(res.messages ?? []);
+      const resolved = resolveFromHistorySlice(slice);
+      return {
+        text: resolved.trim().length > 0 ? resolved : null,
+        usage: extractTurnUsage(slice),
+      };
     } catch (err) {
       lastErr = err;
       if (attempt < HISTORY_FETCH_RETRIES - 1) {
@@ -144,7 +159,7 @@ async function fetchAuthoritativeFromHistory(sessionKey: string): Promise<string
     'attempts:',
     lastErr instanceof Error ? lastErr.message : String(lastErr),
   );
-  return null;
+  return { text: null, usage: { tokens: null, cached: null } };
 }
 
 function pickAuthoritativeReplyText(opts: {
@@ -195,10 +210,36 @@ const pendingAbortIntents = new Set<string>();
 
 // ---------- public client -------------------------------------------------
 
+/** Short cache for agent-existence lookups so Ask routing doesn't hit agents.list every turn. */
+const AGENT_EXISTS_TTL_MS = 30_000;
+const agentExistsCache = new Map<string, { at: number; exists: boolean }>();
+
 export const openclawWs = {
   async listAgents(): Promise<OpenClawAgent[]> {
     const res = await gatewayWs.request<{ agents: OpenClawAgent[] }>('agents.list', {});
     return res.agents ?? [];
+  },
+
+  /**
+   * Whether an agent with this id is configured on the gateway. Cached for a
+   * few seconds. Returns false on any lookup failure (caller falls back to a
+   * non-agent path rather than erroring). Empty id is always false.
+   */
+  async agentExists(agentId: string): Promise<boolean> {
+    const id = agentId.trim();
+    if (!id) return false;
+    const hit = agentExistsCache.get(id);
+    const now = Date.now();
+    if (hit && now - hit.at < AGENT_EXISTS_TTL_MS) return hit.exists;
+    try {
+      const agents = await this.listAgents();
+      const exists = agents.some((a) => a.id === id);
+      agentExistsCache.set(id, { at: now, exists });
+      return exists;
+    } catch {
+      // Gateway unreachable / RPC failed — don't cache, treat as absent.
+      return false;
+    }
   },
 
   /** Create a new "dashboard" session for an agent. Empty params → default agent. */
@@ -214,6 +255,25 @@ export const openclawWs = {
 
   async deleteSession(key: string): Promise<void> {
     await gatewayWs.request('sessions.delete', { key });
+  },
+
+  /**
+   * Append a message into a session's transcript WITHOUT running the model
+   * (`chat.inject`). The gateway records it as an assistant note (zero cost,
+   * `model: "gateway-injected"`) and broadcasts a final `chat` event. Used to
+   * make the main Execute session aware of an out-of-band Ask exchange.
+   */
+  async injectMessage(opts: {
+    sessionKey: string;
+    message: string;
+    label?: string;
+  }): Promise<void> {
+    if (!opts.sessionKey.startsWith('agent:')) return;
+    await gatewayWs.request('chat.inject', {
+      sessionKey: opts.sessionKey,
+      message: opts.message,
+      ...(opts.label ? { label: opts.label } : {}),
+    });
   },
 
   /** Fetch the canonical, UI-normalized transcript. */
@@ -395,6 +455,12 @@ export const openclawWs = {
      * `null` on abort or when nothing usable was found.
      */
     authoritativeText: string | null;
+    /**
+     * Token usage for this turn, summed across the assistant rows of the
+     * `chat.history` slice. `{ null, null }` on abort or when the gateway
+     * reported no usage (powers the dev-mode token badge — see chatRunner).
+     */
+    usage: TurnUsage;
   }> {
     let runId: string | null = null;
     let accumulatedText = '';
@@ -716,10 +782,12 @@ export const openclawWs = {
 
     // Canonical reply: transcript/history first, then last `chat:final`, then stream.
     let authoritativeText: string | null = null;
+    let usage: TurnUsage = { tokens: null, cached: null };
     if (!wasAborted) {
       const fromHistory = await fetchAuthoritativeFromHistory(opts.sessionKey);
+      usage = fromHistory.usage;
       authoritativeText = pickAuthoritativeReplyText({
-        fromHistory,
+        fromHistory: fromHistory.text,
         fromTranscript: transcriptAssistantText,
         fromLastFinal: lastFinalText || accumulatedText,
       });
@@ -730,6 +798,7 @@ export const openclawWs = {
       text: lastFinalText || accumulatedText,
       aborted: wasAborted,
       authoritativeText,
+      usage,
     };
   },
 };

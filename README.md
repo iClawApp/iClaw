@@ -37,6 +37,30 @@ Hit **Share** in any chat to get an encrypted link. The chat is encrypted in you
 
 Powered by [iClaw-cloud](https://github.com/iClawApp/iClaw-cloud) — defaults to `https://app.iclaw.digital`.
 
+## Chat modes
+
+The composer has a small mode selector. The selected mode is stored per message
+(`messages.mode`) and rides the `frontend → WS → chatRunner` path. Missing/unknown
+modes fall back to `execute`, so old chats and older clients keep working. Modes
+are config-driven in [`src/services/chatModes.ts`](src/services/chatModes.ts) (the
+catalog also lists disabled placeholders so new modes can be added without
+touching call sites or the DB — the column is plain `TEXT`).
+
+| Mode | What it does | Backend |
+| --- | --- | --- |
+| **Full Power** (default) | The full OpenClaw agent — files, tools, shell, browser. | OpenClaw Gateway |
+| **Work** | AI edits files in folders you pick; you approve every change. | iClaw runtime |
+| **Safe work & Internet research** | Locked Docker sandbox — run untrusted code and research the web, isolated from your system. | iClaw runtime |
+| **Incognito** | Private, read-only research — reads files & the web, never writes, nothing saved. | iClaw runtime |
+
+**Full Power** routes to the gateway exactly as before. The other three run on
+the bundled **iClaw runtime** (`packages/iclaw-runtime`): the agent loop runs on
+the host and reaches [OpenRouter](https://openrouter.ai), while tool/shell
+execution is isolated in a per-turn Docker sandbox. They therefore need **Docker**
+running and an **OpenRouter key** (Settings); without either they're unavailable
+and the composer falls back to Full Power. See [AGENTS.md](AGENTS.md) for the
+runtime architecture.
+
 ## Remote Access (alpha)
 
 Open the iClaw UI from another device through an **iclaw-relay** tunnel (Settings → Remote Access).

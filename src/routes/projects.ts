@@ -10,7 +10,7 @@
 
 import { Router } from 'express';
 import { listProjectLinkGroups } from '../services/projectLinks';
-import { chats, projects, projectFacts, projectSecrets, tasks, enrichFactsWithSourceChatTitles, enrichFactWithSourceChatTitle } from '../services/store';
+import { chats, projects, projectFacts, projectSkills, projectSecrets, tasks, enrichFactsWithSourceChatTitles, enrichFactWithSourceChatTitle, enrichSkillsWithSourceChatTitles, enrichSkillWithSourceChatTitle } from '../services/store';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
 import { openclaw } from '../services/openclaw';
@@ -77,7 +77,8 @@ projectsRouter.get('/:id', (req, res) => {
   const id = Number(req.params.id);
   const project = projects.get(id);
   if (!project) {
-    res.status(404).send('project not found');
+    // Stale link / deleted project → home, not a dead-end 404 page.
+    res.redirect('/');
     return;
   }
   const linkGroups = listProjectLinkGroups(id);
@@ -89,6 +90,7 @@ projectsRouter.get('/:id', (req, res) => {
     project,
     projectChats: chats.listByProject(id),
     facts: enrichFactsWithSourceChatTitles(projectFacts.listByProject(id)),
+    skills: enrichSkillsWithSourceChatTitles(projectSkills.listForProject(id)),
     projectSecrets: projectSecrets.listMetaByProject(id),
     projectWebLinks: linkGroups.web,
     projectFileLinks: linkGroups.files,
@@ -186,7 +188,8 @@ projectsRouter.get('/:id/secrets/:secretId/value', (req, res) => {
 projectsRouter.post('/:id/delete', (req, res) => {
   const id = Number(req.params.id);
   if (!projects.get(id)) {
-    res.status(404).send('project not found');
+    // Already gone → mirror the success path back to the projects list.
+    res.redirect('/projects');
     return;
   }
   const detachedChatIds = chats.listByProject(id).map((c) => c.id);
@@ -245,5 +248,82 @@ projectsRouter.post('/:id/facts/:factId/delete', (req, res) => {
   projectFacts.remove(factId);
   wsHub.broadcastAll({ type: 'project-fact-deleted', projectId, factId });
   if (wantsJson(req)) res.json({ id: factId, deleted: true });
+  else res.redirect(`/projects/${projectId}`);
+});
+
+/* ---------------- skills (procedural memory; edit/delete here) ---------------- */
+
+/** Skill belongs to the project when project-scoped, or is global (project_id null). */
+function skillVisibleToProject(
+  skill: { project_id: number | null } | undefined,
+  projectId: number,
+): boolean {
+  return !!skill && (skill.project_id === projectId || skill.project_id === null);
+}
+
+/** Active skills (project + global), index info only. */
+projectsRouter.get('/:id/skills', (req, res) => {
+  const id = Number(req.params.id);
+  if (!projects.get(id)) {
+    res.status(404).json({ error: 'project not found' });
+    return;
+  }
+  res.json({ skills: enrichSkillsWithSourceChatTitles(projectSkills.listForProject(id)) });
+});
+
+/** Full skill body (for the view/edit modal). */
+projectsRouter.get('/:id/skills/:skillId', (req, res) => {
+  const projectId = Number(req.params.id);
+  const skillId = Number(req.params.skillId);
+  const skill = projectSkills.get(skillId);
+  if (!projects.get(projectId) || !skillVisibleToProject(skill, projectId)) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  res.json({ skill: enrichSkillWithSourceChatTitle(skill!) });
+});
+
+projectsRouter.patch('/:id/skills/:skillId', (req, res) => {
+  const projectId = Number(req.params.id);
+  const skillId = Number(req.params.skillId);
+  const skill = projectSkills.get(skillId);
+  if (!projects.get(projectId) || !skillVisibleToProject(skill, projectId)) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  const patch: { name?: string; description?: string; body?: string; tags?: string[] | null } = {};
+  if (typeof req.body?.name === 'string' && req.body.name.trim()) patch.name = req.body.name;
+  if (typeof req.body?.description === 'string' && req.body.description.trim())
+    patch.description = req.body.description;
+  if (typeof req.body?.body === 'string' && req.body.body.trim()) patch.body = req.body.body;
+  if (Array.isArray(req.body?.tags)) {
+    const tags = req.body.tags.filter((t: unknown): t is string => typeof t === 'string');
+    patch.tags = tags.length > 0 ? tags : null;
+  }
+  try {
+    projectSkills.update(skillId, patch);
+    const updated = projectSkills.get(skillId)!;
+    wsHub.broadcastAll({
+      type: 'project-skill-updated',
+      projectId,
+      skill: enrichSkillWithSourceChatTitle(updated),
+    });
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'update failed' });
+  }
+});
+
+projectsRouter.post('/:id/skills/:skillId/delete', (req, res) => {
+  const projectId = Number(req.params.id);
+  const skillId = Number(req.params.skillId);
+  const skill = projectSkills.get(skillId);
+  if (!skillVisibleToProject(skill, projectId)) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  projectSkills.remove(skillId);
+  wsHub.broadcastAll({ type: 'project-skill-deleted', projectId, skillId });
+  if (wantsJson(req)) res.json({ id: skillId, deleted: true });
   else res.redirect(`/projects/${projectId}`);
 });

@@ -4,11 +4,14 @@ import { deriveTitle } from './chatTitle';
 import type {
   Chat,
   ChatKind,
+  ChatMode,
   Message,
   MessageAttachment,
   Project,
   ProjectFact,
   ProjectFactSuggestion,
+  ProjectSkill,
+  ProjectSkillSuggestion,
   ProjectSecret,
   QueuedMessage,
   ScheduledMessage,
@@ -24,6 +27,7 @@ import type {
   TaskWithSteps,
 } from '../types';
 import type { InlineSecretWire } from './inlineSecrets';
+import { DEFAULT_MODE } from './chatModes';
 import { clampLogoColor, clampLogoEmoji } from '../constants/projectLogos';
 
 // ---------- chats ----------
@@ -210,6 +214,12 @@ export const messages = {
     finishReason: string | null = null,
     reply?: { replyToMessageId: number; replyQuote: string; replyToRole: string } | null,
     attachments?: MessageAttachment[] | null,
+    /** Send mode for user rows. Defaults to 'execute' (back-compat). */
+    mode: ChatMode = DEFAULT_MODE,
+    /** Total tokens spent producing this message (dev-mode; assistant rows). */
+    tokens: number | null = null,
+    /** Of `tokens`, prompt tokens served from cache (dev-mode). */
+    cachedTokens: number | null = null,
   ): Message {
     const rid = reply?.replyToMessageId ?? null;
     const rq = reply?.replyQuote ?? null;
@@ -218,9 +228,9 @@ export const messages = {
       attachments && attachments.length > 0 ? JSON.stringify(attachments) : null;
     const info = db
       .prepare(
-        'INSERT INTO messages (chat_id, role, content, finish_reason, reply_to_message_id, reply_quote, reply_to_role, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO messages (chat_id, role, content, finish_reason, reply_to_message_id, reply_quote, reply_to_role, attachments, mode, tokens, cached_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(chatId, role, content, finishReason, rid, rq, rrole, att);
+      .run(chatId, role, content, finishReason, rid, rq, rrole, att, mode, tokens, cachedTokens);
     // chats.updated_at is bumped by the trg_chats_touch_on_message SQLite
     // trigger; no manual touch() needed here. We keep chats.touch() public
     // for callers that mutate parents without writing a message (e.g.
@@ -478,6 +488,197 @@ export const projectFactSuggestions = {
     db.prepare('DELETE FROM project_fact_suggestions WHERE id = ?').run(id);
   },
 };
+
+// ---------- project skills (procedural memory; SKILL.md) ----------
+
+/** name + description only — for prompt injection / panel list. */
+export interface ProjectSkillIndexRow {
+  id: number;
+  name: string;
+  description: string;
+}
+
+export const projectSkills = {
+  /** Active skills for a project (does NOT include global; merge in the caller). */
+  listByProject(projectId: number): ProjectSkill[] {
+    return db
+      .prepare(
+        'SELECT * FROM project_skills WHERE project_id = ? ORDER BY updated_at DESC, id DESC',
+      )
+      .all(projectId) as ProjectSkill[];
+  },
+  listGlobal(): ProjectSkill[] {
+    return db
+      .prepare(
+        'SELECT * FROM project_skills WHERE project_id IS NULL ORDER BY updated_at DESC, id DESC',
+      )
+      .all() as ProjectSkill[];
+  },
+  /** Active skills visible to a project: its own skills plus all global skills. */
+  listForProject(projectId: number): ProjectSkill[] {
+    return [...this.listByProject(projectId), ...this.listGlobal()];
+  },
+  get(id: number): ProjectSkill | undefined {
+    return db.prepare('SELECT * FROM project_skills WHERE id = ?').get(id) as
+      | ProjectSkill
+      | undefined;
+  },
+  getByName(projectId: number | null, name: string): ProjectSkill | undefined {
+    const trimmed = name.trim();
+    if (projectId == null) {
+      return db
+        .prepare('SELECT * FROM project_skills WHERE project_id IS NULL AND name = ?')
+        .get(trimmed) as ProjectSkill | undefined;
+    }
+    return db
+      .prepare('SELECT * FROM project_skills WHERE project_id = ? AND name = ?')
+      .get(projectId, trimmed) as ProjectSkill | undefined;
+  },
+  /** Index (id/name/description) of all skills visible to a project. */
+  listIndex(projectId: number): ProjectSkillIndexRow[] {
+    return this.listForProject(projectId).map((s) => ({
+      id: s.id,
+      name: s.name,
+      description: s.description,
+    }));
+  },
+  create(opts: {
+    projectId: number | null;
+    name: string;
+    description: string;
+    body: string;
+    tags?: string[] | null;
+    sourceChatId?: number | null;
+  }): ProjectSkill {
+    const name = opts.name.trim();
+    const description = opts.description.trim();
+    const body = opts.body.trim();
+    if (!name) throw new Error('skill name required');
+    if (!description) throw new Error('skill description required');
+    if (!body) throw new Error('skill body required');
+    const tags = opts.tags && opts.tags.length > 0 ? JSON.stringify(opts.tags) : null;
+    const info = db
+      .prepare(
+        `INSERT INTO project_skills (project_id, name, description, body, tags, source_chat_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(opts.projectId, name, description, body, tags, opts.sourceChatId ?? null);
+    if (opts.projectId != null) projects.touch(opts.projectId);
+    return this.get(Number(info.lastInsertRowid))!;
+  },
+  /** Patch description/body/tags/name; bumps version + updated_at. */
+  update(
+    id: number,
+    patch: { description?: string; body?: string; tags?: string[] | null; name?: string },
+  ): void {
+    const existing = this.get(id);
+    if (!existing) return;
+    const name = patch.name != null ? patch.name.trim() : existing.name;
+    const description =
+      patch.description != null ? patch.description.trim() : existing.description;
+    const body = patch.body != null ? patch.body.trim() : existing.body;
+    const tags =
+      patch.tags !== undefined
+        ? patch.tags && patch.tags.length > 0
+          ? JSON.stringify(patch.tags)
+          : null
+        : existing.tags;
+    db.prepare(
+      `UPDATE project_skills
+         SET name = ?, description = ?, body = ?, tags = ?,
+             version = version + 1, updated_at = datetime('now')
+       WHERE id = ?`,
+    ).run(name, description, body, tags, id);
+    if (existing.project_id != null) projects.touch(existing.project_id);
+  },
+  incrementUsage(id: number): void {
+    db.prepare('UPDATE project_skills SET usage_count = usage_count + 1 WHERE id = ?').run(id);
+  },
+  remove(id: number): void {
+    const row = this.get(id);
+    db.prepare('DELETE FROM project_skills WHERE id = ?').run(id);
+    if (row?.project_id != null) projects.touch(row.project_id);
+  },
+};
+
+// ---------- project skill suggestions (user confirm in chat; inbox-gated) ----------
+
+export const projectSkillSuggestions = {
+  listByChat(chatId: number): ProjectSkillSuggestion[] {
+    return db
+      .prepare(
+        'SELECT * FROM project_skill_suggestions WHERE chat_id = ? ORDER BY id ASC',
+      )
+      .all(chatId) as ProjectSkillSuggestion[];
+  },
+  listByProject(projectId: number): ProjectSkillSuggestion[] {
+    return db
+      .prepare(
+        'SELECT * FROM project_skill_suggestions WHERE project_id = ? ORDER BY id ASC',
+      )
+      .all(projectId) as ProjectSkillSuggestion[];
+  },
+  get(id: number): ProjectSkillSuggestion | undefined {
+    return db.prepare('SELECT * FROM project_skill_suggestions WHERE id = ?').get(id) as
+      | ProjectSkillSuggestion
+      | undefined;
+  },
+  insert(opts: {
+    projectId: number;
+    chatId: number;
+    kind: 'new' | 'patch';
+    targetSkillId?: number | null;
+    name: string;
+    description: string;
+    body: string;
+    tags?: string[] | null;
+    untrusted?: boolean;
+    assistantMessageId: number | null;
+  }): ProjectSkillSuggestion {
+    const name = opts.name.trim();
+    const description = opts.description.trim();
+    const body = opts.body.trim();
+    if (!name) throw new Error('suggestion name required');
+    if (!description) throw new Error('suggestion description required');
+    if (!body) throw new Error('suggestion body required');
+    const tags = opts.tags && opts.tags.length > 0 ? JSON.stringify(opts.tags) : null;
+    const info = db
+      .prepare(
+        `INSERT INTO project_skill_suggestions
+           (project_id, chat_id, kind, target_skill_id, name, description, body, tags, untrusted, assistant_message_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        opts.projectId,
+        opts.chatId,
+        opts.kind,
+        opts.targetSkillId ?? null,
+        name,
+        description,
+        body,
+        tags,
+        opts.untrusted ? 1 : 0,
+        opts.assistantMessageId ?? null,
+      );
+    return this.get(Number(info.lastInsertRowid))!;
+  },
+  remove(id: number): void {
+    db.prepare('DELETE FROM project_skill_suggestions WHERE id = ?').run(id);
+  },
+};
+
+/** UI: attach source chat title from `chats` (not persisted on `project_skills`). */
+export function enrichSkillWithSourceChatTitle(skill: ProjectSkill): ProjectSkill {
+  const sid = skill.source_chat_id;
+  if (sid == null) return { ...skill };
+  const c = chats.get(sid);
+  const source_chat_title = (c?.title ?? '').trim() || 'Chat';
+  return { ...skill, source_chat_title };
+}
+
+export function enrichSkillsWithSourceChatTitles(skills: ProjectSkill[]): ProjectSkill[] {
+  return skills.map(enrichSkillWithSourceChatTitle);
+}
 
 // ---------- project secrets (tokens / API keys; placeholders in messages) ----------
 
@@ -767,7 +968,7 @@ export const queuedMessages = {
   listByChat(chatId: number): QueuedMessage[] {
     const rows = db
       .prepare(
-        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, created_at FROM queued_messages WHERE chat_id = ? ORDER BY position ASC, id ASC',
+        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, mode, created_at FROM queued_messages WHERE chat_id = ? ORDER BY position ASC, id ASC',
       )
       .all(chatId) as QueuedRow[];
     return rows.map(parseQueuedRow);
@@ -775,7 +976,7 @@ export const queuedMessages = {
   get(id: number): QueuedMessage | undefined {
     const row = db
       .prepare(
-        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, created_at FROM queued_messages WHERE id = ?',
+        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, mode, created_at FROM queued_messages WHERE id = ?',
       )
       .get(id) as QueuedRow | undefined;
     return row ? parseQueuedRow(row) : undefined;
@@ -786,7 +987,7 @@ export const queuedMessages = {
     | undefined {
     const row = db
       .prepare(
-        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, inline_secrets, created_at FROM queued_messages WHERE id = ?',
+        'SELECT id, chat_id, content, reply_to_message_id, reply_quote, reply_to_role, attachments, mode, inline_secrets, created_at FROM queued_messages WHERE id = ?',
       )
       .get(id) as (QueuedRow & { inline_secrets: string | null }) | undefined;
     if (!row) return undefined;
@@ -808,6 +1009,7 @@ export const queuedMessages = {
     replyTo?: { messageId: number; quote: string; role?: string } | null;
     attachments?: MessageAttachment[] | null;
     inlineSecrets?: InlineSecretWire[] | null;
+    mode?: ChatMode;
   }): QueuedMessage {
     const trimmed = opts.content.trim();
     const hasAttachments = opts.attachments && opts.attachments.length > 0;
@@ -826,8 +1028,8 @@ export const queuedMessages = {
       .prepare(
         `INSERT INTO queued_messages (
           chat_id, content, reply_to_message_id, reply_quote, reply_to_role,
-          attachments, inline_secrets, position
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          attachments, inline_secrets, mode, position
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         opts.chatId,
@@ -837,6 +1039,7 @@ export const queuedMessages = {
         opts.replyTo?.role ?? null,
         attachmentsJson,
         inlineJson,
+        opts.mode ?? DEFAULT_MODE,
         position,
       );
     return this.get(Number(info.lastInsertRowid))!;

@@ -6,6 +6,7 @@ import { openclaw } from './services/openclaw';
 import { scheduler } from './services/scheduler';
 import { gatewayEvents } from './services/gatewayEvents';
 import { remoteAccess, setRemoteAccessQuiet } from './services/remoteAccess';
+import { runtimeProcess } from './services/runtimeProcess';
 import { setBoundLocalAddress } from './services/localAddress';
 import {
   findAvailablePort,
@@ -44,6 +45,7 @@ function gracefulShutdown(
   }
   removeLockFileIfOwned();
   scheduler.stop();
+  runtimeProcess.stop();
   remoteAccess.shutdown();
 
   const exitCode = signal === 'SIGINT' ? 130 : 0;
@@ -108,6 +110,7 @@ async function main(): Promise<void> {
   server = createServer(app);
   attachWsServer(server);
   scheduler.start();
+  runtimeProcess.start();
   gatewayEvents.start();
 
   const stop = () => gracefulShutdown(server, 'SIGINT');

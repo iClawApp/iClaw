@@ -1,0 +1,26 @@
+{
+  "name": "@iclaw/runtime",
+  "version": "0.1.0",
+  "description": "iClaw agent runtime — agent loop on the host, Docker sandbox per turn (Work / Safe work / Incognito), OpenRouter-only.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vscode/ripgrep": "^1.18.0",
+    "openai": "^6.41.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

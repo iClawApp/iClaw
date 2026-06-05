@@ -19,7 +19,7 @@ These are intentional non-goals. Don't add them. If a request lands here that ne
 - **Not a generic OpenAI-compat client.** We migrated off `/v1/chat/completions` in commit `a92c10e`. Do not re-introduce an HTTP chat completion path or SSE-based streaming — everything chat-related is native WS.
 - **Not a multi-provider chat tool.** No fallback to Ollama, vLLM, Claude API, OpenAI direct, etc. OpenClaw is the only backend; switch model providers in `openclaw.json`.
 - **Not a remote/hosted product.** Loopback-only. No multi-user, no auth layer, no team features. Threat model is "this user on this machine".
-- **Not a re-implementation of OpenClaw's agent runtime.** We don't compact transcripts, run tools, manage `MEMORY.md`, or wrap the LLM. We display what the gateway produces and (separately) maintain a project-scoped fact layer that's *additional* to OpenClaw memory, not a replacement.
+- **For the default Full Power chat, not a re-implementation of OpenClaw's agent runtime.** On that path we don't compact transcripts, run tools, or wrap the LLM — we display what the gateway produces and (separately) maintain a project-scoped fact layer *additional* to OpenClaw memory. (The Work / Safe work / Incognito modes are the deliberate exception — a small, self-contained agent loop in `packages/iclaw-runtime`; see below. Don't grow it into a general OpenClaw replacement.)
 - **Not heavyweight on the frontend.** No build step beyond `tsc`. Plain CSS, vanilla JS on the client, EJS for views. If you want to add React/Vue/Svelte, open an issue first — the answer is probably no for the current scope.
 
 ## Architecture you need to know
@@ -61,6 +61,26 @@ These are intentional non-goals. Don't add them. If a request lands here that ne
 ```
 
 Browser ↔ server is **one persistent WebSocket** at `/ws`. Chat traffic (send, abort, exec approval, streaming turn events, cross-tab sync) flows through it. HTTP routes exist for page rendering (EJS), form actions, the `/media/*` proxy, and JSON endpoints under `/api/gateway/*`. Every HTTP mutation that touches a chat also emits the matching `chat-updated` / `chat-deleted` over WS so other tabs catch up instantly.
+
+### Runtime modes (Work / Safe work / Incognito)
+
+The default **Full Power** mode goes to the gateway (above). The other three modes
+are served by the bundled **iClaw runtime** (`packages/iclaw-runtime`), a small
+agent runtime kept deliberately minimal:
+
+- The host calls it over HTTP on `127.0.0.1:7430` (`src/services/workRuntime.ts` →
+  runtime `index.ts`). The model loop runs **on the host** via OpenRouter.
+- Tool/shell execution is isolated in a **Docker sandbox**, one model per file:
+  `secure-runner.ts` (Safe work / Incognito — everything runs in a per-turn
+  container) and `work-container.ts` (Work — agent loop + file tools on the host,
+  only `run_command` containerized with per-folder `:ro`/`:rw` mounts). Both share
+  ONE image, `container/secure-sandbox.Dockerfile` (tag `iclaw-secure:latest`,
+  built via `npm run build:secure-image`); `node:22` is only an emergency fallback.
+- The live runtime is just 9 files (`index.ts`, `sessions.ts`, `secure-runner.ts`,
+  `work-container.ts`, `agent/{loop,tools,security,prompt-dump}.ts`, `log.ts`).
+  Path/secret enforcement lives in `agent/security.ts`. Needs Docker + an
+  OpenRouter key; without either, these modes are unavailable and fall back to
+  Full Power. This is NOT the OpenClaw path — keep the two cleanly separate.
 
 ### The canonical client paths
 

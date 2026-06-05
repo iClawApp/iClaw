@@ -41,6 +41,8 @@ export interface QueuedMessage {
   reply_quote: string | null;
   reply_to_role: string | null;
   attachments: MessageAttachment[] | null;
+  /** Selected mode at enqueue time; preserved so the flush sends with it. */
+  mode: ChatMode;
   created_at: string;
 }
 
@@ -50,6 +52,42 @@ export interface ProjectFactSuggestion {
   project_id: number;
   chat_id: number;
   content: string;
+  assistant_message_id: number | null;
+  created_at: string;
+}
+
+/**
+ * Procedural memory: an accepted, active project skill stored as SKILL.md.
+ * `project_id === null` means a global skill (available to every project).
+ */
+export interface ProjectSkill {
+  id: number;
+  project_id: number | null; // null = global
+  name: string;
+  description: string;
+  body: string;
+  tags: string | null; // JSON array
+  source_chat_id: number | null;
+  usage_count: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  /** Filled by server for UI (not a DB column). */
+  source_chat_title?: string;
+}
+
+/** LLM-proposed skill awaiting user accept/reject in the chat UI (inbox-gated). */
+export interface ProjectSkillSuggestion {
+  id: number;
+  project_id: number;
+  chat_id: number;
+  kind: 'new' | 'patch';
+  target_skill_id: number | null;
+  name: string;
+  description: string;
+  body: string;
+  tags: string | null;
+  untrusted: number; // 0 | 1
   assistant_message_id: number | null;
   created_at: string;
 }
@@ -67,6 +105,24 @@ export interface ProjectSecret {
 }
 
 export type ChatKind = 'normal' | 'draft' | 'task_execution';
+
+/**
+ * How a user message should be handled.
+ *
+ *   - 'execute' — default: OpenClaw may use tools, files, shell, browser, etc.
+ *     The back-compat fallback for any message whose `mode` is missing or
+ *     unrecognized.
+ *   - 'work' / 'secure' — run on iclaw-runtime (our runtime).
+ *   - 'incognito' — read-only, ephemeral research on iclaw-runtime; never
+ *     persisted (see services/chatModes.ts).
+ *
+ * Kept as a string union for the live modes, but the full catalog
+ * (incl. planned modes like image) lives in
+ * `services/chatModes.ts` so new modes can be added without touching this
+ * type everywhere. Storage columns are plain TEXT, so adding a mode later
+ * needs no DB migration.
+ */
+export type ChatMode = 'execute' | 'work' | 'secure' | 'incognito';
 
 export type TaskStatus =
   | 'planning'
@@ -214,5 +270,15 @@ export interface Message {
   reply_to_role?: string | null;
   /** Persisted user-uploaded files (image / doc). `null` row column is parsed to undefined here. */
   attachments?: MessageAttachment[] | null;
+  /**
+   * How this message was sent. Only meaningful on `user` rows; assistant /
+   * system rows default to 'execute'. Missing/legacy rows read back as
+   * 'execute' (DB column default), so old chats stay fully compatible.
+   */
+  mode: ChatMode;
+  /** Total tokens spent producing this (assistant) message. Dev-mode only; null otherwise. */
+  tokens?: number | null;
+  /** Of `tokens`, how many prompt tokens were served from the provider cache. Dev-mode. */
+  cached_tokens?: number | null;
   created_at: string;
 }

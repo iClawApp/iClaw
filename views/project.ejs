@@ -123,6 +123,18 @@
             type="button"
             class="project-tab"
             role="tab"
+            id="project-tab-skills"
+            aria-controls="project-panel-skills"
+            aria-selected="false"
+            tabindex="-1"
+            data-project-tab="skills"
+            data-tab-base="Skills"
+            data-tab-count="<%= (skills || []).length %>"
+          >Skills</button>
+          <button
+            type="button"
+            class="project-tab"
+            role="tab"
             id="project-tab-links"
             aria-controls="project-panel-links"
             aria-selected="false"
@@ -226,6 +238,58 @@
               <% }); %>
               <% if (facts.length === 0) { %>
                 <li class="project-chats-empty muted">No facts yet. Accept a suggestion in a chat for this project.</li>
+              <% } %>
+            </ul>
+          </div>
+        </div>
+
+        <div
+          id="project-panel-skills"
+          class="project-panel"
+          role="tabpanel"
+          aria-labelledby="project-tab-skills"
+          hidden
+        >
+          <div class="project-sheet project-sheet--flush project-sheet--stacked">
+            <ul id="skills-list" class="project-chats">
+              <% (skills || []).forEach(function (s) { %>
+                <li class="skill" data-skill-id="<%= s.id %>" data-skill-version="<%= s.version %>">
+                  <div class="project-row-head muted">
+                    <% if (s.project_id === null) { %>
+                      <span class="skill-scope-badge" title="Available to every project">Global</span>
+                    <% } %>
+                    <% if (s.source_chat_id) { %>
+                      <a href="/chats/<%= s.source_chat_id %>" class="project-chat-source"><%= (s.source_chat_title || '').trim() || 'Chat' %></a>
+                    <% } else { %>
+                      <span>—</span>
+                    <% } %>
+                  </div>
+                  <input
+                    class="skill-name"
+                    aria-label="Skill name"
+                    value="<%= s.name %>"
+                    spellcheck="false"
+                  />
+                  <textarea
+                    class="skill-description"
+                    aria-label="Skill summary"
+                    rows="2"
+                  ><%= s.description %></textarea>
+                  <details class="skill-body-details">
+                    <summary>View / edit procedure</summary>
+                    <textarea
+                      class="skill-body"
+                      aria-label="Skill procedure (SKILL.md)"
+                      rows="10"
+                    ><%= s.body %></textarea>
+                  </details>
+                  <div class="fact-meta">
+                    <button type="button" class="fact-delete skill-delete" aria-label="Remove skill">Remove</button>
+                  </div>
+                </li>
+              <% }); %>
+              <% if (!(skills || []).length) { %>
+                <li class="project-chats-empty muted">No skills yet. Accept a skill suggestion in a chat for this project.</li>
               <% } %>
             </ul>
           </div>

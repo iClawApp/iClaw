@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import {
   extractAssistantText,
   extractSourceReplyFromMessageToolResult,
+  extractTurnUsage,
   resolveFromHistorySlice,
   sliceFromLastUser,
   type HistoryMessageLike,
@@ -265,5 +266,47 @@ describe('resolveFromHistorySlice — chat #23 regression', () => {
       { role: 'assistant', content: 'Самарі відправив у чат.' },
     ];
     expect(resolveFromHistorySlice(slice)).toBe(samari);
+  });
+});
+
+describe('extractTurnUsage', () => {
+  it('returns nulls when no assistant row carries usage', () => {
+    const slice: HistoryMessageLike[] = [
+      { role: 'assistant', content: 'hi' },
+      { role: 'toolResult', content: [] },
+    ];
+    expect(extractTurnUsage(slice)).toEqual({ tokens: null, cached: null });
+  });
+
+  it('prefers an explicit total and reads cache-read tokens', () => {
+    const slice: HistoryMessageLike[] = [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: 'a', usage: { total_tokens: 1234, cache_read_input_tokens: 200 } },
+    ];
+    expect(extractTurnUsage(slice)).toEqual({ tokens: 1234, cached: 200 });
+  });
+
+  it('falls back to input + output when no total is present (camelCase)', () => {
+    const slice: HistoryMessageLike[] = [
+      { role: 'assistant', content: 'a', usage: { inputTokens: 100, outputTokens: 23, cacheRead: 10 } },
+    ];
+    expect(extractTurnUsage(slice)).toEqual({ tokens: 123, cached: 10 });
+  });
+
+  it('sums usage across the multiple assistant segments of a tool-loop turn', () => {
+    const slice: HistoryMessageLike[] = [
+      { role: 'assistant', content: 'preamble', usage: { total_tokens: 100, cacheRead: 5 } },
+      { role: 'toolResult', content: [] },
+      { role: 'assistant', content: 'final', usage: { input_tokens: 40, output_tokens: 10 } },
+    ];
+    expect(extractTurnUsage(slice)).toEqual({ tokens: 150, cached: 5 });
+  });
+
+  it('ignores non-object / malformed usage', () => {
+    const slice: HistoryMessageLike[] = [
+      { role: 'assistant', content: 'a', usage: 'nope' },
+      { role: 'assistant', content: 'b', usage: { foo: 'bar' } },
+    ];
+    expect(extractTurnUsage(slice)).toEqual({ tokens: null, cached: null });
   });
 });

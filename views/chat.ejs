@@ -14,6 +14,10 @@
           aria-label="Chat title"
         />
       </form>
+      <% if (typeof devMode !== 'undefined' && devMode) { const _tokTotal = (chatMessages || []).reduce((a, m) => a + (Number(m.tokens) || 0), 0); %>
+        <span class="chat-token-total" id="chat-token-total" data-total="<%= _tokTotal %>"
+          title="Total tokens spent in this chat (dev mode)" <%= _tokTotal > 0 ? '' : 'hidden' %>><%= _tokTotal.toLocaleString() %> tok total</span>
+      <% } %>
 
       <div class="chat-header-tools">
       <form class="agent-form header-field" method="post" action="/chats/<%= activeChat.id %>/agent">
@@ -169,7 +173,7 @@
     >
       <div class="messages-thread">
         <% if (chatMessages.length === 0) { %>
-          <p class="muted empty-state">No messages yet. Say something.</p>
+          <p class="muted empty-state">iClaw - the safer way to work with powerful AI</p>
         <% } else { %>
           <% chatMessages.forEach(function (m) { %>
             <div class="msg <%= m.role %>" data-msg-id="<%= m.id %>">
@@ -219,6 +223,9 @@
                     <% } %>
                   <% }); %>
                 </div>
+              <% } %>
+              <% if (typeof devMode !== 'undefined' && devMode && m.tokens) { %>
+                <span class="msg-tokens" title="Tokens spent on this reply"><%= Number(m.tokens).toLocaleString() %> tok<% if (m.cached_tokens) { %> · <%= Number(m.cached_tokens).toLocaleString() %> cached<% } %></span>
               <% } %>
             </div>
           <% }); %>
