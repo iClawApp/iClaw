@@ -16,16 +16,11 @@
  */
 
 import { execFile } from 'node:child_process';
-import { platform as osPlatform } from 'node:os';
 import { promisify } from 'node:util';
 
 import { probeGateway } from './gatewayProbe';
 
 const execFileAsync = promisify(execFile);
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
 
 // Mirror work-container.ts's image resolution so onboarding agrees with what
 // Work/Safe actually use. The canonical image is the prebuilt sandbox; the
@@ -71,34 +66,6 @@ async function dockerInstalled(): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-/**
- * Best-effort daemon start for an installed-but-idle Docker, then poll until it
- * comes up (≤ 60s). Mirrors nanoclaw's container step. Only attempts the
- * no-prompt paths: `open -a Docker` (macOS) / `Docker Desktop` (Windows). On
- * Linux starting the daemon needs sudo, which can't prompt from this headless
- * web context, so we skip and let the user start it. Returns true if reachable.
- */
-async function tryStartDocker(): Promise<boolean> {
-  const plat = osPlatform();
-  try {
-    if (plat === 'darwin') {
-      await execFileAsync('open', ['-a', 'Docker'], { timeout: 8_000 });
-    } else if (plat === 'win32') {
-      await execFileAsync('cmd', ['/c', 'start', '', 'Docker Desktop'], { timeout: 8_000 });
-    } else {
-      return false; // Linux: needs sudo, can't auto-start silently here.
-    }
-  } catch {
-    return false; // Docker.app not found / launch failed.
-  }
-  // Poll for the daemon (Docker Desktop can take 20–40s to accept connections).
-  for (let i = 0; i < 30; i++) {
-    await sleep(2_000);
-    if (await dockerReachable()) return true;
-  }
-  return false;
 }
 
 async function imageExists(image: string): Promise<boolean> {
@@ -148,19 +115,19 @@ export function startOnboardingPrep(): void {
   prepStarted = true;
 
   void (async () => {
-    // 1. Daemon already up? Straight to the image check.
+    // 1. Daemon already up (the user started it)? Pre-pull the sandbox image so
+    //    the first Work/Safe use is fast.
     if (await dockerReachable()) {
       await ensureImage();
       return;
     }
-    // 2. Installed but idle → try to start it (macOS/Windows), then re-check.
+    // 2. Installed but idle → DON'T start it here. Onboarding is informational;
+    //    the runtime starts Docker on demand the moment a task needs it
+    //    (docker-lifecycle.ts) and auto-stops it when idle. Starting it here
+    //    instead would be a transparent start the runtime can't track → it would
+    //    never get auto-stopped. So we just report the state.
     if (await dockerInstalled()) {
-      state.docker = 'starting';
-      if (await tryStartDocker()) {
-        await ensureImage();
-      } else {
-        state.docker = 'stopped';
-      }
+      state.docker = 'stopped';
       return;
     }
     // 3. Not installed at all.

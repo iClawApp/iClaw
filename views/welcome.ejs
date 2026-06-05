@@ -191,9 +191,8 @@
   // "all good" badge is just noise for a non-technical user.
   var prep = document.getElementById('onb-prep');
   function describe(env) {
-    if (env.docker === 'starting') return 'Starting Docker…';
     if (env.docker === 'pulling') return 'Setting up your workspace… downloading the sandbox';
-    if (env.docker === 'stopped') return 'Docker is installed but not running — start it to enable Work mode.';
+    if (env.docker === 'stopped') return 'Docker is installed — iClaw starts it automatically when a task needs it.';
     if (env.docker === 'missing') return 'Work mode needs Docker — you can add it later.';
     return null; // 'ready' or 'unknown' → nothing useful to say.
   }
