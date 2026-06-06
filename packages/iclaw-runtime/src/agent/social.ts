@@ -91,14 +91,19 @@ function getFetcherB64(): string {
 function buildSocialCommand(p: {
   query: string; sources: string; limit: number; time: string; withComments: boolean;
 }): string {
+  // Write the fetcher to $HOME — writable in BOTH sandboxes regardless of the
+  // container uid. Secure runs as `node` (owns /workspace), but Work runs as the
+  // HOST uid with folders at /work/<n> and NO writable /workspace, so a
+  // /workspace path fails with EACCES there. $HOME is set in both (Work:
+  // HOME=/tmp, Secure: /home/node), so it's the one path safe everywhere.
+  const script = '"$HOME/.iclaw-social-fetch.mjs"';
   return [
     'set -e',
-    'mkdir -p /workspace/.tools',
-    `echo ${shQuote(getFetcherB64())} | base64 -d > /workspace/.tools/social-fetch.mjs`,
+    `echo ${shQuote(getFetcherB64())} | base64 -d > ${script}`,
     `SOCIAL_QUERY=${shQuote(p.query)} SOCIAL_SOURCES=${shQuote(p.sources)} ` +
       `SOCIAL_LIMIT=${shQuote(String(p.limit))} SOCIAL_TIME=${shQuote(p.time)} ` +
       `SOCIAL_WITH_COMMENTS=${shQuote(p.withComments ? '1' : '0')} ` +
-      'node /workspace/.tools/social-fetch.mjs',
+      `node ${script}`,
   ].join('\n');
 }
 
