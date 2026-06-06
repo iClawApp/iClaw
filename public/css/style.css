@@ -874,6 +874,17 @@ code {
   display: none !important;
 }
 
+/* Header tools toggle between the draft (new-chat) and live-chat states via the
+   `hidden` attribute — these carry explicit `display`, so the UA [hidden] rule
+   alone wouldn't win. Agent also hides in non-Full-Power modes (see iclaw.js). */
+.agent-form[hidden],
+.reasoning-toggle[hidden],
+.share-form[hidden],
+.delete-form[hidden],
+.share-btn[hidden] {
+  display: none !important;
+}
+
 /* All header controls (selects, toggles, buttons) standardise on 32px height
    + 10px radius so the row reads as one consistent strip of pills. */
 .chat-header .btn--sm {

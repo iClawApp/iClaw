@@ -32,17 +32,7 @@
         </select>
       </form>
 
-      <button
-        type="button"
-        class="stop-btn btn btn--ghost btn--sm header-action-btn"
-        id="stop-btn"
-        aria-label="Stop generation"
-        title="Stop this turn"
-        hidden
-      >
-        <%- include('partials/header-tool-icon', { icon: 'stop' }) %>
-        <span class="header-tool-label">Stop</span>
-      </button>
+      <%- include('partials/header-chat-tools', { draftHeader: true }) %>
 
       </div>
     </header>
@@ -134,9 +124,16 @@
       <% } %>
     </div>
 
+    <% if (cloudShareBaseUrl) { %>
+      <%- include('partials/share-modal') %>
+    <% } %>
+
     <script src="/js/vendor/marked.min.js"></script>
     <script src="/js/vendor/highlight.min.js"></script>
     <script src="/js/iclaw.js?v=1"></script>
+    <% if (cloudShareBaseUrl) { %>
+      <script src="/js/share.js" defer></script>
+    <% } %>
   </main>
 </div>
 

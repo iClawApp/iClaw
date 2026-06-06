@@ -127,6 +127,21 @@
     if (typeof syncIncognitoSurface === 'function') syncIncognitoSurface(next);
     syncExecuteAvailability();
     if (typeof syncDockerAvailability === 'function') syncDockerAvailability();
+    syncAgentVisibility(next);
+  }
+
+  /**
+   * The Agent picker selects an OpenClaw agent session, which only affects Full
+   * Power (Execute). Work / Safe work / Incognito route to iclaw-runtime and
+   * ignore it — so hide it there instead of implying a choice that does nothing.
+   * Mode is per-message, so this re-runs on every mode change. (When only Execute
+   * is selectable the mode menu isn't rendered and this never hides it.)
+   */
+  function syncAgentVisibility(mode) {
+    const m = mode || getComposerMode();
+    document.querySelectorAll('.agent-form').forEach((el) => {
+      el.hidden = m !== 'execute';
+    });
   }
 
   // ── Full Power (Execute) gating ───────────────────────────────────────────
@@ -1430,6 +1445,7 @@
       if (typeof updateWorkFoldersButton === 'function') updateWorkFoldersButton();
     }
     history.replaceState(null, '', '/chats/' + id);
+    promoteDraftHeaderTools(id, payload.projectId);
     // Migrate mode from the draft fallback key to the per-chat key
     try {
       const draftMode = localStorage.getItem('iclaw:composer-mode');
@@ -1451,6 +1467,37 @@
       if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
     }
     syncComposerSecretUi();
+  }
+
+  /**
+   * Promote the dormant draft header tools into a live chat's tools once the row
+   * exists. The draft renders them hidden + action-less (see
+   * partials/header-chat-tools.ejs); here we fill in the /chats/:id actions and
+   * reveal them — so Share, Delete, Reasoning (and Suggest-facts, when the draft
+   * chose a project) show up immediately instead of only after a reload. Queries
+   * are scoped to the header so they don't hit the share modal's own .share-form.
+   */
+  function promoteDraftHeaderTools(id, projectId) {
+    if (!startedOnDraft) return;
+    const header = document.querySelector('.chat-header-tools');
+    if (!header) return;
+    const shareBtn = document.getElementById('share-btn');
+    if (shareBtn) shareBtn.hidden = false;
+    const reasoning = header.querySelector('.reasoning-toggle');
+    if (reasoning) reasoning.hidden = false;
+    const delForm = header.querySelector('.delete-form');
+    if (delForm) {
+      delForm.setAttribute('action', '/chats/' + id + '/delete');
+      delForm.hidden = false;
+    }
+    const hasProject =
+      (projectId != null && Number.isFinite(Number(projectId))) ||
+      (draftChosenProjectId != null && Number.isFinite(draftChosenProjectId));
+    const sharesForm = header.querySelector('.share-form');
+    if (sharesForm && hasProject) {
+      sharesForm.setAttribute('action', '/chats/' + id + '/shares');
+      sharesForm.hidden = false;
+    }
   }
 
   async function ensureDraftChatRow() {
@@ -8049,8 +8096,12 @@
   // -------------------------------------------------------------------------
   const reasoningToggle = document.getElementById('chat-reasoning-toggle');
 
-  if (reasoningToggle && activeChatId != null) {
+  if (reasoningToggle) {
     reasoningToggle.addEventListener('change', async () => {
+      // Drafts adopt a chat id mid-session (adoptDraftChat), so resolve it live
+      // rather than gating the binding at init — otherwise the toggle stays dead
+      // on a freshly-started chat until reload.
+      if (activeChatId == null) return;
       const mode = reasoningToggle.checked ? 'on' : 'off';
       try {
         // Server route does two things atomically: persists the iClaw mirror

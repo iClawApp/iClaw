@@ -2,7 +2,7 @@ import express, { Router } from 'express';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { chats, projectSecrets, projects, tasks } from '../services/store';
-import { openclaw } from '../services/openclaw';
+import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
 import { probeGateway } from '../services/gatewayProbe';
 import { chatStatus } from '../services/chatStatus';
 import { shouldShowSendHint } from '../services/sendHint';
@@ -166,6 +166,7 @@ indexRouter.get('/', async (req, res) => {
     agentsError,
     defaultAgent: 'openclaw/default',
     openclawBaseUrl: openclaw.baseUrl,
+    cloudShareBaseUrl,
     workingIds: chatStatus.workingIds(),
     sendHintShow: shouldShowSendHint(),
     chatModes: listSelectableModes(),
