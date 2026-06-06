@@ -248,13 +248,18 @@ export async function isContainerRunning(containerName: string): Promise<boolean
 async function execInContainer(containerName: string, command: string): Promise<string> {
   const dev = process.env.ICLAW_DEV_MODE === 'true';
   const startedAt = Date.now();
+  // Don't dump giant commands (e.g. base64-injected tool scripts like
+  // social_search) into the log — keep the head + the useful env/arg tail.
+  const cmdLog = command.length > 400
+    ? `${command.slice(0, 120)} …[+${command.length - 340} chars]… ${command.slice(-220)}`
+    : command;
   try {
     const { stdout, stderr } = await execFileAsync(
       'docker', ['exec', containerName, 'bash', '-c', command],
       { timeout: CONTAINER_TIMEOUT },
     );
     const out = [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)';
-    if (dev) log.info('secure run_command', { code: 0, ms: Date.now() - startedAt, bytes: out.length, cmd: command });
+    if (dev) log.info('secure run_command', { code: 0, ms: Date.now() - startedAt, bytes: out.length, cmd: cmdLog });
     return out;
   } catch (err: unknown) {
     const e = err as { stdout?: string; stderr?: string; message?: string; killed?: boolean; signal?: string; code?: number };
@@ -264,7 +269,7 @@ async function execInContainer(containerName: string, command: string): Promise<
       log.warn('secure run_command failed', {
         ms: Date.now() - startedAt, timedOut,
         killed: Boolean(e.killed), signal: e.signal ?? null, code: e.code ?? null,
-        bytes: partial.length, cmd: command,
+        bytes: partial.length, cmd: cmdLog,
       });
     }
     // Not dev-gated: a timeout kill must reach the MODEL. In Secure Mode the
