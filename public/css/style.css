@@ -4879,6 +4879,7 @@ code {
 .composer-mic {
   flex: 0 0 auto;
   align-self: center;
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4891,6 +4892,7 @@ code {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+  touch-action: none;
   transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
 }
 .composer-mic:hover {
@@ -4921,6 +4923,148 @@ code {
 @keyframes composer-mic-spin {
   to { transform: rotate(360deg); }
 }
+
+/* --- Voice recording (hold-to-record) — UX ported from the Flutter app --- */
+/* Active/locked mic: filled accent with an amplitude halo driven by --mic-amp. */
+.composer-mic[data-state='recording'],
+.composer-mic[data-state='locked'] {
+  color: #fff;
+  background: var(--accent);
+  animation: none;
+  box-shadow: 0 0 0 calc(var(--mic-amp, 0) * 10px)
+    color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.composer-mic[data-state='recording']:hover,
+.composer-mic[data-state='locked']:hover {
+  color: #fff;
+  background: var(--accent);
+}
+.composer-mic.is-cancel[data-state='recording'],
+.composer-mic.is-cancel[data-state='recording']:hover {
+  background: var(--danger);
+  box-shadow: 0 0 0 calc(var(--mic-amp, 0) * 10px)
+    color-mix(in srgb, var(--danger) 30%, transparent);
+}
+.composer-mic__send { display: none; }
+.composer-mic[data-state='locked'] .composer-mic__idle { display: none; }
+.composer-mic[data-state='locked'] .composer-mic__send { display: inline-flex; }
+
+/* The recording bar takes the textarea's place while the mic is held. */
+.composer-field.is-recording .composer-input-stack textarea { display: none; }
+.composer-recording {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+  padding: 2px 0 10px;
+}
+.composer-recording:not([hidden]) { display: flex; }
+.composer-recording__dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: composer-rec-dot 1.1s ease-in-out infinite;
+}
+@keyframes composer-rec-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.78); }
+}
+.composer-recording__time {
+  flex: 0 0 auto;
+  min-width: 62px;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+.composer-recording__wave {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  display: block;
+}
+.composer-recording__hint {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.8em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.composer-recording__cancel {
+  display: none;
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--danger);
+  font: inherit;
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 8px;
+}
+.composer-recording__cancel:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.composer-recording.is-locked .composer-recording__cancel { display: inline-flex; }
+.composer-recording.is-cancel .composer-recording__dot { background: var(--danger); }
+.composer-recording.is-cancel .composer-recording__time,
+.composer-recording.is-cancel .composer-recording__hint { color: var(--danger); }
+/* Quick-tap coaching hint */
+.composer-recording.is-hint .composer-recording__dot,
+.composer-recording.is-hint .composer-recording__time,
+.composer-recording.is-hint .composer-recording__wave,
+.composer-recording.is-hint .composer-recording__cancel { display: none; }
+.composer-recording.is-hint .composer-recording__hint { color: var(--muted); }
+
+/* Floating lock indicator above the mic. */
+.composer-lock-hint {
+  position: absolute;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  transform: translateX(-50%);
+  padding: 9px 7px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  color: var(--muted);
+  z-index: var(--z-popover);
+  pointer-events: none;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.composer-lock-hint:not([hidden]) { display: flex; }
+.composer-lock-hint__chev {
+  transform: translateY(calc((1 - var(--lock-progress, 0)) * 5px));
+  opacity: calc(0.35 + var(--lock-progress, 0) * 0.65);
+  transition: transform 0.08s linear, opacity 0.08s linear;
+}
+.composer-lock-hint.is-locked {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+.composer-lock-hint.is-locked .composer-lock-hint__chev { display: none; }
+
+@media (max-width: 430px) {
+  .composer-recording__hint { display: none; }
+  .composer-recording.is-hint .composer-recording__hint { display: inline; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-recording__dot { animation: none; }
+}
+
+/* While recording, hide everything but the waveform + active mic. Use
+   visibility (not display:none) so the toolbar keeps its layout — otherwise the
+   lone right group collapses to the left under `justify-content: space-between`
+   and the mic appears to "teleport" left. */
+.composer-field.is-recording .composer-toolbar__left,
+.composer-field.is-recording .composer-send { visibility: hidden; }
 
 .composer-attach-menu,
 .composer-secret-pick-menu {

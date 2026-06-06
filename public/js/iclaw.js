@@ -843,24 +843,69 @@
   // Speech-to-text (mic). Records via MediaRecorder, POSTs the clip to
   // /api/stt, and inserts the returned transcript into the composer textarea.
   // Only wired when the server rendered the button (OPENROUTER_API_KEY set).
-  // Click to start, click again to stop.
+  // Hold to record; slide left to cancel; slide up to lock hands-free.
   // -------------------------------------------------------------------------
   const micBtn = document.getElementById('composer-mic-btn');
   if (micBtn && navigator.mediaDevices && window.MediaRecorder) {
+    // Telegram/WhatsApp-style hold-to-record gesture ported from the Flutter
+    // app: hold the mic to record, slide left to cancel, slide up to lock
+    // hands-free. A Web Audio meter drives the live waveform + amplitude halo.
+    // The post-release pipeline (audio → /api/stt → transcript) is unchanged.
+    const recEl = document.getElementById('composer-recording');
+    const recTimeEl = document.getElementById('composer-recording-time');
+    const recHintEl = document.getElementById('composer-recording-hint');
+    const recCancelBtn = document.getElementById('composer-recording-cancel');
+    const recWave = document.getElementById('composer-recording-wave');
+    const lockHintEl = document.getElementById('composer-lock-hint');
+    const composerFieldEl = micBtn.closest('.composer-field');
+
+    const CANCEL_DX = 72; // px dragged left to arm cancel
+    const LOCK_DY = 96; // px dragged up to lock hands-free
+    const MIN_MS = 800; // discard clips shorter than this
+    const REST_HINT = '‹ slide to cancel · slide up to lock';
+
     let mediaRecorder = null;
     let mediaStream = null;
     let micChunks = [];
-    let micRecording = false;
+    // phase: 'idle' | 'starting' | 'recording' | 'locked'
+    let phase = 'idle';
+    let pendingSend = false;
+    let willCancel = false;
+    let ignoreNextUp = false;
+    let startedAt = 0;
+    let activePointerId = null;
+    let startX = 0;
+    let startY = 0;
+    let holdHintTimer = 0;
+    // Caret captured when recording starts, so the transcript is inserted at
+    // the cursor (dictate-into-text) instead of appended at the end.
+    let savedSelStart = null;
+    let savedSelEnd = null;
+
+    // Web Audio meter (live waveform + amplitude halo).
+    let audioCtx = null;
+    let analyser = null;
+    let sourceNode = null;
+    let meterRaf = 0;
+    let timeData = null;
+    let waveSamples = [];
+    let accentColor = '#4f8cff';
+    let dangerColor = '#e5484d';
 
     function setMicState(state) {
       micBtn.dataset.state = state;
-      micBtn.setAttribute('aria-pressed', state === 'recording' ? 'true' : 'false');
+      micBtn.setAttribute(
+        'aria-pressed',
+        state === 'recording' || state === 'locked' ? 'true' : 'false',
+      );
       micBtn.title =
         state === 'recording'
-          ? 'Stop recording'
-          : state === 'busy'
-            ? 'Transcribing…'
-            : 'Record voice';
+          ? 'Release to send · slide to cancel'
+          : state === 'locked'
+            ? 'Tap to send'
+            : state === 'busy'
+              ? 'Transcribing…'
+              : 'Hold to record';
     }
 
     function pickMicMime() {
@@ -884,14 +929,29 @@
 
     function insertTranscript(text) {
       if (!input || !text) return;
-      const cur = input.value || '';
-      const sep = cur && !/\s$/.test(cur) ? ' ' : '';
-      input.value = cur + sep + text;
+      const val = input.value || '';
+      // Insert at the caret captured when recording began; fall back to the end
+      // when the field wasn't focused (savedSel* are null).
+      let start = typeof savedSelStart === 'number' ? savedSelStart : val.length;
+      let end = typeof savedSelEnd === 'number' ? savedSelEnd : val.length;
+      start = Math.max(0, Math.min(start, val.length));
+      end = Math.max(start, Math.min(end, val.length));
+      const before = val.slice(0, start);
+      const after = val.slice(end);
+      // Pad so dictated words don't collide with the surrounding text.
+      const lead = before && !/\s$/.test(before) ? ' ' : '';
+      const trail = after && !/^\s/.test(after) ? ' ' : '';
+      const piece = lead + text + trail;
+      input.value = before + piece + after;
+      const caret = before.length + (lead + text).length;
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.focus();
       try {
-        input.setSelectionRange(input.value.length, input.value.length);
+        input.setSelectionRange(caret, caret);
       } catch (_) {}
+      // Keep the caret in sync for a possible next dictation.
+      savedSelStart = caret;
+      savedSelEnd = caret;
     }
 
     async function transcribeBlob(blob) {
@@ -913,11 +973,13 @@
     }
 
     async function onMicStop() {
+      stopMeter();
       stopMicStream();
+      const send = pendingSend;
       const type = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
       const blob = new Blob(micChunks, { type });
       micChunks = [];
-      if (!blob.size) {
+      if (!send || !blob.size) {
         setMicState('idle');
         return;
       }
@@ -934,11 +996,195 @@
       }
     }
 
-    async function startMicRecording() {
+    // ----- recording UI -----
+    function fmtTime(ms) {
+      const cs = Math.floor(ms / 10) % 100;
+      const totalSec = Math.floor(ms / 1000);
+      const p2 = (n) => String(n).padStart(2, '0');
+      return p2(Math.floor(totalSec / 60)) + ':' + p2(totalSec % 60) + '.' + p2(cs);
+    }
+
+    function readThemeColors() {
+      try {
+        const cs = getComputedStyle(document.documentElement);
+        const a = cs.getPropertyValue('--accent').trim();
+        const d = cs.getPropertyValue('--danger').trim();
+        if (a) accentColor = a;
+        if (d) dangerColor = d;
+      } catch (_) {}
+    }
+
+    function sizeWaveCanvas() {
+      if (!recWave) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w = recWave.clientWidth || 160;
+      recWave.width = Math.max(1, Math.round(w * dpr));
+      recWave.height = Math.round(26 * dpr);
+    }
+
+    function positionLockHint() {
+      if (!lockHintEl || !composerFieldEl) return;
+      const r = micBtn.getBoundingClientRect();
+      const fr = composerFieldEl.getBoundingClientRect();
+      lockHintEl.style.left = r.left - fr.left + r.width / 2 + 'px';
+      lockHintEl.style.bottom = fr.bottom - r.top + 10 + 'px';
+    }
+
+    function showRecordingUI() {
+      readThemeColors();
+      window.clearTimeout(holdHintTimer);
+      if (composerFieldEl) composerFieldEl.classList.add('is-recording');
+      if (recEl) {
+        recEl.classList.remove('is-cancel', 'is-locked', 'is-hint');
+        recEl.hidden = false;
+      }
+      micBtn.classList.remove('is-cancel');
+      if (recHintEl) recHintEl.textContent = REST_HINT;
+      if (recTimeEl) recTimeEl.textContent = '00:00.00';
+      sizeWaveCanvas();
+      if (lockHintEl) {
+        lockHintEl.classList.remove('is-locked');
+        lockHintEl.style.setProperty('--lock-progress', '0');
+        lockHintEl.hidden = false;
+        positionLockHint();
+      }
+    }
+
+    function hideRecordingUI() {
+      if (composerFieldEl) composerFieldEl.classList.remove('is-recording');
+      if (recEl) {
+        recEl.hidden = true;
+        recEl.classList.remove('is-cancel', 'is-locked', 'is-hint');
+      }
+      if (lockHintEl) lockHintEl.hidden = true;
+      micBtn.classList.remove('is-cancel');
+      micBtn.style.setProperty('--mic-amp', '0');
+    }
+
+    function setCancelArmed(on) {
+      if (willCancel === on) return;
+      willCancel = on;
+      if (recEl) recEl.classList.toggle('is-cancel', on);
+      micBtn.classList.toggle('is-cancel', on);
+      if (recHintEl && phase === 'recording') {
+        recHintEl.textContent = on ? 'release to cancel' : REST_HINT;
+      }
+    }
+
+    function setLockProgress(p) {
+      if (lockHintEl) {
+        lockHintEl.style.setProperty('--lock-progress', String(Math.max(0, Math.min(1, p))));
+      }
+    }
+
+    function flashHoldHint() {
+      // Quick tap (no real recording) → briefly coach the user to hold.
+      if (!recEl) return;
+      if (composerFieldEl) composerFieldEl.classList.add('is-recording');
+      recEl.classList.add('is-hint');
+      recEl.hidden = false;
+      if (recHintEl) recHintEl.textContent = 'hold the mic to record';
+      window.clearTimeout(holdHintTimer);
+      holdHintTimer = window.setTimeout(() => {
+        recEl.classList.remove('is-hint');
+        if (phase === 'idle') {
+          recEl.hidden = true;
+          if (composerFieldEl) composerFieldEl.classList.remove('is-recording');
+        }
+      }, 1100);
+    }
+
+    // ----- Web Audio meter -----
+    function startMeter(stream) {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new Ctx();
+        if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+        sourceNode = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.65;
+        sourceNode.connect(analyser);
+        timeData = new Uint8Array(analyser.fftSize);
+        waveSamples = [];
+      } catch (_) {
+        // Meter is best-effort; recording still works without it.
+      }
+      meterRaf = requestAnimationFrame(meterFrame);
+    }
+
+    function stopMeter() {
+      if (meterRaf) cancelAnimationFrame(meterRaf);
+      meterRaf = 0;
+      try { if (sourceNode) sourceNode.disconnect(); } catch (_) {}
+      try { if (audioCtx) audioCtx.close(); } catch (_) {}
+      sourceNode = null;
+      analyser = null;
+      audioCtx = null;
+      timeData = null;
+    }
+
+    function meterFrame() {
+      meterRaf = requestAnimationFrame(meterFrame);
+      if (phase === 'recording' || phase === 'locked') {
+        if (recTimeEl) recTimeEl.textContent = fmtTime(Date.now() - startedAt);
+      }
+      let level = 0;
+      if (analyser && timeData) {
+        analyser.getByteTimeDomainData(timeData);
+        let sum = 0;
+        for (let i = 0; i < timeData.length; i++) {
+          const v = (timeData[i] - 128) / 128;
+          sum += v * v;
+        }
+        level = Math.min(1, Math.sqrt(sum / timeData.length) * 2.4);
+      }
+      micBtn.style.setProperty('--mic-amp', level.toFixed(3));
+      waveSamples.push(level);
+      drawWave();
+    }
+
+    function drawWave() {
+      if (!recWave) return;
+      const ctx = recWave.getContext('2d');
+      if (!ctx) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w = recWave.width;
+      const h = recWave.height;
+      ctx.clearRect(0, 0, w, h);
+      const barW = 2 * dpr;
+      const step = barW + 2 * dpr;
+      const n = Math.max(1, Math.floor(w / step));
+      if (waveSamples.length > n) waveSamples = waveSamples.slice(-n);
+      const data = waveSamples;
+      const mid = h / 2;
+      ctx.fillStyle = willCancel ? dangerColor : accentColor;
+      for (let i = 0; i < data.length; i++) {
+        const bh = Math.max(2 * dpr, data[i] * h * 0.92);
+        const x = w - (data.length - i) * step;
+        const r = barW / 2;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x, mid - bh / 2, barW, bh, r);
+        else ctx.rect(x, mid - bh / 2, barW, bh);
+        ctx.fill();
+      }
+    }
+
+    // ----- lifecycle -----
+    async function beginRecording() {
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch (_) {
+        phase = 'idle';
+        activePointerId = null;
+        hideRecordingUI();
         window.alert('Microphone access was blocked. Allow it in your browser to use voice input.');
+        return;
+      }
+      // The user may have released or cancelled while the permission prompt was
+      // open. If we're no longer arming, drop the freshly acquired stream.
+      if (phase !== 'starting') {
+        stopMicStream();
         return;
       }
       micChunks = [];
@@ -955,24 +1201,142 @@
       });
       mediaRecorder.addEventListener('stop', onMicStop);
       mediaRecorder.start();
-      micRecording = true;
+      phase = 'recording';
+      startedAt = Date.now();
+      pendingSend = false;
+      willCancel = false;
       setMicState('recording');
+      showRecordingUI();
+      startMeter(mediaStream);
+      try { if (input) input.blur(); } catch (_) {}
     }
 
-    function stopMicRecording() {
-      micRecording = false;
+    function finishRecording(send) {
+      if (phase !== 'recording' && phase !== 'locked') return;
+      const longEnough = Date.now() - startedAt >= MIN_MS;
+      pendingSend = !!send && longEnough && !willCancel;
+      if (send && !longEnough && navigator.vibrate) {
+        try { navigator.vibrate([15, 40, 15]); } catch (_) {}
+      }
+      phase = 'idle';
+      willCancel = false;
+      ignoreNextUp = false;
+      activePointerId = null;
+      hideRecordingUI();
+      if (send && !longEnough) flashHoldHint();
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        try {
-          mediaRecorder.stop();
-        } catch (_) {}
+        try { mediaRecorder.stop(); } catch (_) { onMicStop(); }
+      } else {
+        onMicStop();
       }
     }
 
-    micBtn.addEventListener('click', (e) => {
+    function cancelRecording() {
+      finishRecording(false);
+    }
+
+    function lockRecording() {
+      if (phase !== 'recording') return;
+      phase = 'locked';
+      ignoreNextUp = true;
+      setCancelArmed(false);
+      setMicState('locked');
+      if (recEl) recEl.classList.add('is-locked');
+      if (recHintEl) recHintEl.textContent = 'tap mic to send';
+      if (lockHintEl) {
+        lockHintEl.classList.add('is-locked');
+        setLockProgress(1);
+      }
+      try { micBtn.releasePointerCapture(activePointerId); } catch (_) {}
+      sizeWaveCanvas();
+    }
+
+    // ----- pointer gesture -----
+    micBtn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       if (micBtn.dataset.state === 'busy') return;
-      if (micRecording) stopMicRecording();
-      else startMicRecording();
+      // In locked mode a fresh tap on the mic sends.
+      if (phase === 'locked') {
+        finishRecording(true);
+        return;
+      }
+      if (phase !== 'idle') return;
+      // Capture the caret so the transcript lands where the user put it. Only
+      // when the textarea is focused; otherwise append at the end (null).
+      if (input && document.activeElement === input) {
+        savedSelStart = input.selectionStart;
+        savedSelEnd = input.selectionEnd;
+      } else {
+        savedSelStart = null;
+        savedSelEnd = null;
+      }
+      phase = 'starting';
+      willCancel = false;
+      activePointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
+      try { micBtn.setPointerCapture(e.pointerId); } catch (_) {}
+      beginRecording();
+    });
+
+    micBtn.addEventListener('pointermove', (e) => {
+      if (phase !== 'recording') return;
+      if (activePointerId !== null && e.pointerId !== activePointerId) return;
+      const dx = startX - e.clientX; // leftward positive
+      const dy = startY - e.clientY; // upward positive
+      setCancelArmed(dx >= CANCEL_DX);
+      if (willCancel) {
+        setLockProgress(0);
+        return;
+      }
+      setLockProgress(dy / LOCK_DY);
+      if (dy >= LOCK_DY) lockRecording();
+    });
+
+    function onPointerEnd(e) {
+      if (activePointerId !== null && e.pointerId !== activePointerId) return;
+      if (phase === 'starting') {
+        // Released before recording actually began → treat as a quick tap.
+        phase = 'idle';
+        activePointerId = null;
+        stopMicStream();
+        flashHoldHint();
+        return;
+      }
+      if (phase === 'recording') {
+        finishRecording(!willCancel);
+        return;
+      }
+      if (phase === 'locked' && ignoreNextUp) {
+        // The release that triggered the lock — keep recording hands-free.
+        ignoreNextUp = false;
+      }
+    }
+
+    micBtn.addEventListener('pointerup', onPointerEnd);
+    micBtn.addEventListener('pointercancel', (e) => {
+      if (activePointerId !== null && e.pointerId !== activePointerId) return;
+      if (phase === 'starting') {
+        phase = 'idle';
+        activePointerId = null;
+        stopMicStream();
+        return;
+      }
+      if (phase === 'recording') cancelRecording();
+    });
+
+    if (recCancelBtn) {
+      recCancelBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        cancelRecording();
+      });
+    }
+
+    window.addEventListener('resize', () => {
+      if (phase === 'recording' || phase === 'locked') {
+        sizeWaveCanvas();
+        positionLockHint();
+      }
     });
   }
 
