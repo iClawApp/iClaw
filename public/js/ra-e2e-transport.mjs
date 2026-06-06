@@ -501,26 +501,12 @@ export async function installRaE2eTransport() {
 // double-binding of its document/WebSocket listeners — same single-load model,
 // just without the gate round trip.
 
-let spaBound = false;
 let spaNavInFlight = false;
 let spaNavTimer = null;
 
 function isE2eEnabled() {
   const meta = document.querySelector('meta[name="iclaw-ra-e2e"]');
   return !!(meta && meta.getAttribute('content') === 'true');
-}
-
-// Dev-only tracing (gated on window.__ICLAW_DEV__, set by head.ejs). Lets us see
-// in the console whether a navigation went over E2E or fell back to the gate.
-function spaLog() {
-  try {
-    const on = window.__ICLAW_DEV__ || localStorage.getItem('iclaw:spa-debug') === '1';
-    if (on) {
-      console.debug.apply(console, ['[iclaw][e2e-spa]'].concat([].slice.call(arguments)));
-    }
-  } catch {
-    // ignore
-  }
 }
 
 function beginSpaNav() {
@@ -561,10 +547,7 @@ export async function e2eNavigate(nextUrl, opts) {
     window.location.assign(nextUrl);
     return;
   }
-  if (spaNavInFlight) {
-    spaLog('navigate skipped — already in flight, wanted', path);
-    return;
-  }
+  if (spaNavInFlight) return;
   beginSpaNav();
   try {
     if (opts && opts.replace) history.replaceState({ iclawE2eSpa: true }, '', path);
@@ -579,17 +562,15 @@ export async function e2eNavigate(nextUrl, opts) {
     try {
       await navigateViaE2eDocument(path);
       return; // success — the document is being replaced
-    } catch (err) {
-      const msg = (err && err.message) || String(err);
+    } catch {
       if (attempt === 0) {
-        spaLog('navigate attempt failed, retrying:', path, msg);
         await new Promise(function (r) {
           setTimeout(r, 150);
         });
         continue;
       }
-      spaLog('navigate FELL BACK to full navigation (→ gate):', path, msg);
       spaNavInFlight = false;
+      // Encrypted load failed twice — fall back to a real navigation (gate resume).
       window.location.assign(path);
       return;
     }
@@ -629,30 +610,13 @@ function spaShouldIntercept(a) {
 }
 
 function onSpaClick(e) {
-  if (e.defaultPrevented) {
-    spaLog('click ignored — defaultPrevented (handled by app JS)');
-    return; // iclaw.js already handled this click
-  }
+  if (e.defaultPrevented) return; // iclaw.js already handled this click
   if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   const start = e.target;
   const a = start && start.closest ? start.closest('a[href]') : null;
-  if (!a) return;
-  if (!spaShouldIntercept(a)) {
-    // Surface same-origin links we deliberately let full-navigate — these are
-    // the ones that would show the gate. (External/asset links are expected.)
-    const href = a.getAttribute('href') || '';
-    let sameOrigin = false;
-    try {
-      sameOrigin = new URL(href, location.href).origin === location.origin;
-    } catch {
-      sameOrigin = false;
-    }
-    if (sameOrigin) spaLog('click NOT intercepted → full navigation:', href);
-    return;
-  }
+  if (!a || !spaShouldIntercept(a)) return;
   const u = new URL(a.getAttribute('href'), location.href);
   e.preventDefault();
-  spaLog('intercept click →', u.pathname + u.search);
   e2eNavigate(u.pathname + u.search + u.hash);
 }
 
@@ -804,6 +768,4 @@ export function setupE2eSpaNavigation() {
   window.addEventListener('click', onSpaClick);
   window.addEventListener('submit', onSpaSubmit);
   window.addEventListener('popstate', onSpaPopState);
-  spaLog('SPA navigation armed', spaBound ? '(re-armed)' : '(first)', location.pathname);
-  spaBound = true;
 }
