@@ -110,6 +110,17 @@
     // explicitly-entered surface, not a sticky preference.
     if ((!opts || opts.persist !== false) && next !== 'incognito') {
       try { localStorage.setItem(MODE_STORAGE_KEY, next); } catch (_) {}
+      // Persist server-side too, so the mode sticks across page navigation and
+      // syncs across devices — not just this browser's localStorage. Drafts have
+      // no chat id yet (mode rides along with the first message); once the chat
+      // exists the server row (chats.mode) is the source of truth on reload.
+      if (activeChatId != null) {
+        fetch('/chats/' + encodeURIComponent(activeChatId) + '/mode', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode: next }),
+        }).catch(function () {});
+      }
     }
     // Incognito: tint the surface + show the "nothing saved" banner, and start a
     // fresh ephemeral session each time the mode is (re)entered.
@@ -391,8 +402,9 @@
 
   if (composerModeBtn && composerModeMenu) {
     // Initial mode precedence:
-    //   1. per-chat remembered choice (localStorage, existing chats only)
-    //   2. the mode this chat was last used in (server-derived, data-chat-mode)
+    //   1. server-persisted chat mode (data-chat-mode = chats.mode) — authoritative,
+    //      survives navigation and syncs across devices.
+    //   2. per-chat localStorage (legacy / offline fallback, existing chats only).
     //   3. the UI default (Work) — for new chats we ignore any stale GLOBAL
     //      localStorage value so a fresh chat always starts on the default.
     let stored = null;
@@ -400,7 +412,7 @@
       try { stored = localStorage.getItem(MODE_STORAGE_KEY); } catch (_) {}
     }
     const chatMode = composerModesEl ? composerModesEl.dataset.chatMode : '';
-    setComposerMode(stored || chatMode || composerModeDefault, { persist: false });
+    setComposerMode(chatMode || stored || composerModeDefault, { persist: false });
     // Entered via "Incognito" elsewhere → ?mode=incognito on a fresh surface.
     try {
       const _qp = new URLSearchParams(window.location.search);
@@ -4183,6 +4195,11 @@
         // Sync header controls when another tab/CLI flipped these.
         if (msg.chatId === activeChatId && msg.reasoningMode !== undefined && reasoningToggle) {
           reasoningToggle.checked = msg.reasoningMode !== 'off';
+        }
+        // Composer mode changed elsewhere (another tab/device) → mirror it here
+        // without re-persisting (avoids a broadcast loop).
+        if (msg.chatId === activeChatId && msg.mode !== undefined) {
+          setComposerMode(msg.mode, { persist: false });
         }
         if (msg.chatId === activeChatId && msg.projectId !== undefined && messagesEl) {
           messagesEl.dataset.projectId =

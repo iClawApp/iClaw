@@ -238,6 +238,9 @@ export interface Chat {
   model_override: string | null;
   /** Reasoning visibility mirror — 'off' | 'on' | 'stream'. */
   reasoning_mode: string;
+  /** Sticky composer send-mode for this chat (e.g. 'work' | 'secure' | 'execute').
+   *  null = never set → client uses the UI default. Survives navigation/devices. */
+  mode: string | null;
   title_manual: number;
   unread: number;
   created_at: string;

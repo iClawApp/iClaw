@@ -299,17 +299,20 @@ chatsRouter.get('/:id', async (req, res, next) => {
     if (chats.markRead(id)) wsHub.broadcastAll({ type: 'chat-read', chatId: id });
     const { agents, error: agentsError } = await getAgentsSafe();
     const chatMessages = messages.listByChat(id);
-    // The chat's "current" mode = the most recent message's (non-ephemeral,
-    // still-selectable) mode, so reopening a chat restores the mode it was last
-    // used in instead of snapping back to the global default. Empty string when
-    // the chat has no usable mode yet (brand-new chat) — the client then falls
-    // back to the UI default.
+    // The chat's "current" composer mode. Prefer the explicitly persisted
+    // chats.mode (set the moment the user picks a mode — survives navigation and
+    // syncs across devices). Fall back to the most recent message's mode for
+    // legacy chats that predate the column, then to the UI default (empty string).
     let chatCurrentMode = '';
-    for (let i = chatMessages.length - 1; i >= 0; i--) {
-      const m = chatMessages[i].mode;
-      if (m && isSelectableMode(m) && !isEphemeralMode(m as ChatMode)) {
-        chatCurrentMode = m;
-        break;
+    if (chat.mode && isSelectableMode(chat.mode) && !isEphemeralMode(chat.mode as ChatMode)) {
+      chatCurrentMode = chat.mode;
+    } else {
+      for (let i = chatMessages.length - 1; i >= 0; i--) {
+        const m = chatMessages[i].mode;
+        if (m && isSelectableMode(m) && !isEphemeralMode(m as ChatMode)) {
+          chatCurrentMode = m;
+          break;
+        }
       }
     }
     res.render('chat', {
@@ -444,6 +447,32 @@ chatsRouter.post('/:id/reasoning', async (req, res) => {
     gatewayWarning = err instanceof Error ? err.message : String(err);
   }
   res.json({ id, mode, ...(gatewayWarning ? { gatewayWarning } : {}) });
+});
+
+// Persist the chat's sticky composer send-mode the moment the user picks it, so it
+// survives navigation and syncs across devices instead of living only in this
+// browser's localStorage. Pure iClaw UI state — the mode rides along with each
+// sent message, so there's no gateway patch to make here.
+chatsRouter.post('/:id/mode', (req, res) => {
+  const id = Number(req.params.id);
+  if (!chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const raw = String(req.body?.mode ?? '').trim().toLowerCase();
+  // Only persist real, selectable, non-ephemeral modes — incognito is transient.
+  if (!isSelectableMode(raw) || isEphemeralMode(raw as ChatMode)) {
+    res.status(400).json({ error: 'invalid mode' });
+    return;
+  }
+  chats.setChatMode(id, raw);
+  wsHub.broadcastAll({
+    type: 'chat-updated',
+    chatId: id,
+    mode: raw,
+    updatedAt: chats.get(id)!.updated_at,
+  });
+  res.json({ id, mode: raw });
 });
 
 chatsRouter.post('/:id/unread', (req, res) => {

@@ -138,6 +138,12 @@ export const chats = {
       "UPDATE chats SET reasoning_mode = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(mode, id);
   },
+  /** Persist the chat's sticky composer send-mode (see chats.mode). */
+  setChatMode(id: number, mode: string): void {
+    db.prepare(
+      "UPDATE chats SET mode = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(mode, id);
+  },
   touch(id: number): void {
     db.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").run(id);
   },
