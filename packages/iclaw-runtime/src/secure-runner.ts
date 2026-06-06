@@ -26,10 +26,22 @@ import { dumpPrompt, newTurnId } from './agent/prompt-dump.js';
 
 const execFileAsync = promisify(execFile);
 
-// Slim secure sandbox image: a small CLI toolset, no browser (build-secure.sh).
+// Curated secure sandbox image: a small CLI toolset, no browser (build-secure.sh).
 // The agent reaches the web via `curl` and can self-install more tools into
-// /workspace/.tools (no root).
-const CONTAINER_IMAGE = process.env.ICLAW_SECURE_IMAGE || 'iclaw-secure:latest';
+// /workspace/.tools (no root). Runs as the non-root `node` user — see
+// secure-sandbox.Dockerfile.
+const SECURE_IMAGE = process.env.ICLAW_SECURE_IMAGE || 'iclaw-secure:latest';
+// Emergency fallback when the curated image isn't built yet — e.g. a fresh
+// `npx @iclawapp/iclaw` install, which doesn't ship the Dockerfile. A public
+// base `docker run` can auto-pull, so Safe work degrades to a leaner toolset
+// instead of hard-failing (matches Work mode in work-container.ts + the AGENTS.md
+// contract that "node:22 is only an emergency fallback"). Full node:22 (not
+// -slim) carries curl/wget/git so web research still works; the non-root user
+// and the /workspace/.tools PATH the curated image bakes in are re-applied as run
+// flags in startContainer (fallbackArgs) so the fallback keeps the SAME
+// guarantees. Override with ICLAW_SECURE_FALLBACK_IMAGE.
+const FALLBACK_IMAGE = process.env.ICLAW_SECURE_FALLBACK_IMAGE || 'node:22';
+let resolvedSecureImage: string | null = null;
 const CONTAINER_TIMEOUT = 30_000;
 /** Max tool-call rounds per turn (env-tunable for long multi-step tasks). */
 const MAX_ROUNDS = Math.max(1, Number(process.env.ICLAW_MAX_ROUNDS) || 40);
@@ -127,6 +139,37 @@ export async function killOrphanContainers(): Promise<number> {
   }
 }
 
+async function imageExists(image: string): Promise<boolean> {
+  try {
+    await execFileAsync('docker', ['image', 'inspect', image], { timeout: 8_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pick the Safe-work image: the curated sandbox if it's been built (or an
+ * explicit ICLAW_SECURE_IMAGE override, trusted as-is so a registry ref can
+ * auto-pull), otherwise the public fallback so a fresh install degrades
+ * gracefully instead of hard-failing. Cached after the first resolve — a build
+ * done mid-session is picked up on the next runtime restart, as in Work mode.
+ */
+async function resolveSecureImage(): Promise<string> {
+  if (resolvedSecureImage) return resolvedSecureImage;
+  if (process.env.ICLAW_SECURE_IMAGE || (await imageExists(SECURE_IMAGE))) {
+    resolvedSecureImage = SECURE_IMAGE;
+  } else {
+    log.warn(
+      'Curated sandbox image not built — Safe work falling back to a leaner base. ' +
+        'Build it with `npm run build:secure-image` for the full toolset.',
+      { fallback: FALLBACK_IMAGE, image: SECURE_IMAGE },
+    );
+    resolvedSecureImage = FALLBACK_IMAGE;
+  }
+  return resolvedSecureImage;
+}
+
 /**
  * Start a container with the given workspace. Returns containerName.
  * Fail-closed: if Docker can't start the sandbox we throw, so the caller
@@ -141,6 +184,21 @@ export async function startContainer(workspaceDir: string, networkEnabled: boole
 
   const networkArgs = networkEnabled ? [] : ['--network', 'none'];
 
+  const image = await resolveSecureImage();
+  // The curated image bakes in `USER node` (non-root) and a /workspace/.tools
+  // PATH for rootless self-installs. A public fallback base defaults to ROOT and
+  // lacks those envs, so on the fallback we re-apply them as run flags to keep
+  // the SAME non-root + rootless-install guarantees. Empty for the curated image,
+  // so its run command stays byte-for-byte unchanged.
+  const fallbackArgs = image === FALLBACK_IMAGE
+    ? [
+        '--user', '1000:1000',
+        '-e', 'HOME=/tmp',
+        '-e', 'NPM_CONFIG_PREFIX=/workspace/.tools/npm',
+        '-e', 'PATH=/workspace/.tools/bin:/workspace/.tools/npm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+      ]
+    : [];
+
   try {
     // `-d` returns once the container is up (and pulls the image on first run),
     // so we await the real result instead of guessing with a fixed sleep.
@@ -149,13 +207,14 @@ export async function startContainer(workspaceDir: string, networkEnabled: boole
       '--name', containerName,
       '--label', INSTALL_LABEL,
       ...networkArgs,
+      ...fallbackArgs,
       // No browser any more, so the default 64MB /dev/shm is fine and 512MB is
       // plenty of headroom for shell/node tasks. Tunable via env.
       '--memory', process.env.ICLAW_SECURE_MEMORY || '512m',
       '--cpus', process.env.ICLAW_SECURE_CPUS || '1',
       '-v', `${workspaceDir}:/workspace:rw`,
       '--workdir', '/workspace',
-      CONTAINER_IMAGE,
+      image,
       'sleep', '86400',
     ], { timeout: 60_000 });
   } catch (err) {
