@@ -20,7 +20,13 @@ import { platform as osPlatform } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { colimaInstalled, colimaStart, ensureColimaRouting, isMac } from './colima';
+
 const execFileAsync = promisify(execFile);
+
+// macOS: route every `docker` call in this process to iClaw's Colima VM (not the
+// user's global context / Docker Desktop). No-op off macOS.
+ensureColimaRouting();
 
 export type DockerState =
   | 'ready' // daemon reachable (`docker info` ok)
@@ -29,8 +35,13 @@ export type DockerState =
   | 'starting' // we're launching the daemon
   | 'installing'; // we're installing the engine
 
-/** Human-readable footprint shown on the Install button. */
-export const DOCKER_SIZE_HINT = '~600 MB download · ~4 GB on disk';
+/**
+ * Human-readable footprint shown on the Install button. macOS installs Colima
+ * (a lightweight VM engine, no Docker Desktop); other platforms install Docker.
+ */
+export const DOCKER_SIZE_HINT = isMac
+  ? '~600 MB download · ~2 GB on disk · no Docker Desktop'
+  : '~600 MB download · ~4 GB on disk';
 
 const PROBE_TIMEOUT = 8_000;
 const CACHE_MS = 4_000;
@@ -58,8 +69,9 @@ async function reachable(): Promise<boolean> {
   }
 }
 
-/** Docker CLI present on PATH (daemon may be down). */
+/** Engine installed: Colima on macOS, the Docker CLI elsewhere (daemon may be down). */
 async function installed(): Promise<boolean> {
+  if (isMac) return colimaInstalled();
   try {
     await execFileAsync('docker', ['--version'], { timeout: PROBE_TIMEOUT });
     return true;
@@ -101,7 +113,10 @@ async function launchDaemon(): Promise<void> {
   const plat = osPlatform();
   try {
     if (plat === 'darwin') {
-      await execFileAsync('open', ['-a', 'Docker'], { timeout: PROBE_TIMEOUT });
+      // macOS engine is Colima, not Docker Desktop: start iClaw's own VM. This
+      // blocks until the daemon is ready (idempotent if already up), so the
+      // poll below is just a fast confirmation.
+      await colimaStart();
     } else if (plat === 'win32') {
       await execFileAsync('cmd', ['/c', 'start', '', 'Docker Desktop'], { timeout: PROBE_TIMEOUT });
     }
@@ -109,11 +124,11 @@ async function launchDaemon(): Promise<void> {
     // context — leave it to the user. The poll below still picks it up if they
     // start it manually.
   } catch {
-    /* Docker.app not found / launch failed — the poll reports the real state. */
+    /* engine launch failed (not installed / boot error) — the poll reports the real state. */
   }
 }
 
-/** Poll until the daemon accepts connections (Docker Desktop can take 20–40s). */
+/** Poll until the daemon accepts connections (a cold Colima/Docker start can take 20–40s). */
 async function pollReady(): Promise<boolean> {
   for (let i = 0; i < POLL_ATTEMPTS; i++) {
     await sleep(POLL_INTERVAL);

@@ -20,9 +20,14 @@ import { homedir, platform as osPlatform } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { colimaInstalled, colimaStart, colimaStop, ensureColimaRouting, isMac } from './colima.js';
 import { log } from './log.js';
 
 const execFileAsync = promisify(execFile);
+
+// macOS: route every `docker` call in this process to iClaw's Colima VM (not the
+// user's global context / Docker Desktop). No-op off macOS.
+ensureColimaRouting();
 
 const PROBE_TIMEOUT = 8_000;
 const START_POLL_ATTEMPTS = 30;
@@ -97,6 +102,7 @@ async function reachable(): Promise<boolean> {
 }
 
 async function installed(): Promise<boolean> {
+  if (isMac) return colimaInstalled();
   try {
     await execFileAsync('docker', ['--version'], { timeout: PROBE_TIMEOUT });
     return true;
@@ -108,7 +114,9 @@ async function installed(): Promise<boolean> {
 async function launchDaemon(): Promise<void> {
   const plat = osPlatform();
   if (plat === 'darwin') {
-    await execFileAsync('open', ['-a', 'Docker'], { timeout: PROBE_TIMEOUT });
+    // macOS engine is Colima, not Docker Desktop: start iClaw's own VM. Blocks
+    // until the daemon is ready (idempotent if already running).
+    await colimaStart();
   } else if (plat === 'win32') {
     await execFileAsync('cmd', ['/c', 'start', '', 'Docker Desktop'], { timeout: PROBE_TIMEOUT });
   }
@@ -172,7 +180,8 @@ async function quitDocker(): Promise<void> {
   const plat = osPlatform();
   try {
     if (plat === 'darwin') {
-      await execFileAsync('osascript', ['-e', 'quit app "Docker"'], { timeout: 15_000 });
+      // Stop only iClaw's own Colima VM — never the user's other profiles/engines.
+      await colimaStop();
     } else if (plat === 'win32') {
       await execFileAsync('taskkill', ['/IM', 'Docker Desktop.exe', '/F'], { timeout: 15_000 });
     }

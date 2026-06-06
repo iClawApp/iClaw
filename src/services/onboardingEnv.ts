@@ -3,7 +3,8 @@
  *
  * The onboarding screen shows an HONEST background progress line while the user
  * reads the welcome copy / pastes their OpenRouter key. We do NOT install
- * anything here — Docker Desktop and the OpenClaw gateway are user-installed.
+ * anything here — the container engine (Colima on macOS) and the OpenClaw
+ * gateway are installed elsewhere (the composer's Install button / the user).
  * What we CAN do without the user noticing:
  *   - probe whether Docker is reachable (`docker info`),
  *   - if it is and the Work/Safe sandbox base image is missing, pre-pull it in
@@ -18,9 +19,13 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { colimaInstalled, ensureColimaRouting, isMac } from './colima';
 import { probeGateway } from './gatewayProbe';
 
 const execFileAsync = promisify(execFile);
+
+// macOS: probe Colima (iClaw's engine), routing docker calls to its context.
+ensureColimaRouting();
 
 // Mirror work-container.ts's image resolution so onboarding agrees with what
 // Work/Safe actually use. The canonical image is the prebuilt sandbox; the
@@ -58,8 +63,9 @@ async function dockerReachable(): Promise<boolean> {
   }
 }
 
-/** Docker CLI present on PATH (binary installed, daemon may be down). */
+/** Engine installed: Colima on macOS, the Docker CLI elsewhere (daemon may be down). */
 async function dockerInstalled(): Promise<boolean> {
+  if (isMac) return colimaInstalled();
   try {
     await execFileAsync('docker', ['--version'], { timeout: 8_000 });
     return true;

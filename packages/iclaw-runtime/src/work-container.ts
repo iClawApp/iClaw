@@ -240,8 +240,8 @@ export async function startWorkContainer(mounts: WorkMount[], image: string): Pr
   // Run the command process as the HOST user, so files it creates in the user's
   // real (bind-mounted) folders are owned by the user — not root or the image's
   // uid 1000. Without this, run_command output in a :rw folder lands root-owned
-  // and the user can't edit/delete it (visible on Linux; macOS Docker Desktop
-  // remaps ownership so it's hidden there). Skip when we'd add no value or can't:
+  // and the user can't edit/delete it (visible on Linux; on macOS the engine's
+  // VM file-sharing remaps ownership so it's hidden there). Skip when we'd add no value or can't:
   // running as root already (uid 0), already matching the image user (1000), or
   // Windows (getuid undefined). HOME=/tmp gives the now-nameless uid a writable
   // home for tool caches (npm, git) since /home/node isn't writable by it.
