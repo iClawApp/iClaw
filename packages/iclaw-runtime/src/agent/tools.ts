@@ -334,7 +334,7 @@ export const ANALYZE_LINK_TOOL = {
 
 export type ToolName =
   | 'list_files' | 'read_file' | 'read_summary' | 'search_files' | 'write_file' | 'edit_file'
-  | 'run_command' | 'web_fetch' | 'web_search' | 'analyze_link' | 'show_image';
+  | 'run_command' | 'web_fetch' | 'web_search' | 'analyze_link' | 'social_search' | 'show_image';
 
 /** A host image the agent asked to display inline (via show_image). */
 export interface ImageRef {
@@ -476,6 +476,13 @@ export async function executeTool(
           return 'analyze_link needs a sandbox container (Docker), which is unavailable here. Use web_fetch/web_search instead.';
         }
         return await analyzeLink(args, { runInSandbox: ctx.linkSandbox, networkEnabled: true, onNote: ctx.onNote });
+      case 'social_search': {
+        if (!ctx.linkSandbox) {
+          return 'social_search needs a sandbox container (Docker), which is unavailable here. Use web_search instead.';
+        }
+        const { socialSearch } = await import('./social.js');
+        return await socialSearch(args, { runInSandbox: ctx.linkSandbox, networkEnabled: true, onNote: ctx.onNote });
+      }
       default: return `Unknown tool: ${name}`;
     }
   } catch (err) {

@@ -391,11 +391,12 @@ async function* runSecureAgentLoop(
   const OpenAI = (await import('openai')).default;
   const { TOOL_DEFINITIONS, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, analyzeLink, clampMiddle, compressCommandOutput, TOOL_OUTPUT_MAX_CHARS } =
     await import('./agent/tools.js');
+  const { SOCIAL_SEARCH_TOOL, socialSearch } = await import('./agent/social.js');
 
-  // analyze_link is appended (not part of core TOOL_DEFINITIONS) and runs its
-  // network work INSIDE this container, so it respects the same network gate.
-  // show_image lets the agent surface an image it produced in /workspace.
-  const tools = [...TOOL_DEFINITIONS, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL];
+  // analyze_link and social_search are appended (not part of core TOOL_DEFINITIONS)
+  // and run their network work INSIDE this container, so they respect the same
+  // network gate. show_image lets the agent surface an image it produced in /workspace.
+  const tools = [...TOOL_DEFINITIONS, ANALYZE_LINK_TOOL, SOCIAL_SEARCH_TOOL, SHOW_IMAGE_TOOL];
 
   // Buffer for analyze_link savings notes, flushed as `note` events per tool call.
   const savingsNotes: SavingsNote[] = [];
@@ -549,6 +550,13 @@ async function* runSecureAgentLoop(
       } else if (tc.name === 'analyze_link') {
         // Runs its fetch inside this same container (network honours the gate).
         result = await analyzeLink(args, {
+          runInSandbox: (command) => execInContainer(containerName, command),
+          networkEnabled,
+          onNote: (note) => savingsNotes.push(note),
+        });
+      } else if (tc.name === 'social_search') {
+        // Keyless social fetch — runs in this container, honours the network gate.
+        result = await socialSearch(args, {
           runInSandbox: (command) => execInContainer(containerName, command),
           networkEnabled,
           onNote: (note) => savingsNotes.push(note),

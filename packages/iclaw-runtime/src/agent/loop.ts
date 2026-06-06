@@ -7,6 +7,7 @@
 import OpenAI from 'openai';
 
 import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, executeTool, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
+import { SOCIAL_SEARCH_TOOL } from './social.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 
 export interface AgentOptions {
@@ -271,7 +272,9 @@ export async function* runAgentTurn(
     // show_image lets the agent surface a real image file inline. Not in
     // Incognito — that turn is ephemeral, so there's no message to attach to.
     ...(opts.incognito ? [] : [SHOW_IMAGE_TOOL]),
-    ...(opts.linkSandbox ? [ANALYZE_LINK_TOOL] : []),
+    // analyze_link + social_search both run in the session container, so both
+    // are offered only when a sandbox backend is wired.
+    ...(opts.linkSandbox ? [ANALYZE_LINK_TOOL, SOCIAL_SEARCH_TOOL] : []),
   ];
 
   // When the user dropped image(s), send the turn's user message as a
