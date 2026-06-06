@@ -316,6 +316,10 @@ ensureColumn('messages', 'tokens', 'INTEGER'); // dev-mode token usage (runtime 
 ensureColumn('messages', 'cached_tokens', 'INTEGER'); // dev-mode: prompt tokens served from cache
 ensureColumn('queued_messages', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
 ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
+// Sticky composer send-mode per chat (null = use UI default). Persisted on change
+// so it survives page navigation and syncs across devices — previously only the
+// last sent message's mode + per-browser localStorage tracked this.
+ensureColumn('chats', 'mode', 'TEXT');
 ensureColumn('remote_access_tunnels', 'access_token', 'TEXT');
 ensureColumn('remote_access_tunnels', 'opaque_registration_record', 'TEXT');
 // Tunnel ownership secret. Proves to the relay that a re-registering client is

@@ -138,6 +138,8 @@ export type ServerMsg =
       sharesToProject?: boolean;
       /** Reasoning visibility mode mirror — 'off' | 'on' | 'stream'. */
       reasoningMode?: 'off' | 'on' | 'stream';
+      /** Sticky composer send-mode mirror (e.g. 'work' | 'secure' | 'execute'). */
+      mode?: string;
       /** Present after mutations that bump `chats.updated_at` — flat sidebar order. */
       updatedAt?: string;
     }
