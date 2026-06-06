@@ -16,15 +16,16 @@
  */
 import http from 'node:http';
 
-import { ensureColimaRouting } from './colima.js';
+import { ensureColimaEnv } from './colima.js';
 import { createSession, getSession, deleteSession, abortSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, exportSessionWorkspace, applySessionChanges, sweepExpiredSessions, startContainerReaper, loadPersistedSessions, type RuntimeAttachment } from './sessions.js';
 import { killOrphanContainers } from './secure-runner.js';
 import { startDockerIdleReaper, stopDockerOnShutdown } from './docker-lifecycle.js';
 import { killOrphanWorkContainers } from './work-container.js';
 
-// macOS: route every `docker` call in this process (the container sandboxes in
-// secure-runner.ts / work-container.ts included) to iClaw's Colima VM.
-ensureColimaRouting();
+// macOS: put colima/docker on PATH and route every `docker` call in this process
+// (the container sandboxes in secure-runner.ts / work-container.ts included) to
+// iClaw's Colima VM.
+ensureColimaEnv();
 
 const PORT = parseInt(process.env.ICLAW_RUNTIME_PORT || '7430', 10);
 const SECRET = process.env.ICLAW_RUNTIME_SECRET || '';

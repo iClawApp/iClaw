@@ -9,6 +9,9 @@ cd "$(dirname "$0")"
 # its own Colima VM. Build into that same VM (start it if needed, route the build
 # to its context) so Secure Mode actually finds the image — not Docker Desktop.
 if [[ "$(uname -s)" == "Darwin" ]]; then
+  # Find colima/docker whether installed via Homebrew or downloaded by iClaw into
+  # ~/.iclaw/engine (no-brew installs), plus Homebrew's bin dirs.
+  export PATH="${ICLAW_ENGINE_DIR:-$HOME/.iclaw/engine}/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
   if ! command -v colima >/dev/null 2>&1; then
     echo "ERROR: colima not found. Install it first (iClaw installs it automatically; or: brew install colima docker)." >&2
     exit 1

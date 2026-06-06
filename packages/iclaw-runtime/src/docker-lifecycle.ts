@@ -20,14 +20,14 @@ import { homedir, platform as osPlatform } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { colimaInstalled, colimaStart, colimaStop, ensureColimaRouting, isMac } from './colima.js';
+import { colimaInstalled, colimaStart, colimaStop, ensureColimaEnv, isMac } from './colima.js';
 import { log } from './log.js';
 
 const execFileAsync = promisify(execFile);
 
-// macOS: route every `docker` call in this process to iClaw's Colima VM (not the
-// user's global context / Docker Desktop). No-op off macOS.
-ensureColimaRouting();
+// macOS: put colima/docker on PATH and pin every `docker` call in this process to
+// iClaw's Colima VM (not the user's global context / Docker Desktop). No-op off macOS.
+ensureColimaEnv();
 
 const PROBE_TIMEOUT = 8_000;
 const START_POLL_ATTEMPTS = 30;

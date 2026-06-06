@@ -27,11 +27,12 @@ import {
   writeLockFile,
 } from './startup';
 import { offerRemoteAccessOnboarding } from './remoteAccessOnboarding';
-import { ensureColimaRouting } from './services/colima';
+import { ensureColimaEnv } from './services/colima';
 
-// macOS: pin docker to iClaw's Colima context before we spawn the runtime
-// sidecar, so the child (and its container commands) inherit the routing.
-ensureColimaRouting();
+// macOS: set up the Colima engine env (PATH to colima/docker + docker context)
+// before we spawn the runtime sidecar, so the child — and its container
+// commands — inherit it.
+ensureColimaEnv();
 
 const preferredPort = Number(process.env.PORT ?? 3000);
 const host = '127.0.0.1';

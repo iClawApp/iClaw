@@ -19,13 +19,14 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { colimaInstalled, ensureColimaRouting, isMac } from './colima';
+import { colimaInstalled, ensureColimaEnv, isMac } from './colima';
 import { probeGateway } from './gatewayProbe';
 
 const execFileAsync = promisify(execFile);
 
-// macOS: probe Colima (iClaw's engine), routing docker calls to its context.
-ensureColimaRouting();
+// macOS: probe Colima (iClaw's engine) — put it on PATH and route docker calls to
+// its context.
+ensureColimaEnv();
 
 // Mirror work-container.ts's image resolution so onboarding agrees with what
 // Work/Safe actually use. The canonical image is the prebuilt sandbox; the

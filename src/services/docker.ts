@@ -20,13 +20,13 @@ import { platform as osPlatform } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { colimaInstalled, colimaStart, ensureColimaRouting, isMac } from './colima';
+import { colimaInstalled, colimaStart, ensureColimaEnv, isMac } from './colima';
 
 const execFileAsync = promisify(execFile);
 
-// macOS: route every `docker` call in this process to iClaw's Colima VM (not the
-// user's global context / Docker Desktop). No-op off macOS.
-ensureColimaRouting();
+// macOS: put colima/docker on PATH and pin every `docker` call to iClaw's Colima
+// VM (not the user's global context / Docker Desktop). No-op off macOS.
+ensureColimaEnv();
 
 export type DockerState =
   | 'ready' // daemon reachable (`docker info` ok)
@@ -160,9 +160,10 @@ export function startDocker(): DockerState {
 const INSTALL_SCRIPT = path.resolve(__dirname, '../../scripts/install-docker.sh');
 
 /**
- * Install the Docker engine (Homebrew cask on macOS, get.docker.com on Linux),
- * then start it — all in the background. Returns immediately with `installing`;
- * the cached state settles once the install + start + poll resolve.
+ * Install the container engine — macOS: Colima (Homebrew when present, else
+ * downloaded binaries in ~/.iclaw/engine); Linux: get.docker.com — then start it,
+ * all in the background. Returns immediately with `installing`; the cached state
+ * settles once the install + start + poll resolve.
  */
 export function installDocker(): DockerState {
   if (!actionInFlight) {
@@ -172,9 +173,12 @@ export function installDocker(): DockerState {
       try {
         await execFileAsync('bash', [INSTALL_SCRIPT], { timeout: INSTALL_TIMEOUT });
       } catch {
-        /* Install failed (no brew, offline, declined sudo) — settle() reports
-           whether anything landed; the UI keeps the Install button. */
+        /* Install failed (no brew + no network, offline, declined sudo) — settle()
+           reports whether anything landed; the UI keeps the Install button. */
       }
+      // A no-brew install drops colima/docker into ~/.iclaw/engine/bin — re-run so
+      // that dir is on PATH before we try to launch the daemon.
+      ensureColimaEnv();
       await launchDaemon();
       await pollReady();
       return settle();
