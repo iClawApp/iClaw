@@ -12,6 +12,15 @@ All notable changes to iClaw are documented here. The format follows [Keep a Cha
 - **Hover-intent auto-close (3.5 s)** for both menus. Mouse leaves the menu → 3.5 s timer; returns → timer resets. Replaces the schedule menu's old 10 s blanket timeout.
 - **Dynamic favicon.** The browser tab icon is now canvas-rendered with Apple-style rounded corners, and carries up to two status dots aggregated across all chats/tasks: 🟠 needs-human, 🔵 chat ready / task-review, 🟢 working (priority orange → blue → green). It's a derived view of the sidebar status dots — repainted only when the verdict actually changes (debounced), never animated, so steady-state cost is zero.
 
+#### Remote Access (E2E alpha)
+- Open the local iClaw UI from another device through an **iclaw-relay** tunnel — no inbound port, no SSH forwarding (**Settings → Remote Access**). Two setups: *local mode* (iClaw + OpenClaw on one laptop) and *host mode* (always-on machine, browse from phone/laptop). Enabled by `ICLAW_RELAY_URL` + `OPAQUE_SERVER_SETUP` on the iClaw host.
+- **OPAQUE login** (`@serenity-kit/opaque`): the tunnel passphrase is never sent in plaintext over the wire; a tunneled `POST /__ra/login` is rejected (426) in favour of the OPAQUE `start`/`finish` handshake.
+- **End-to-end encrypted transport**: HTTP and WebSocket payloads are encrypted between the browser and the *local* iClaw (`/__ra/e2e/http`, `/__ra/e2e/ws`); the relay forwards opaque envelopes (`ct`, `sid`) and sees only metadata (subdomain, timing, sizes).
+- **Trusted device sessions**: Ed25519 challenge-response lets a browser reconnect without retyping the passphrase; devices are listed and individually revocable in Settings.
+- **Relay access-token gate** (`?access=` → HttpOnly cookie) blocks visitors who only guess the subdomain. **New access link** rotates the token and forbids old links; **Disable** revokes the tunnel and its relay registration.
+- Adversarial smoke bundle (`npm run test:ra-smoke`) plus a relay frame-capture scanner (`npm run scan:relay-capture`) assert no plaintext passphrase, cookie, HTML, or chat JSON ever crosses the relay.
+- **Alpha** — not externally audited; the relay still sees routing metadata. Security model and setup in [docs/REMOTE_ACCESS.md](../docs/REMOTE_ACCESS.md).
+
 ### Removed
 
 - Native browser tooltip on sidebar chat items (`title="<chat.title>"`). The full title is already visible inline; the tooltip just got in the way of the new hover-hold gesture.
