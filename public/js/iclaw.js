@@ -12,6 +12,20 @@
   // -------------------------------------------------------------------------
   // shared DOM handles + state
   // -------------------------------------------------------------------------
+  // In-app navigation. Through a tunnel a full browser navigation bounces via
+  // the passphrase gate ("Checking this device…") because it can't be E2E
+  // wrapped. When the encrypted transport is installed it exposes
+  // window.iclawE2eNavigate, which pulls the next page over the existing channel
+  // and swaps the document in place — no gate round trip. Outside the tunnel
+  // (helper absent) this is a normal navigation.
+  function goTo(url) {
+    if (typeof window.iclawE2eNavigate === 'function') {
+      window.iclawE2eNavigate(url);
+      return;
+    }
+    window.location.assign(url);
+  }
+
   const messagesEl = document.getElementById('messages');
   function getMessagesThreadEl() {
     return messagesEl?.querySelector(':scope > .messages-thread') ?? null;
@@ -3703,7 +3717,7 @@
           headers: { Accept: 'application/json' },
         });
         if (!res.ok) throw new Error(String(res.status));
-        window.location.assign('/');
+        goTo('/');
       } catch (err) {
         console.error('[iclaw] mark unread failed', err);
       }
@@ -3715,7 +3729,12 @@
       f.method = 'POST';
       f.action = '/chats/' + encodeURIComponent(cid) + '/delete';
       document.body.appendChild(f);
-      f.submit();
+      // requestSubmit() (not submit()) fires a real submit event, so the E2E
+      // SPA layer can take it over the encrypted channel instead of a full
+      // navigation that bounces off the gate. Falls back to a normal submit
+      // when that layer isn't present (local, non-tunnel).
+      if (typeof f.requestSubmit === 'function') f.requestSubmit();
+      else f.submit();
     }
   });
 
@@ -4178,7 +4197,7 @@
 
       case 'chat-deleted':
         sidebarRemoveChat(msg.chatId);
-        if (msg.chatId === activeChatId) window.location.assign('/');
+        if (msg.chatId === activeChatId) goTo('/');
         return;
 
       case 'chat-unread':
@@ -4606,7 +4625,7 @@
         });
         window.__ICLAW_PROJECTS__ = (window.__ICLAW_PROJECTS__ || []).filter((p) => p && p.id !== pid);
         removeProjectsHubRow(pid);
-        if (currentProjectPageId() === pid) window.location.assign('/projects');
+        if (currentProjectPageId() === pid) goTo('/projects');
         return;
       }
 
@@ -6826,7 +6845,7 @@
       openBtn.dataset.bound = '1';
       openBtn.addEventListener('click', () => {
         removeTaskCreateBanner(pendingId);
-        window.location.href = '/tasks/' + encodeURIComponent(taskId);
+        goTo('/tasks/' + encodeURIComponent(taskId));
       });
     }
   }
@@ -8211,7 +8230,7 @@
     const taskAskModal = document.getElementById('task-ask-modal');
     if (taskAskModal && !taskAskModal.hidden) return;
     if (location.pathname === '/' || location.pathname === '') return;
-    window.location.assign('/');
+    goTo('/');
   });
 
   function renderSlashMenu() {
@@ -8605,7 +8624,7 @@
     const sel = document.getElementById('task-project-filter');
     if (!sel) return;
     sel.addEventListener('change', () => {
-      window.location.href = '/tasks' + tasksBoardQueryFromFilterValue(sel.value);
+      goTo('/tasks' + tasksBoardQueryFromFilterValue(sel.value));
     });
   }
 
@@ -8735,7 +8754,7 @@
         at: Date.now(),
       }),
     );
-    window.location.href = '/tasks';
+    goTo('/tasks');
   }
 
   function redirectToTasksAfterRetry(taskId, title) {
@@ -8747,7 +8766,7 @@
         at: Date.now(),
       }),
     );
-    window.location.href = '/tasks';
+    goTo('/tasks');
   }
 
   function redirectToTasksAfterResumeSubmit(taskId, title, humanInput) {
@@ -8760,7 +8779,7 @@
         at: Date.now(),
       }),
     );
-    window.location.href = '/tasks';
+    goTo('/tasks');
   }
 
   async function hydrateTaskApproveRunFlash() {
@@ -9882,7 +9901,7 @@
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || res.statusText);
-          window.location.href = '/tasks';
+          goTo('/tasks');
         } catch (err) {
           alert(err instanceof Error ? err.message : String(err));
           deleteBtn.disabled = false;
@@ -9908,7 +9927,7 @@
         if (failBtn) failBtn.disabled = true;
         try {
           await postAction('/complete', { status: 'done' });
-          window.location.href = '/tasks';
+          goTo('/tasks');
         } catch (err) {
           alert(err instanceof Error ? err.message : String(err));
           doneBtn.disabled = false;
@@ -9922,7 +9941,7 @@
         if (doneBtn) doneBtn.disabled = true;
         try {
           await postAction('/complete', { status: 'failed' });
-          window.location.href = '/tasks';
+          goTo('/tasks');
         } catch (err) {
           alert(err instanceof Error ? err.message : String(err));
           failBtn.disabled = false;

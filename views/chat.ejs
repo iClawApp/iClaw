@@ -22,7 +22,7 @@
       <div class="chat-header-tools">
       <form class="agent-form header-field" method="post" action="/chats/<%= activeChat.id %>/agent">
         <label class="header-field-label" for="chat-agent-select">Agent</label>
-        <select name="agent" id="chat-agent-select" onchange="this.form.submit()" aria-label="Agent">
+        <select name="agent" id="chat-agent-select" onchange="this.form.requestSubmit()" aria-label="Agent">
           <% agents.forEach(function (a) { %>
             <option value="<%= a.id %>" <%= a.id === activeChat.agent ? 'selected' : '' %>>
               <%= a.id %>
@@ -65,7 +65,7 @@
               name="shares"
               value="1"
               <%= activeChat.shares_to_project ? 'checked' : '' %>
-              onchange="this.form.submit()"
+              onchange="this.form.requestSubmit()"
             />
             <%- include('partials/header-tool-icon', { icon: 'facts' }) %>
             <span class="header-tool-label">Suggest facts for project</span>
