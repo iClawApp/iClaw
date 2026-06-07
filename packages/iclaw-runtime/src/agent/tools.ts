@@ -206,11 +206,11 @@ export const WEB_FETCH_TOOL = {
   type: 'function' as const,
   function: {
     name: 'web_fetch',
-    description: 'Fetch an http(s) URL and return its text (HTML stripped). Read-only. By default returns a concise summary (cheaper). GitHub repo/file URLs are auto-redirected to raw markdown/source, and Reddit comment threads to their clean .json. Set summarize:false when you need the EXACT text.',
+    description: 'Fetch an http(s) URL and return its text (HTML stripped). Read-only. By default returns a concise summary (cheaper). GitHub repo/file URLs are auto-redirected to raw markdown/source, and Reddit links to old.reddit.com (server-rendered, fetchable). Set summarize:false when you need the EXACT text.',
     parameters: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'Absolute http(s) URL. A github.com repo or /blob/ file link is fetched as raw README/source; a reddit.com comment thread as clean .json.' },
+        url: { type: 'string', description: 'Absolute http(s) URL. A github.com repo or /blob/ file link is fetched as raw README/source; a reddit.com link via old.reddit.com.' },
         summarize: { type: 'boolean', description: 'Defaults to true (concise gist). Set false to get the exact page text — do this for full lists, precise numbers/dates, source code, or anything you will quote verbatim.' },
         focus: { type: 'string', description: 'What the summary should focus on (only used when summarizing).' },
       },
@@ -866,7 +866,7 @@ export function normalizeFetchUrl(raw: string): string {
 // Redirect a repo URL to its raw README and a /blob/ file URL to the raw file, so
 // web_fetch pulls clean markdown/source from the first byte. Non-content GitHub
 // routes (issues, pull, tree, releases, wiki, user profiles, …) pass through.
-// Reddit comment threads get the same treatment (→ .json); other URLs untouched.
+// Reddit links get routed to old.reddit.com (server-rendered); other untouched.
 const GITHUB_NON_REPO = new Set([
   'features', 'about', 'pricing', 'marketplace', 'sponsors', 'settings', 'notifications',
   'explore', 'topics', 'trending', 'collections', 'events', 'enterprise', 'team', 'login',
@@ -895,13 +895,16 @@ export function canonicalizeFetchUrl(raw: string): string {
     return raw;
   }
 
-  // Reddit comment threads → the .json endpoint: post + comments as clean data
-  // instead of a heavy HTML page. Idempotent, and strips trailing slash / query /
-  // hash so the HTML URL and the .json URL collapse to ONE fetch + cache entry.
-  if ((host === 'reddit.com' || host.endsWith('.reddit.com')) && u.pathname.includes('/comments/')) {
-    const p = u.pathname.replace(/\/$/, '').replace(/\.json$/, '').replace(/\/$/, '');
-    u.pathname = `${p}.json`;
-    u.search = '';
+  // Reddit: the JSON API and new-reddit are blocked / JS-only from many IPs
+  // (the .json endpoint 403s even with a browser UA; www.reddit returns an empty
+  // JS shell). old.reddit.com is server-rendered — the real post AND comments are
+  // in the HTML. Route every reddit host there (idempotent), dropping a trailing
+  // `.json` (it 403s) and the hash so the variants collapse to one fetch + cache.
+  if (host === 'reddit.com' || host.endsWith('.reddit.com')) {
+    u.hostname = 'old.reddit.com';
+    // drop a trailing `.json` (403s) and a trailing slash so the www / old /
+    // .json / slash variants all collapse to one fetch + cache entry.
+    u.pathname = u.pathname.replace(/\.json$/, '').replace(/(.)\/$/, '$1');
     u.hash = '';
     return u.toString();
   }
