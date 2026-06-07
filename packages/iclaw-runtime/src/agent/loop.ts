@@ -156,18 +156,18 @@ const TOOL_REPEAT_LIMIT = Math.max(1, Number(process.env.ICLAW_TOOL_REPEAT_LIMIT
  * Collapse a tool call into a repeat-signature. Keyed on EXACT args by default,
  * but web tools get a semantic key so the model can't dodge the guard by
  * rewording: `web_fetch` keys on the normalized URL alone (a tweaked `focus` or
- * `#anchor` is the SAME page), `web_search` on the normalized query (word order /
- * quoting / operators don't change the results). Malformed args fall back to the
- * exact-args key.
+ * `#anchor` is the SAME page), `web_search`/`social_search` on the normalized
+ * query (word order / quoting / operators don't change the results). Malformed
+ * args fall back to the exact-args key.
  */
 function toolRepeatSignature(name: string, rawArgs: string): string {
   try {
     if (name === 'web_fetch') {
       const a = JSON.parse(rawArgs) as { url?: unknown };
       if (a.url) return `web_fetch:${normalizeFetchUrl(String(a.url))}`;
-    } else if (name === 'web_search') {
+    } else if (name === 'web_search' || name === 'social_search') {
       const a = JSON.parse(rawArgs) as { query?: unknown };
-      if (a.query) return `web_search:${normalizeSearchQuery(String(a.query))}`;
+      if (a.query) return `${name}:${normalizeSearchQuery(String(a.query))}`;
     }
   } catch {
     // fall through to exact-args signature
@@ -188,7 +188,7 @@ export function makeToolGuard(): { check(name: string, rawArgs: string): string 
             `no matter what 'focus' or '#anchor' you pass. Not fetching it again. Use what you already have, ` +
             `fetch a DIFFERENT url, or tell the user the data isn't available there.`;
         }
-        if (name === 'web_search') {
+        if (name === 'web_search' || name === 'social_search') {
           return `Guardrail: you've already run this search ${n - 1} times this turn — rewording it returns the ` +
             `same results. Not running it again. Try a genuinely different source or tool, or tell the user what ` +
             `you couldn't find.`;

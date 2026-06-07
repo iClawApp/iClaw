@@ -206,11 +206,11 @@ export const WEB_FETCH_TOOL = {
   type: 'function' as const,
   function: {
     name: 'web_fetch',
-    description: 'Fetch an http(s) URL and return its text (HTML stripped). Read-only. By default returns a concise summary (cheaper). A GitHub repo or file URL is auto-redirected to its raw markdown/source. Set summarize:false when you need the EXACT text.',
+    description: 'Fetch an http(s) URL and return its text (HTML stripped). Read-only. By default returns a concise summary (cheaper). GitHub repo/file URLs are auto-redirected to raw markdown/source, and Reddit comment threads to their clean .json. Set summarize:false when you need the EXACT text.',
     parameters: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'Absolute http(s) URL. A github.com repo or /blob/ file link is auto-fetched as raw README/source.' },
+        url: { type: 'string', description: 'Absolute http(s) URL. A github.com repo or /blob/ file link is fetched as raw README/source; a reddit.com comment thread as clean .json.' },
         summarize: { type: 'boolean', description: 'Defaults to true (concise gist). Set false to get the exact page text — do this for full lists, precise numbers/dates, source code, or anything you will quote verbatim.' },
         focus: { type: 'string', description: 'What the summary should focus on (only used when summarizing).' },
       },
@@ -865,8 +865,8 @@ export function normalizeFetchUrl(raw: string): string {
 // that noise then truncates at 20k — so the actual content gets buried/cut.
 // Redirect a repo URL to its raw README and a /blob/ file URL to the raw file, so
 // web_fetch pulls clean markdown/source from the first byte. Non-content GitHub
-// routes (issues, pull, tree, releases, wiki, user profiles, …) and non-GitHub
-// URLs pass through untouched.
+// routes (issues, pull, tree, releases, wiki, user profiles, …) pass through.
+// Reddit comment threads get the same treatment (→ .json); other URLs untouched.
 const GITHUB_NON_REPO = new Set([
   'features', 'about', 'pricing', 'marketplace', 'sponsors', 'settings', 'notifications',
   'explore', 'topics', 'trending', 'collections', 'events', 'enterprise', 'team', 'login',
@@ -878,18 +878,34 @@ export function canonicalizeFetchUrl(raw: string): string {
   let u: URL;
   try { u = new URL(String(raw).trim()); } catch { return String(raw).trim(); }
   const host = u.hostname.toLowerCase();
-  if (host !== 'github.com' && host !== 'www.github.com') return raw;
-  const seg = u.pathname.split('/').filter(Boolean);
-  // /owner/repo/blob/<ref>/<path...> → raw file (any "view file" link)
-  if (seg.length >= 5 && seg[2] === 'blob') {
-    const [owner, repo, , ref, ...rest] = seg;
-    return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${rest.join('/')}`;
+
+  // GitHub repo/file pages → raw markdown/source.
+  if (host === 'github.com' || host === 'www.github.com') {
+    const seg = u.pathname.split('/').filter(Boolean);
+    // /owner/repo/blob/<ref>/<path...> → raw file (any "view file" link)
+    if (seg.length >= 5 && seg[2] === 'blob') {
+      const [owner, repo, , ref, ...rest] = seg;
+      return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${rest.join('/')}`;
+    }
+    // /owner/repo (exactly) → raw README on the default branch (HEAD resolves it)
+    if (seg.length === 2 && !GITHUB_NON_REPO.has(seg[0].toLowerCase())) {
+      const [owner, repo] = seg;
+      return `https://raw.githubusercontent.com/${owner}/${repo.replace(/\.git$/, '')}/HEAD/README.md`;
+    }
+    return raw;
   }
-  // /owner/repo (exactly) → raw README on the default branch (HEAD resolves it)
-  if (seg.length === 2 && !GITHUB_NON_REPO.has(seg[0].toLowerCase())) {
-    const [owner, repo] = seg;
-    return `https://raw.githubusercontent.com/${owner}/${repo.replace(/\.git$/, '')}/HEAD/README.md`;
+
+  // Reddit comment threads → the .json endpoint: post + comments as clean data
+  // instead of a heavy HTML page. Idempotent, and strips trailing slash / query /
+  // hash so the HTML URL and the .json URL collapse to ONE fetch + cache entry.
+  if ((host === 'reddit.com' || host.endsWith('.reddit.com')) && u.pathname.includes('/comments/')) {
+    const p = u.pathname.replace(/\/$/, '').replace(/\.json$/, '').replace(/\/$/, '');
+    u.pathname = `${p}.json`;
+    u.search = '';
+    u.hash = '';
+    return u.toString();
   }
+
   return raw;
 }
 
