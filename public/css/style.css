@@ -1714,21 +1714,53 @@ code {
   cursor: pointer;
 }
 
-/* tables (GFM) */
-.msg-body table {
-  border-collapse: collapse;
+/* tables (GFM) — wrapped in `.md-table-wrap` (see enhanceTables) so wide
+   tables scroll horizontally instead of breaking the thread layout, and the
+   rounded frame + zebra rows read cleanly. */
+.md-table-wrap {
   margin: 0.5em 0 1em;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+.msg-body table {
+  /* `separate` (not `collapse`) so the wrapper's border-radius clips cleanly */
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 0;
+  width: 100%;
+  min-width: max-content;
   font-size: 0.9em;
+  background: var(--surface);
 }
 .msg-body th,
 .msg-body td {
-  border: 1px solid var(--border);
-  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  padding: 7px 12px;
   text-align: left;
+  vertical-align: top;
 }
+/* edges: no double border against the rounded frame */
+.msg-body th:last-child,
+.msg-body td:last-child { border-right: none; }
+.msg-body tbody tr:last-child td { border-bottom: none; }
 .msg-body th {
   background: var(--th-bg);
   font-weight: 600;
+  white-space: nowrap;
+}
+.msg-body tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--th-bg) 45%, transparent);
+}
+.msg-body tbody tr:hover {
+  background: color-mix(in srgb, var(--md-link) 8%, transparent);
+}
+/* compact, readable link text inside cells (full URL kept on the href + title) */
+.msg-body td a {
+  word-break: break-all;
 }
 
 /* When the assistant body is the streaming target, keep our markdown rules */

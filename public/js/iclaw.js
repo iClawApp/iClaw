@@ -2127,10 +2127,30 @@
   const CODE_COPIED_ICON_SVG =
     '<svg class="code-copy-icon code-copy-icon--ok" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"/></svg>';
 
+  /** Strip protocol/`www.`/trailing slash; middle-truncate pathological URLs. */
+  function prettifyUrlText(href) {
+    let s = String(href || '')
+      .replace(/^https?:\/\//i, '')
+      .replace(/^www\./i, '')
+      .replace(/\/+$/, '');
+    if (s.length > 60) s = s.slice(0, 42) + '…' + s.slice(-15);
+    return s;
+  }
   function decorateLinks(root) {
     root.querySelectorAll('a[href]').forEach((a) => {
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
+      // Inside tables, collapse long bare-URL link text to a compact, readable
+      // form (full URL stays on the href + title). Leaves `[label](url)` links
+      // and prose URLs untouched. Idempotent: after rewrite text !== href.
+      if (a.closest('td, th')) {
+        const href = a.getAttribute('href') || '';
+        const txt = (a.textContent || '').trim();
+        if (txt && txt === href && /^https?:\/\//i.test(href)) {
+          if (!a.title) a.title = href;
+          a.textContent = prettifyUrlText(href);
+        }
+      }
     });
   }
 
@@ -2155,6 +2175,23 @@
       parent.insertBefore(wrap, pre);
       wrap.appendChild(pre);
       wrap.appendChild(btn);
+    });
+  }
+
+  /** Wrap GFM tables in a horizontal-scroll frame (after markdown → DOM). */
+  function enhanceTables(root) {
+    if (!root || root.nodeType !== 1) return;
+    const tables = root.querySelectorAll(
+      '.msg-body table, .stream-body table, .reasoning-body table, .task-log-entry-body table',
+    );
+    tables.forEach((table) => {
+      if (table.parentElement?.classList.contains('md-table-wrap')) return;
+      const parent = table.parentElement;
+      if (!parent) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'md-table-wrap';
+      parent.insertBefore(wrap, table);
+      wrap.appendChild(table);
     });
   }
 
@@ -2215,6 +2252,7 @@
   function decorateMessageBody(root, opts) {
     decorateLinks(root);
     enhanceCodeBlocks(root);
+    enhanceTables(root);
     if (opts && opts.deferSyntaxHighlight) {
       scheduleStreamSyntaxHighlight(root);
       return;
