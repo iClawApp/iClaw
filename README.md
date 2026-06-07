@@ -9,9 +9,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/iClawApp/iClaw/actions/workflows/ci.yml?branch=main"><img src="https://img.shields.io/github/actions/workflow/status/iClawApp/iClaw/ci.yml?branch=main&style=for-the-badge" alt="CI"></a>
-  <a href="https://github.com/iClawApp/iClaw/stargazers"><img src="https://img.shields.io/github/stars/iClawApp/iClaw?style=for-the-badge" alt="GitHub stars"></a>
-  <a href="https://www.npmjs.com/package/@iclawapp/iclaw"><img src="https://img.shields.io/npm/v/@iclawapp/iclaw?style=for-the-badge" alt="npm"></a>
   <a href="https://www.npmjs.com/package/@iclawapp/iclaw"><img src="https://img.shields.io/npm/dm/@iclawapp/iclaw?style=for-the-badge" alt="npm downloads"></a>
   <a href="https://www.reddit.com/r/iClaw_ai_agent/"><img src="https://img.shields.io/badge/Reddit-r%2FiClaw__ai__agent-FF4500?style=for-the-badge&logo=reddit&logoColor=white" alt="Reddit"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT"></a>
