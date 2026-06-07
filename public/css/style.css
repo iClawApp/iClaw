@@ -1260,7 +1260,8 @@ code {
   font-size: 0.8125rem;
   color: var(--muted);
   font-style: normal;
-  margin-bottom: 4px;
+  /* Status now sits BELOW the streamed text → put the gap above it. */
+  margin-top: 4px;
   font-weight: 500;
 }
 .msg.assistant.streaming .stream-status::before {

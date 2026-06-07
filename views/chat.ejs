@@ -168,6 +168,7 @@
           %>
           <div class="msg assistant streaming <%= _waitingClass %>" id="reload-placeholder">
             <div class="role">assistant</div>
+            <div class="msg-body stream-body"></div>
             <div
               class="stream-status<%= _detail ? ' has-detail' : '' %>"
               <% if (_detail) { %>
@@ -176,7 +177,6 @@
                 title="<%= _detail %>"
               <% } %>
             ><%= _act.label %></div>
-            <div class="msg-body stream-body"></div>
           </div>
         <% } %>
       </div>

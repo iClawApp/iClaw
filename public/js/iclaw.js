@@ -2588,8 +2588,8 @@
     div.className = 'msg assistant streaming stream-waiting';
     div.innerHTML =
       '<div class="role">assistant</div>' +
-      '<div class="stream-status"></div>' +
-      '<div class="msg-body stream-body"></div>';
+      '<div class="msg-body stream-body"></div>' +
+      '<div class="stream-status"></div>';
     messagesAppendRoot().appendChild(div);
     const st = div.querySelector('.stream-status');
     if (st) setStreamStatusLabel(st, isFirstTurn ? 'Warming up…' : 'Thinking…');
@@ -9823,8 +9823,8 @@
     div.className = 'msg assistant streaming stream-waiting';
     div.innerHTML =
       '<div class="role">assistant</div>' +
-      '<div class="stream-status"></div>' +
-      '<div class="msg-body stream-body"></div>';
+      '<div class="msg-body stream-body"></div>' +
+      '<div class="stream-status"></div>';
     taskAskLive.thread.appendChild(div);
     const st = div.querySelector('.stream-status');
     if (st) setStreamStatusLabel(st, 'Thinking…');
