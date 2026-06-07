@@ -169,6 +169,12 @@
     return true; // no signal → don't block
   })();
 
+  // The sidebar "Start OpenClaw" banner only makes sense when the user actually
+  // wants Full Power — the runtime modes (Work / Safe work / Incognito) never
+  // touch the gateway. Tracked here so BOTH a gateway-status change and a mode
+  // change re-evaluate the banner (see refreshGatewayOfflineBanner).
+  let gatewayOffline = false;
+
   /** True only when OpenClaw is reachable for Full Power (Execute). */
   function isExecuteAvailable() {
     return gatewayOk;
@@ -189,6 +195,9 @@
       composerExecMsg.setAttribute('aria-hidden', blocked ? 'false' : 'true');
     }
     refreshComposerInputDisabled();
+    // The mode may have just changed — the sidebar "Start OpenClaw" banner is
+    // gated on Full Power too, so keep it in sync from the same funnel.
+    refreshGatewayOfflineBanner();
   }
 
   /**
@@ -5314,8 +5323,23 @@
   const gatewayBannerStart = document.getElementById('sidebar-gateway-start');
   let gatewayStatusPollTimer = null;
 
-  function setGatewayOfflineBannerVisible(visible) {
-    if (gatewayBanner) gatewayBanner.hidden = !visible;
+  function setGatewayOffline(offline) {
+    gatewayOffline = offline;
+    refreshGatewayOfflineBanner();
+  }
+
+  /**
+   * Show the "Start OpenClaw" banner only when the gateway is offline AND the
+   * user actually wants Full Power. Work / Safe work / Incognito run on the
+   * iclaw-runtime and never touch the gateway, so nudging them to start it is
+   * just noise — same `execute` gate the composer overlay uses. Queries the DOM
+   * directly (not the closure const) so it's safe to call from the early
+   * mode-change funnel before the gateway-banner const is initialised.
+   */
+  function refreshGatewayOfflineBanner() {
+    const banner = document.getElementById('sidebar-gateway-banner');
+    if (!banner) return;
+    banner.hidden = !(gatewayOffline && getComposerMode() === 'execute');
   }
 
   function applyGatewayStatus(status, detail) {
@@ -5324,7 +5348,7 @@
     // "Start OpenClaw" banner is reserved for a genuinely-offline gateway —
     // there's nothing to "start" when it's already running.
     const offline = status === 'down' || status === 'shutdown';
-    setGatewayOfflineBannerVisible(offline);
+    setGatewayOffline(offline);
 
     // Keep Full Power gating current on every page.
     gatewayOk = status === 'ok';
@@ -5338,7 +5362,7 @@
     void fetch('/api/gateway/status', { headers: { Accept: 'application/json' } })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data && data.up !== true) setGatewayOfflineBannerVisible(true);
+        if (data && data.up !== true) setGatewayOffline(true);
       })
       .catch(() => {});
   })();
