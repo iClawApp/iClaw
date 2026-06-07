@@ -445,6 +445,14 @@ export interface ToolContext {
    * loop wires this to emit an `image` event the host turns into an attachment.
    */
   onImage?: (image: ImageRef) => void;
+  /**
+   * Within-turn cache of fetched page bodies, keyed by normalized URL
+   * (`normalizeFetchUrl`). A research turn often re-fetches the same page with a
+   * tweaked `focus`; with this set, web_fetch serves the body from memory and
+   * re-summarizes for the new focus instead of re-hitting the network. Created
+   * fresh per turn by the loop; absent → caching off (each fetch goes to network).
+   */
+  fetchCache?: Map<string, string>;
 }
 
 /** Folders to validate reads against — empty (anywhere) for Incognito. */
@@ -468,7 +476,7 @@ export async function executeTool(
       case 'write_file': return await writeFile(args, ctx);
       case 'edit_file': return await editFile(args, ctx);
       case 'run_command': return await runCommand(args, ctx);
-      case 'web_fetch': return await webFetch(args);
+      case 'web_fetch': return await webFetch(args, ctx);
       case 'web_search': return await webSearch(args);
       case 'show_image': return showImage(args, ctx);
       case 'analyze_link':
@@ -825,39 +833,100 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-async function webFetch(args: Record<string, unknown>): Promise<string> {
+// Search-query terms dropped before normalizing (boolean/scope operators + a few
+// fillers) so two searches that differ only by operator/word-order collapse to
+// the same repeat-signature. Kept tiny on purpose — over-collapsing distinct
+// queries would wrongly trip the loop guard.
+const SEARCH_STOPWORDS = new Set([
+  'or', 'and', 'the', 'a', 'an', 'of', 'to', 'for', 'in', 'on', 'vs', 'site', 'intitle', 'inurl',
+]);
+
+/**
+ * Normalize a URL for within-turn fetch dedup AND the loop guard: lowercase the
+ * host, drop the `#fragment` (it never changes what a fetch returns), and strip
+ * a bare trailing slash. So `…/page`, `…/page/`, and `…/page#overview` collapse
+ * to one key — the model can't dodge the repeat-guard by tweaking the anchor.
+ */
+export function normalizeFetchUrl(raw: string): string {
+  try {
+    const u = new URL(String(raw).trim());
+    u.hash = '';
+    u.hostname = u.hostname.toLowerCase();
+    let s = u.toString();
+    if (s.endsWith('/') && u.pathname === '/' && !u.search) s = s.slice(0, -1);
+    return s;
+  } catch {
+    return String(raw).trim();
+  }
+}
+
+/**
+ * Normalize a search query into a repeat-signature for the loop guard: lowercase,
+ * strip punctuation/quotes/operators, drop stopwords, then sort the UNIQUE terms.
+ * Two searches that differ only by word order, quoting, or a repeated word map to
+ * the same key; genuinely different term sets stay distinct (so a real new search
+ * isn't blocked).
+ */
+export function normalizeSearchQuery(raw: string): string {
+  const terms = String(raw)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((t) => t && !SEARCH_STOPWORDS.has(t));
+  return Array.from(new Set(terms)).sort().join(' ');
+}
+
+async function webFetch(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const url = String(args.url ?? '').trim();
   if (!/^https?:\/\/\S+$/i.test(url)) {
     return 'Only absolute http(s) URLs are allowed.';
   }
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), WEB_FETCH_TIMEOUT);
-  try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      redirect: 'follow',
-      headers: { 'User-Agent': 'iClaw-Incognito/1.0', Accept: 'text/html,application/json;q=0.9,*/*;q=0.8' },
-    });
-    const ct = res.headers.get('content-type') || '';
-    const raw = await res.text();
-    let text = /html/i.test(ct) ? htmlToText(raw) : raw.trim();
-    // Optional: hand the page to the cheap model and return just the gist.
-    if (args.summarize === true && text) {
-      const summary = await summarizeText(text, args.focus ? String(args.focus) : undefined);
-      return `Summary of ${url} (HTTP ${res.status}):\n\n${summary}`;
+  const key = normalizeFetchUrl(url);
+  const cache = ctx?.fetchCache;
+
+  // Within-turn cache: if we already pulled this page this turn, re-use the body
+  // (the model loves to re-fetch the same URL with a tweaked `focus`). We cache
+  // the extracted body, not the summary, so a new `focus` re-summarizes from
+  // memory with NO network round-trip. Misses go to the network as before;
+  // failures are NOT cached, so a transient error can still be retried.
+  let text = cache?.get(key);
+  const fromCache = text !== undefined;
+  let status = 200;
+  if (text === undefined) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), WEB_FETCH_TIMEOUT);
+    try {
+      const res = await fetch(url, {
+        signal: ctrl.signal,
+        redirect: 'follow',
+        headers: { 'User-Agent': 'iClaw-Incognito/1.0', Accept: 'text/html,application/json;q=0.9,*/*;q=0.8' },
+      });
+      status = res.status;
+      const ct = res.headers.get('content-type') || '';
+      const raw = await res.text();
+      text = /html/i.test(ct) ? htmlToText(raw) : raw.trim();
+      cache?.set(key, text);
+    } catch (err) {
+      const msg = err instanceof Error && err.name === 'AbortError'
+        ? `timed out after ${WEB_FETCH_TIMEOUT / 1000}s`
+        : err instanceof Error ? err.message : String(err);
+      return `Fetch failed (${url}): ${msg}`;
+    } finally {
+      clearTimeout(timer);
     }
-    if (text.length > WEB_FETCH_MAX_CHARS) {
-      text = text.slice(0, WEB_FETCH_MAX_CHARS) + `\n\n[truncated at ${WEB_FETCH_MAX_CHARS} chars]`;
-    }
-    return `HTTP ${res.status} — ${url}\n\n${text || '(empty response body)'}`;
-  } catch (err) {
-    const msg = err instanceof Error && err.name === 'AbortError'
-      ? `timed out after ${WEB_FETCH_TIMEOUT / 1000}s`
-      : err instanceof Error ? err.message : String(err);
-    return `Fetch failed (${url}): ${msg}`;
-  } finally {
-    clearTimeout(timer);
   }
+
+  const note = fromCache ? '(already fetched this turn — served from cache; no new request)\n\n' : '';
+
+  // Optional: hand the page to the cheap model and return just the gist.
+  if (args.summarize === true && text) {
+    const summary = await summarizeText(text, args.focus ? String(args.focus) : undefined);
+    return `${note}Summary of ${url}:\n\n${summary}`;
+  }
+  if (text.length > WEB_FETCH_MAX_CHARS) {
+    text = text.slice(0, WEB_FETCH_MAX_CHARS) + `\n\n[truncated at ${WEB_FETCH_MAX_CHARS} chars]`;
+  }
+  return `${note}HTTP ${status} — ${url}\n\n${text || '(empty response body)'}`;
 }
 
 // ── cheap-model summarizer (read_summary, web_fetch summarize) ────────────────

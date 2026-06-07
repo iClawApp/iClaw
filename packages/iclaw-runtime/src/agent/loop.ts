@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, executeTool, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
 import { SOCIAL_SEARCH_TOOL } from './social.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 
@@ -152,14 +152,47 @@ export function withPromptCaching(messages: Message[]): Message[] {
  */
 const TOOL_REPEAT_LIMIT = Math.max(1, Number(process.env.ICLAW_TOOL_REPEAT_LIMIT) || 3);
 
+/**
+ * Collapse a tool call into a repeat-signature. Keyed on EXACT args by default,
+ * but web tools get a semantic key so the model can't dodge the guard by
+ * rewording: `web_fetch` keys on the normalized URL alone (a tweaked `focus` or
+ * `#anchor` is the SAME page), `web_search` on the normalized query (word order /
+ * quoting / operators don't change the results). Malformed args fall back to the
+ * exact-args key.
+ */
+function toolRepeatSignature(name: string, rawArgs: string): string {
+  try {
+    if (name === 'web_fetch') {
+      const a = JSON.parse(rawArgs) as { url?: unknown };
+      if (a.url) return `web_fetch:${normalizeFetchUrl(String(a.url))}`;
+    } else if (name === 'web_search') {
+      const a = JSON.parse(rawArgs) as { query?: unknown };
+      if (a.query) return `web_search:${normalizeSearchQuery(String(a.query))}`;
+    }
+  } catch {
+    // fall through to exact-args signature
+  }
+  return `${name}:${rawArgs}`;
+}
+
 export function makeToolGuard(): { check(name: string, rawArgs: string): string | null } {
   const counts = new Map<string, number>();
   return {
     check(name: string, rawArgs: string): string | null {
-      const sig = `${name}:${rawArgs}`;
+      const sig = toolRepeatSignature(name, rawArgs);
       const n = (counts.get(sig) ?? 0) + 1;
       counts.set(sig, n);
       if (n > TOOL_REPEAT_LIMIT) {
+        if (name === 'web_fetch') {
+          return `Guardrail: you've already fetched this URL ${n - 1} times this turn — the page is identical ` +
+            `no matter what 'focus' or '#anchor' you pass. Not fetching it again. Use what you already have, ` +
+            `fetch a DIFFERENT url, or tell the user the data isn't available there.`;
+        }
+        if (name === 'web_search') {
+          return `Guardrail: you've already run this search ${n - 1} times this turn — rewording it returns the ` +
+            `same results. Not running it again. Try a genuinely different source or tool, or tell the user what ` +
+            `you couldn't find.`;
+        }
         return `Guardrail: you've already called ${name} with these exact arguments ${n - 1} times this turn ` +
           `and got the same result. Not running it again. Change the arguments, try a different tool, ` +
           `or tell the user what's blocking you.`;
@@ -167,6 +200,31 @@ export function makeToolGuard(): { check(name: string, rawArgs: string): string 
       return null;
     },
   };
+}
+
+/** Dead-round circuit-breaker (#3): this many CONSECUTIVE rounds whose tool calls
+ *  ALL came back empty / failed / timed-out / guard-blocked means the agent is
+ *  spinning on data it can't get (e.g. login-gated stats). We then force it to
+ *  conclude from what it has instead of grinding to MAX_ROUNDS. Env-tunable. */
+const DEAD_ROUND_LIMIT = Math.max(1, Number(process.env.ICLAW_DEAD_ROUND_LIMIT) || 5);
+
+/** True for a tool result that carried no new signal — fuels DEAD_ROUND_LIMIT.
+ *  Matches the leading text of every "nothing useful" path in tools.ts
+ *  (fetch/search failures, timeouts, empty results, the guard nudge). */
+export function isLowValueResult(s: string): boolean {
+  const t = s.trimStart();
+  if (t.length === 0) return true;
+  return (
+    t.startsWith('Fetch failed') ||
+    t.startsWith('Search failed') ||
+    t.startsWith('Guardrail:') ||
+    t.startsWith('No results for') ||
+    t.startsWith('No files found') ||
+    t.startsWith('(empty') ||
+    t.startsWith('Only absolute http') ||
+    t.startsWith('Security error:') ||
+    /\btimed out after\b/.test(t)
+  );
 }
 
 const DEFAULT_SYSTEM = `Work Mode: read/search/edit/create files in the selected folders, run shell commands, and research the web (web_search then web_fetch).
@@ -256,6 +314,9 @@ export async function* runAgentTurn(
     requestWriteApproval: opts.onWriteApproval ?? (async () => true),
     onNote: (note) => pendingNotes.push(note),
     onImage: (image) => pendingImages.push(image),
+    // Fresh per turn → web_fetch dedups repeat pulls of the same URL within this
+    // turn (and never leaks fetched bodies across turns).
+    fetchCache: new Map<string, string>(),
   };
 
   // Per-mode tool set. Incognito is read-only, so don't ship write_file/edit_file
@@ -311,6 +372,11 @@ export async function* runAgentTurn(
   // raw, so without this the two segments glue into "…the repoOh, the repo…".
   let pendingSeparator = '';
 
+  // Dead-round circuit-breaker state: count consecutive all-low-value rounds;
+  // once we trip, force the next round to answer with tools disabled.
+  let deadStreak = 0;
+  let forceConclude = false;
+
   // Max tool-call rounds to prevent infinite loops (env-tunable: ICLAW_MAX_ROUNDS).
   for (let round = 0; round < MAX_ROUNDS; round++) {
     // User pressed Stop between rounds → end cleanly (partial text already sent).
@@ -331,7 +397,9 @@ export async function* runAgentTurn(
           model: opts.model,
           messages: withPromptCaching(messages),
           tools: tools as unknown as OpenAI.Chat.ChatCompletionTool[],
-          tool_choice: 'auto',
+          // Normally 'auto'; after the dead-round breaker trips we send 'none' so
+          // the model MUST produce a final answer instead of calling more tools.
+          tool_choice: forceConclude ? 'none' : 'auto',
           stream: true,
           stream_options: { include_usage: true }, // final chunk carries token usage
         },
@@ -423,6 +491,7 @@ export async function* runAgentTurn(
     messages.push(assistantMsg);
 
     // Execute each tool call
+    const roundResults: string[] = [];
     for (let i = 0; i < toolCalls.length; i++) {
       const tc = toolCalls[i];
       let parsedArgs: Record<string, unknown> = {};
@@ -437,6 +506,7 @@ export async function* runAgentTurn(
       // Guardrail: refuse to re-run an identical call that's already looping.
       const blocked = guard.check(tc.name, tc.arguments);
       const result = blocked ?? (await executeTool(tc.name as ToolName, parsedArgs, toolCtx));
+      roundResults.push(result);
 
       yield { type: 'tool_result', name: tc.name, result };
       while (pendingNotes.length) yield { type: 'note', note: pendingNotes.shift()! };
@@ -459,6 +529,23 @@ export async function* runAgentTurn(
     // Mid-turn compaction: on a long multi-round task the accumulated tool
     // outputs would be resent every round (O(n²) tokens). Stub out old ones.
     shrinkOldToolOutputs(messages);
+
+    // Dead-round circuit-breaker: if EVERY tool result this round was empty/
+    // failed/timed-out/guard-blocked, the agent made no progress. After
+    // DEAD_ROUND_LIMIT such rounds in a row, force a conclusion (tools off next
+    // round) so we don't grind to MAX_ROUNDS re-trying data we can't reach.
+    const allDead = roundResults.length > 0 && roundResults.every(isLowValueResult);
+    deadStreak = allDead ? deadStreak + 1 : 0;
+    if (deadStreak >= DEAD_ROUND_LIMIT && !forceConclude) {
+      forceConclude = true;
+      messages.push({
+        role: 'user',
+        content:
+          `[system] The last ${deadStreak} tool rounds all came back empty, failed, timed out, or ` +
+          `duplicate — you're not getting closer. Stop calling tools and answer now with what you've ` +
+          `gathered, stating plainly which parts you could NOT find or verify. Do not invent numbers.`,
+      });
+    }
     // Continue loop — model will see tool results and respond
   }
 
