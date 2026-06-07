@@ -206,13 +206,13 @@ export const WEB_FETCH_TOOL = {
   type: 'function' as const,
   function: {
     name: 'web_fetch',
-    description: 'Fetch an http(s) URL and return its text (HTML stripped). Read-only. Set summarize:true for a short gist (cheaper) instead of the full page.',
+    description: 'Fetch an http(s) URL and return its text (HTML stripped). Read-only. By default returns a concise summary (cheaper). A GitHub repo or file URL is auto-redirected to its raw markdown/source. Set summarize:false when you need the EXACT text.',
     parameters: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'Absolute http(s) URL' },
-        summarize: { type: 'boolean', description: 'Return a short summary instead of the full text' },
-        focus: { type: 'string', description: 'What the summary should focus on (optional)' },
+        url: { type: 'string', description: 'Absolute http(s) URL. A github.com repo or /blob/ file link is auto-fetched as raw README/source.' },
+        summarize: { type: 'boolean', description: 'Defaults to true (concise gist). Set false to get the exact page text — do this for full lists, precise numbers/dates, source code, or anything you will quote verbatim.' },
+        focus: { type: 'string', description: 'What the summary should focus on (only used when summarizing).' },
       },
       required: ['url'],
     },
@@ -860,6 +860,39 @@ export function normalizeFetchUrl(raw: string): string {
   }
 }
 
+// GitHub repo/file *pages* are mostly UI chrome (the awesome-ai-agents repo page
+// is ~1.4 MB of nav/file-tree/JS vs a ~220 KB raw README), and htmlToText keeps
+// that noise then truncates at 20k — so the actual content gets buried/cut.
+// Redirect a repo URL to its raw README and a /blob/ file URL to the raw file, so
+// web_fetch pulls clean markdown/source from the first byte. Non-content GitHub
+// routes (issues, pull, tree, releases, wiki, user profiles, …) and non-GitHub
+// URLs pass through untouched.
+const GITHUB_NON_REPO = new Set([
+  'features', 'about', 'pricing', 'marketplace', 'sponsors', 'settings', 'notifications',
+  'explore', 'topics', 'trending', 'collections', 'events', 'enterprise', 'team', 'login',
+  'join', 'search', 'orgs', 'apps', 'security', 'readme', 'site', 'contact', 'customer-stories',
+  'solutions', 'resources', 'git-guides', 'mobile',
+]);
+
+export function canonicalizeFetchUrl(raw: string): string {
+  let u: URL;
+  try { u = new URL(String(raw).trim()); } catch { return String(raw).trim(); }
+  const host = u.hostname.toLowerCase();
+  if (host !== 'github.com' && host !== 'www.github.com') return raw;
+  const seg = u.pathname.split('/').filter(Boolean);
+  // /owner/repo/blob/<ref>/<path...> → raw file (any "view file" link)
+  if (seg.length >= 5 && seg[2] === 'blob') {
+    const [owner, repo, , ref, ...rest] = seg;
+    return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${rest.join('/')}`;
+  }
+  // /owner/repo (exactly) → raw README on the default branch (HEAD resolves it)
+  if (seg.length === 2 && !GITHUB_NON_REPO.has(seg[0].toLowerCase())) {
+    const [owner, repo] = seg;
+    return `https://raw.githubusercontent.com/${owner}/${repo.replace(/\.git$/, '')}/HEAD/README.md`;
+  }
+  return raw;
+}
+
 /**
  * Normalize a search query into a repeat-signature for the loop guard: lowercase,
  * strip punctuation/quotes/operators, drop stopwords, then sort the UNIQUE terms.
@@ -877,10 +910,13 @@ export function normalizeSearchQuery(raw: string): string {
 }
 
 async function webFetch(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
-  const url = String(args.url ?? '').trim();
-  if (!/^https?:\/\/\S+$/i.test(url)) {
+  const inputUrl = String(args.url ?? '').trim();
+  if (!/^https?:\/\/\S+$/i.test(inputUrl)) {
     return 'Only absolute http(s) URLs are allowed.';
   }
+  // Redirect GitHub repo/file pages to their raw markdown/source before anything
+  // else, so the cache + fetch both work on the clean URL.
+  const url = canonicalizeFetchUrl(inputUrl);
   const key = normalizeFetchUrl(url);
   const cache = ctx?.fetchCache;
 
@@ -918,8 +954,9 @@ async function webFetch(args: Record<string, unknown>, ctx?: ToolContext): Promi
 
   const note = fromCache ? '(already fetched this turn — served from cache; no new request)\n\n' : '';
 
-  // Optional: hand the page to the cheap model and return just the gist.
-  if (args.summarize === true && text) {
+  // Summarize by default (cheaper, smaller history); the model opts out with
+  // summarize:false when it needs the exact text (lists, numbers, code, quotes).
+  if (args.summarize !== false && text) {
     const summary = await summarizeText(text, args.focus ? String(args.focus) : undefined);
     return `${note}Summary of ${url}:\n\n${summary}`;
   }
