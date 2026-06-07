@@ -141,7 +141,8 @@ export interface RuntimeSavingsNote {
 
 export type WorkEvent =
   | { type: 'text'; content: string }
-  | { type: 'tool'; name: string; input?: unknown }
+  | { type: 'tool_start'; name: string; input?: unknown }
+  | { type: 'tool_result'; name: string; result?: string }
   | { type: 'note'; note: RuntimeSavingsNote }
   | { type: 'image'; path: string; mime: string; fileName: string; bytes: number }
   | { type: 'done'; tokens?: number; cached?: number }

@@ -14,7 +14,7 @@ import { projectSkills } from './store';
 import { chatStatus } from './chatStatus';
 import { openclawWs, type TurnEvent } from './openclawWs';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
-import { toolActivityLabel } from './toolLabels';
+import { toolActivityLabel, toolActivityDetail } from './toolLabels';
 import { wsHub } from './wsHub';
 import {
   gatewayAttachmentsFromPersisted,
@@ -1014,6 +1014,18 @@ async function runWorkModeTurn(opts: {
         if (event.type === 'text') {
           accumulated += event.content;
           onEvent({ type: 'text-delta', text: event.content });
+        } else if (event.type === 'tool_start') {
+          // Surface what the agent is doing right now (live status label, e.g.
+          // "Searching social media…"). Reuses the same turn-tool pipeline the
+          // gateway path uses; without this Work/Secure showed only "Thinking…".
+          onEvent({
+            type: 'tool-start',
+            name: event.name,
+            label: toolActivityLabel(event.name),
+            detail: toolActivityDetail(event.name, event.input),
+          });
+        } else if (event.type === 'tool_result') {
+          onEvent({ type: 'tool-end', name: event.name });
         } else if (event.type === 'note') {
           // A tool gave the model less than the full content — surface the saving
           // as a friendly, plain-language chat note (no jargon: no "tokens",
@@ -1161,7 +1173,7 @@ export async function runIncognitoTurn(opts: {
       (event) => {
         if (event.type === 'text') {
           onEvent({ type: 'text-delta', text: event.content });
-        } else if (event.type === 'tool') {
+        } else if (event.type === 'tool_start') {
           onEvent({ type: 'tool', name: event.name });
         } else if (event.type === 'done') {
           unsubscribe();
