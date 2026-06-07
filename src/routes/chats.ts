@@ -307,7 +307,13 @@ chatsRouter.get('/:id', async (req, res, next) => {
     if (chat.mode && isSelectableMode(chat.mode) && !isEphemeralMode(chat.mode as ChatMode)) {
       chatCurrentMode = chat.mode;
     } else {
+      // Only USER rows carry a user-chosen mode. Assistant rows mirror it, but
+      // synthetic system rows (e.g. the "saved X% tokens" savings badge) default
+      // to 'execute' — and being the newest rows they'd otherwise hijack this
+      // fallback, reopening a Work chat as Full Power. Walk back to the last
+      // user message instead.
       for (let i = chatMessages.length - 1; i >= 0; i--) {
+        if (chatMessages[i].role !== 'user') continue;
         const m = chatMessages[i].mode;
         if (m && isSelectableMode(m) && !isEphemeralMode(m as ChatMode)) {
           chatCurrentMode = m;
