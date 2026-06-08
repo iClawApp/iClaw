@@ -30,6 +30,7 @@
 
 import type { ChatMode } from '../types';
 import { openRouterEnabled } from './openRouter';
+import { isOpenClawInstalled } from './openclawInstall';
 
 export interface ChatModeDef {
   /** Wire/DB value. */
@@ -138,9 +139,22 @@ function modeAvailable(def: ChatModeDef): boolean {
   return true;
 }
 
-/** Available modes only — feeds the composer selector (EJS locals / client). */
+/** Available modes only — backend source of truth for what may actually run. */
 export function listSelectableModes(): ChatModeDef[] {
   return CHAT_MODES.filter(modeAvailable);
+}
+
+/**
+ * Every ENABLED mode, each tagged with whether its backend is reachable right
+ * now. The composer always shows the full selector (so users discover the
+ * modes) and locks the ones that aren't usable yet — e.g. the runtime modes
+ * before an OpenRouter key is added.
+ */
+export function listComposerModes(): Array<ChatModeDef & { available: boolean }> {
+  return CHAT_MODES.filter((m) => m.enabled).map((m) => ({
+    ...m,
+    available: modeAvailable(m),
+  }));
 }
 
 function findMode(id: string): ChatModeDef | undefined {
@@ -154,12 +168,13 @@ export function isSelectableMode(id: string): boolean {
 }
 
 /**
- * UI default for the composer, with a graceful fallback: Work is runtime-backed,
- * so when it isn't currently selectable (e.g. no OpenRouter key) we fall back to
- * the always-available DEFAULT_MODE instead of pre-selecting a hidden mode.
+ * UI default for the composer after onboarding. Keyed on what's on the device:
+ * Full Power when OpenClaw is installed (it can be started on demand), otherwise
+ * Work — the OpenRouter runtime path. Work may still be locked until a key is
+ * added; the composer surfaces the connect chooser on first send in that case.
  */
 export function defaultComposerMode(): ChatMode {
-  return isSelectableMode(DEFAULT_COMPOSER_MODE) ? DEFAULT_COMPOSER_MODE : DEFAULT_MODE;
+  return isOpenClawInstalled() ? 'execute' : DEFAULT_COMPOSER_MODE;
 }
 
 /**

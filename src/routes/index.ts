@@ -6,7 +6,7 @@ import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
 import { probeGateway } from '../services/gatewayProbe';
 import { chatStatus } from '../services/chatStatus';
 import { shouldShowSendHint } from '../services/sendHint';
-import { defaultComposerMode, listSelectableModes } from '../services/chatModes';
+import { defaultComposerMode, listComposerModes } from '../services/chatModes';
 import { openRouterEnabled, transcribeAudio, isOpenRouterFailure } from '../services/openRouter';
 import { isOnboardingDone, setOnboardingDone } from '../services/config';
 import { startOnboardingPrep, getOnboardingEnv } from '../services/onboardingEnv';
@@ -169,7 +169,7 @@ indexRouter.get('/', async (req, res) => {
     cloudShareBaseUrl,
     workingIds: chatStatus.workingIds(),
     sendHintShow: shouldShowSendHint(),
-    chatModes: listSelectableModes(),
+    chatModes: listComposerModes(),
     defaultChatMode: defaultComposerMode(),
     sttEnabled: openRouterEnabled(),
     // With an OpenRouter key the runtime modes (Work / Safe work / Incognito)

@@ -33,7 +33,7 @@ import {
   defaultComposerMode,
   isSelectableMode,
   isEphemeralMode,
-  listSelectableModes,
+  listComposerModes,
   normalizeChatMode,
 } from '../services/chatModes';
 import type { ChatMode } from '../types';
@@ -339,10 +339,13 @@ chatsRouter.get('/:id', async (req, res, next) => {
       scheduledList: scheduledMessages.listByChat(id),
       queueList: queuedMessages.listByChat(id),
       sendHintShow: shouldShowSendHint(),
-      chatModes: listSelectableModes(),
+      chatModes: listComposerModes(),
       defaultChatMode: defaultComposerMode(),
       chatCurrentMode,
       sttEnabled: openRouterEnabled(),
+      // Lets the composer lock the runtime modes (and the connect chooser fire)
+      // when no key is configured.
+      openRouterReady: openRouterEnabled(),
       // Full Power (Execute) needs the gateway; agents.list succeeding implies it's
       // reachable. Seeds the composer's Full Power gating (no badge on this page).
       gatewayOk: !agentsError,

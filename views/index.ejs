@@ -38,15 +38,16 @@
     </header>
 
     <% const _firstChat = typeof isFirstChat !== 'undefined' && isFirstChat; %>
+    <% const _noProjects = !Array.isArray(allProjects) || allProjects.length === 0; %>
     <div
       class="draft-body is-picking"
       id="draft-body"
-      <%- _firstChat ? 'data-auto-none="1"' : '' %>
+      <%- (_firstChat || _noProjects) ? 'data-auto-none="1"' : '' %>
     >
       <div class="draft-pick-stage" id="draft-pick-stage">
-        <% if (agentsError && !openRouterReady) { %>
-        <%- include('partials/gatewayError', { agentsError, gatewayUp, openclawBaseUrl }) %>
-        <% } else { %>
+        <%# No model connected (skipped onboarding, no OpenClaw) is no longer a
+            dead end here — we show the normal picker + composer and re-offer the
+            connect choice when the user actually tries to send (connectModal). %>
         <section
           class="project-pick"
           id="project-pick"
@@ -85,30 +86,12 @@
             <% }); %>
           </div>
         </section>
-        <% } %>
       </div>
 
       <section class="messages" id="messages" data-chat-id="" data-draft="1">
         <div class="messages-thread">
           <% if (_firstChat) { %>
-          <div class="welcome-card empty-state" id="welcome-card">
-            <div class="welcome-avatar" aria-hidden="true">iC</div>
-            <div class="welcome-bubble">
-              <p class="welcome-greeting">Hi - I’m iClaw</p>
-              <p class="welcome-lead">From now on, you don’t have to choose between convenience, power and safety</p>
-              <ul class="welcome-list">
-                <li>Unlike other agents, I go online inside an isolated space - so a dangerous site can’t do any harm</li>
-                <li>Other agents want access to your whole computer. I only work where you let me</li>
-                <li>And our developers are 70% coffee - so we built a really efficient system that saves your tokens and your money</li>
-              </ul>
-              <div class="welcome-chips" role="group" aria-label="Suggestions to get started">
-                <button type="button" class="welcome-chip" data-prompt="Open an unknown website safely">Open an unknown website safely</button>
-                <button type="button" class="welcome-chip" data-prompt="Check a ZIP file safely, isolated from my computer">Check a ZIP file safely, isolated from my computer</button>
-                <button type="button" class="welcome-chip" data-prompt="Check this GitHub repo in a sandbox">Check this GitHub repo in a sandbox</button>
-                <button type="button" class="welcome-chip" data-prompt="Summarize this 2-hour YouTube video for $0.0005">Summarize this 2-hour YouTube video for $0.0005</button>
-              </div>
-            </div>
-          </div>
+          <%- include('partials/welcomeCard') %>
           <% } else { %>
           <p class="muted empty-state" id="draft-empty-hint" hidden>Write your first message.</p>
           <% } %>
@@ -117,11 +100,9 @@
 
       <section class="queue" id="queue" aria-live="polite"></section>
 
-      <% if (!agentsError || openRouterReady) { %>
       <div id="draft-composer-wrap" class="draft-composer-wrap" hidden>
         <%- include('partials/composer', { gatewayOk: gatewayStatus === 'ok' }) %>
       </div>
-      <% } %>
     </div>
 
     <% if (cloudShareBaseUrl) { %>

@@ -22,6 +22,8 @@
         </svg>
       </a>
       <a href="/" class="new-chat-btn <%= !activeChat && !activeProject && !(typeof activeProjectsList !== 'undefined' && activeProjectsList) ? 'active' : '' %>">New chat</a>
+      <% /* Search only earns its place once there are many chats — declutter for new users. */ %>
+      <% if (chats.length >= 15) { %>
       <div class="sidebar-search-slot">
         <button
           type="button"
@@ -53,13 +55,17 @@
           </button>
         </div>
       </div>
+      <% } %>
     </div>
     <p id="sidebar-search-status" class="sidebar-search-status" hidden aria-live="polite"></p>
     <div class="sidebar-projects-nav">
+      <% /* Projects surfaces once a user is established (>=5 chats) or already has one. */ %>
+      <% if (chats.length >= 5 || _projectsList.length > 0) { %>
       <a
         href="/projects"
         class="sidebar-projects-btn<%= typeof activeProjectsList !== 'undefined' && activeProjectsList ? ' active' : '' %>"
       >Projects</a>
+      <% } %>
       <% if (typeof hasAnyTasks !== 'undefined' && hasAnyTasks) {
         const _taskSignals = typeof taskStatusSignals !== 'undefined' ? taskStatusSignals : {};
         const _taskDotHuman = _taskSignals.needsHuman;
@@ -142,9 +148,9 @@
     <% } %>
 
     <% if (chats.length === 0 && _projectsList.length === 0) { %>
-      <p class="muted empty-list">No projects or chats yet.</p>
+      <p class="muted empty-list">Your chats will appear here</p>
     <% } else if (chats.length === 0) { %>
-      <p class="muted empty-list">No chats yet. Click <strong>+ New chat</strong> and pick a project on the home screen.</p>
+      <p class="muted empty-list">Your chats will appear here — hit <strong>+ New chat</strong> to start</p>
     <% } %>
 
     <div id="sidebar-list-tail" class="sidebar-list-tail" aria-hidden="true"></div>
