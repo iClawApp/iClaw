@@ -168,17 +168,16 @@ export function isSelectableMode(id: string): boolean {
 }
 
 /**
- * UI default for the composer's mode selector on a new chat — picks whatever is
- * actually usable right now:
- *   - OpenClaw gateway reachable → Full Power.
- *   - gateway off but an OpenRouter key is set → Work (works immediately; don't
- *     drop the user into a dead Full Power).
- *   - gateway off, no key, OpenClaw installed → Full Power (startable on demand).
- *   - otherwise → Work (locked until a key is added; the composer then surfaces
- *     the connect chooser on first send).
+ * UI default for the composer's mode selector on a new chat:
+ *   - an OpenRouter key is set → Work (the runtime path; the user's everyday mode).
+ *   - no key, OpenClaw installed → Full Power (startable on demand).
+ *   - no key, no OpenClaw → Work (locked until a key is added; the composer
+ *     surfaces the connect chooser on first send).
+ *
+ * Deliberately does NOT prefer Full Power just because the gateway is up — a key
+ * user starts in Work and switches to Full Power explicitly when they want it.
  */
-export function defaultComposerMode(gatewayReachable = false): ChatMode {
-  if (gatewayReachable) return 'execute';
+export function defaultComposerMode(): ChatMode {
   if (openRouterEnabled()) return DEFAULT_COMPOSER_MODE;
   return isOpenClawInstalled() ? 'execute' : DEFAULT_COMPOSER_MODE;
 }

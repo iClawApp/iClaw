@@ -340,7 +340,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
       queueList: queuedMessages.listByChat(id),
       sendHintShow: shouldShowSendHint(),
       chatModes: listComposerModes(),
-      defaultChatMode: defaultComposerMode(!agentsError),
+      defaultChatMode: defaultComposerMode(),
       chatCurrentMode,
       sttEnabled: openRouterEnabled(),
       // Lets the composer lock the runtime modes (and the connect chooser fire)
@@ -475,11 +475,15 @@ chatsRouter.post('/:id/mode', (req, res) => {
     return;
   }
   chats.setChatMode(id, raw);
+  // A draft is hidden from the sidebar until its first user message. The client
+  // upserts a sidebar row on any `updatedAt`, so omit it for drafts — otherwise
+  // switching mode would leak the empty draft into the list. `mode` still
+  // broadcasts for cross-tab sync.
   wsHub.broadcastAll({
     type: 'chat-updated',
     chatId: id,
     mode: raw,
-    updatedAt: chats.get(id)!.updated_at,
+    ...(chats.isDraft(id) ? {} : { updatedAt: chats.get(id)!.updated_at }),
   });
   res.json({ id, mode: raw });
 });
