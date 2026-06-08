@@ -1517,7 +1517,7 @@
    * Promote the dormant draft header tools into a live chat's tools once the row
    * exists. The draft renders them hidden + action-less (see
    * partials/header-chat-tools.ejs); here we fill in the /chats/:id actions and
-   * reveal them — so Share, Delete, Reasoning (and Suggest-facts, when the draft
+   * reveal them — so Share, Delete (and Suggest-facts, when the draft
    * chose a project) show up immediately instead of only after a reload. Queries
    * are scoped to the header so they don't hit the share modal's own .share-form.
    */
@@ -1527,8 +1527,6 @@
     if (!header) return;
     const shareBtn = document.getElementById('share-btn');
     if (shareBtn) shareBtn.hidden = false;
-    const reasoning = header.querySelector('.reasoning-toggle');
-    if (reasoning) reasoning.hidden = false;
     const delForm = header.querySelector('.delete-form');
     if (delForm) {
       delForm.setAttribute('action', '/chats/' + id + '/delete');
@@ -2217,7 +2215,7 @@
   function enhanceCodeBlocks(root) {
     if (!root || root.nodeType !== 1) return;
     const pres = root.querySelectorAll(
-      '.msg-body pre, .stream-body pre, .reasoning-body pre, .task-log-entry-body pre',
+      '.msg-body pre, .stream-body pre, .task-log-entry-body pre',
     );
     pres.forEach((pre) => {
       if (pre.parentElement?.classList.contains('code-block-wrap')) return;
@@ -2241,7 +2239,7 @@
   function enhanceTables(root) {
     if (!root || root.nodeType !== 1) return;
     const tables = root.querySelectorAll(
-      '.msg-body table, .stream-body table, .reasoning-body table, .task-log-entry-body table',
+      '.msg-body table, .stream-body table, .task-log-entry-body table',
     );
     tables.forEach((table) => {
       if (table.parentElement?.classList.contains('md-table-wrap')) return;
@@ -2274,7 +2272,7 @@
     const hl = window.hljs;
     if (!root || root.nodeType !== 1 || !hl || typeof hl.highlightElement !== 'function') return;
     root.querySelectorAll(
-      '.msg-body pre code, .stream-body pre code, .reasoning-body pre code, .task-log-entry-body pre code',
+      '.msg-body pre code, .stream-body pre code, .task-log-entry-body pre code',
     ).forEach((code) => {
       const pre = code.parentElement;
       if (!pre || pre.tagName !== 'PRE') return;
@@ -4422,8 +4420,7 @@
     if (
       el.classList.contains('streaming') ||
       el.classList.contains('fact-suggestions-card') ||
-      el.classList.contains('skill-suggestions-card') ||
-      el.classList.contains('reasoning-block')
+      el.classList.contains('skill-suggestions-card')
     ) {
       return null;
     }
@@ -4700,10 +4697,6 @@
           });
         }
         if (msg.chatId === activeChatId && msg.title != null) applyTitleForActive(msg.title);
-        // Sync header controls when another tab/CLI flipped these.
-        if (msg.chatId === activeChatId && msg.reasoningMode !== undefined && reasoningToggle) {
-          reasoningToggle.checked = msg.reasoningMode !== 'off';
-        }
         // Composer mode changed elsewhere (another tab/device) → mirror it here
         // without re-persisting (avoids a broadcast loop).
         if (msg.chatId === activeChatId && msg.mode !== undefined) {
@@ -4904,7 +4897,6 @@
         setWorkingDot(msg.chatId, false);
         if (msg.chatId !== activeChatId) return;
         setStopVisible(false);
-        finalizeReasoningBlock();
         // Tear down a streaming element that nobody finalized — e.g. an
         // abort with no streamed text (skipPersist on the server → no
         // `message-appended` to clean it up), or any other edge where the
@@ -4949,7 +4941,6 @@
           return;
         }
         setStopVisible(false);
-        finalizeReasoningBlock();
         if (currentStreamEl) {
           const st = currentStreamEl.querySelector('.stream-status');
           stopStreamStatusDotAnim(st);
@@ -5282,12 +5273,6 @@
       case 'exec-approval-resolved': {
         if (msg.chatId !== 0 && msg.chatId !== activeChatId) return;
         removeApprovalCard(msg.approvalId, msg.decision);
-        return;
-      }
-
-      case 'turn-reasoning': {
-        if (msg.chatId !== activeChatId) return;
-        appendReasoningChunk(msg.text);
         return;
       }
 
@@ -8231,41 +8216,6 @@
   }
 
   // -------------------------------------------------------------------------
-  // Chat header extras: Reasoning toggle
-  // (Interrupt moved to per-queue-item buttons; Compact removed — OpenClaw
-  // auto-compacts at context limit, and users who want it can still type
-  // /compact in the composer.)
-  // -------------------------------------------------------------------------
-  const reasoningToggle = document.getElementById('chat-reasoning-toggle');
-
-  if (reasoningToggle) {
-    reasoningToggle.addEventListener('change', async () => {
-      // Drafts adopt a chat id mid-session (adoptDraftChat), so resolve it live
-      // rather than gating the binding at init — otherwise the toggle stays dead
-      // on a freshly-started chat until reload.
-      if (activeChatId == null) return;
-      const mode = reasoningToggle.checked ? 'on' : 'off';
-      try {
-        // Server route does two things atomically: persists the iClaw mirror
-        // and calls `sessions.patch({ reasoningLevel })` on the OpenClaw
-        // gateway. No more /reasoning slash kludge.
-        const res = await fetch(
-          '/chats/' + encodeURIComponent(activeChatId) + '/reasoning',
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ mode }),
-          },
-        );
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-      } catch {
-        // revert if the server didn't accept
-        reasoningToggle.checked = !reasoningToggle.checked;
-      }
-    });
-  }
-
-  // -------------------------------------------------------------------------
   // Daily-reset policy banner — surfaces when OpenClaw's default "reset every
   // morning at 04:00" policy is active for `direct` (dashboard) sessions.
   // One-click fix via /api/gateway/session-reset-fix; if the gateway token
@@ -8686,38 +8636,6 @@
       // Disable buttons to prevent double-clicks while the RPC resolves.
       card.querySelectorAll('.exec-approval-btn').forEach((b) => (b.disabled = true));
       wsSend({ type: 'exec-approval', chatId: activeChatId, approvalId, decision });
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Reasoning text rendering
-  // -------------------------------------------------------------------------
-  function appendReasoningChunk(text) {
-    if (!messagesEl || !text) return;
-    let block = messagesEl.querySelector('.reasoning-block.active');
-    if (!block) {
-      block = document.createElement('div');
-      block.className = 'msg assistant reasoning-block active';
-      block.innerHTML =
-        '<div class="role">reasoning</div>' +
-        '<div class="msg-body reasoning-body"></div>';
-      // Insert above any currently-streaming assistant element so the user
-      // sees thinking → answer, not answer → thinking.
-      const appendRoot = messagesAppendRoot();
-      if (currentStreamEl && appendRoot && currentStreamEl.parentElement === appendRoot) {
-        appendRoot.insertBefore(block, currentStreamEl);
-      } else if (appendRoot) {
-        appendRoot.appendChild(block);
-      }
-    }
-    const body = block.querySelector('.reasoning-body');
-    if (body) body.textContent += text;
-    scrollToBottom();
-  }
-  function finalizeReasoningBlock() {
-    if (!messagesEl) return;
-    messagesEl.querySelectorAll('.reasoning-block.active').forEach((b) => {
-      b.classList.remove('active');
     });
   }
 

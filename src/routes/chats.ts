@@ -340,7 +340,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
       queueList: queuedMessages.listByChat(id),
       sendHintShow: shouldShowSendHint(),
       chatModes: listComposerModes(),
-      defaultChatMode: defaultComposerMode(!agentsError),
+      defaultChatMode: defaultComposerMode(),
       chatCurrentMode,
       sttEnabled: openRouterEnabled(),
       // Lets the composer lock the runtime modes (and the connect chooser fire)
@@ -420,44 +420,6 @@ chatsRouter.post('/:id/shares', (req, res) => {
   res.redirect(`/chats/${id}`);
 });
 
-/**
- * Toggle reasoning visibility on the active session by sending the slash
- * command through the normal chat flow. The mode is mirrored locally so the
- * UI toggle stays in sync across reloads.
- */
-chatsRouter.post('/:id/reasoning', async (req, res) => {
-  const id = Number(req.params.id);
-  const chat = chats.get(id);
-  if (!chat) {
-    res.status(404).json({ error: 'chat not found' });
-    return;
-  }
-  const raw = String(req.body?.mode ?? '').trim().toLowerCase();
-  const mode: 'off' | 'on' | 'stream' =
-    raw === 'on' ? 'on' : raw === 'stream' ? 'stream' : 'off';
-  // Mirror locally first — UI source of truth even if the gateway hiccups.
-  chats.setReasoningMode(id, mode);
-  wsHub.broadcastAll({
-    type: 'chat-updated',
-    chatId: id,
-    reasoningMode: mode,
-    updatedAt: chats.get(id)!.updated_at,
-  });
-  // Push the real flip to OpenClaw. `sessions.patch` is the proper channel —
-  // it's what the dashboard uses. Failure here doesn't roll back the mirror;
-  // we surface the error to the caller so the UI can warn.
-  let gatewayWarning: string | null = null;
-  try {
-    await openclawWs.patchSession({
-      sessionKey: chat.openclaw_session_id,
-      reasoningLevel: mode === 'off' ? null : mode,
-    });
-  } catch (err) {
-    gatewayWarning = err instanceof Error ? err.message : String(err);
-  }
-  res.json({ id, mode, ...(gatewayWarning ? { gatewayWarning } : {}) });
-});
-
 // Persist the chat's sticky composer send-mode the moment the user picks it, so it
 // survives navigation and syncs across devices instead of living only in this
 // browser's localStorage. Pure iClaw UI state — the mode rides along with each
@@ -475,11 +437,15 @@ chatsRouter.post('/:id/mode', (req, res) => {
     return;
   }
   chats.setChatMode(id, raw);
+  // A draft is hidden from the sidebar until its first user message. The client
+  // upserts a sidebar row on any `updatedAt`, so omit it for drafts — otherwise
+  // switching mode would leak the empty draft into the list. `mode` still
+  // broadcasts for cross-tab sync.
   wsHub.broadcastAll({
     type: 'chat-updated',
     chatId: id,
     mode: raw,
-    updatedAt: chats.get(id)!.updated_at,
+    ...(chats.isDraft(id) ? {} : { updatedAt: chats.get(id)!.updated_at }),
   });
   res.json({ id, mode: raw });
 });

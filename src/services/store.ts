@@ -133,11 +133,6 @@ export const chats = {
       "UPDATE chats SET shares_to_project = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(shares ? 1 : 0, id);
   },
-  setReasoningMode(id: number, mode: 'off' | 'on' | 'stream'): void {
-    db.prepare(
-      "UPDATE chats SET reasoning_mode = ?, updated_at = datetime('now') WHERE id = ?",
-    ).run(mode, id);
-  },
   /** Persist the chat's sticky composer send-mode (see chats.mode). */
   setChatMode(id: number, mode: string): void {
     db.prepare(

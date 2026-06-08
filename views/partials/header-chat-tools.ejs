@@ -1,5 +1,5 @@
 <%
-  // Shared chat-header tool cluster (reasoning / suggest-facts / stop / share /
+  // Shared chat-header tool cluster (suggest-facts / stop / share /
   // delete). Rendered live in chat.ejs and, in a dormant "draft" form, in
   // index.ejs (the new-chat screen). On the draft the chat row doesn't exist
   // yet, so the id-bound controls render hidden + action-less; adoptDraftChat()
@@ -9,25 +9,9 @@
   const _draft = typeof draftHeader !== 'undefined' && draftHeader;
   const _cid = _draft ? '' : activeChat.id;
   const _hasProject = !_draft && Boolean(activeChat.project_id);
-  const _reasoningOn = !_draft && activeChat.reasoning_mode && activeChat.reasoning_mode !== 'off';
   const _sharesOn = !_draft && activeChat.shares_to_project;
   const _working = typeof isWorking !== 'undefined' && isWorking;
 %>
-      <label
-        class="reasoning-toggle header-field"
-        title="Show the model's reasoning / thinking inline. Type /reasoning on in chat to actually enable it on OpenClaw side."
-        aria-label="Reasoning"
-        <%= _draft ? 'hidden' : '' %>
-      >
-        <input
-          type="checkbox"
-          id="chat-reasoning-toggle"
-          <%= _reasoningOn ? 'checked' : '' %>
-        />
-        <%- include('header-tool-icon', { icon: 'reasoning' }) %>
-        <span class="header-tool-label">Reasoning</span>
-      </label>
-
       <% if (_draft || _hasProject) { %>
         <form
           method="post"

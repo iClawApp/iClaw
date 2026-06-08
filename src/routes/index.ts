@@ -170,7 +170,7 @@ indexRouter.get('/', async (req, res) => {
     workingIds: chatStatus.workingIds(),
     sendHintShow: shouldShowSendHint(),
     chatModes: listComposerModes(),
-    defaultChatMode: defaultComposerMode(gatewayStatus === 'ok'),
+    defaultChatMode: defaultComposerMode(),
     sttEnabled: openRouterEnabled(),
     // With an OpenRouter key the runtime modes (Work / Safe work / Incognito)
     // work without OpenClaw — so a missing gateway must NOT block starting a chat.

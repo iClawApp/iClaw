@@ -236,8 +236,6 @@ export interface Chat {
   shares_to_project: number;
   /** Optional per-chat model override applied via `sessions.patch` on OpenClaw. */
   model_override: string | null;
-  /** Reasoning visibility mirror — 'off' | 'on' | 'stream'. */
-  reasoning_mode: string;
   /** Sticky composer send-mode for this chat (e.g. 'work' | 'secure' | 'execute').
    *  null = never set → client uses the UI default. Survives navigation/devices. */
   mode: string | null;
