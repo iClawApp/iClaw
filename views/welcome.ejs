@@ -1,0 +1,227 @@
+<%- include('partials/head', { title: 'Welcome to iClaw' }) %>
+
+<div class="onb">
+  <div class="onb-card-shell" role="dialog" aria-labelledby="onb-title">
+
+    <!-- Step 1 — pick a power source -->
+    <section class="onb-step" id="onb-choose">
+      <h1 class="onb-title" id="onb-title">Welcome to iClaw</h1>
+      <p class="onb-sub">iClaw works with the world’s best AI models - connect one to begin</p>
+
+      <button type="button" class="onb-option" id="onb-pick-openrouter">
+        <span class="onb-option-main">
+          <span class="onb-option-name">Connect OpenRouter</span>
+          <span class="onb-option-desc">
+            Pay as you go - about $5 lasts a long time, and we’ll guide you
+          </span>
+        </span>
+        <span class="onb-option-chevron" aria-hidden="true">›</span>
+      </button>
+
+      <button type="button" class="onb-option onb-option--disabled" disabled>
+        <span class="onb-option-main">
+          <span class="onb-option-name">
+            Use iClaw credits
+            <span class="onb-badge">Coming soon</span>
+          </span>
+          <span class="onb-option-desc">
+            No setup - we handle the AI for you
+          </span>
+        </span>
+      </button>
+
+      <button type="button" class="onb-skip" id="onb-skip">Skip for now</button>
+    </section>
+
+    <!-- Step 2 — paste the OpenRouter key -->
+    <section class="onb-step" id="onb-key" hidden>
+      <button type="button" class="onb-back" id="onb-back" aria-label="Back">‹ Back</button>
+      <h1 class="onb-title">Connect OpenRouter</h1>
+
+      <ol class="onb-steps">
+        <li>
+          Sign in at
+          <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">openrouter.ai/keys</a>
+        </li>
+        <li>Add about $5 - it goes a long way</li>
+        <li>Click <strong>Create Key</strong>, then copy and paste it below</li>
+      </ol>
+
+      <form class="onb-key-form" id="onb-key-form" autocomplete="off">
+        <input
+          type="password"
+          id="onb-key-input"
+          class="onb-key-input"
+          placeholder="sk-or-..."
+          aria-label="OpenRouter API key"
+          spellcheck="false"
+          autocapitalize="off"
+        />
+        <button type="submit" class="btn btn--primary onb-key-submit" id="onb-key-submit">
+          Connect
+        </button>
+      </form>
+      <p class="onb-key-error" id="onb-key-error" role="alert" hidden></p>
+      <p class="onb-key-note">Your key stays on this computer only</p>
+    </section>
+
+    <!-- Honest background-prep line, shared by both steps -->
+    <div class="onb-prep" id="onb-prep" aria-live="polite" hidden>
+      <span class="onb-prep-dot" id="onb-prep-dot"></span>
+      <span class="onb-prep-text" id="onb-prep-text"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var stepChoose = document.getElementById('onb-choose');
+  var stepKey = document.getElementById('onb-key');
+  var prepText = document.getElementById('onb-prep-text');
+  var prepDot = document.getElementById('onb-prep-dot');
+
+  function show(step) {
+    stepChoose.hidden = step !== 'choose';
+    stepKey.hidden = step !== 'key';
+    if (step === 'key') {
+      var input = document.getElementById('onb-key-input');
+      if (input) input.focus();
+    }
+  }
+
+  document.getElementById('onb-pick-openrouter').addEventListener('click', function () {
+    show('key');
+  });
+  document.getElementById('onb-back').addEventListener('click', function () {
+    show('choose');
+  });
+
+  function complete() {
+    return fetch('/api/onboarding/complete', { method: 'POST' });
+  }
+
+  document.getElementById('onb-skip').addEventListener('click', function () {
+    complete().finally(function () { window.location.href = '/'; });
+  });
+
+  var form = document.getElementById('onb-key-form');
+  var errorEl = document.getElementById('onb-key-error');
+  var submitBtn = document.getElementById('onb-key-submit');
+  var keyInput = document.getElementById('onb-key-input');
+  var noCreditOkFor = null; // key the user confirmed despite a $0 balance
+
+  function resetBtn() {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Connect';
+  }
+  function showError(msg, warn) {
+    errorEl.textContent = msg;
+    errorEl.classList.toggle('is-warn', !!warn);
+    errorEl.hidden = false;
+  }
+
+  var INVALID = {
+    empty: 'Paste your OpenRouter key first.',
+    unauthorized: 'That key was rejected by OpenRouter. Double-check you copied it in full.',
+    http: 'OpenRouter couldn’t verify that key. Try again in a moment.',
+    network: 'Couldn’t reach OpenRouter to verify the key — check your connection.',
+  };
+
+  // Save the (already-validated) key, mark onboarding done, enter the app.
+  function saveAndEnter(key) {
+    return fetch('/api/openrouter/key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: key }),
+    })
+      .then(function (res) { return res.json().then(function (b) { return { ok: res.ok, body: b }; }); })
+      .then(function (r) {
+        if (!r.ok) {
+          showError((r.body && r.body.error) || 'Could not save the key.');
+          resetBtn();
+          return;
+        }
+        return complete().then(function () { window.location.href = '/'; });
+      });
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var key = keyInput.value.trim();
+    errorEl.hidden = true;
+    if (!key) { showError(INVALID.empty); return; }
+
+    // Second click after a "no credit" warning → proceed without re-checking.
+    if (noCreditOkFor === key) { submitBtn.disabled = true; submitBtn.textContent = 'Connecting…'; saveAndEnter(key); return; }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Verifying…';
+    fetch('/api/openrouter/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: key }),
+    })
+      .then(function (res) { return res.json().catch(function () { return {}; }); })
+      .then(function (v) {
+        if (!v || !v.valid) {
+          showError(INVALID[(v && v.reason)] || INVALID.http);
+          resetBtn();
+          return;
+        }
+        // Valid but no credit: warn once, let them continue anyway.
+        if (typeof v.remaining === 'number' && v.remaining <= 0) {
+          noCreditOkFor = key;
+          showError('Key works, but it has no credit yet — paid models won’t run until you top up. Click Connect again to continue anyway.', true);
+          resetBtn();
+          submitBtn.textContent = 'Continue anyway';
+          return;
+        }
+        submitBtn.textContent = 'Connecting…';
+        return saveAndEnter(key);
+      })
+      .catch(function () { showError(INVALID.network); resetBtn(); });
+  });
+  // Editing the key clears a prior "continue anyway" confirmation.
+  keyInput.addEventListener('input', function () { noCreditOkFor = null; });
+
+  // Background-prep poller: an honest line about Docker / OpenClaw readiness.
+  // Never blocks anything — purely informational.
+  // Only worth a line when something is actually happening or needs attention.
+  // When everything's fine (or we're still checking) we say nothing — a green
+  // "all good" badge is just noise for a non-technical user.
+  var prep = document.getElementById('onb-prep');
+  function describe(env) {
+    // Keep onboarding jargon-free for non-technical users: only surface a
+    // neutral "setting up" line while the sandbox image downloads. Docker's
+    // state (stopped/missing) is NOT shown here — it's handled automatically
+    // (started on demand) and surfaces in-context later, with an Install
+    // button, only if the user actually picks Safe work.
+    if (env.docker === 'pulling') return 'Setting up your workspace…';
+    return null;
+  }
+  function settled(env) {
+    return env.docker === 'ready' || env.docker === 'missing' || env.docker === 'stopped';
+  }
+  function poll() {
+    fetch('/api/onboarding/status')
+      .then(function (r) { return r.json(); })
+      .then(function (env) {
+        var msg = describe(env);
+        if (msg) {
+          prepText.textContent = msg;
+          if (prep) prep.hidden = false;
+        } else if (prep) {
+          prep.hidden = true;
+        }
+        // Green dot only means "all set". Attention states (missing/stopped)
+        // keep the amber pulsing dot; 'ready' is hidden anyway.
+        prepDot.classList.toggle('is-done', env.docker === 'ready');
+        if (!settled(env)) setTimeout(poll, 1500);
+      })
+      .catch(function () { setTimeout(poll, 3000); });
+  }
+  poll();
+})();
+</script>
+
+<%- include('partials/foot') %>

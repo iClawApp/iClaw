@@ -1,0 +1,22 @@
+<%# Conversational welcome + scenario chips. Shown to users who haven't set up
+    any project yet (first chat, or any empty chat while no project exists) in
+    place of the terse one-liner. Carries `empty-state` so clearEmptyState()
+    removes it on the first message; the chips are wired by initWelcomeChips. %>
+<div class="welcome-card empty-state" id="welcome-card">
+  <div class="welcome-avatar" aria-hidden="true">iC</div>
+  <div class="welcome-bubble">
+    <p class="welcome-greeting">Hi - I’m iClaw</p>
+    <p class="welcome-lead">From now on, you don’t have to choose between convenience, power and safety</p>
+    <ul class="welcome-list">
+      <li>Unlike other agents, I go online inside an isolated space - so a dangerous site can’t do any harm</li>
+      <li>Other agents want access to your whole computer. I only work where you let me</li>
+      <li>And our developers are 70% coffee - so we built a really efficient system that saves your tokens and your money</li>
+    </ul>
+    <div class="welcome-chips" role="group" aria-label="Suggestions to get started">
+      <button type="button" class="welcome-chip" data-prompt="Open an unknown website safely">Open an unknown website safely</button>
+      <button type="button" class="welcome-chip" data-prompt="Check a ZIP file safely, isolated from my computer">Check a ZIP file safely, isolated from my computer</button>
+      <button type="button" class="welcome-chip" data-prompt="Check this GitHub repo in a sandbox">Check this GitHub repo in a sandbox</button>
+      <button type="button" class="welcome-chip" data-prompt="Summarize this 2-hour YouTube video for $0.0005">Summarize this 2-hour YouTube video for $0.0005</button>
+    </div>
+  </div>
+</div>

@@ -32,37 +32,22 @@
         </select>
       </form>
 
-      <button
-        type="button"
-        class="stop-btn btn btn--ghost btn--sm header-action-btn"
-        id="stop-btn"
-        aria-label="Stop generation"
-        title="Stop this turn"
-        hidden
-      >
-        <%- include('partials/header-tool-icon', { icon: 'stop' }) %>
-        <span class="header-tool-label">Stop</span>
-      </button>
+      <%- include('partials/header-chat-tools', { draftHeader: true }) %>
 
-      <span
-        class="gateway <%= gatewayStatus %>"
-        id="gateway-badge"
-        data-base-url="<%= openclawBaseUrl %>"
-        title="<%= openclawBaseUrl %>"
-      >
-        OpenClaw: <%= gatewayStatus === 'ok' ? 'connected' : (gatewayStatus === 'degraded' ? 'unreachable' : 'off') %>
-      </span>
       </div>
     </header>
 
+    <% const _firstChat = typeof isFirstChat !== 'undefined' && isFirstChat; %>
+    <% const _noProjects = !Array.isArray(allProjects) || allProjects.length === 0; %>
     <div
       class="draft-body is-picking"
       id="draft-body"
+      <%- (_firstChat || _noProjects) ? 'data-auto-none="1"' : '' %>
     >
       <div class="draft-pick-stage" id="draft-pick-stage">
-        <% if (agentsError) { %>
-        <%- include('partials/gatewayError', { agentsError, gatewayUp, openclawBaseUrl }) %>
-        <% } else { %>
+        <%# No model connected (skipped onboarding, no OpenClaw) is no longer a
+            dead end here — we show the normal picker + composer and re-offer the
+            connect choice when the user actually tries to send (connectModal). %>
         <section
           class="project-pick"
           id="project-pick"
@@ -71,6 +56,7 @@
           data-initial-project-id="<%= preselectedProject ? String(preselectedProject.id) : '' %>"
         >
           <h2 class="project-pick-title" id="project-pick-title">Choose a project</h2>
+          <p class="project-pick-hint">Press <kbd>Space</kbd> to select No project</p>
           <div class="project-pick-grid">
             <button
               type="button"
@@ -101,27 +87,35 @@
             <% }); %>
           </div>
         </section>
-        <% } %>
       </div>
 
       <section class="messages" id="messages" data-chat-id="" data-draft="1">
         <div class="messages-thread">
+          <% if (_firstChat) { %>
+          <%- include('partials/welcomeCard') %>
+          <% } else { %>
           <p class="muted empty-state" id="draft-empty-hint" hidden>Write your first message.</p>
+          <% } %>
         </div>
       </section>
 
       <section class="queue" id="queue" aria-live="polite"></section>
 
-      <% if (!agentsError) { %>
       <div id="draft-composer-wrap" class="draft-composer-wrap" hidden>
-        <%- include('partials/composer') %>
+        <%- include('partials/composer', { gatewayOk: gatewayStatus === 'ok' }) %>
       </div>
-      <% } %>
     </div>
+
+    <% if (cloudShareBaseUrl) { %>
+      <%- include('partials/share-modal') %>
+    <% } %>
 
     <script src="/js/vendor/marked.min.js"></script>
     <script src="/js/vendor/highlight.min.js"></script>
     <script src="/js/iclaw.js?v=1"></script>
+    <% if (cloudShareBaseUrl) { %>
+      <script src="/js/share.js" defer></script>
+    <% } %>
   </main>
 </div>
 

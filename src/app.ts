@@ -8,6 +8,7 @@ import { projectsRouter } from './routes/projects';
 import { agentsRouter } from './routes/sessions';
 import { mediaRouter } from './routes/media';
 import { gatewayRouter } from './routes/gateway';
+import { dockerRouter } from './routes/docker';
 import { updateRouter } from './routes/update';
 import { tasksRouter } from './routes/tasks';
 import { projects, scheduledMessages } from './services/store';
@@ -71,6 +72,7 @@ export function createApp(): express.Express {
     }));
     res.locals.scheduledChatIds = scheduledMessages.chatIdsWithPending();
     res.locals.scheduledChatCounts = scheduledMessages.pendingCountByChatId();
+    res.locals.devMode = process.env.ICLAW_DEV_MODE === 'true';
     next();
   });
 
@@ -125,6 +127,7 @@ export function createApp(): express.Express {
   app.use('/', settingsRouter);
   app.use('/api/agents', agentsRouter);
   app.use('/api/gateway', gatewayRouter);
+  app.use('/api/docker', dockerRouter);
   app.use('/api/update', updateRouter);
   app.use('/api/remote-access', remoteAccessApiRouter);
   app.use('/media', mediaRouter);

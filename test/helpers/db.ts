@@ -32,6 +32,8 @@ export function resetTestDb(): void {
     DELETE FROM task_context_snapshots;
     DELETE FROM project_fact_suggestions;
     DELETE FROM project_facts;
+    DELETE FROM project_skill_suggestions;
+    DELETE FROM project_skills;
     DELETE FROM project_secrets;
     DELETE FROM scheduled_messages;
     DELETE FROM queued_messages;

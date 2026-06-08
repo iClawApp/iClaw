@@ -15,7 +15,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, statSync, copyFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { resolveUploadsRoot as uploadsRootFromPaths } from '../paths';
 import type { MessageAttachment } from '../types';
@@ -198,6 +198,32 @@ export function persistIncomingAttachments(
 }
 
 /**
+ * Resolve persisted attachments to absolute on-disk paths for the iclaw-runtime
+ * (Work/Secure/Incognito). The runtime shares the host filesystem, so it reads
+ * the file directly — no base64 roundtrip. Rows with an unexpected URL are
+ * skipped (rather than thrown) so one bad attachment can't sink the whole turn.
+ */
+export function runtimeAttachmentsFromPersisted(
+  chatId: number,
+  persisted: MessageAttachment[],
+): { path: string; mimeType: string; fileName: string }[] {
+  if (!persisted.length) return [];
+  const chatDir = join(resolveUploadsRoot(), String(chatId));
+  const prefix = `/uploads/${chatId}/`;
+  const out: { path: string; mimeType: string; fileName: string }[] = [];
+  for (const att of persisted) {
+    const url = att.url || '';
+    if (!url.startsWith(prefix)) continue;
+    out.push({
+      path: join(chatDir, basename(url)),
+      mimeType: att.mimeType || 'application/octet-stream',
+      fileName: att.fileName || 'attachment',
+    });
+  }
+  return out;
+}
+
+/**
  * Rebuild OpenClaw gateway attachment payloads from rows already on disk
  * (queued messages persist files at enqueue time).
  */
@@ -237,4 +263,49 @@ export function gatewayAttachmentsFromPersisted(
     });
   }
   return out;
+}
+
+/** Map a lowercase image extension to its MIME (the set show_image supports). */
+const AGENT_IMAGE_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+};
+
+/**
+ * Persist an image the AGENT produced — already a real file on the host (a Work
+ * folder is bind-mounted live; a Secure workspace dir is the host side of the
+ * container mount) — into the chat's uploads dir, returning a MessageAttachment
+ * for the assistant row. Returns null (caller skips it) if the path isn't a
+ * readable, image-typed, size-capped regular file.
+ *
+ * Path TRUST is the caller's job: only pass a host path already confirmed to lie
+ * inside an allowed root. This copies (never moves) so the original is untouched.
+ */
+export function persistAgentImage(chatId: number, hostPath: string): MessageAttachment | null {
+  let st;
+  try { st = statSync(hostPath); } catch { return null; }
+  if (!st.isFile() || st.size === 0 || st.size > MAX_ATTACHMENT_BYTES) return null;
+
+  const ext = (basename(hostPath).match(/\.[a-zA-Z0-9]+$/)?.[0] ?? '').toLowerCase();
+  const mimeType = AGENT_IMAGE_MIME[ext];
+  if (!mimeType) return null; // not a supported image type
+
+  const chatDir = join(resolveUploadsRoot(), String(chatId));
+  mkdirSync(chatDir, { recursive: true });
+  const onDiskName = `${randomUUID()}${ext}`;
+  try {
+    copyFileSync(hostPath, join(chatDir, onDiskName));
+  } catch {
+    return null;
+  }
+  return {
+    url: `/uploads/${chatId}/${onDiskName}`,
+    mimeType,
+    fileName: sanitizeFileName(basename(hostPath)),
+    sizeBytes: st.size,
+  };
 }

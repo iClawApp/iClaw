@@ -37,7 +37,36 @@
   }) %>
 <% }); %></div>
 
-<form id="send-form" class="composer">
+<%
+  // Mode selector data. Server passes the enabled modes (config-driven) and
+  // the default. Fall back gracefully if a render path forgot the locals so
+  // the composer never breaks — the selector just hides.
+  const _modes =
+    typeof chatModes !== 'undefined' && Array.isArray(chatModes) ? chatModes : [];
+  const _defaultMode =
+    typeof defaultChatMode !== 'undefined' && defaultChatMode ? defaultChatMode : 'execute';
+  const _defaultModeDef =
+    _modes.find(function (m) { return m.id === _defaultMode; }) || _modes[0] || null;
+  // The mode this chat was last used in (server-derived from its last message).
+  // Empty for new chats. Used to pre-select the picker so switching chats keeps
+  // each chat's own mode instead of resetting to the default.
+  const _chatCurrentMode =
+    typeof chatCurrentMode !== 'undefined' && chatCurrentMode ? chatCurrentMode : '';
+  const _curModeDef = _modes.find(function (m) { return m.id === _chatCurrentMode; });
+  // Don't pre-select a locked mode (e.g. a chat last used in Work after the key
+  // was removed) — fall back to the default, which is always usable.
+  const _initialMode =
+    _curModeDef && _curModeDef.available !== false ? _chatCurrentMode : _defaultMode;
+  const _initialModeDef =
+    _modes.find(function (m) { return m.id === _initialMode; }) || _defaultModeDef;
+%>
+<%
+  // Whether Full Power (Execute → OpenClaw) is usable right now. Stamped here so
+  // the JS gating works on every composer surface (the gateway badge only exists
+  // on the new-chat header). Defaults to available when a render path omits it.
+  const _gatewayOk = typeof gatewayOk !== 'undefined' ? !!gatewayOk : true;
+%>
+<form id="send-form" class="composer" data-gateway-ok="<%= _gatewayOk ? '1' : '0' %>">
   <div id="composer-reply-bar" class="composer-reply-bar" hidden>
     <div class="composer-reply-bar-inner">
       <span class="composer-reply-accent" aria-hidden="true"></span>
@@ -63,66 +92,172 @@
       </svg>
       <span>Drop file here</span>
     </div>
-    <input
-      type="file"
-      id="composer-file-input"
-      class="composer-file-input"
-      multiple
-      hidden
-    />
-    <div
-      id="composer-attach-menu"
-      class="menu composer-attach-menu"
-      role="menu"
-      aria-label="Attachments"
-      hidden
-    >
-      <button type="button" class="menu-item composer-attach-menu-item" data-attach-pick="file" role="menuitem">
-        <span class="menu-item__title">File</span>
-      </button>
-      <button type="button" class="menu-item composer-attach-menu-item" data-attach-pick="secret" role="menuitem">
-        <span class="menu-item__title">Secret</span>
-      </button>
+    <input type="file" id="composer-file-input" class="composer-file-input" multiple hidden />
+    <!-- menus stay here so JS can position them relative to the field -->
+    <div id="composer-attach-menu" class="menu composer-attach-menu" role="menu" aria-label="Attachments" hidden>
+      <button type="button" class="menu-item composer-attach-menu-item" data-attach-pick="file" role="menuitem"><span class="menu-item__title">File</span></button>
+      <button type="button" class="menu-item composer-attach-menu-item" data-attach-pick="secret" role="menuitem"><span class="menu-item__title">Secret</span></button>
     </div>
-    <div
-      id="composer-secret-pick-menu"
-      class="menu composer-secret-pick-menu"
-      role="menu"
-      aria-label="Choose secret"
-      hidden
-    ></div>
-    <button
-      type="button"
-      class="composer-attach"
-      id="composer-attach-btn"
-      aria-label="Add attachment"
-      title="File or secret (also drag &amp; drop and paste)"
-      aria-haspopup="menu"
-      aria-expanded="false"
-      aria-controls="composer-attach-menu"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l8.57-8.57A4 4 0 1117.95 8.83l-8.59 8.57a2 2 0 01-2.83-2.83l8.49-8.49"/>
-      </svg>
-    </button>
+    <div id="composer-secret-pick-menu" class="menu composer-secret-pick-menu" role="menu" aria-label="Choose secret" hidden></div>
+
+    <!-- Textarea — full width, top -->
     <div class="composer-input-stack">
       <textarea
         id="composer-input"
         name="content"
-        placeholder="Message…"
+        placeholder="Ask anything"
         rows="1"
       ></textarea>
+      <!-- Replaces the textarea when Full Power is selected but OpenClaw is off.
+           The toolbar (incl. the mode switcher) stays visible so the user can
+           switch mode right below this message. -->
+      <div class="composer-exec-msg" id="composer-exec-msg" aria-hidden="true">
+        OpenClaw is off. Turn it on, or switch mode below.
+      </div>
+      <!-- Replaces the textarea when a Docker-required mode (Safe work) is
+           selected but Docker isn't running. The Install/Start button text and
+           action are set by syncDockerAvailability in iclaw.js. -->
+      <div class="composer-docker-msg" id="composer-docker-msg" aria-hidden="true">
+        <span id="composer-docker-msg-text">Safe work needs Docker.</span>
+        <button type="button" class="composer-docker-btn" id="composer-docker-action">Install Docker</button>
+        <span class="composer-docker-size" id="composer-docker-size"></span>
+        <span class="composer-docker-or">or switch mode below.</span>
+      </div>
+      <% if (typeof sttEnabled !== 'undefined' && sttEnabled) { %>
+      <!-- Voice recording bar — replaces the textarea while the mic is held.
+           Pipeline after release is unchanged (audio → /api/stt → transcript). -->
+      <div class="composer-recording" id="composer-recording" hidden aria-hidden="true">
+        <span class="composer-recording__dot" aria-hidden="true"></span>
+        <span class="composer-recording__time" id="composer-recording-time">00:00.00</span>
+        <canvas class="composer-recording__wave" id="composer-recording-wave" aria-hidden="true"></canvas>
+        <button type="button" class="composer-recording__cancel" id="composer-recording-cancel">Cancel</button>
+        <span class="composer-recording__hint" id="composer-recording-hint">‹ slide to cancel · slide up to lock</span>
+      </div>
+      <% } %>
     </div>
-    <button
-      type="submit"
-      class="composer-send"
-      id="composer-send-btn"
-      aria-label="Send (hold to schedule)"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 19V5M5 12l7-7 7 7"/>
+
+    <!-- Toolbar — bottom row -->
+    <div class="composer-toolbar">
+      <div class="composer-toolbar__left">
+        <!-- Attach -->
+        <button
+          type="button"
+          class="composer-toolbar-btn composer-attach"
+          id="composer-attach-btn"
+          aria-label="Add attachment"
+          title="File or secret (also drag &amp; drop and paste)"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-controls="composer-attach-menu"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l8.57-8.57A4 4 0 1117.95 8.83l-8.59 8.57a2 2 0 01-2.83-2.83l8.49-8.49"/>
+          </svg>
+        </button>
+
+        <!-- Mode selector -->
+        <% if (_modes.length > 1 && _defaultModeDef) { %>
+        <div class="composer-modes composer-toolbar-modes" id="composer-modes" data-default-mode="<%= _defaultMode %>" data-chat-mode="<%= _chatCurrentMode %>">
+          <button
+            type="button"
+            class="composer-toolbar-btn composer-mode-btn"
+            id="composer-mode-btn"
+            data-mode="<%= _initialMode %>"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="composer-mode-menu"
+            title="<%= _initialModeDef.description %>"
+          >
+            <span class="composer-mode-btn__label" id="composer-mode-label"><%= _initialModeDef.label %></span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div id="composer-mode-menu" class="menu composer-mode-menu" role="menu" aria-label="Message mode" hidden>
+            <% _modes.forEach(function (m) { %>
+            <% if (m.ephemeral) { %><div class="composer-mode-menu-sep" role="separator" aria-hidden="true"></div><% } %>
+            <button type="button" class="menu-item composer-mode-menu-item<%= m.available === false ? ' is-unavailable' : '' %>" role="menuitemradio" data-mode="<%= m.id %>" data-requires-docker="<%= m.requiresDocker ? '1' : '0' %>" data-requires-key="<%= m.available === false ? '1' : '0' %>" aria-checked="<%= m.id === _initialMode ? 'true' : 'false' %>">
+              <span class="menu-item__title"><%= m.label %></span>
+              <span class="composer-mode-menu-item__desc"><%= m.description %></span>
+            </button>
+            <% }); %>
+          </div>
+        </div>
+        <% } %>
+
+        <!-- Secure Mode network toggle -->
+        <button
+          type="button"
+          class="composer-toolbar-btn composer-network-toggle"
+          id="composer-network-toggle-btn"
+          aria-label="Toggle network access"
+          title="Network is off - click to enable"
+          data-network="off"
+          hidden
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="2" y1="12" x2="22" y2="12"/>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+          </svg>
+        </button>
+
+        <!-- Work Mode folders -->
+        <button
+          type="button"
+          class="composer-toolbar-btn composer-work-folders"
+          id="composer-work-folders-btn"
+          aria-label="Work Mode folders"
+          title="Configure allowed folders for Work Mode"
+          hidden
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          <span class="composer-work-folders__count" id="composer-work-folders-count"></span>
+        </button>
+      </div>
+
+      <div class="composer-toolbar__right">
+        <!-- Mic -->
+        <% if (typeof sttEnabled !== 'undefined' && sttEnabled) { %>
+        <button type="button" class="composer-mic" id="composer-mic-btn" data-state="idle" aria-label="Record voice" aria-pressed="false" title="Record voice">
+          <svg class="composer-mic__idle" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="22"/>
+          </svg>
+          <svg class="composer-mic__busy" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          </svg>
+          <svg class="composer-mic__send" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 19V5M5 12l7-7 7 7"/>
+          </svg>
+        </button>
+        <% } %>
+
+        <!-- Send -->
+        <button type="submit" class="composer-send" id="composer-send-btn" aria-label="Send (hold to schedule)">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 19V5M5 12l7-7 7 7"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <% if (typeof sttEnabled !== 'undefined' && sttEnabled) { %>
+    <!-- Floating lock indicator — shown while recording; fills as you drag up.
+         Positioned over the mic by JS. -->
+    <div class="composer-lock-hint" id="composer-lock-hint" hidden aria-hidden="true">
+      <svg class="composer-lock-hint__chev" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="18 15 12 9 6 15"/>
       </svg>
-    </button>
+      <svg class="composer-lock-hint__lock" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="11" width="18" height="11" rx="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
+    </div>
+    <% } %>
 
     <% if (typeof sendHintShow !== 'undefined' && sendHintShow) { %>
       <!-- Discovery pill — surfaces the long-press menu (scheduled msg / create
@@ -210,6 +345,24 @@
       </div>
     </div>
   </div>
+
+  <!-- Secure Mode workspace indicator — shares the bottom row with the secret UI -->
+  <div class="secure-workspace-bar" id="secure-workspace-bar" hidden>
+    <span class="secure-workspace-bar__label">Secure workspace</span>
+    <span class="secure-workspace-bar__size" id="secure-workspace-size" hidden></span>
+    <span class="secure-workspace-bar__sep" id="secure-workspace-sep">·</span>
+    <span class="secure-workspace-bar__ttl" id="secure-workspace-ttl"></span>
+    <button type="button" class="secure-workspace-bar__change" id="secure-workspace-change">change</button>
+    <button type="button" class="secure-workspace-bar__action" id="secure-workspace-export" title="Copy the sandbox out to a folder on your computer">Export</button>
+    <button type="button" class="secure-workspace-bar__action" id="secure-workspace-apply" title="Copy the sandbox's new/changed files back to your original folders">Apply changes</button>
+    <button type="button" class="secure-workspace-bar__destroy" id="secure-workspace-destroy" title="Delete the sandbox copy and everything in it">Destroy</button>
+    <!-- Anchored to the bar so it pops up in place instead of shifting layout -->
+    <div class="secure-ttl-menu menu" id="secure-ttl-menu" role="menu" hidden>
+      <button type="button" class="menu-item" data-ttl="1" role="menuitem">1 day</button>
+      <button type="button" class="menu-item" data-ttl="7" role="menuitem">7 days</button>
+      <button type="button" class="menu-item" data-ttl="30" role="menuitem">30 days</button>
+    </div>
+  </div>
   <div class="composer-secret-modal" id="composer-secret-modal" hidden>
     <div class="composer-secret-modal__backdrop" id="composer-secret-modal-backdrop"></div>
     <div class="composer-secret-modal__panel" role="dialog" aria-modal="true" aria-labelledby="composer-secret-modal-title">
@@ -289,3 +442,25 @@
       </div>
     </div>
   </div>
+
+<!-- Work Mode folders modal -->
+<div class="work-folders-modal" id="work-folders-modal" hidden>
+  <div class="work-folders-modal__backdrop" id="work-folders-backdrop"></div>
+  <div class="work-folders-modal__panel" role="dialog" aria-modal="true" aria-labelledby="work-folders-title">
+    <header class="work-folders-modal__head">
+      <div class="work-folders-modal__head-row">
+        <div>
+          <h3 class="work-folders-modal__title" id="work-folders-title">Work Mode folders</h3>
+          <p class="work-folders-modal__hint muted">AI can only access these folders. New folders are read-only — click the access pill to allow writing.</p>
+        </div>
+        <button type="button" class="btn btn--primary btn--sm" id="work-folders-browse-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          Browse
+        </button>
+      </div>
+    </header>
+    <ul class="work-folders-list" id="work-folders-list"></ul>
+  </div>
+</div>
+
+<%- include('connectModal') %>

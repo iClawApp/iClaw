@@ -14,11 +14,15 @@
           aria-label="Chat title"
         />
       </form>
+      <% if (typeof devMode !== 'undefined' && devMode) { const _tokTotal = (chatMessages || []).reduce((a, m) => a + (Number(m.tokens) || 0), 0); %>
+        <span class="chat-token-total" id="chat-token-total" data-total="<%= _tokTotal %>"
+          title="Total tokens spent in this chat (dev mode)" <%= _tokTotal > 0 ? '' : 'hidden' %>><%= _tokTotal.toLocaleString() %> tok total</span>
+      <% } %>
 
       <div class="chat-header-tools">
       <form class="agent-form header-field" method="post" action="/chats/<%= activeChat.id %>/agent">
         <label class="header-field-label" for="chat-agent-select">Agent</label>
-        <select name="agent" id="chat-agent-select" onchange="this.form.submit()" aria-label="Agent">
+        <select name="agent" id="chat-agent-select" onchange="this.form.requestSubmit()" aria-label="Agent">
           <% agents.forEach(function (a) { %>
             <option value="<%= a.id %>" <%= a.id === activeChat.agent ? 'selected' : '' %>>
               <%= a.id %>
@@ -30,83 +34,7 @@
         </select>
       </form>
 
-      <label
-        class="reasoning-toggle header-field"
-        title="Show the model's reasoning / thinking inline. Type /reasoning on in chat to actually enable it on OpenClaw side."
-        aria-label="Reasoning"
-      >
-        <input
-          type="checkbox"
-          id="chat-reasoning-toggle"
-          <%= activeChat.reasoning_mode && activeChat.reasoning_mode !== 'off' ? 'checked' : '' %>
-        />
-        <%- include('partials/header-tool-icon', { icon: 'reasoning' }) %>
-        <span class="header-tool-label">Reasoning</span>
-      </label>
-
-      <% if (activeChat.project_id) { %>
-        <form
-          method="post"
-          action="/chats/<%= activeChat.id %>/shares"
-          class="share-form"
-          title="When on, after each assistant reply you get suggested facts to add to the project (you confirm each)."
-        >
-          <label
-            class="share-toggle"
-            title="Suggest facts for project"
-            aria-label="Suggest facts for project"
-          >
-            <input
-              type="checkbox"
-              name="shares"
-              value="1"
-              <%= activeChat.shares_to_project ? 'checked' : '' %>
-              onchange="this.form.submit()"
-            />
-            <%- include('partials/header-tool-icon', { icon: 'facts' }) %>
-            <span class="header-tool-label">Suggest facts for project</span>
-          </label>
-        </form>
-      <% } %>
-
-      <button
-        type="button"
-        class="stop-btn btn btn--ghost btn--sm header-action-btn"
-        id="stop-btn"
-        aria-label="Stop generation"
-        title="Stop this turn"
-        <%= isWorking ? '' : 'hidden' %>
-      >
-        <%- include('partials/header-tool-icon', { icon: 'stop' }) %>
-        <span class="header-tool-label">Stop</span>
-      </button>
-
-      <% if (cloudShareBaseUrl) { %>
-        <button
-          type="button"
-          class="share-btn btn btn--ghost btn--sm header-action-btn"
-          id="share-btn"
-          data-cloud-base-url="<%= cloudShareBaseUrl %>"
-          title="Encrypted in your browser; the key is in the # part of the link. Optional password."
-          aria-label="Share this chat"
-        >
-          <%- include('partials/header-tool-icon', { icon: 'share' }) %>
-          <span class="header-tool-label">Share</span>
-        </button>
-      <% } %>
-
-      <form method="post" action="/chats/<%= activeChat.id %>/delete" class="delete-form">
-        <button
-          type="submit"
-          class="btn btn--ghost btn--sm header-action-btn chat-delete-btn"
-          onclick="return confirm('Delete this chat?')"
-          aria-label="Delete chat"
-          title="Delete this chat"
-        >
-          <%- include('partials/header-tool-icon', { icon: 'delete' }) %>
-          <span class="header-tool-label">Delete</span>
-        </button>
-      </form>
+      <%- include('partials/header-chat-tools') %>
       </div>
     </header>
 
@@ -169,7 +97,11 @@
     >
       <div class="messages-thread">
         <% if (chatMessages.length === 0) { %>
-          <p class="muted empty-state">No messages yet. Say something.</p>
+          <% if (!Array.isArray(allProjects) || allProjects.length === 0) { %>
+          <%- include('partials/welcomeCard') %>
+          <% } else { %>
+          <p class="muted empty-state">iClaw - the safer way to work with powerful AI</p>
+          <% } %>
         <% } else { %>
           <% chatMessages.forEach(function (m) { %>
             <div class="msg <%= m.role %>" data-msg-id="<%= m.id %>">
@@ -220,6 +152,9 @@
                   <% }); %>
                 </div>
               <% } %>
+              <% if (typeof devMode !== 'undefined' && devMode && m.tokens) { %>
+                <span class="msg-tokens" title="Tokens spent on this reply"><%= Number(m.tokens).toLocaleString() %> tok<% if (m.cached_tokens) { %> · <%= Number(m.cached_tokens).toLocaleString() %> cached<% } %></span>
+              <% } %>
             </div>
           <% }); %>
         <% } %>
@@ -237,6 +172,7 @@
           %>
           <div class="msg assistant streaming <%= _waitingClass %>" id="reload-placeholder">
             <div class="role">assistant</div>
+            <div class="msg-body stream-body"></div>
             <div
               class="stream-status<%= _detail ? ' has-detail' : '' %>"
               <% if (_detail) { %>
@@ -245,7 +181,6 @@
                 title="<%= _detail %>"
               <% } %>
             ><%= _act.label %></div>
-            <div class="msg-body stream-body"></div>
           </div>
         <% } %>
       </div>

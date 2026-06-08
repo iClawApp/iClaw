@@ -8,12 +8,35 @@ import type { Server as HttpServer, IncomingMessage } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { chats } from '../services/store';
 import { wsHub } from '../services/wsHub';
-import { sendMessage, abortChatRun } from '../services/chatRunner';
+import { sendMessage, abortChatRun, runIncognitoTurn, abortIncognito, type WorkFolder } from '../services/chatRunner';
 import { openclawWs } from '../services/openclawWs';
 import type { ClientMsg, ServerMsg } from '../types/protocol';
 import type { InlineSecretWire } from '../services/inlineSecrets';
+import { normalizeChatMode } from '../services/chatModes';
 
 const PATH = '/ws';
+
+/**
+ * Coerce the untrusted `workFolders` wire field into typed WorkFolder[]. Accepts
+ * either objects ({ path, readonly }) from the current client or bare path
+ * strings from older clients. Missing/unknown readonly defaults to true
+ * (read-only) — the safe default. Returns undefined when nothing valid is sent.
+ */
+function parseWorkFolders(raw: unknown): WorkFolder[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: WorkFolder[] = [];
+  for (const entry of raw) {
+    if (typeof entry === 'string') {
+      if (entry) out.push({ path: entry, readonly: true });
+    } else if (entry && typeof entry === 'object') {
+      const o = entry as Record<string, unknown>;
+      if (typeof o.path === 'string' && o.path) {
+        out.push({ path: o.path, readonly: o.readonly !== false });
+      }
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 function send(socket: WebSocket, msg: ServerMsg): void {
   wsHub.send(socket, msg);
@@ -90,6 +113,12 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
           replyTo: msg.replyTo,
           incomingAttachments: msg.attachments,
           inlineSecrets,
+          mode: normalizeChatMode((msg as { mode?: unknown }).mode),
+          networkEnabled: (msg as Record<string, unknown>).networkEnabled === true,
+          ttlDays: typeof (msg as Record<string, unknown>).ttlDays === 'number'
+            ? ((msg as Record<string, unknown>).ttlDays as number)
+            : undefined,
+          workFolders: parseWorkFolders((msg as Record<string, unknown>).workFolders),
         });
       } catch (err) {
         // Errors are already broadcast via chatRunner; nothing more to do.
@@ -105,6 +134,39 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
         });
       }
       return;
+
+    case 'incognito-send': {
+      const key = String((msg as { key?: unknown }).key ?? '').trim();
+      const content = String(msg.content ?? '').trim();
+      if (!key || !content) return;
+      let endedTokens: number | undefined;
+      let endedCached: number | undefined;
+      try {
+        const res = await runIncognitoTurn({
+          key,
+          content,
+          workFolders: parseWorkFolders((msg as Record<string, unknown>).workFolders),
+          onEvent: (e) => {
+            if (e.type === 'text-delta') send(socket, { type: 'incognito-turn-delta', key, text: e.text });
+            else if (e.type === 'tool') send(socket, { type: 'incognito-turn-tool', key, name: e.name });
+            else if (e.type === 'error') send(socket, { type: 'incognito-error', key, message: e.message });
+          },
+        });
+        endedTokens = res.tokens;
+        endedCached = res.cached;
+      } catch (err) {
+        send(socket, { type: 'incognito-error', key, message: err instanceof Error ? err.message : String(err) });
+      }
+      // Always close the turn so the client can re-enable the composer.
+      send(socket, { type: 'incognito-turn-ended', key, tokens: endedTokens, cached: endedCached });
+      return;
+    }
+
+    case 'incognito-abort': {
+      const key = String((msg as { key?: unknown }).key ?? '').trim();
+      if (key) await abortIncognito(key).catch((err) => console.error('[ws] incognito-abort failed', err));
+      return;
+    }
 
     case 'exec-approval': {
       const approvalId = String(msg.approvalId ?? '').trim();

@@ -7,20 +7,29 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { chats, messages, projects, projectSecrets } from './store';
+import { chats, messages, projects, projectSecrets, projectFacts } from './store';
 import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
+import { buildSkillsPromptBlock, scheduleProjectSkillReview } from './projectSkills';
+import { projectSkills } from './store';
 import { chatStatus } from './chatStatus';
 import { openclawWs, type TurnEvent } from './openclawWs';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
-import { toolActivityLabel } from './toolLabels';
+import { toolActivityLabel, toolActivityDetail } from './toolLabels';
 import { wsHub } from './wsHub';
 import {
   gatewayAttachmentsFromPersisted,
   persistIncomingAttachments,
+  persistAgentImage,
+  runtimeAttachmentsFromPersisted,
   type IncomingAttachment,
   type ProcessedAttachment,
 } from './uploads';
-import type { Message, MessageAttachment } from '../types';
+import { resolve as resolvePath, sep as pathSep, join as joinPath } from 'node:path';
+import { homedir } from 'node:os';
+import type { ChatMode, Message, MessageAttachment } from '../types';
+import { DEFAULT_MODE } from './chatModes';
+import { buildCompactedHistory } from './contextCompaction';
+import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession, abortWorkSession, exportSandbox, applySandboxChanges, type ExportResult, type ApplyResult } from './workRuntime';
 import {
   expandStoredSecretPlaceholdersForGateway,
   resolveInlineSecretMarkersInContent,
@@ -29,6 +38,22 @@ import {
 } from './inlineSecrets';
 
 const DEFAULT_AGENT = 'openclaw/default';
+
+/**
+ * A folder granted to a Work Mode chat, with its access level. `readonly: true`
+ * means the agent may read/list/search but not write_file or run_command under
+ * it; `readonly: false` grants read & write. New folders default to read-only.
+ */
+export interface WorkFolder {
+  path: string;
+  readonly: boolean;
+}
+
+/**
+ * OpenClaw session key currently executing an Execute turn for a chat. Lets
+ * `abortChatRun` stop the right gateway run. Cleared in the runTurn `finally`.
+ */
+const activeRunSessionKeys = new Map<number, string>();
 
 /**
  * Map an iClaw agent label ("openclaw/default", "openclaw/code", ...) to the
@@ -211,6 +236,11 @@ async function runTurnLocked(opts: {
   /** Attachments already saved under data/uploads (queued-message flush). */
   prePersistedAttachments?: MessageAttachment[];
   inlineSecrets?: InlineSecretWire[];
+  /** 'execute' | 'work' | 'secure' | 'incognito'. Defaults to 'execute'. */
+  mode?: ChatMode;
+  workFolders?: WorkFolder[];
+  networkEnabled?: boolean;
+  ttlDays?: number;
 }): Promise<void> {
   const {
     chatId,
@@ -221,8 +251,8 @@ async function runTurnLocked(opts: {
     prePersistedAttachments,
     inlineSecrets,
   } = opts;
+  const mode: ChatMode = opts.mode ?? DEFAULT_MODE;
   const chat = chats.get(chatId)!;
-  const sessionKey = await ensureSession(chatId);
   const projectId = chat.project_id ?? null;
 
   let storedUserContent = content;
@@ -268,10 +298,12 @@ async function runTurnLocked(opts: {
     gatewayBody = formatReplyGatewayBlock(refExpanded, reply.quote) + gatewayBody;
   }
 
-  const gatewayMessage =
+  const gatewayMessageBase =
     chat.project_id != null && projects.get(chat.project_id)
       ? buildGatewayUserMessage(gatewayBody, chat.project_id)
       : gatewayBody;
+  // The turn is dispatched AFTER the user row is persisted (Ask needs
+  // userMsg.id to seed prior-thread context). See the Ask/Execute branch below.
 
   // Persist user message + broadcast (stored text keeps placeholders only).
   const replyToRole =
@@ -289,6 +321,7 @@ async function runTurnLocked(opts: {
         }
       : null,
     persistedAttachments.length > 0 ? persistedAttachments : null,
+    mode,
   );
   for (const sid of newSecretIds) {
     projectSecrets.setSourceMessage(sid, userMsg.id);
@@ -350,6 +383,9 @@ async function runTurnLocked(opts: {
 
   let switchedToGenerating = false;
   let assistantText = '';
+  // Whether this turn invoked any tool — used to throttle skill review to
+  // "substantive" turns (procedural learning comes from tool use, not chit-chat).
+  let usedTools = false;
 
   const onEvent = (ev: TurnEvent): void => {
     if (ev.type === 'text-delta') {
@@ -360,6 +396,7 @@ async function runTurnLocked(opts: {
       assistantText += ev.text;
       wsHub.broadcastToChat(chatId, { type: 'turn-delta', chatId, text: ev.text });
     } else if (ev.type === 'tool-start') {
+      usedTools = true;
       chatStatus.setActivity(chatId, {
         kind: 'tool',
         name: ev.name,
@@ -394,13 +431,6 @@ async function runTurnLocked(opts: {
         phase: ev.phase,
         label: ev.label,
       });
-    } else if (ev.type === 'reasoning') {
-      // Surface model reasoning only when the user opted in for this chat.
-      // We re-read chat row every event because the toggle can flip mid-turn.
-      const cur = chats.get(chatId);
-      if (cur && cur.reasoning_mode && cur.reasoning_mode !== 'off') {
-        wsHub.broadcastToChat(chatId, { type: 'turn-reasoning', chatId, text: ev.text });
-      }
     } else if (ev.type === 'attachment') {
       const proxied = rewriteMediaUrl(ev.url);
       // Inline into the running text so the stream-renderer picks it up, AND
@@ -421,16 +451,42 @@ async function runTurnLocked(opts: {
     }
   };
 
-  const {
-    text: gatewayAccumulated,
-    aborted,
-    authoritativeText,
-  } = await openclawWs.runTurn({
-    sessionKey,
-    message: gatewayMessage,
-    onEvent,
-    attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
-  });
+  // Work / Secure Mode — routes to iclaw-runtime, returns early. Forward dropped
+  // files so the runtime agent can read them (Work) / stage them (Secure) and
+  // see images — otherwise the model has no idea a file was attached.
+  if (mode === 'work' || mode === 'secure') {
+    const runtimeAttachments = runtimeAttachmentsFromPersisted(chatId, persistedAttachments);
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
+    wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
+    return;
+  }
+
+  // Execute: the chat's own main-agent OpenClaw session, full tools.
+  // Provision the gateway session lazily, HERE — so Work / Safe work / Incognito
+  // chats (which use iclaw-runtime, not the gateway) can start and run even when
+  // OpenClaw is unreachable, as long as an OpenRouter key is configured.
+  const sessionKey = await ensureSession(chatId);
+  let gatewayAccumulated = '';
+  let aborted = false;
+  let authoritativeText: string | null = null;
+  let turnUsage: { tokens: number | null; cached: number | null } = { tokens: null, cached: null };
+
+  activeRunSessionKeys.set(chatId, sessionKey);
+  try {
+    const turn = await openclawWs.runTurn({
+      sessionKey,
+      message: gatewayMessageBase,
+      onEvent,
+      attachments: gatewayAttachments.length > 0 ? gatewayAttachments : undefined,
+    });
+    gatewayAccumulated = turn.text;
+    aborted = turn.aborted;
+    authoritativeText = turn.authoritativeText;
+    // `usage` is absent from older stubs/mocks — keep the null default then.
+    if (turn.usage) turnUsage = turn.usage;
+  } finally {
+    activeRunSessionKeys.delete(chatId);
+  }
 
   // Picking the assistant text in priority order:
   //
@@ -469,7 +525,12 @@ async function runTurnLocked(opts: {
   const skipAssistant = aborted && finalText.trim().length === 0;
   const assistantMsg = skipAssistant
     ? null
-    : messages.append(chatId, 'assistant', finalText, aborted ? 'aborted' : null);
+    : messages.append(
+        chatId, 'assistant', finalText, aborted ? 'aborted' : null, null, null,
+        // Stamp the execute (OpenClaw) mode + dev-mode token usage resolved from
+        // the gateway history slice, mirroring the Work/Secure path.
+        'execute', turnUsage.tokens, turnUsage.cached,
+      );
   if (assistantMsg) {
     wsHub.broadcastToChat(chatId, {
       type: 'message-appended',
@@ -478,6 +539,7 @@ async function runTurnLocked(opts: {
     });
     syncSidebarUnread(chatId);
   }
+
 
   // Persistent "Stopped by user" marker. Lives in `messages` so it
   // survives page reload + lands in the iClaw-cloud share payload.
@@ -510,6 +572,22 @@ async function runTurnLocked(opts: {
       userMessage: storedUserContent,
       assistantText: finalText,
       assistantMessageId: assistantMsg.id,
+    });
+
+    // Procedural memory: throttled skill review (heavier than fact extraction,
+    // so only every Nth substantive turn). MVP untrusted heuristic: a tool-using
+    // turn with network reach may have ingested external content (web/email/etc.),
+    // so its distilled skills are flagged for extra scrutiny in the inbox.
+    // (This site handles Ask/Execute; Work/Secure returns earlier — see above.)
+    scheduleProjectSkillReview({
+      chatId,
+      projectId: chatAfter.project_id,
+      sharesToProject: Boolean(chatAfter.shares_to_project),
+      substantive: usedTools,
+      userMessage: storedUserContent,
+      assistantText: finalText,
+      assistantMessageId: assistantMsg.id,
+      untrusted: usedTools && Boolean(opts.networkEnabled),
     });
   }
 
@@ -584,6 +662,14 @@ export async function sendMessage(opts: {
   incomingAttachments?: IncomingAttachment[];
   /** Files already on disk (queued-message flush). */
   prePersistedAttachments?: MessageAttachment[];
+  /** 'ask' | 'execute'. Defaults to 'execute' when omitted. */
+  mode?: ChatMode;
+  /** Allowed folders for Work Mode, each with a read-only / read&write flag. */
+  workFolders?: WorkFolder[];
+  /** Network toggle for Secure Mode. */
+  networkEnabled?: boolean;
+  /** TTL in days for Secure Mode workspace. */
+  ttlDays?: number;
 }): Promise<{ chatId: number }> {
   let chatId = opts.chatId;
   let isFirstTurn = false;
@@ -629,6 +715,10 @@ export async function sendMessage(opts: {
         incomingAttachments: opts.incomingAttachments,
         prePersistedAttachments: opts.prePersistedAttachments,
         inlineSecrets: opts.inlineSecrets,
+        mode: opts.mode,
+        workFolders: opts.workFolders,
+        networkEnabled: opts.networkEnabled,
+        ttlDays: opts.ttlDays,
       }),
     );
   } catch (err) {
@@ -663,7 +753,463 @@ export async function sendMessage(opts: {
   return { chatId };
 }
 
+/** Build system prompt for Work/Secure Mode including project context. */
+function buildWorkSystemPrompt(chatId: number): string {
+  const chat = chats.get(chatId);
+  const lines: string[] = [];
+
+  if (chat?.project_id) {
+    const project = projects.get(chat.project_id);
+    if (project?.name) lines.push(`Project: ${project.name}`);
+    if (project?.description) lines.push(`Description: ${project.description}`);
+
+    const facts = projectFacts.listByProject(chat.project_id, 20);
+    if (facts.length > 0) {
+      lines.push('\nProject context:');
+      facts.forEach((f) => lines.push(`- ${f.content}`));
+    }
+
+    const skillsBlock = buildSkillsPromptBlock(chat.project_id);
+    if (skillsBlock) {
+      lines.push('\n' + skillsBlock);
+    }
+  }
+
+  return lines.length > 0 ? lines.join('\n') : '';
+}
+
+/**
+ * Persistent Work Mode sessions — one per chat, reused across turns. We store
+ * the folder signature alongside the sessionId so a mid-chat change to the
+ * folder set or a folder's read-only/read&write flag forces the session to be
+ * recreated with the new access (folderAccess is fixed at session creation).
+ */
+const workSessions = new Map<
+  number,
+  { sessionId: string; foldersKey: string; secure: boolean; skillsKey: string }
+>();
+
+/**
+ * Stable signature of the folders granted to a chat. Order-independent so the
+ * key only changes when a path or its readonly flag actually changes.
+ */
+function foldersSignature(folders?: WorkFolder[]): string {
+  if (!folders?.length) return '';
+  return JSON.stringify(
+    folders
+      .map((f) => ({ p: f.path, r: f.readonly }))
+      .sort((a, b) => a.p.localeCompare(b.p)),
+  );
+}
+
+/**
+ * Stable signature of the active skills injected into a chat's session. Changes
+ * when a skill is accepted/edited/deleted (id+version), so the work session is
+ * recreated with the new skill set without a manual restart — same class of fix
+ * as folder-access / Work<->Secure mode changes.
+ */
+function skillsSignature(chatId: number): string {
+  const chat = chats.get(chatId);
+  if (!chat?.project_id) return '';
+  const idx = projectSkills.listForProject(chat.project_id);
+  if (idx.length === 0) return '';
+  return idx
+    .map((s) => `${s.id}:${s.version}`)
+    .sort()
+    .join(',');
+}
+
+/**
+ * Skill-review cadence for Work/Secure. Smaller than the Ask/Execute interval:
+ * these turns are agentic and tool-heavy, so each one is more likely to contain
+ * a reusable procedure worth distilling.
+ */
+const WORK_SKILL_REVIEW_INTERVAL = 4;
+
+/** Get the runtime sessionId for a chat (if active). */
+export function getWorkSessionId(chatId: number): string | undefined {
+  return workSessions.get(chatId)?.sessionId;
+}
+
+/**
+ * Destroy a chat's Work/Safe runtime session — stops the container AND deletes
+ * the workspace (the Safe sandbox copy and anything in it). Backs the
+ * "Destroy sandbox" button. The map entry is cleared so the next turn starts a
+ * fresh session (re-ingesting any selected folders for Safe Mode).
+ */
+export async function destroyWorkSession(chatId: number): Promise<boolean> {
+  const sessionId = workSessions.get(chatId)?.sessionId;
+  workSessions.delete(chatId);
+  if (!sessionId) return false;
+  try {
+    await stopWorkSession(sessionId);
+  } catch {
+    /* best-effort — the map is already cleared, so a stale session just TTLs out. */
+  }
+  return true;
+}
+
+/** Export a chat's Safe sandbox to a host folder. */
+export async function exportChatSandbox(chatId: number, destDir?: string): Promise<ExportResult> {
+  const sessionId = workSessions.get(chatId)?.sessionId;
+  if (!sessionId) return { ok: false, error: 'no active sandbox for this chat' };
+  return exportSandbox(sessionId, destDir);
+}
+
+/** Apply a chat's Safe sandbox changes back to the original folders. */
+export async function applyChatSandboxChanges(chatId: number): Promise<ApplyResult[]> {
+  const sessionId = workSessions.get(chatId)?.sessionId;
+  if (!sessionId) return [];
+  return applySandboxChanges(sessionId);
+}
+
+/** Secure workspaces live here (mirrors the runtime's SECURE_DATA_DIR default). */
+const SECURE_WORKSPACE_ROOT = process.env.ICLAW_SECURE_DATA_DIR || joinPath(homedir(), '.iclaw', 'secure');
+
+/**
+ * Defense-in-depth for show_image: the runtime already validates the image is
+ * inside an allowed folder before emitting the event, but the host independently
+ * re-checks the absolute path lies under a root this chat legitimately controls
+ * — its granted Work folders, or (Secure) the runtime's workspace root — before
+ * copying anything into the chat's uploads.
+ */
+function imagePathAllowed(hostPath: string, opts: { workFolders?: WorkFolder[]; secure?: boolean }): boolean {
+  const abs = resolvePath(hostPath);
+  const roots: string[] = [];
+  if (opts.secure) roots.push(resolvePath(SECURE_WORKSPACE_ROOT));
+  for (const f of opts.workFolders ?? []) roots.push(resolvePath(f.path));
+  return roots.some((root) => abs === root || abs.startsWith(root + pathSep));
+}
+
+/**
+ * Route a Work Mode turn to iclaw-runtime.
+ * Reuses the session across turns to preserve conversation history.
+ */
+async function runWorkModeTurn(opts: {
+  chatId: number;
+  content: string;
+  onEvent: (event: TurnEvent) => void;
+  workFolders?: WorkFolder[];
+  secure?: boolean;
+  networkEnabled?: boolean;
+  ttlDays?: number;
+  /** Current user message id — history before it seeds the session context. */
+  beforeMsgId?: number;
+  /** Original (stored) user text for skill review — without injected project prefix. */
+  reviewUserMessage?: string;
+  /** Dropped files (absolute host paths) to forward to the runtime agent. */
+  attachments?: { path: string; mimeType: string; fileName: string }[];
+}): Promise<void> {
+  const { chatId, content, onEvent } = opts;
+
+  // Mode and folder access are baked in at session creation. Tear the session
+  // down (so it's recreated below) when either changed since it was created:
+  //   - the mode switched Work↔Secure, or
+  //   - (Work only) the folder set or a read-only/read&write flag changed.
+  // Without this, switching mode or toggling a folder in the UI is silently
+  // ignored — the chat keeps running on the stale session.
+  const wantSecure = !!opts.secure;
+  const foldersKey = wantSecure ? '' : foldersSignature(opts.workFolders);
+  const skillsKey = skillsSignature(chatId);
+  const existing = workSessions.get(chatId);
+  if (
+    existing &&
+    (existing.secure !== wantSecure ||
+      (!wantSecure && existing.foldersKey !== foldersKey) ||
+      existing.skillsKey !== skillsKey)
+  ) {
+    await stopWorkSession(existing.sessionId).catch(() => {});
+    workSessions.delete(chatId);
+    const note =
+      existing.secure !== wantSecure
+        ? `Mode changed — restarted the session in ${wantSecure ? 'Secure' : 'Work'} mode.`
+        : existing.skillsKey !== skillsKey &&
+            existing.foldersKey === foldersKey
+          ? 'Project skills changed — restarted the work session with the updated skills.'
+          : 'Folder access changed — restarted the work session with the new permissions.';
+    const sys = messages.append(chatId, 'system', note, null);
+    wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+  }
+
+  // Reuse existing session for this chat, or create a new one
+  let sessionId = workSessions.get(chatId)?.sessionId;
+  if (!sessionId) {
+    try {
+      // Per-folder access drives both the allowed-path list and read-only
+      // enforcement. Secure Mode ignores it (the sandbox workspace is the only
+      // mount); when no folders are chosen we fall back to HOME with write
+      // access, preserving prior behavior.
+      const hasFolders = !opts.secure && !!opts.workFolders?.length;
+      const folderAccess = hasFolders ? opts.workFolders : undefined;
+      const allowedFolders = hasFolders
+        ? opts.workFolders!.map((f) => f.path)
+        : [process.env.HOME ?? ''].filter(Boolean);
+      // Safe Mode: the folders the user picked are COPIED into the isolated
+      // sandbox (originals untouched), not bind-mounted live like Work Mode.
+      const copyFolders =
+        opts.secure && opts.workFolders?.length
+          ? opts.workFolders.map((f) => f.path)
+          : undefined;
+      // Seed the (possibly restored) session with compacted prior history from
+      // our DB, so context survives runtime restarts (older turns summarized).
+      const history = opts.beforeMsgId
+        ? await buildCompactedHistory(chatId, opts.beforeMsgId)
+        : undefined;
+      sessionId = await createWorkSession({
+        allowedFolders,
+        folderAccess,
+        copyFolders,
+        secure: opts.secure,
+        systemPrompt: buildWorkSystemPrompt(chatId),
+        // Stable key → the chat reconnects to its persisted Secure workspace
+        // (and its running TTL) after a runtime restart.
+        key: `chat:${chatId}`,
+        history,
+      });
+      workSessions.set(chatId, { sessionId, foldersKey, secure: wantSecure, skillsKey });
+    } catch (err) {
+      const note = `Work Mode runtime unavailable. (${err instanceof Error ? err.message : String(err)})`;
+      const sys = messages.append(chatId, 'system', note, 'work-unavailable');
+      wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+      return;
+    }
+  }
+
+  // Safe Mode: forward the current folder selection every turn so folders added
+  // mid-chat get copied into the live sandbox (the runtime ingests new ones only).
+  const turnCopyFolders =
+    opts.secure && opts.workFolders?.length
+      ? opts.workFolders.map((f) => f.path)
+      : undefined;
+  try {
+    await sendWorkMessage(sessionId, content, opts.networkEnabled, opts.ttlDays, opts.attachments, turnCopyFolders);
+  } catch (err) {
+    // Session may have expired — retry with a fresh one
+    workSessions.delete(chatId);
+    const note = `Work Mode session lost, please resend. (${err instanceof Error ? err.message : String(err)})`;
+    const sys = messages.append(chatId, 'system', note, null);
+    wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let accumulated = '';
+    // Images the agent surfaced via show_image this turn — attached to the reply
+    // row so they render inline (on `done`, and again from the DB on reload).
+    const turnAttachments: MessageAttachment[] = [];
+    // Savings notes arrive mid-stream (when a tool truncates), but we want them
+    // rendered BELOW the assistant's reply, not above it. So buffer them and
+    // flush as system rows only after the assistant row is appended on `done`.
+    const savingsTexts: string[] = [];
+    const unsubscribe = subscribeWorkEvents(
+      sessionId!,
+      (event) => {
+        if (event.type === 'text') {
+          accumulated += event.content;
+          onEvent({ type: 'text-delta', text: event.content });
+        } else if (event.type === 'tool_start') {
+          // Surface what the agent is doing right now (live status label, e.g.
+          // "Searching social media…"). Reuses the same turn-tool pipeline the
+          // gateway path uses; without this Work/Secure showed only "Thinking…".
+          onEvent({
+            type: 'tool-start',
+            name: event.name,
+            label: toolActivityLabel(event.name),
+            detail: toolActivityDetail(event.name, event.input),
+          });
+        } else if (event.type === 'tool_result') {
+          onEvent({ type: 'tool-end', name: event.name });
+        } else if (event.type === 'note') {
+          // A tool gave the model less than the full content — surface the saving
+          // as a friendly, plain-language chat note (no jargon: no "tokens",
+          // "output", "command"). When we have a real measured percentage we show
+          // it; otherwise (search line-trimming, where ripgrep never reports how
+          // much it dropped) we stay quantity-free rather than invent a number.
+          // The "ніж звичайні помічники" framing is a category claim anchored to
+          // the naive approach (load the whole file) — never a per-competitor
+          // benchmark, which we don't measure.
+          const n = event.note;
+          const text =
+            typeof n.savedPct === 'number'
+              ? `iClaw обробив це на ${n.savedPct}% економніше, ніж звичайні помічники 💚`
+              : `iClaw обробив це економніше, ніж звичайні помічники 💚`;
+          if (!savingsTexts.includes(text)) savingsTexts.push(text); // dedupe within a turn
+        } else if (event.type === 'image') {
+          // show_image: copy the agent's image (already on the host — a Work
+          // bind-mount or a Secure workspace) into this chat's uploads and queue
+          // it as an attachment. Re-validate the path host-side before touching
+          // the file; silently skip anything that fails (never break the turn).
+          if (imagePathAllowed(event.path, opts)) {
+            const att = persistAgentImage(chatId, event.path);
+            if (att) turnAttachments.push(att);
+          }
+        } else if (event.type === 'done') {
+          if (accumulated.trim() || turnAttachments.length > 0) {
+            // Stamp the assistant row with the actual turn mode (secure/work),
+            // not the append() default of 'execute'. Keeps history + UI honest.
+            // `tokens` powers the dev-mode usage badge (null when not reported).
+            const assistantMsg = messages.append(
+              chatId, 'assistant', accumulated, null, null,
+              turnAttachments.length > 0 ? turnAttachments : null,
+              opts.secure ? 'secure' : 'work', event.tokens ?? null, event.cached ?? null,
+            );
+            wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });
+
+            // Procedural memory: review Work/Secure turns too. These are agentic
+            // and tool-capable by nature, so every completed turn counts as
+            // "substantive". Untrusted heuristic: a turn with network reach may
+            // have ingested external content (web/email/etc.). Throttled with a
+            // smaller interval than Ask/Execute. Fire-and-forget.
+            const chatNow = chats.get(chatId);
+            if (chatNow?.project_id != null && projects.get(chatNow.project_id)) {
+              scheduleProjectSkillReview({
+                chatId,
+                projectId: chatNow.project_id,
+                sharesToProject: Boolean(chatNow.shares_to_project),
+                substantive: true,
+                userMessage: opts.reviewUserMessage ?? content,
+                assistantText: accumulated,
+                assistantMessageId: assistantMsg.id,
+                untrusted: Boolean(opts.networkEnabled),
+                interval: WORK_SKILL_REVIEW_INTERVAL,
+              });
+            }
+          }
+          // Now that the reply row exists, drop the savings note(s) UNDER it.
+          for (const text of savingsTexts) {
+            const sys = messages.append(chatId, 'system', text, 'savings');
+            wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+          }
+          unsubscribe();
+          resolve();
+        } else if (event.type === 'error') {
+          const sys = messages.append(chatId, 'system', `Work Mode error: ${event.message}`, null);
+          wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+          unsubscribe();
+          resolve();
+        }
+      },
+      (err) => {
+        // Ignore "aborted" — it just means the SSE stream closed normally
+        if (err.message !== 'aborted') {
+          const sys = messages.append(chatId, 'system', `Work Mode connection error: ${err.message}`, null);
+          wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: sys });
+        }
+        resolve();
+      },
+    );
+  });
+}
+
+/**
+ * Incognito turns — fully ephemeral. Keyed by a client-generated string (the
+ * browser's in-RAM chat id), NOT a DB chat. Nothing is persisted: no message
+ * rows, no chat row, no facts/skills review. Output streams to the caller, who
+ * forwards it to the originating socket only. The runtime session enforces
+ * read-only + read-anywhere + web_fetch (incognito:true).
+ */
+const incognitoSessions = new Map<string, { sessionId: string; foldersKey: string }>();
+
+export type IncognitoEvent =
+  | { type: 'text-delta'; text: string }
+  | { type: 'tool'; name: string }
+  | { type: 'error'; message: string };
+
+export async function runIncognitoTurn(opts: {
+  key: string;
+  content: string;
+  workFolders?: WorkFolder[];
+  onEvent: (event: IncognitoEvent) => void;
+}): Promise<{ tokens?: number; cached?: number }> {
+  const { key, content, onEvent } = opts;
+
+  // Recreate the runtime session if the selected folders changed (the shell's
+  // :ro mounts are baked in at creation), mirroring the Work path.
+  const foldersKey = foldersSignature(opts.workFolders);
+  const existing = incognitoSessions.get(key);
+  if (existing && existing.foldersKey !== foldersKey) {
+    await stopWorkSession(existing.sessionId).catch(() => {});
+    incognitoSessions.delete(key);
+  }
+
+  let sessionId = incognitoSessions.get(key)?.sessionId;
+  if (!sessionId) {
+    try {
+      const folderAccess = opts.workFolders?.length ? opts.workFolders : undefined;
+      // No HOME fallback: incognito reads anywhere via the runtime, and with no
+      // folders the read-only shell is simply unavailable (file/web tools work).
+      const allowedFolders = folderAccess ? folderAccess.map((f) => f.path) : [];
+      sessionId = await createWorkSession({
+        allowedFolders,
+        folderAccess,
+        incognito: true,
+        key: `incognito:${key}`,
+      });
+      incognitoSessions.set(key, { sessionId, foldersKey });
+    } catch (err) {
+      onEvent({ type: 'error', message: `Incognito runtime unavailable. (${err instanceof Error ? err.message : String(err)})` });
+      return {};
+    }
+  }
+
+  try {
+    await sendWorkMessage(sessionId, content);
+  } catch (err) {
+    incognitoSessions.delete(key);
+    onEvent({ type: 'error', message: `Incognito session lost, please resend. (${err instanceof Error ? err.message : String(err)})` });
+    return {};
+  }
+
+  return await new Promise<{ tokens?: number; cached?: number }>((resolve) => {
+    const unsubscribe = subscribeWorkEvents(
+      sessionId!,
+      (event) => {
+        if (event.type === 'text') {
+          onEvent({ type: 'text-delta', text: event.content });
+        } else if (event.type === 'tool_start') {
+          onEvent({ type: 'tool', name: event.name });
+        } else if (event.type === 'done') {
+          unsubscribe();
+          resolve({ tokens: event.tokens, cached: event.cached });
+        } else if (event.type === 'error') {
+          onEvent({ type: 'error', message: event.message });
+          unsubscribe();
+          resolve({});
+        }
+      },
+      (err) => {
+        if (err.message !== 'aborted') onEvent({ type: 'error', message: err.message });
+        resolve({});
+      },
+    );
+  });
+}
+
+/** Stop and forget an incognito session (abort / tab close). */
+export async function abortIncognito(key: string): Promise<void> {
+  const e = incognitoSessions.get(key);
+  if (!e) return;
+  incognitoSessions.delete(key);
+  await stopWorkSession(e.sessionId).catch(() => {});
+}
+
 export async function abortChatRun(chatId: number): Promise<void> {
+  // Execute: abort the OpenClaw run on the session actually executing this turn.
+  const active = activeRunSessionKeys.get(chatId);
+  if (active && active.startsWith('agent:')) {
+    await openclawWs.abortRun(active);
+    return;
+  }
+  // Work / Secure: a runtime turn. Abort it without destroying the session —
+  // the workspace and warm container survive (unlike stopWorkSession). This is
+  // what makes the header Stop button work for Work and Sandbox, not just
+  // OpenClaw/Execute.
+  const workSessionId = getWorkSessionId(chatId);
+  if (workSessionId) {
+    await abortWorkSession(workSessionId).catch(() => {});
+    return;
+  }
+  // Fallback: abort the chat's main OpenClaw session if it's mid-run.
   const chat = chats.get(chatId);
   if (!chat) return;
   if (chat.openclaw_session_id?.startsWith('agent:')) {

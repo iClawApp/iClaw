@@ -10,9 +10,11 @@
  */
 
 import type {
+  ChatMode,
   Message,
   Project,
   ProjectFact,
+  ProjectSkill,
   QueuedMessage,
   ScheduledMessage,
   TaskWithSteps,
@@ -39,6 +41,12 @@ export type ClientMsg =
       content: string;
       agent?: string;
       projectId?: number | null;
+      /**
+       * How to handle this message — 'execute' (full agent, default),
+       * 'work' / 'secure' / 'incognito' (iclaw-runtime). Omitted/unknown →
+       * server treats it as 'execute'. See services/chatModes.ts.
+       */
+      mode?: ChatMode;
       /** Reply to an existing user/assistant row in this chat (quote ≤240 chars). */
       replyTo?: { messageId: number; quote: string; role?: string };
       /**
@@ -62,6 +70,21 @@ export type ClientMsg =
     }
   /** Abort a running turn for this chat. */
   | { type: 'abort'; chatId: number }
+  /**
+   * Incognito turn — ephemeral, never persisted. `key` is the browser's in-RAM
+   * chat id (not a DB chatId). The server streams `incognito-*` events back to
+   * THIS socket only. `workFolders` mirrors the `send` field (folders are forced
+   * read-only in incognito).
+   */
+  | {
+      type: 'incognito-send';
+      key: string;
+      content: string;
+      requestId?: string;
+      workFolders?: Array<{ path: string; readonly?: boolean } | string>;
+    }
+  /** Abort / forget an incognito session. */
+  | { type: 'incognito-abort'; key: string }
   /** Resolve a pending exec approval — `decision` is 'approved' | 'denied'. */
   | {
       type: 'exec-approval';
@@ -85,6 +108,12 @@ export type ServerMsg =
   | { type: 'hello'; serverStarted: number }
   | { type: 'pong' }
 
+  /* ---- incognito (ephemeral; keyed by the browser's in-RAM chat id) ---- */
+  | { type: 'incognito-turn-delta'; key: string; text: string }
+  | { type: 'incognito-turn-tool'; key: string; name: string }
+  | { type: 'incognito-turn-ended'; key: string; tokens?: number; cached?: number }
+  | { type: 'incognito-error'; key: string; message: string }
+
   /* ---- chat lifecycle ---- */
   | {
       type: 'chat-created';
@@ -107,8 +136,8 @@ export type ServerMsg =
       projectName?: string | null;
       /** Toggle on whether the chat writes facts back to the project. */
       sharesToProject?: boolean;
-      /** Reasoning visibility mode mirror — 'off' | 'on' | 'stream'. */
-      reasoningMode?: 'off' | 'on' | 'stream';
+      /** Sticky composer send-mode mirror (e.g. 'work' | 'secure' | 'execute'). */
+      mode?: string;
       /** Present after mutations that bump `chats.updated_at` — flat sidebar order. */
       updatedAt?: string;
     }
@@ -170,6 +199,31 @@ export type ServerMsg =
       suggestions: { id: number; content: string }[];
     }
   | { type: 'project-fact-suggestion-removed'; chatId: number; suggestionId: number }
+
+  /* ---- project skills (procedural memory) ---- */
+  | { type: 'project-skill-added'; projectId: number; skill: ProjectSkill }
+  | { type: 'project-skill-updated'; projectId: number; skill: ProjectSkill }
+  | { type: 'project-skill-deleted'; projectId: number; skillId: number }
+  /**
+   * After a turn, proposed skills the user can accept into project memory
+   * (confirm in chat). Card list carries summary fields only; the full body is
+   * fetched via REST when the user expands/edits — keeps WS frames small.
+   */
+  | {
+      type: 'project-skill-suggestions';
+      chatId: number;
+      projectId: number;
+      projectName: string;
+      suggestions: {
+        id: number;
+        kind: 'new' | 'patch';
+        name: string;
+        description: string;
+        untrusted: boolean;
+        targetSkillId: number | null;
+      }[];
+    }
+  | { type: 'project-skill-suggestion-removed'; chatId: number; suggestionId: number }
 
   /* ---- scheduled messages (Telegram-style send-later) ---- */
   | { type: 'scheduled-added'; chatId: number; scheduled: ScheduledMessage }
@@ -233,8 +287,6 @@ export type ServerMsg =
       approvalId: string;
       decision: string;
     }
-  /** A turn lost a reasoning/analysis chunk — only emitted when reasoning is on. */
-  | { type: 'turn-reasoning'; chatId: number; text: string }
 
   /** Live mirror of the OpenClaw gateway health — drives the header badge. */
   | {

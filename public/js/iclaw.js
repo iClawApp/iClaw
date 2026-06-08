@@ -12,6 +12,20 @@
   // -------------------------------------------------------------------------
   // shared DOM handles + state
   // -------------------------------------------------------------------------
+  // In-app navigation. Through a tunnel a full browser navigation bounces via
+  // the passphrase gate ("Checking this device…") because it can't be E2E
+  // wrapped. When the encrypted transport is installed it exposes
+  // window.iclawE2eNavigate, which pulls the next page over the existing channel
+  // and swaps the document in place — no gate round trip. Outside the tunnel
+  // (helper absent) this is a normal navigation.
+  function goTo(url) {
+    if (typeof window.iclawE2eNavigate === 'function') {
+      window.iclawE2eNavigate(url);
+      return;
+    }
+    window.location.assign(url);
+  }
+
   const messagesEl = document.getElementById('messages');
   function getMessagesThreadEl() {
     return messagesEl?.querySelector(':scope > .messages-thread') ?? null;
@@ -42,6 +56,1349 @@
   const rawChatId = messagesEl?.dataset.chatId;
   const startedOnDraft = messagesEl?.dataset.draft === '1' || !rawChatId;
   let activeChatId = startedOnDraft ? null : Number(rawChatId);
+
+  // -------------------------------------------------------------------------
+  // composer mode (Ask / Execute). Mode rides along with each sent message.
+  // The set of selectable modes is rendered server-side from the config in
+  // services/chatModes.ts, so adding a mode there surfaces it here with no
+  // client change. Default + back-compat fallback is 'execute'.
+  // -------------------------------------------------------------------------
+  const MODE_STORAGE_KEY = rawChatId ? `iclaw:composer-mode:${rawChatId}` : 'iclaw:composer-mode';
+  const composerModesEl = document.getElementById('composer-modes');
+  const composerModeBtn = document.getElementById('composer-mode-btn');
+  const composerModeMenu = document.getElementById('composer-mode-menu');
+  const composerModeLabel = document.getElementById('composer-mode-label');
+  const composerModeDefault =
+    composerModesEl?.dataset.defaultMode || 'execute';
+  const composerModeIds = composerModeMenu
+    ? Array.from(composerModeMenu.querySelectorAll('.composer-mode-menu-item')).map(
+        (el) => el.dataset.mode,
+      )
+    : [composerModeDefault];
+  let selectedComposerMode = composerModeDefault;
+
+  // True when an OpenRouter key is configured. Derived from the rendered menu:
+  // locked (needs-key) items are only emitted when there's no key. Drives the
+  // connect chooser + the Full Power "switch mode" overlay (the runtime modes
+  // are the only fallback for a dead gateway, and they need the key).
+  const openRouterReady =
+    !!composerModeMenu &&
+    !composerModeMenu.querySelector('.composer-mode-menu-item[data-requires-key="1"]');
+
+  /** True when a mode is shown but locked behind a missing OpenRouter key. */
+  function isModeLocked(id) {
+    if (!composerModeMenu) return false;
+    const el = composerModeMenu.querySelector(
+      '.composer-mode-menu-item[data-mode="' + id + '"]',
+    );
+    return !!el && el.dataset.requiresKey === '1';
+  }
+
+  /** Currently selected send mode (always one of the rendered, enabled ids). */
+  function getComposerMode() {
+    return composerModeIds.includes(selectedComposerMode)
+      ? selectedComposerMode
+      : composerModeDefault;
+  }
+
+  function setComposerMode(mode, opts) {
+    let next = composerModeIds.includes(mode) ? mode : composerModeDefault;
+    // Don't land on a locked mode that isn't the default (e.g. a chat last used
+    // in a runtime mode after the key was removed) — fall back to the default.
+    // The default itself MAY be a locked Work (no OpenClaw + no key); that's
+    // intended, and the connect chooser fires on first send.
+    if (isModeLocked(next)) next = composerModeDefault;
+    // Remember the mode we leave when entering Incognito, so the × can restore it.
+    if (next === 'incognito' && selectedComposerMode !== 'incognito') {
+      incognitoReturnMode = selectedComposerMode;
+    }
+    selectedComposerMode = next;
+    if (composerModeBtn) composerModeBtn.dataset.mode = next;
+    if (composerModeMenu) {
+      composerModeMenu.querySelectorAll('.composer-mode-menu-item').forEach((el) => {
+        const on = el.dataset.mode === next;
+        el.setAttribute('aria-checked', on ? 'true' : 'false');
+        if (composerModeLabel && on) {
+          const t = el.querySelector('.menu-item__title');
+          composerModeLabel.textContent = t ? t.textContent : next;
+        }
+        if (on) {
+          const desc = el.querySelector('.composer-mode-menu-item__desc');
+          if (composerModeBtn && desc) composerModeBtn.title = desc.textContent || '';
+        }
+      });
+    }
+    // Never persist incognito as a chat's default mode — it's a transient,
+    // explicitly-entered surface, not a sticky preference.
+    if ((!opts || opts.persist !== false) && next !== 'incognito') {
+      try { localStorage.setItem(MODE_STORAGE_KEY, next); } catch (_) {}
+      // Persist server-side too, so the mode sticks across page navigation and
+      // syncs across devices — not just this browser's localStorage. Drafts have
+      // no chat id yet (mode rides along with the first message); once the chat
+      // exists the server row (chats.mode) is the source of truth on reload.
+      if (activeChatId != null) {
+        fetch('/chats/' + encodeURIComponent(activeChatId) + '/mode', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode: next }),
+        }).catch(function () {});
+      }
+    }
+    // Incognito: tint the surface + show the "nothing saved" banner, and start a
+    // fresh ephemeral session each time the mode is (re)entered.
+    if (typeof syncIncognitoSurface === 'function') syncIncognitoSurface(next);
+    syncExecuteAvailability();
+    if (typeof syncDockerAvailability === 'function') syncDockerAvailability();
+    syncAgentVisibility(next);
+  }
+
+  /**
+   * The Agent picker selects an OpenClaw agent session, which only affects Full
+   * Power (Execute). Work / Safe work / Incognito route to iclaw-runtime and
+   * ignore it — so hide it there instead of implying a choice that does nothing.
+   * Mode is per-message, so this re-runs on every mode change. (When only Execute
+   * is selectable the mode menu isn't rendered and this never hides it.)
+   */
+  function syncAgentVisibility(mode) {
+    const m = mode || getComposerMode();
+    document.querySelectorAll('.agent-form').forEach((el) => {
+      el.hidden = m !== 'execute';
+    });
+  }
+
+  // ── Full Power (Execute) gating ───────────────────────────────────────────
+  // Execute routes to the OpenClaw gateway; the runtime modes don't. When the
+  // gateway is off we mute the Full Power option and, if it's the selected mode,
+  // cover the input with an explanation (same treatment as the drag-drop overlay)
+  // so the user switches mode instead of typing into a dead end.
+  const composerExecMsg = document.getElementById('composer-exec-msg');
+
+  // ── Docker gating (Safe-work sandbox) ─────────────────────────────────────
+  // We only block Safe work when Docker is NOT INSTALLED ('missing'). When it's
+  // merely stopped, the runtime starts it on demand the moment a task needs it
+  // (and auto-stops it when idle), so we don't block or nag. Work/Incognito are
+  // never blocked — file tools run on the host, run_command starts Docker lazily.
+  const composerDockerMsg = document.getElementById('composer-docker-msg');
+  let dockerState = 'unknown';
+  let dockerSizeHint = '';
+  let dockerPollTimer = null;
+
+  // Live "is the gateway usable for Full Power" flag. Seeded from the server via
+  // the composer form's data-gateway-ok, then kept current by applyGatewayStatus
+  // on every status change.
+  let gatewayOk = (function seedGatewayOk() {
+    if (form && form.dataset.gatewayOk != null) return form.dataset.gatewayOk !== '0';
+    return true; // no signal → don't block
+  })();
+
+  // The sidebar "Start OpenClaw" banner only makes sense when the user actually
+  // wants Full Power — the runtime modes (Work / Safe work / Incognito) never
+  // touch the gateway. Tracked here so BOTH a gateway-status change and a mode
+  // change re-evaluate the banner (see refreshGatewayOfflineBanner).
+  let gatewayOffline = false;
+
+  /** True only when OpenClaw is reachable for Full Power (Execute). */
+  function isExecuteAvailable() {
+    return gatewayOk;
+  }
+
+  /** Reflect gateway availability on the Full Power option + the input overlay. */
+  function syncExecuteAvailability() {
+    const avail = isExecuteAvailable();
+    if (composerModeMenu) {
+      const execItem = composerModeMenu.querySelector(
+        '.composer-mode-menu-item[data-mode="execute"]',
+      );
+      if (execItem) execItem.classList.toggle('is-unavailable', !avail);
+    }
+    // Full Power with the gateway down is only a "switch mode below" situation
+    // when the runtime modes are actually usable — i.e. an OpenRouter key is
+    // set. Without a key those modes are locked, so don't disable the input
+    // here; the submit handler surfaces the connect chooser instead.
+    const blocked =
+      !avail && getComposerMode() === 'execute' && openRouterReady;
+    if (form) form.classList.toggle('is-exec-disabled', blocked);
+    if (composerExecMsg) {
+      composerExecMsg.setAttribute('aria-hidden', blocked ? 'false' : 'true');
+    }
+    refreshComposerInputDisabled();
+    // The mode may have just changed — the sidebar "Start OpenClaw" banner is
+    // gated on Full Power too, so keep it in sync from the same funnel.
+    refreshGatewayOfflineBanner();
+  }
+
+  /**
+   * The composer input is disabled while ANY blocking overlay is up — Full
+   * Power with OpenClaw off, or a Docker-required mode with Docker off. Both
+   * overlays cover the textarea, so the send target would be hidden anyway;
+   * disabling input + send keeps keyboard submit from firing into nothing.
+   */
+  function refreshComposerInputDisabled() {
+    const blocked = !!(
+      form &&
+      (form.classList.contains('is-exec-disabled') ||
+        form.classList.contains('is-docker-disabled'))
+    );
+    if (input) input.disabled = blocked;
+    const sb = document.getElementById('composer-send-btn');
+    if (sb) sb.disabled = blocked;
+  }
+
+  /** True when the given mode can't run without a Docker daemon (Safe work). */
+  function modeRequiresDocker(mode) {
+    if (!composerModeMenu) return false;
+    const item = composerModeMenu.querySelector(
+      '.composer-mode-menu-item[data-mode="' + mode + '"]',
+    );
+    return !!item && item.dataset.requiresDocker === '1';
+  }
+
+  /**
+   * Reflect Docker state. We only BLOCK when Docker is genuinely unusable —
+   * i.e. not installed ('missing') — and only for a mode that can't run without
+   * it (Safe work). When Docker is merely stopped we don't block or nag: the
+   * runtime starts it on demand the moment a task needs it (and auto-stops it
+   * when idle). Work/Incognito are never blocked — their file tools run on the
+   * host and run_command starts Docker lazily. No-op until the first poll.
+   */
+  function syncDockerAvailability() {
+    const missing = dockerState === 'missing';
+    if (composerModeMenu) {
+      composerModeMenu.querySelectorAll('.composer-mode-menu-item').forEach((el) => {
+        if (el.dataset.requiresDocker === '1') {
+          // A key-locked mode (no OpenRouter) stays locked regardless of Docker.
+          el.classList.toggle('is-unavailable', missing || el.dataset.requiresKey === '1');
+        }
+      });
+    }
+    const mode = getComposerMode();
+    const blocked = missing && modeRequiresDocker(mode);
+    if (form) form.classList.toggle('is-docker-disabled', blocked);
+    if (composerDockerMsg) {
+      composerDockerMsg.setAttribute('aria-hidden', blocked ? 'false' : 'true');
+    }
+    applyDockerActionLabels();
+    refreshComposerInputDisabled();
+  }
+
+  /** Button copy reflects whether Docker is missing (Install) or just idle (Start). */
+  function applyDockerActionLabels() {
+    const installing = dockerState === 'installing';
+    const starting = dockerState === 'starting';
+    const needsInstall = dockerState === 'missing';
+    let label = needsInstall ? 'Install Docker' : 'Start Docker';
+    if (installing) label = 'Installing Docker…';
+    else if (starting) label = 'Starting Docker…';
+    const busy = installing || starting;
+
+    const mainBtn = document.getElementById('composer-docker-action');
+    if (mainBtn) {
+      mainBtn.textContent = label;
+      mainBtn.disabled = busy;
+    }
+    const sizeEl = document.getElementById('composer-docker-size');
+    if (sizeEl) sizeEl.textContent = needsInstall && !busy && dockerSizeHint ? dockerSizeHint : '';
+  }
+
+  function applyDockerState(next, sizeHint) {
+    dockerState = next || 'unknown';
+    if (typeof sizeHint === 'string' && sizeHint) dockerSizeHint = sizeHint;
+    syncDockerAvailability();
+  }
+
+  function pollDockerStatus(opts) {
+    fetch('/api/docker/status', { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        applyDockerState(data.state, data.sizeHint);
+        // Keep polling only while a start/install is in flight; otherwise the
+        // state is settled and the next change is user-driven (button click).
+        if (dockerState === 'installing' || dockerState === 'starting') {
+          dockerPollTimer = setTimeout(() => pollDockerStatus(opts), 2500);
+        }
+      })
+      .catch(() => {
+        if (opts && opts.keepAlive) dockerPollTimer = setTimeout(() => pollDockerStatus(opts), 4000);
+      });
+  }
+
+  function triggerDockerAction() {
+    // Missing → install (which also starts); installed-but-idle → just start.
+    const endpoint = dockerState === 'missing' ? '/api/docker/install' : '/api/docker/start';
+    // Optimistic transient state so the button shows progress immediately.
+    applyDockerState(dockerState === 'missing' ? 'installing' : 'starting', dockerSizeHint);
+    fetch(endpoint, { method: 'POST', headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.state) applyDockerState(data.state, dockerSizeHint);
+        if (dockerPollTimer) clearTimeout(dockerPollTimer);
+        pollDockerStatus({ keepAlive: true });
+      })
+      .catch(() => {
+        // Endpoint failed (e.g. non-localhost) — re-probe so the UI is honest.
+        if (dockerPollTimer) clearTimeout(dockerPollTimer);
+        pollDockerStatus({});
+      });
+  }
+
+  (function initDockerGate() {
+    const mainBtn = document.getElementById('composer-docker-action');
+    if (mainBtn) mainBtn.addEventListener('click', triggerDockerAction);
+    syncDockerAvailability();
+    // First real status read; thereafter polling only runs during an action.
+    pollDockerStatus({});
+  })();
+
+  // ── Incognito (ephemeral, never persisted) ────────────────────────────────
+  // The conversation lives only in this tab: messages render locally, the turn
+  // streams over `incognito-*` WS events keyed by `activeIncognitoKey`, and
+  // nothing is written to the DB. Reloading the page clears it.
+  let activeIncognitoKey = null;
+  let incognitoReturnMode = composerModeDefault;
+
+  function newIncognitoKey() {
+    return 'inc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  }
+
+  /**
+   * Leave Incognito → return to wherever we came from (that chat + the sidebar
+   * come back). Incognito ran on a fresh ephemeral surface, so we just navigate
+   * back; the ephemeral conversation is discarded.
+   */
+  function exitIncognito() {
+    let origin = '/';
+    try {
+      origin = sessionStorage.getItem('iclaw:incognito-origin') || '/';
+      sessionStorage.removeItem('iclaw:incognito-origin');
+    } catch (_) {}
+    window.location.assign(origin);
+  }
+
+  /** The fixed top-left × shown only in incognito. Created once, CSS toggles it. */
+  function ensureIncognitoExitButton() {
+    if (document.getElementById('incognito-exit')) return;
+    const btn = document.createElement('button');
+    btn.id = 'incognito-exit';
+    btn.type = 'button';
+    btn.className = 'incognito-exit';
+    btn.setAttribute('aria-label', 'Exit Incognito');
+    btn.title = 'Exit Incognito';
+    btn.innerHTML =
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+    btn.addEventListener('click', exitIncognito);
+    document.body.appendChild(btn);
+  }
+
+  function syncIncognitoSurface(mode) {
+    const on = mode === 'incognito';
+    document.body.classList.toggle('incognito-mode', on);
+    if (on) ensureIncognitoExitButton();
+    let banner = document.getElementById('incognito-banner');
+    if (on) {
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'incognito-banner';
+        banner.className = 'incognito-banner';
+        banner.innerHTML =
+          '<svg class="incognito-banner__icon" viewBox="0 0 24 24" fill="none" ' +
+          'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M2 12s3.5-7 10-7 10 7 10 7"/><path d="m4 4 16 16"/>' +
+          '<path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>' +
+          '<span>Incognito — read-only research. Your chat list is hidden, and this ' +
+          'conversation isn’t saved or added to project memory.</span>';
+        const root = typeof messagesAppendRoot === 'function' ? messagesAppendRoot() : messagesEl;
+        (root || messagesEl)?.prepend(banner);
+      }
+      // Fresh session whenever incognito is (re)selected.
+      activeIncognitoKey = null;
+    } else if (banner) {
+      banner.remove();
+    }
+  }
+
+  /**
+   * Finalize the streamed incognito reply (no message-appended for ephemeral
+   * turns): render the full markdown, strip the streaming chrome, and release
+   * the composer. Shared by the `incognito-turn-ended` event and the stop button.
+   */
+  function finalizeIncognitoStream() {
+    setStopVisible(false);
+    cancelStreamRender();
+    if (currentStreamEl) {
+      const body = currentStreamEl.querySelector('.stream-body, .msg-body');
+      if (body && currentStreamFullText.trim()) {
+        body.classList.remove('stream-body');
+        body.innerHTML = renderMarkdown(currentStreamFullText);
+        decorateMessageBody(body);
+        currentStreamEl.classList.remove('streaming', 'stream-waiting', 'stream-tool', 'stream-generating');
+        const st = currentStreamEl.querySelector('.stream-status');
+        if (st) { stopStreamStatusDotAnim(st); st.remove(); }
+      } else {
+        currentStreamEl.remove();
+      }
+      currentStreamEl = null;
+    }
+    currentStreamFullText = '';
+    streamShownLen = 0;
+    if (inFlight) { inFlight = false; if (waitingItems[0]) flushNextQueued(); }
+  }
+
+  function closeComposerModeMenu() {
+    if (!composerModeMenu) return;
+    composerModeMenu.hidden = true;
+    if (composerModeBtn) composerModeBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  if (composerModeBtn && composerModeMenu) {
+    // Initial mode precedence:
+    //   1. server-persisted chat mode (data-chat-mode = chats.mode) — authoritative,
+    //      survives navigation and syncs across devices.
+    //   2. per-chat localStorage (legacy / offline fallback, existing chats only).
+    //   3. the UI default (Work) — for new chats we ignore any stale GLOBAL
+    //      localStorage value so a fresh chat always starts on the default.
+    let stored = null;
+    if (rawChatId) {
+      try { stored = localStorage.getItem(MODE_STORAGE_KEY); } catch (_) {}
+    }
+    const chatMode = composerModesEl ? composerModesEl.dataset.chatMode : '';
+    setComposerMode(chatMode || stored || composerModeDefault, { persist: false });
+    // Entered via "Incognito" elsewhere → ?mode=incognito on a fresh surface.
+    try {
+      const _qp = new URLSearchParams(window.location.search);
+      if (_qp.get('mode') === 'incognito' && composerModeIds.includes('incognito')) {
+        setComposerMode('incognito', { persist: false });
+        window.history.replaceState({}, '', window.location.pathname); // tidy the URL
+      }
+    } catch (_) {}
+
+    composerModeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = composerModeMenu.hidden;
+      composerModeMenu.hidden = !open;
+      composerModeBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    const MODE_PLACEHOLDERS = {
+      work:      'Work inside selected folders',
+      secure:    'Run risky tasks in isolation',
+      incognito: 'Private read-only research — nothing saved',
+      execute:   'Use full iClaw power',
+    };
+
+    function updateComposerPlaceholder(mode) {
+      if (input) input.placeholder = MODE_PLACEHOLDERS[mode] || 'Ask anything';
+    }
+
+    composerModeMenu.addEventListener('click', (e) => {
+      const item = e.target.closest('.composer-mode-menu-item');
+      if (!item) return;
+      // Locked behind a missing OpenRouter key — re-offer connecting instead of
+      // switching into a mode that can't run.
+      if (item.dataset.requiresKey === '1') {
+        closeComposerModeMenu();
+        openConnectChooser();
+        return;
+      }
+      // Incognito is a separate ephemeral surface, not a flag on the current
+      // chat: open a fresh blank chat instead of converting this one. Remember
+      // where we came from so the × can bring us back.
+      if (item.dataset.mode === 'incognito' && !document.body.classList.contains('incognito-mode')) {
+        try { sessionStorage.setItem('iclaw:incognito-origin', window.location.pathname + window.location.search); } catch (_) {}
+        window.location.assign('/?mode=incognito');
+        return;
+      }
+      setComposerMode(item.dataset.mode);
+      closeComposerModeMenu();
+      updateComposerPlaceholder(item.dataset.mode);
+      if (typeof updateWorkFoldersButton === 'function') updateWorkFoldersButton();
+      input?.focus();
+    });
+
+    // Set placeholder on initial load
+    updateComposerPlaceholder(getComposerMode());
+    document.addEventListener('click', (e) => {
+      if (composerModeMenu.hidden) return;
+      if (composerModesEl && !composerModesEl.contains(e.target)) closeComposerModeMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !composerModeMenu.hidden) closeComposerModeMenu();
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Work Mode — folders picker
+  // -------------------------------------------------------------------------
+  const workFoldersBtn = document.getElementById('composer-work-folders-btn');
+  const workFoldersModal = document.getElementById('work-folders-modal');
+  const workFoldersList = document.getElementById('work-folders-list');
+  const workFoldersInput = document.getElementById('work-folders-input');
+  const workFoldersAddBtn = document.getElementById('work-folders-add-btn');
+  const workFoldersBrowseBtn = document.getElementById('work-folders-browse-btn');
+  const workFoldersClose = document.getElementById('work-folders-close');
+  const workFoldersBackdrop = document.getElementById('work-folders-backdrop');
+  const workFoldersCount = document.getElementById('composer-work-folders-count');
+
+  function workFoldersKey() {
+    const pid = messagesEl?.dataset.projectId;
+    if (pid) return `iclaw:work-folders:project:${pid}`;
+    return 'iclaw:work-folders:no-project';
+  }
+
+  // Folders are stored as { path, write }. Older clients stored bare path
+  // strings — migrate those to writable (their effective behavior at the time)
+  // so upgrading doesn't silently revoke access on existing folders. Newly
+  // added folders default to read-only (see addFolder / browse below).
+  function getWorkFolders() {
+    let raw;
+    try { raw = JSON.parse(localStorage.getItem(workFoldersKey()) || '[]'); }
+    catch { return []; }
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((f) => (typeof f === 'string'
+        ? { path: f, write: true }
+        : (f && typeof f === 'object' && typeof f.path === 'string'
+          ? { path: f.path, write: f.write === true }
+          : null)))
+      .filter(Boolean);
+  }
+
+  function saveWorkFolders(folders) {
+    try { localStorage.setItem(workFoldersKey(), JSON.stringify(folders)); } catch {}
+  }
+
+  function escAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function renderWorkFoldersList() {
+    if (!workFoldersList) return;
+    const folders = getWorkFolders();
+    workFoldersList.innerHTML = '';
+    for (const f of folders) {
+      const p = escAttr(f.path);
+      const li = document.createElement('li');
+      li.className = 'work-folders-list__item';
+      const label = f.write ? 'Read & write' : 'Read-only';
+      li.innerHTML =
+        `<span class="work-folders-list__path" title="${p}">${p}</span>` +
+        `<button type="button" class="work-folders-list__access" data-path="${p}" data-write="${f.write ? '1' : '0'}" ` +
+        `title="Click to toggle access">${label}</button>` +
+        `<button type="button" class="work-folders-list__remove" data-path="${p}" aria-label="Remove">×</button>`;
+      workFoldersList.appendChild(li);
+    }
+    if (workFoldersCount) {
+      workFoldersCount.textContent = folders.length > 0 ? String(folders.length) : '';
+    }
+  }
+
+  // ── Network toggle (Secure Mode) ──────────────────────────────────────────
+  const networkToggleBtn = document.getElementById('composer-network-toggle-btn');
+
+  function networkKey() {
+    const pid = messagesEl?.dataset.projectId;
+    return pid ? `iclaw:secure-network:project:${pid}` : 'iclaw:secure-network:no-project';
+  }
+
+  function getNetworkEnabled() {
+    try { return localStorage.getItem(networkKey()) === 'on'; } catch { return false; }
+  }
+
+  function setNetworkEnabledStorage(on) {
+    try { localStorage.setItem(networkKey(), on ? 'on' : 'off'); } catch {}
+  }
+
+  function updateNetworkToggle() {
+    if (!networkToggleBtn) return;
+    const mode = getComposerMode();
+    networkToggleBtn.hidden = (mode !== 'secure');
+    const on = getNetworkEnabled();
+    networkToggleBtn.dataset.network = on ? 'on' : 'off';
+    networkToggleBtn.title = on ? 'Network is ON - click to disable' : 'Network is OFF - click to enable';
+    networkToggleBtn.style.color = on ? 'var(--accent)' : '';
+  }
+
+  networkToggleBtn?.addEventListener('click', () => {
+    const on = !getNetworkEnabled();
+    setNetworkEnabledStorage(on);
+    updateNetworkToggle();
+  });
+
+  function updateWorkFoldersButton() {
+    if (!workFoldersBtn) return;
+    const mode = getComposerMode();
+    // Incognito also uses folders — as read-only roots for its sandboxed shell.
+    workFoldersBtn.hidden = (mode !== 'work' && mode !== 'incognito');
+    renderWorkFoldersList();
+    updateNetworkToggle();
+  }
+
+  if (workFoldersBtn && workFoldersModal) {
+    workFoldersBtn.addEventListener('click', () => {
+      renderWorkFoldersList();
+      workFoldersModal.hidden = false;
+      workFoldersInput?.focus();
+    });
+
+    workFoldersList?.addEventListener('click', (e) => {
+      const removeBtn = e.target.closest('.work-folders-list__remove');
+      if (removeBtn) {
+        const path = removeBtn.dataset.path;
+        saveWorkFolders(getWorkFolders().filter((f) => f.path !== path));
+        renderWorkFoldersList();
+        return;
+      }
+      const accessBtn = e.target.closest('.work-folders-list__access');
+      if (accessBtn) {
+        const path = accessBtn.dataset.path;
+        const folders = getWorkFolders().map((f) =>
+          f.path === path ? { ...f, write: !f.write } : f);
+        saveWorkFolders(folders);
+        renderWorkFoldersList();
+      }
+    });
+
+    function addFolderPath(val) {
+      if (!val) return;
+      const folders = getWorkFolders();
+      if (!folders.some((f) => f.path === val)) {
+        // New folders default to read-only; user opts into write explicitly.
+        folders.push({ path: val, write: false });
+        saveWorkFolders(folders);
+        renderWorkFoldersList();
+      }
+    }
+
+    function addFolder() {
+      addFolderPath(workFoldersInput?.value.trim());
+      if (workFoldersInput) workFoldersInput.value = '';
+    }
+
+    workFoldersAddBtn?.addEventListener('click', addFolder);
+    workFoldersInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); addFolder(); }
+    });
+
+    workFoldersBrowseBtn?.addEventListener('click', async () => {
+      workFoldersBrowseBtn.disabled = true;
+      try {
+        const res = await fetch('/api/pick-folder', { method: 'POST' });
+        if (res.status === 204) return; // user cancelled
+        const data = await res.json();
+        if (data.path) addFolderPath(data.path);
+      } catch (e) {
+        console.error('pick-folder failed', e);
+      } finally {
+        workFoldersBrowseBtn.disabled = false;
+      }
+    });
+
+    const closeModal = () => { workFoldersModal.hidden = true; };
+    workFoldersClose?.addEventListener('click', closeModal);
+    workFoldersBackdrop?.addEventListener('click', closeModal);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !workFoldersModal.hidden) closeModal();
+    });
+  }
+
+  updateWorkFoldersButton();
+
+  // ── Secure workspace bar ─────────────────────────────────────────────────
+  const secureBar = document.getElementById('secure-workspace-bar');
+  const secureSizeEl = document.getElementById('secure-workspace-size');
+  const secureTtlEl = document.getElementById('secure-workspace-ttl');
+  const secureChangeBtn = document.getElementById('secure-workspace-change');
+  const secureTtlMenu = document.getElementById('secure-ttl-menu');
+
+  function secureTtlKey() {
+    const pid = messagesEl?.dataset.projectId;
+    return `iclaw:secure-ttl:${pid ? 'project:' + pid : 'chat:' + rawChatId}`;
+  }
+
+  function getSecureTtl() {
+    try {
+      const raw = localStorage.getItem(secureTtlKey());
+      return raw ? JSON.parse(raw) : { ttlDays: 7, lastActivity: Date.now() };
+    } catch { return { ttlDays: 7, lastActivity: Date.now() }; }
+  }
+
+  function saveSecureTtl(ttlDays) {
+    try {
+      localStorage.setItem(secureTtlKey(), JSON.stringify({ ttlDays, lastActivity: Date.now() }));
+    } catch {}
+  }
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function formatTtlRemaining(ttlDays, lastActivity) {
+    if (ttlDays === 0) return 'never expires';
+    // +15s demo buffer: holds the full day count for ~15s after each reset so
+    // users can see the countdown tick down (proof the TTL resets on activity).
+    const expiresAt = lastActivity + ttlDays * 86400_000 + 15_000;
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) return 'expired';
+    const days = Math.floor(remaining / 86400_000);
+    const hours = Math.floor((remaining % 86400_000) / 3600_000);
+    const mins = Math.floor((remaining % 3600_000) / 60_000);
+    const secs = Math.floor((remaining % 60_000) / 1000);
+    // More than 2 days: show only days (no hours)
+    if (days > 2) return `expires in ${days}d`;
+    if (days > 0) return `expires in ${days}d ${hours}h`;
+    if (hours > 0) return `expires in ${hours}h ${mins}m`;
+    if (mins > 0) return `expires in ${mins}m ${secs}s`;
+    return `expires in ${secs}s`;
+  }
+
+  // True when the secret hint UI is visible — it takes priority over the secure bar.
+  function secretUiVisible() {
+    const el = document.getElementById('composer-secret-ui');
+    return el && !el.hidden;
+  }
+
+  // Update only the TTL text (cheap, local — ticks every second).
+  function tickSecureTtl() {
+    if (!secureBar || secureBar.hidden) return;
+    const ttl = getSecureTtl();
+    if (secureTtlEl) secureTtlEl.textContent = formatTtlRemaining(ttl.ttlDays, ttl.lastActivity);
+  }
+
+  async function refreshSecureBar() {
+    if (!secureBar) return;
+    const mode = getComposerMode();
+    // Hide if not in Secure Mode, or if the secret UI is currently showing.
+    if (mode !== 'secure' || secretUiVisible() || !rawChatId) { secureBar.hidden = true; return; }
+
+    try {
+      const res = await fetch(`/chats/${rawChatId}/workspace-info`);
+      const data = await res.json();
+      // Only surface the bar once a secure session actually exists — i.e. after
+      // the first message. Nothing is created on the host until then.
+      if (!data.active) { secureBar.hidden = true; return; }
+      secureBar.hidden = false;
+      tickSecureTtl();
+      if (secureSizeEl) {
+        // Only show a size once there's actually something in the workspace —
+        // "0 B" is noise.
+        const size = data.workspaceSize != null ? data.workspaceSize : 0;
+        if (size > 0) {
+          secureSizeEl.textContent = formatBytes(size);
+          secureSizeEl.hidden = false;
+        } else {
+          secureSizeEl.textContent = '';
+          secureSizeEl.hidden = true;
+        }
+      }
+    } catch { secureBar.hidden = true; }
+  }
+
+  // Live countdown — updates the TTL text every second.
+  setInterval(tickSecureTtl, 1000);
+
+  secureChangeBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (secureTtlMenu) {
+      secureTtlMenu.hidden = !secureTtlMenu.hidden;
+    }
+  });
+
+  secureTtlMenu?.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-ttl]');
+    if (!item) return;
+    saveSecureTtl(Number(item.dataset.ttl));
+    secureTtlMenu.hidden = true;
+    refreshSecureBar();
+  });
+
+  // Export the sandbox out to a host folder (default ~/Downloads). Read-only —
+  // copies the sandbox contents to a fresh place, touches nothing of the user's.
+  const secureExportBtn = document.getElementById('secure-workspace-export');
+  secureExportBtn?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!rawChatId) return;
+    secureExportBtn.disabled = true;
+    const prev = secureExportBtn.textContent;
+    secureExportBtn.textContent = 'Exporting…';
+    try {
+      const res = await fetch(`/chats/${rawChatId}/export-sandbox`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: '{}',
+      });
+      const data = await res.json();
+      if (data && data.ok) alert(`Exported ${data.files != null ? data.files + ' files' : 'sandbox'} to:\n${data.path}`);
+      else alert(`Export failed: ${(data && data.error) || 'unknown error'}`);
+    } catch { alert('Export failed.'); }
+    secureExportBtn.disabled = false;
+    secureExportBtn.textContent = prev || 'Export';
+  });
+
+  // Apply: copy the sandbox's new/changed files back to the ORIGINAL folders.
+  // This writes to the user's real files, so it's confirmed and additive only.
+  const secureApplyBtn = document.getElementById('secure-workspace-apply');
+  secureApplyBtn?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!rawChatId) return;
+    if (!confirm('Apply the sandbox\'s new and changed files back to your original folders? Existing files may be overwritten; nothing is deleted.')) return;
+    secureApplyBtn.disabled = true;
+    const prev = secureApplyBtn.textContent;
+    secureApplyBtn.textContent = 'Applying…';
+    try {
+      const res = await fetch(`/chats/${rawChatId}/apply-sandbox`, {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      });
+      const data = await res.json();
+      const results = (data && data.results) || [];
+      if (results.length === 0) {
+        alert('Nothing to apply — no folders were copied into this sandbox.');
+      } else {
+        const lines = results.map((r) => r.ok
+          ? `• ${r.source}: ${(r.applied && r.applied.length) || 0} file(s)`
+          : `✗ ${r.source}: ${r.error}`);
+        alert('Applied changes:\n' + lines.join('\n'));
+      }
+    } catch { alert('Apply failed.'); }
+    secureApplyBtn.disabled = false;
+    secureApplyBtn.textContent = prev || 'Apply changes';
+  });
+
+  // Destroy the sandbox: deletes the copied workspace + container. The next
+  // message starts a fresh sandbox (re-copying any selected folders).
+  const secureDestroyBtn = document.getElementById('secure-workspace-destroy');
+  secureDestroyBtn?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!rawChatId) return;
+    if (!confirm('Destroy this sandbox? The copied files and anything created in it are deleted. Your original files are untouched.')) return;
+    secureDestroyBtn.disabled = true;
+    const prev = secureDestroyBtn.textContent;
+    secureDestroyBtn.textContent = 'Destroying…';
+    try {
+      await fetch(`/chats/${rawChatId}/destroy-workspace`, {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      });
+    } catch { /* best-effort */ }
+    secureDestroyBtn.disabled = false;
+    secureDestroyBtn.textContent = prev || 'Destroy';
+    refreshSecureBar();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (secureTtlMenu && !secureTtlMenu.hidden && !secureChangeBtn?.contains(e.target) && !secureTtlMenu.contains(e.target)) {
+      secureTtlMenu.hidden = true;
+    }
+  });
+
+  // Refresh bar when mode changes
+  composerModeMenu?.addEventListener('click', () => setTimeout(refreshSecureBar, 50));
+  refreshSecureBar();
+
+  // -------------------------------------------------------------------------
+  // Speech-to-text (mic). Records via MediaRecorder, POSTs the clip to
+  // /api/stt, and inserts the returned transcript into the composer textarea.
+  // Only wired when the server rendered the button (OPENROUTER_API_KEY set).
+  // Hold to record; slide left to cancel; slide up to lock hands-free.
+  // -------------------------------------------------------------------------
+  const micBtn = document.getElementById('composer-mic-btn');
+  if (micBtn && navigator.mediaDevices && window.MediaRecorder) {
+    // Telegram/WhatsApp-style hold-to-record gesture ported from the Flutter
+    // app: hold the mic to record, slide left to cancel, slide up to lock
+    // hands-free. A Web Audio meter drives the live waveform + amplitude halo.
+    // The post-release pipeline (audio → /api/stt → transcript) is unchanged.
+    const recEl = document.getElementById('composer-recording');
+    const recTimeEl = document.getElementById('composer-recording-time');
+    const recHintEl = document.getElementById('composer-recording-hint');
+    const recCancelBtn = document.getElementById('composer-recording-cancel');
+    const recWave = document.getElementById('composer-recording-wave');
+    const lockHintEl = document.getElementById('composer-lock-hint');
+    const composerFieldEl = micBtn.closest('.composer-field');
+
+    const CANCEL_DX = 72; // px dragged left to arm cancel
+    const LOCK_DY = 96; // px dragged up to lock hands-free
+    const MIN_MS = 800; // discard clips shorter than this
+    const REST_HINT = '‹ slide to cancel · slide up to lock';
+
+    let mediaRecorder = null;
+    let mediaStream = null;
+    let micChunks = [];
+    // phase: 'idle' | 'starting' | 'recording' | 'locked'
+    let phase = 'idle';
+    let pendingSend = false;
+    let willCancel = false;
+    let ignoreNextUp = false;
+    let startedAt = 0;
+    let activePointerId = null;
+    let startX = 0;
+    let startY = 0;
+    let holdHintTimer = 0;
+    // Caret captured when recording starts, so the transcript is inserted at
+    // the cursor (dictate-into-text) instead of appended at the end.
+    let savedSelStart = null;
+    let savedSelEnd = null;
+
+    // Web Audio meter (live waveform + amplitude halo).
+    let audioCtx = null;
+    let analyser = null;
+    let sourceNode = null;
+    let meterRaf = 0;
+    let timeData = null;
+    let waveSamples = [];
+    let accentColor = '#4f8cff';
+    let dangerColor = '#e5484d';
+
+    function setMicState(state) {
+      micBtn.dataset.state = state;
+      micBtn.setAttribute(
+        'aria-pressed',
+        state === 'recording' || state === 'locked' ? 'true' : 'false',
+      );
+      micBtn.title =
+        state === 'recording'
+          ? 'Release to send · slide to cancel'
+          : state === 'locked'
+            ? 'Tap to send'
+            : state === 'busy'
+              ? 'Transcribing…'
+              : 'Hold to record';
+    }
+
+    function pickMicMime() {
+      if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
+      const cands = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/mp4',
+        'audio/mpeg',
+      ];
+      return cands.find((t) => MediaRecorder.isTypeSupported(t)) || '';
+    }
+
+    function stopMicStream() {
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((t) => t.stop());
+        mediaStream = null;
+      }
+    }
+
+    function insertTranscript(text) {
+      if (!input || !text) return;
+      const val = input.value || '';
+      // Insert at the caret captured when recording began; fall back to the end
+      // when the field wasn't focused (savedSel* are null).
+      let start = typeof savedSelStart === 'number' ? savedSelStart : val.length;
+      let end = typeof savedSelEnd === 'number' ? savedSelEnd : val.length;
+      start = Math.max(0, Math.min(start, val.length));
+      end = Math.max(start, Math.min(end, val.length));
+      const before = val.slice(0, start);
+      const after = val.slice(end);
+      // Pad so dictated words don't collide with the surrounding text.
+      const lead = before && !/\s$/.test(before) ? ' ' : '';
+      const trail = after && !/^\s/.test(after) ? ' ' : '';
+      const piece = lead + text + trail;
+      input.value = before + piece + after;
+      const caret = before.length + (lead + text).length;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+      try {
+        input.setSelectionRange(caret, caret);
+      } catch (_) {}
+      // Keep the caret in sync for a possible next dictation.
+      savedSelStart = caret;
+      savedSelEnd = caret;
+    }
+
+    async function transcribeBlob(blob) {
+      const res = await fetch('/api/stt', {
+        method: 'POST',
+        headers: { 'Content-Type': blob.type || 'audio/webm' },
+        body: blob,
+      });
+      if (!res.ok) {
+        let msg = 'HTTP ' + res.status;
+        try {
+          const j = await res.json();
+          if (j && j.error) msg = j.error;
+        } catch (_) {}
+        throw new Error(msg);
+      }
+      const j = await res.json();
+      return j && typeof j.text === 'string' ? j.text.trim() : '';
+    }
+
+    async function onMicStop() {
+      stopMeter();
+      stopMicStream();
+      const send = pendingSend;
+      const type = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
+      const blob = new Blob(micChunks, { type });
+      micChunks = [];
+      if (!send || !blob.size) {
+        setMicState('idle');
+        return;
+      }
+      setMicState('busy');
+      try {
+        const text = await transcribeBlob(blob);
+        if (text) insertTranscript(text);
+      } catch (err) {
+        window.alert(
+          'Transcription failed: ' + (err && err.message ? err.message : 'unknown error'),
+        );
+      } finally {
+        setMicState('idle');
+      }
+    }
+
+    // ----- recording UI -----
+    function fmtTime(ms) {
+      const cs = Math.floor(ms / 10) % 100;
+      const totalSec = Math.floor(ms / 1000);
+      const p2 = (n) => String(n).padStart(2, '0');
+      return p2(Math.floor(totalSec / 60)) + ':' + p2(totalSec % 60) + '.' + p2(cs);
+    }
+
+    function readThemeColors() {
+      try {
+        const cs = getComputedStyle(document.documentElement);
+        const a = cs.getPropertyValue('--accent').trim();
+        const d = cs.getPropertyValue('--danger').trim();
+        if (a) accentColor = a;
+        if (d) dangerColor = d;
+      } catch (_) {}
+    }
+
+    function sizeWaveCanvas() {
+      if (!recWave) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w = recWave.clientWidth || 160;
+      recWave.width = Math.max(1, Math.round(w * dpr));
+      recWave.height = Math.round(26 * dpr);
+    }
+
+    function positionLockHint() {
+      if (!lockHintEl || !composerFieldEl) return;
+      const r = micBtn.getBoundingClientRect();
+      const fr = composerFieldEl.getBoundingClientRect();
+      lockHintEl.style.left = r.left - fr.left + r.width / 2 + 'px';
+      lockHintEl.style.bottom = fr.bottom - r.top + 10 + 'px';
+    }
+
+    function showRecordingUI() {
+      readThemeColors();
+      window.clearTimeout(holdHintTimer);
+      if (composerFieldEl) composerFieldEl.classList.add('is-recording');
+      if (recEl) {
+        recEl.classList.remove('is-cancel', 'is-locked', 'is-hint');
+        recEl.hidden = false;
+      }
+      micBtn.classList.remove('is-cancel');
+      if (recHintEl) recHintEl.textContent = REST_HINT;
+      if (recTimeEl) recTimeEl.textContent = '00:00.00';
+      sizeWaveCanvas();
+      if (lockHintEl) {
+        lockHintEl.classList.remove('is-locked');
+        lockHintEl.style.setProperty('--lock-progress', '0');
+        lockHintEl.hidden = false;
+        positionLockHint();
+      }
+    }
+
+    function hideRecordingUI() {
+      if (composerFieldEl) composerFieldEl.classList.remove('is-recording');
+      if (recEl) {
+        recEl.hidden = true;
+        recEl.classList.remove('is-cancel', 'is-locked', 'is-hint');
+      }
+      if (lockHintEl) lockHintEl.hidden = true;
+      micBtn.classList.remove('is-cancel');
+      micBtn.style.setProperty('--mic-amp', '0');
+    }
+
+    function setCancelArmed(on) {
+      if (willCancel === on) return;
+      willCancel = on;
+      if (recEl) recEl.classList.toggle('is-cancel', on);
+      micBtn.classList.toggle('is-cancel', on);
+      if (recHintEl && phase === 'recording') {
+        recHintEl.textContent = on ? 'release to cancel' : REST_HINT;
+      }
+    }
+
+    function setLockProgress(p) {
+      if (lockHintEl) {
+        lockHintEl.style.setProperty('--lock-progress', String(Math.max(0, Math.min(1, p))));
+      }
+    }
+
+    function flashHoldHint() {
+      // Quick tap (no real recording) → briefly coach the user to hold.
+      if (!recEl) return;
+      if (composerFieldEl) composerFieldEl.classList.add('is-recording');
+      recEl.classList.add('is-hint');
+      recEl.hidden = false;
+      if (recHintEl) recHintEl.textContent = 'hold the mic to record';
+      window.clearTimeout(holdHintTimer);
+      holdHintTimer = window.setTimeout(() => {
+        recEl.classList.remove('is-hint');
+        if (phase === 'idle') {
+          recEl.hidden = true;
+          if (composerFieldEl) composerFieldEl.classList.remove('is-recording');
+        }
+      }, 1100);
+    }
+
+    // ----- Web Audio meter -----
+    function startMeter(stream) {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new Ctx();
+        if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+        sourceNode = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.65;
+        sourceNode.connect(analyser);
+        timeData = new Uint8Array(analyser.fftSize);
+        waveSamples = [];
+      } catch (_) {
+        // Meter is best-effort; recording still works without it.
+      }
+      meterRaf = requestAnimationFrame(meterFrame);
+    }
+
+    function stopMeter() {
+      if (meterRaf) cancelAnimationFrame(meterRaf);
+      meterRaf = 0;
+      try { if (sourceNode) sourceNode.disconnect(); } catch (_) {}
+      try { if (audioCtx) audioCtx.close(); } catch (_) {}
+      sourceNode = null;
+      analyser = null;
+      audioCtx = null;
+      timeData = null;
+    }
+
+    function meterFrame() {
+      meterRaf = requestAnimationFrame(meterFrame);
+      if (phase === 'recording' || phase === 'locked') {
+        if (recTimeEl) recTimeEl.textContent = fmtTime(Date.now() - startedAt);
+      }
+      let level = 0;
+      if (analyser && timeData) {
+        analyser.getByteTimeDomainData(timeData);
+        let sum = 0;
+        for (let i = 0; i < timeData.length; i++) {
+          const v = (timeData[i] - 128) / 128;
+          sum += v * v;
+        }
+        level = Math.min(1, Math.sqrt(sum / timeData.length) * 2.4);
+      }
+      micBtn.style.setProperty('--mic-amp', level.toFixed(3));
+      waveSamples.push(level);
+      drawWave();
+    }
+
+    function drawWave() {
+      if (!recWave) return;
+      const ctx = recWave.getContext('2d');
+      if (!ctx) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w = recWave.width;
+      const h = recWave.height;
+      ctx.clearRect(0, 0, w, h);
+      const barW = 2 * dpr;
+      const step = barW + 2 * dpr;
+      const n = Math.max(1, Math.floor(w / step));
+      if (waveSamples.length > n) waveSamples = waveSamples.slice(-n);
+      const data = waveSamples;
+      const mid = h / 2;
+      ctx.fillStyle = willCancel ? dangerColor : accentColor;
+      for (let i = 0; i < data.length; i++) {
+        const bh = Math.max(2 * dpr, data[i] * h * 0.92);
+        const x = w - (data.length - i) * step;
+        const r = barW / 2;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x, mid - bh / 2, barW, bh, r);
+        else ctx.rect(x, mid - bh / 2, barW, bh);
+        ctx.fill();
+      }
+    }
+
+    // ----- lifecycle -----
+    async function beginRecording() {
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (_) {
+        phase = 'idle';
+        activePointerId = null;
+        hideRecordingUI();
+        window.alert('Microphone access was blocked. Allow it in your browser to use voice input.');
+        return;
+      }
+      // The user may have released or cancelled while the permission prompt was
+      // open. If we're no longer arming, drop the freshly acquired stream.
+      if (phase !== 'starting') {
+        stopMicStream();
+        return;
+      }
+      micChunks = [];
+      const mimeType = pickMicMime();
+      try {
+        mediaRecorder = mimeType
+          ? new MediaRecorder(mediaStream, { mimeType })
+          : new MediaRecorder(mediaStream);
+      } catch (_) {
+        mediaRecorder = new MediaRecorder(mediaStream);
+      }
+      mediaRecorder.addEventListener('dataavailable', (e) => {
+        if (e.data && e.data.size) micChunks.push(e.data);
+      });
+      mediaRecorder.addEventListener('stop', onMicStop);
+      mediaRecorder.start();
+      phase = 'recording';
+      startedAt = Date.now();
+      pendingSend = false;
+      willCancel = false;
+      setMicState('recording');
+      showRecordingUI();
+      startMeter(mediaStream);
+      try { if (input) input.blur(); } catch (_) {}
+    }
+
+    function finishRecording(send) {
+      if (phase !== 'recording' && phase !== 'locked') return;
+      const longEnough = Date.now() - startedAt >= MIN_MS;
+      pendingSend = !!send && longEnough && !willCancel;
+      if (send && !longEnough && navigator.vibrate) {
+        try { navigator.vibrate([15, 40, 15]); } catch (_) {}
+      }
+      phase = 'idle';
+      willCancel = false;
+      ignoreNextUp = false;
+      activePointerId = null;
+      hideRecordingUI();
+      if (send && !longEnough) flashHoldHint();
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try { mediaRecorder.stop(); } catch (_) { onMicStop(); }
+      } else {
+        onMicStop();
+      }
+    }
+
+    function cancelRecording() {
+      finishRecording(false);
+    }
+
+    function lockRecording() {
+      if (phase !== 'recording') return;
+      phase = 'locked';
+      ignoreNextUp = true;
+      setCancelArmed(false);
+      setMicState('locked');
+      if (recEl) recEl.classList.add('is-locked');
+      if (recHintEl) recHintEl.textContent = 'tap mic to send';
+      if (lockHintEl) {
+        lockHintEl.classList.add('is-locked');
+        setLockProgress(1);
+      }
+      try { micBtn.releasePointerCapture(activePointerId); } catch (_) {}
+      sizeWaveCanvas();
+    }
+
+    // ----- pointer gesture -----
+    micBtn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (micBtn.dataset.state === 'busy') return;
+      // In locked mode a fresh tap on the mic sends.
+      if (phase === 'locked') {
+        finishRecording(true);
+        return;
+      }
+      if (phase !== 'idle') return;
+      // Capture the caret so the transcript lands where the user put it. Only
+      // when the textarea is focused; otherwise append at the end (null).
+      if (input && document.activeElement === input) {
+        savedSelStart = input.selectionStart;
+        savedSelEnd = input.selectionEnd;
+      } else {
+        savedSelStart = null;
+        savedSelEnd = null;
+      }
+      phase = 'starting';
+      willCancel = false;
+      activePointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
+      try { micBtn.setPointerCapture(e.pointerId); } catch (_) {}
+      beginRecording();
+    });
+
+    micBtn.addEventListener('pointermove', (e) => {
+      if (phase !== 'recording') return;
+      if (activePointerId !== null && e.pointerId !== activePointerId) return;
+      const dx = startX - e.clientX; // leftward positive
+      const dy = startY - e.clientY; // upward positive
+      setCancelArmed(dx >= CANCEL_DX);
+      if (willCancel) {
+        setLockProgress(0);
+        return;
+      }
+      setLockProgress(dy / LOCK_DY);
+      if (dy >= LOCK_DY) lockRecording();
+    });
+
+    function onPointerEnd(e) {
+      if (activePointerId !== null && e.pointerId !== activePointerId) return;
+      if (phase === 'starting') {
+        // Released before recording actually began → treat as a quick tap.
+        phase = 'idle';
+        activePointerId = null;
+        stopMicStream();
+        flashHoldHint();
+        return;
+      }
+      if (phase === 'recording') {
+        finishRecording(!willCancel);
+        return;
+      }
+      if (phase === 'locked' && ignoreNextUp) {
+        // The release that triggered the lock — keep recording hands-free.
+        ignoreNextUp = false;
+      }
+    }
+
+    micBtn.addEventListener('pointerup', onPointerEnd);
+    micBtn.addEventListener('pointercancel', (e) => {
+      if (activePointerId !== null && e.pointerId !== activePointerId) return;
+      if (phase === 'starting') {
+        phase = 'idle';
+        activePointerId = null;
+        stopMicStream();
+        return;
+      }
+      if (phase === 'recording') cancelRecording();
+    });
+
+    if (recCancelBtn) {
+      recCancelBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        cancelRecording();
+      });
+    }
+
+    window.addEventListener('resize', () => {
+      if (phase === 'recording' || phase === 'locked') {
+        sizeWaveCanvas();
+        positionLockHint();
+      }
+    });
+  }
+
   /** Clears timed reply-quote highlights in the transcript. */
   let replyJumpHighlightTimer = null;
   let replyJumpHighlightFadeTimer = null;
@@ -129,8 +1486,15 @@
       } else {
         messagesEl.dataset.projectId = '';
       }
+      if (typeof updateWorkFoldersButton === 'function') updateWorkFoldersButton();
     }
     history.replaceState(null, '', '/chats/' + id);
+    promoteDraftHeaderTools(id, payload.projectId);
+    // Migrate mode from the draft fallback key to the per-chat key
+    try {
+      const draftMode = localStorage.getItem('iclaw:composer-mode');
+      if (draftMode) localStorage.setItem(`iclaw:composer-mode:${id}`, draftMode);
+    } catch (_) {}
     applyTitleForActive(payload.title || 'New chat');
     if (ws && ws.readyState === WebSocket.OPEN) {
       wsSend({ type: 'subscribe', chatId: id });
@@ -147,6 +1511,35 @@
       if (searchInput && searchInput.value.trim()) scheduleSidebarSearch();
     }
     syncComposerSecretUi();
+  }
+
+  /**
+   * Promote the dormant draft header tools into a live chat's tools once the row
+   * exists. The draft renders them hidden + action-less (see
+   * partials/header-chat-tools.ejs); here we fill in the /chats/:id actions and
+   * reveal them — so Share, Delete (and Suggest-facts, when the draft
+   * chose a project) show up immediately instead of only after a reload. Queries
+   * are scoped to the header so they don't hit the share modal's own .share-form.
+   */
+  function promoteDraftHeaderTools(id, projectId) {
+    if (!startedOnDraft) return;
+    const header = document.querySelector('.chat-header-tools');
+    if (!header) return;
+    const shareBtn = document.getElementById('share-btn');
+    if (shareBtn) shareBtn.hidden = false;
+    const delForm = header.querySelector('.delete-form');
+    if (delForm) {
+      delForm.setAttribute('action', '/chats/' + id + '/delete');
+      delForm.hidden = false;
+    }
+    const hasProject =
+      (projectId != null && Number.isFinite(Number(projectId))) ||
+      (draftChosenProjectId != null && Number.isFinite(draftChosenProjectId));
+    const sharesForm = header.querySelector('.share-form');
+    if (sharesForm && hasProject) {
+      sharesForm.setAttribute('action', '/chats/' + id + '/shares');
+      sharesForm.hidden = false;
+    }
   }
 
   async function ensureDraftChatRow() {
@@ -326,6 +1719,21 @@
       void commitDraftFromCard(card);
     });
 
+    // Space = "No project" — a quick skip past project selection. Guarded to the
+    // active picking stage so it never fires afterwards, and ignored while a text
+    // field is focused. commitDraftFromCard's re-entry guard makes this safe even
+    // if a card button also has focus.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== ' ' && e.code !== 'Space') return;
+      if (draftProjectLocked || !draftBody.classList.contains('is-picking')) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const none = projectPickEl.querySelector('.project-pick-card--none');
+      if (!none) return;
+      e.preventDefault();
+      void commitDraftFromCard(none);
+    });
+
     const initSel = (projectPickEl.dataset.initialProjectId || '').trim();
     if (initSel !== '') {
       const esc =
@@ -334,8 +1742,34 @@
           : initSel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       const card = projectPickEl.querySelector('.project-pick-card[data-project-id="' + esc + '"]');
       if (card) queueMicrotask(() => void commitDraftFromCard(card));
+    } else if (draftBody?.dataset.autoNone === '1') {
+      // First-ever chat: skip the "Choose a project" step so a new user lands
+      // straight on the welcome greeting + composer (No project).
+      const card = projectPickEl.querySelector('.project-pick-card--none');
+      if (card) queueMicrotask(() => void commitDraftFromCard(card));
     }
   }
+
+  // Welcome-card suggestion chips: drop the text into the composer and send it,
+  // so a non-technical user gets going with one click.
+  function initWelcomeChips() {
+    const card = document.getElementById('welcome-card');
+    if (!card) return;
+    card.addEventListener('click', (e) => {
+      const chip = e.target.closest('.welcome-chip');
+      if (!chip) return;
+      const prompt = chip.getAttribute('data-prompt') || chip.textContent || '';
+      const ta = document.getElementById('composer-input');
+      const form = document.getElementById('send-form');
+      if (!ta || !form) return;
+      ta.value = prompt;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      if (typeof form.requestSubmit === 'function') form.requestSubmit();
+      else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    });
+  }
+
+  initWelcomeChips();
 
   initDraftProjectPick();
   // serializes turns per chat too, so this is just for the visible label
@@ -379,6 +1813,10 @@
   /** the assistant DOM node we're streaming into right now */
   let currentStreamEl = null;
   let currentStreamFullText = '';
+  /** Pending requestAnimationFrame id for the streaming typewriter (0 = none). */
+  let streamRenderRaf = 0;
+  /** How many chars of currentStreamFullText the typewriter has revealed. */
+  let streamShownLen = 0;
   /** Debounce hljs while `turn-delta` re-renders markdown (innerHTML each chunk). */
   let streamSyntaxHlTimer = null;
 
@@ -629,6 +2067,63 @@
     refreshProjectTabLabels(active || 'chats');
   }
 
+  function syncProjectSkillsTabCountFromDom() {
+    const root = document.querySelector('main.project-page[data-project-id]');
+    const btn = root?.querySelector('[data-project-tab="skills"]');
+    const ul = document.getElementById('skills-list');
+    if (!btn || !ul) return;
+    btn.setAttribute('data-tab-count', String(ul.querySelectorAll('li.skill').length));
+    const active = root.querySelector('.project-tab.is-active')?.getAttribute('data-project-tab');
+    refreshProjectTabLabels(active || 'chats');
+  }
+
+  /** Build a skill row matching `views/project.ejs` (WS-driven updates on project page). */
+  function buildSkillLi(s) {
+    const li = document.createElement('li');
+    li.className = 'skill';
+    li.dataset.skillId = String(s.id);
+    li.dataset.skillVersion = String(s.version != null ? s.version : 1);
+    const isGlobal = s.project_id == null;
+    const titleRaw =
+      s.source_chat_title != null && String(s.source_chat_title).trim() !== ''
+        ? String(s.source_chat_title).trim()
+        : 'Chat';
+    const head =
+      '<div class="project-row-head muted">' +
+      (isGlobal
+        ? '<span class="skill-scope-badge" title="Available to every project">Global</span>'
+        : '') +
+      (s.source_chat_id != null
+        ? '<a href="/chats/' +
+          s.source_chat_id +
+          '" class="project-chat-source">' +
+          escapeHtml(titleRaw) +
+          '</a>'
+        : '<span>—</span>') +
+      '</div>';
+    li.innerHTML =
+      head +
+      '<input class="skill-name" aria-label="Skill name" spellcheck="false" value="' +
+      escapeHtml(s.name || '') +
+      '" />' +
+      '<textarea class="skill-description" aria-label="Skill summary" rows="2">' +
+      escapeHtml(s.description || '') +
+      '</textarea>' +
+      '<details class="skill-body-details"><summary>View / edit procedure</summary>' +
+      '<textarea class="skill-body" aria-label="Skill procedure (SKILL.md)" rows="10">' +
+      escapeHtml(s.body || '') +
+      '</textarea></details>' +
+      '<div class="fact-meta">' +
+      '<button type="button" class="fact-delete skill-delete" aria-label="Remove skill">Remove</button></div>';
+    const nameEl = li.querySelector('.skill-name');
+    if (nameEl) nameEl.dataset.saved = String(s.name || '').trim();
+    const descEl = li.querySelector('.skill-description');
+    if (descEl) descEl.dataset.saved = String(s.description || '').trim();
+    const bodyEl = li.querySelector('.skill-body');
+    if (bodyEl) bodyEl.dataset.saved = String(s.body || '').trim();
+    return li;
+  }
+
   /** Build a secrets row matching `views/project.ejs` (WS-driven updates on project page). */
   function buildProjectSecretRowLi(secret) {
     const label = String(secret?.label ?? '');
@@ -689,10 +2184,30 @@
   const CODE_COPIED_ICON_SVG =
     '<svg class="code-copy-icon code-copy-icon--ok" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"/></svg>';
 
+  /** Strip protocol/`www.`/trailing slash; middle-truncate pathological URLs. */
+  function prettifyUrlText(href) {
+    let s = String(href || '')
+      .replace(/^https?:\/\//i, '')
+      .replace(/^www\./i, '')
+      .replace(/\/+$/, '');
+    if (s.length > 60) s = s.slice(0, 42) + '…' + s.slice(-15);
+    return s;
+  }
   function decorateLinks(root) {
     root.querySelectorAll('a[href]').forEach((a) => {
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
+      // Inside tables, collapse long bare-URL link text to a compact, readable
+      // form (full URL stays on the href + title). Leaves `[label](url)` links
+      // and prose URLs untouched. Idempotent: after rewrite text !== href.
+      if (a.closest('td, th')) {
+        const href = a.getAttribute('href') || '';
+        const txt = (a.textContent || '').trim();
+        if (txt && txt === href && /^https?:\/\//i.test(href)) {
+          if (!a.title) a.title = href;
+          a.textContent = prettifyUrlText(href);
+        }
+      }
     });
   }
 
@@ -700,7 +2215,7 @@
   function enhanceCodeBlocks(root) {
     if (!root || root.nodeType !== 1) return;
     const pres = root.querySelectorAll(
-      '.msg-body pre, .stream-body pre, .reasoning-body pre, .task-log-entry-body pre',
+      '.msg-body pre, .stream-body pre, .task-log-entry-body pre',
     );
     pres.forEach((pre) => {
       if (pre.parentElement?.classList.contains('code-block-wrap')) return;
@@ -717,6 +2232,23 @@
       parent.insertBefore(wrap, pre);
       wrap.appendChild(pre);
       wrap.appendChild(btn);
+    });
+  }
+
+  /** Wrap GFM tables in a horizontal-scroll frame (after markdown → DOM). */
+  function enhanceTables(root) {
+    if (!root || root.nodeType !== 1) return;
+    const tables = root.querySelectorAll(
+      '.msg-body table, .stream-body table, .task-log-entry-body table',
+    );
+    tables.forEach((table) => {
+      if (table.parentElement?.classList.contains('md-table-wrap')) return;
+      const parent = table.parentElement;
+      if (!parent) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'md-table-wrap';
+      parent.insertBefore(wrap, table);
+      wrap.appendChild(table);
     });
   }
 
@@ -740,16 +2272,32 @@
     const hl = window.hljs;
     if (!root || root.nodeType !== 1 || !hl || typeof hl.highlightElement !== 'function') return;
     root.querySelectorAll(
-      '.msg-body pre code, .stream-body pre code, .reasoning-body pre code, .task-log-entry-body pre code',
+      '.msg-body pre code, .stream-body pre code, .task-log-entry-body pre code',
     ).forEach((code) => {
       const pre = code.parentElement;
       if (!pre || pre.tagName !== 'PRE') return;
       if (pre.closest('.exec-approval-card')) return;
       if (code.classList.contains('hljs')) return;
-      try {
-        hl.highlightElement(code);
-      } catch (_) {
-        /* unknown language / empty */
+      // Only highlight when the fence declares a language hljs actually knows.
+      // On a bare/unknown fence, highlightElement() falls back to auto-detection,
+      // which mis-guesses prose as Ruby/Perl (an apostrophe opens a "string" and
+      // the github-dark theme dims whole paragraphs). Leave those as plain text.
+      const langClass = [...code.classList].find((c) => c.startsWith('language-'));
+      const lang = langClass && langClass.slice(9);
+      const known =
+        lang &&
+        lang !== 'text' &&
+        lang !== 'plaintext' &&
+        typeof hl.getLanguage === 'function' &&
+        hl.getLanguage(lang);
+      if (known) {
+        try {
+          hl.highlightElement(code);
+        } catch (_) {
+          code.classList.add('hljs'); /* keep block styling even if hljs throws */
+        }
+      } else {
+        code.classList.add('hljs'); /* plaintext — styled, no auto-detect */
       }
     });
   }
@@ -761,6 +2309,7 @@
   function decorateMessageBody(root, opts) {
     decorateLinks(root);
     enhanceCodeBlocks(root);
+    enhanceTables(root);
     if (opts && opts.deferSyntaxHighlight) {
       scheduleStreamSyntaxHighlight(root);
       return;
@@ -923,6 +2472,63 @@
   function scrollToBottom() {
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
   }
+
+  /** True when the messages list is at/near the bottom (within `threshold` px). */
+  function isNearBottom(threshold = 120) {
+    if (!messagesEl) return true;
+    return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= threshold;
+  }
+
+  /**
+   * Smooth "typewriter" streaming. Backend deltas arrive in bursts and can stall
+   * for ~a second; we decouple what's shown from what's arrived. `currentStream
+   * FullText` is the target (grows as deltas arrive); `streamShownLen` is how much
+   * we've revealed. Each animation frame we reveal a few more characters, so the
+   * user sees a steady flow no matter how lumpy the source is.
+   *
+   * The reveal is adaptive — a larger backlog drains faster (so we never fall
+   * seconds behind on a big burst) while a small backlog types out gently. Re-
+   * rendering happens at most once per frame (re-parsing the whole markdown +
+   * replacing innerHTML per token would be O(n²) and thrash layout). Auto-scroll
+   * fires only when the user is already at the bottom, so scrolling up mid-stream
+   * no longer yanks them back down.
+   */
+  function renderStreamFrame() {
+    streamRenderRaf = 0;
+    const el = currentStreamEl;
+    if (!el || !messagesEl?.contains(el)) return;
+    const body = el.querySelector('.stream-body, .msg-body');
+    if (!body) return;
+
+    const target = currentStreamFullText;
+    if (streamShownLen < target.length) {
+      const remaining = target.length - streamShownLen;
+      // ~120 chars/s floor (2 per frame), faster as the backlog grows.
+      const step = Math.max(2, Math.ceil(remaining / 8));
+      streamShownLen = Math.min(target.length, streamShownLen + step);
+      const stick = isNearBottom();
+      body.innerHTML = renderMarkdown(target.slice(0, streamShownLen));
+      decorateMessageBody(body, { deferSyntaxHighlight: true });
+      if (stick) scrollToBottom();
+    }
+
+    // Keep going while there's still backlog; otherwise idle until the next
+    // delta re-arms the loop via ensureTyping().
+    if (streamShownLen < currentStreamFullText.length) {
+      streamRenderRaf = requestAnimationFrame(renderStreamFrame);
+    }
+  }
+
+  /** Start the typewriter loop if it isn't already running. */
+  function ensureTyping() {
+    if (!streamRenderRaf) streamRenderRaf = requestAnimationFrame(renderStreamFrame);
+  }
+
+  /** Stop the typewriter and reset the revealed position (call when finalizing). */
+  function cancelStreamRender() {
+    if (streamRenderRaf) { cancelAnimationFrame(streamRenderRaf); streamRenderRaf = 0; }
+    streamShownLen = 0;
+  }
   /** Build the HTML block for persisted attachments (image inline / file as link). */
   function attachmentsHtml(attachments) {
     if (!Array.isArray(attachments) || attachments.length === 0) return '';
@@ -962,6 +2568,30 @@
     return '<div class="msg-attachments">' + items + '</div>';
   }
 
+  /** Dev mode: add a live message's tokens to the chat-wide running total. */
+  function bumpChatTokenTotal(tokens) {
+    if (!window.__ICLAW_DEV__ || !tokens) return;
+    const el = document.getElementById('chat-token-total');
+    if (!el) return;
+    const cur = (Number(el.dataset.total) || 0) + Number(tokens);
+    el.dataset.total = String(cur);
+    el.textContent = cur.toLocaleString() + ' tok total';
+    el.hidden = false;
+  }
+
+  /** Dev mode: show token usage (+cache hits) on a message bubble + chat total. */
+  function applyTokenBadge(el, tokens, cached) {
+    if (!window.__ICLAW_DEV__ || !tokens || !el) return;
+    if (el.querySelector(':scope > .msg-tokens')) return;
+    const c = Number(cached) || 0;
+    const span = document.createElement('span');
+    span.className = 'msg-tokens';
+    span.title = 'Tokens spent on this reply' + (c ? ' (' + c.toLocaleString() + ' served from cache)' : '');
+    span.textContent = Number(tokens).toLocaleString() + ' tok' + (c ? ' · ' + c.toLocaleString() + ' cached' : '');
+    el.appendChild(span);
+    bumpChatTokenTotal(tokens);
+  }
+
   function appendMessage(msg, opts) {
     if (!messagesEl) return null;
     clearEmptyState();
@@ -999,6 +2629,7 @@
       '<div class="msg-body">' + renderMessageHtml(msg.content || '') + '</div>' +
       attachmentsHtml(msg.attachments);
     decorateMessageBody(div);
+    applyTokenBadge(div, msg.tokens, msg.cached_tokens);
     messagesAppendRoot().appendChild(div);
     scrollToBottom();
     return div;
@@ -1006,15 +2637,19 @@
   function appendStreamingAssistant() {
     if (!messagesEl) return null;
     clearEmptyState();
+    // First turn of a chat can be a cold start (model/Docker warming up, 20–60s).
+    // Say "Warming up…" instead of "Thinking…" so the wait reads as honest setup,
+    // not a hang. Detected by the absence of any prior assistant message.
+    const isFirstTurn = !messagesAppendRoot()?.querySelector('.msg.assistant');
     const div = document.createElement('div');
     div.className = 'msg assistant streaming stream-waiting';
     div.innerHTML =
       '<div class="role">assistant</div>' +
-      '<div class="stream-status"></div>' +
-      '<div class="msg-body stream-body"></div>';
+      '<div class="msg-body stream-body"></div>' +
+      '<div class="stream-status"></div>';
     messagesAppendRoot().appendChild(div);
     const st = div.querySelector('.stream-status');
-    if (st) setStreamStatusLabel(st, 'Thinking…');
+    if (st) setStreamStatusLabel(st, isFirstTurn ? 'Warming up…' : 'Thinking…');
     scrollToBottom();
     return div;
   }
@@ -1361,6 +2996,187 @@
   }
 
   // -------------------------------------------------------------------------
+  // skill suggestions (inbox-gated procedural memory) — chat cards
+  // Mirrors fact suggestions, but with no auto-reject: a skill is a standing
+  // instruction, so acceptance is always a deliberate user action.
+  // -------------------------------------------------------------------------
+
+  function existingSkillSuggestionIds() {
+    const ids = new Set();
+    if (!messagesEl) return ids;
+    messagesEl.querySelectorAll('.skill-suggestion-row[data-suggestion-id]').forEach((el) => {
+      const n = Number(el.dataset.suggestionId);
+      if (Number.isFinite(n)) ids.add(n);
+    });
+    return ids;
+  }
+
+  function removeSkillSuggestionRow(chatId, sid) {
+    if (!messagesEl || chatId !== activeChatId) return;
+    const row = messagesEl.querySelector(
+      '.skill-suggestion-row[data-suggestion-id="' + sid + '"]',
+    );
+    if (!row) return;
+    const card = row.closest('.skill-suggestions-card');
+    row.remove();
+    if (card && !card.querySelector('.skill-suggestion-row')) card.remove();
+  }
+
+  // "handle-sandbox-network" → "Handle sandbox network": a readable title from
+  // the kebab slug, used until/unless the server sends a friendlier s.title.
+  function humanizeSkillName(name) {
+    const s = String(name || '').replace(/[-_]+/g, ' ').trim();
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+  }
+
+  // A non-technical person sees ONE plain sentence + two buttons. Everything
+  // technical (kebab name, full procedure, "all projects", provenance) is folded
+  // into a collapsed «Деталі» block — still in the DOM, so the accept handler
+  // reads the same fields whether or not it's ever opened.
+  function buildSkillSuggestionRowHtml(s) {
+    const id = Number(s.id);
+    if (!Number.isFinite(id)) return '';
+    const kind = s.kind === 'patch' ? 'patch' : 'new';
+    const humanTitle =
+      (s.title && String(s.title).trim()) || humanizeSkillName(s.name) || 'це';
+    const updatesLine =
+      kind === 'patch'
+        ? '<div class="skill-suggestion-updates">Доповнює те, що вже вмію</div>'
+        : '';
+    // Provenance kept — but as a quiet ⓘ, not a red "untrusted" badge.
+    const infoIcon = s.untrusted
+      ? '<span class="skill-suggestion-info" tabindex="0" role="img" aria-label="Підказано з матеріалу, що міг містити зовнішній вміст — перевір у «Деталях»" title="Підказано з матеріалу, що міг містити зовнішній (недовірений) вміст. Переглянь «Деталі», перш ніж зберігати.">&#9432;</span>'
+      : '';
+    return (
+      '<li class="skill-suggestion-row" data-suggestion-id="' +
+      id +
+      '" data-kind="' +
+      kind +
+      '" role="listitem">' +
+      '<div class="skill-suggestion-simple">' +
+      '<div class="skill-suggestion-title">' +
+      escapeHtml(humanTitle) +
+      infoIcon +
+      '</div>' +
+      (s.description
+        ? '<div class="skill-suggestion-summary">' + escapeHtml(s.description) + '</div>'
+        : '') +
+      updatesLine +
+      '</div>' +
+      '<details class="skill-suggestion-advanced"><summary>Деталі</summary>' +
+      '<label class="skill-suggestion-field"><span class="skill-suggestion-field-label">Назва</span>' +
+      '<input class="skill-suggestion-name" aria-label="Skill name" spellcheck="false" value="' +
+      escapeHtml(s.name || '') +
+      '" /></label>' +
+      '<label class="skill-suggestion-field"><span class="skill-suggestion-field-label">Опис</span>' +
+      '<textarea class="skill-suggestion-desc" aria-label="Skill summary" rows="2">' +
+      escapeHtml(s.description || '') +
+      '</textarea></label>' +
+      '<label class="skill-suggestion-field"><span class="skill-suggestion-field-label">Що саме робити</span>' +
+      '<textarea class="skill-suggestion-body" aria-label="Skill procedure (SKILL.md)" rows="10">' +
+      escapeHtml(s.body || '') +
+      '</textarea></label>' +
+      '<label class="skill-suggestion-scope"><input type="checkbox" class="skill-suggestion-global" /> Використовувати в усіх проєктах</label>' +
+      '</details>' +
+      '<div class="skill-suggestion-actions">' +
+      '<button type="button" class="skill-suggestion-btn skill-suggestion-reject" data-suggestion-id="' +
+      id +
+      '">Не треба</button>' +
+      '<button type="button" class="skill-suggestion-btn skill-suggestion-accept" data-suggestion-id="' +
+      id +
+      '">Запам\'ятати</button>' +
+      '</div></li>'
+    );
+  }
+
+  function appendSkillSuggestionsCard(opts) {
+    if (!messagesEl) return;
+    const { projectId, chatId, suggestions, projectName } = opts;
+    if (!suggestions || suggestions.length === 0) return;
+    clearEmptyState();
+    const safeName = escapeHtml((projectName || '').trim() || 'project');
+    const rowsHtml = suggestions.map(buildSkillSuggestionRowHtml).filter(Boolean).join('');
+    if (!rowsHtml) return;
+
+    const pidEsc = String(projectId);
+    const cidEsc = String(chatId);
+    const existing = messagesEl.querySelector(
+      '.skill-suggestions-card[data-project-id="' + pidEsc + '"][data-chat-id="' + cidEsc + '"]',
+    );
+    if (existing) {
+      const ul = existing.querySelector('.skill-suggestions-list');
+      if (!ul) return;
+      const tpl = document.createElement('template');
+      tpl.innerHTML = rowsHtml.trim();
+      tpl.content.childNodes.forEach((n) => {
+        if (n.nodeType !== 1) return;
+        const el = n;
+        const sid = el.dataset.suggestionId;
+        if (!sid || ul.querySelector('.skill-suggestion-row[data-suggestion-id="' + sid + '"]'))
+          return;
+        ul.appendChild(el);
+      });
+      scrollToBottom();
+      return;
+    }
+
+    const card = document.createElement('div');
+    card.className = 'msg system skill-suggestions-card';
+    card.dataset.projectId = pidEsc;
+    card.dataset.chatId = cidEsc;
+    card.innerHTML =
+      '<div class="skill-suggestions-shell">' +
+      '<p class="skill-suggestions-lead">💡 Запам\'ятати це для «' +
+      safeName +
+      '», щоб наступного разу зробити швидше?</p>' +
+      '<ul class="skill-suggestions-list" role="list">' +
+      rowsHtml +
+      '</ul></div>';
+    messagesAppendRoot().appendChild(card);
+    scrollToBottom();
+  }
+
+  async function loadPendingSkillSuggestions() {
+    if (activeChatId == null || !messagesEl) return;
+    try {
+      const res = await fetch(
+        '/chats/' + encodeURIComponent(activeChatId) + '/skill-suggestions',
+        { headers: { Accept: 'application/json' } },
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = Array.isArray(data.suggestions) ? data.suggestions : [];
+      if (list.length === 0) return;
+      const first = list[0];
+      const pid = first ? Number(first.project_id) : NaN;
+      if (!Number.isFinite(pid)) return;
+      const have = existingSkillSuggestionIds();
+      const fresh = list
+        .filter((s) => s && Number.isFinite(Number(s.id)) && !have.has(Number(s.id)))
+        .map((s) => ({
+          id: Number(s.id),
+          kind: s.kind === 'patch' ? 'patch' : 'new',
+          name: String(s.name ?? ''),
+          description: String(s.description ?? ''),
+          body: String(s.body ?? ''),
+          untrusted: !!s.untrusted,
+        }));
+      const pname =
+        typeof data.projectName === 'string' && data.projectName.trim()
+          ? data.projectName.trim()
+          : 'project';
+      appendSkillSuggestionsCard({
+        projectId: pid,
+        chatId: activeChatId,
+        projectName: pname,
+        suggestions: fresh,
+      });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // queue widget — shows only WAITING items (not the in-flight one)
   // -------------------------------------------------------------------------
 
@@ -1369,6 +3185,7 @@
       serverId: row.id,
       id: String(row.id),
       content: row.content,
+      mode: row.mode || undefined,
     };
     if (row.reply_to_message_id != null && row.reply_quote) {
       item.replyTo = {
@@ -1398,6 +3215,7 @@
 
   async function enqueueQueueOnServer(chatId, draft) {
     const body = { content: draft.content };
+    if (draft.mode) body.mode = draft.mode;
     if (draft.replyTo) body.replyTo = draft.replyTo;
     if (draft.inlineSecrets && draft.inlineSecrets.length > 0) {
       body.inlineSecrets = draft.inlineSecrets;
@@ -1590,6 +3408,59 @@
             if (res.ok) removeFactSuggestionRow(activeChatId, sid);
           })
           .catch(() => {});
+        return;
+      }
+      const sAcc = e.target.closest('.skill-suggestion-accept');
+      const sRej = e.target.closest('.skill-suggestion-reject');
+      if (sAcc || sRej) {
+        const row = (sAcc || sRej).closest('.skill-suggestion-row');
+        const sid = Number((sAcc || sRej).dataset.suggestionId);
+        if (!Number.isFinite(sid) || activeChatId == null) return;
+        e.preventDefault();
+        if (sRej) {
+          fetch(
+            '/chats/' +
+              encodeURIComponent(activeChatId) +
+              '/skill-suggestions/' +
+              encodeURIComponent(sid) +
+              '/reject',
+            { method: 'POST', headers: { Accept: 'application/json' } },
+          )
+            .then((res) => {
+              if (res.ok) removeSkillSuggestionRow(activeChatId, sid);
+            })
+            .catch(() => {});
+          return;
+        }
+        // Accept — submit any inline edits + the scope choice.
+        const name = row?.querySelector('.skill-suggestion-name')?.value?.trim() || '';
+        const description = row?.querySelector('.skill-suggestion-desc')?.value?.trim() || '';
+        const body = row?.querySelector('.skill-suggestion-body')?.value?.trim() || '';
+        const global = !!row?.querySelector('.skill-suggestion-global')?.checked;
+        const payload = { scope: global ? 'global' : 'project' };
+        if (name) payload.name = name;
+        if (description) payload.description = description;
+        if (body) payload.body = body;
+        if (sAcc) sAcc.disabled = true;
+        fetch(
+          '/chats/' +
+            encodeURIComponent(activeChatId) +
+            '/skill-suggestions/' +
+            encodeURIComponent(sid) +
+            '/accept',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(payload),
+          },
+        )
+          .then((res) => {
+            if (res.ok) removeSkillSuggestionRow(activeChatId, sid);
+            else if (sAcc) sAcc.disabled = false;
+          })
+          .catch(() => {
+            if (sAcc) sAcc.disabled = false;
+          });
         return;
       }
       const status = e.target.closest('.stream-status.has-detail');
@@ -2364,7 +4235,7 @@
           headers: { Accept: 'application/json' },
         });
         if (!res.ok) throw new Error(String(res.status));
-        window.location.assign('/');
+        goTo('/');
       } catch (err) {
         console.error('[iclaw] mark unread failed', err);
       }
@@ -2376,7 +4247,12 @@
       f.method = 'POST';
       f.action = '/chats/' + encodeURIComponent(cid) + '/delete';
       document.body.appendChild(f);
-      f.submit();
+      // requestSubmit() (not submit()) fires a real submit event, so the E2E
+      // SPA layer can take it over the encrypted channel instead of a full
+      // navigation that bounces off the gate. Falls back to a normal submit
+      // when that layer isn't present (local, non-tunnel).
+      if (typeof f.requestSubmit === 'function') f.requestSubmit();
+      else f.submit();
     }
   });
 
@@ -2544,7 +4420,7 @@
     if (
       el.classList.contains('streaming') ||
       el.classList.contains('fact-suggestions-card') ||
-      el.classList.contains('reasoning-block')
+      el.classList.contains('skill-suggestions-card')
     ) {
       return null;
     }
@@ -2753,6 +4629,7 @@
       if (activeChatId != null) {
         wsSend({ type: 'subscribe', chatId: activeChatId });
         loadPendingFactSuggestions();
+        loadPendingSkillSuggestions();
       }
       /* If the socket dropped while we had pending task-create records (or
        * was never up when the server emitted 'ready'), reconcile against the
@@ -2820,9 +4697,10 @@
           });
         }
         if (msg.chatId === activeChatId && msg.title != null) applyTitleForActive(msg.title);
-        // Sync header controls when another tab/CLI flipped these.
-        if (msg.chatId === activeChatId && msg.reasoningMode !== undefined && reasoningToggle) {
-          reasoningToggle.checked = msg.reasoningMode !== 'off';
+        // Composer mode changed elsewhere (another tab/device) → mirror it here
+        // without re-persisting (avoids a broadcast loop).
+        if (msg.chatId === activeChatId && msg.mode !== undefined) {
+          setComposerMode(msg.mode, { persist: false });
         }
         if (msg.chatId === activeChatId && msg.projectId !== undefined && messagesEl) {
           messagesEl.dataset.projectId =
@@ -2837,7 +4715,7 @@
 
       case 'chat-deleted':
         sidebarRemoveChat(msg.chatId);
-        if (msg.chatId === activeChatId) window.location.assign('/');
+        if (msg.chatId === activeChatId) goTo('/');
         return;
 
       case 'chat-unread':
@@ -2885,6 +4763,7 @@
           // rather than left orphaned above the final message.
           const target = ensureStreamEl();
           if (target) {
+            cancelStreamRender(); // final render below is authoritative
             target.classList.remove(
               'streaming', 'stream-waiting', 'stream-tool', 'stream-generating',
             );
@@ -2900,6 +4779,18 @@
               body.innerHTML = renderMarkdown(msg.message.content || '');
               decorateMessageBody(body);
             }
+            // Inline images the agent surfaced via show_image. The streaming
+            // bubble only built a text body, so append the attachments block here
+            // (the non-streaming appendMessage path already includes it). Reload
+            // renders them the same way, from msg.attachments.
+            if (Array.isArray(msg.message.attachments) && msg.message.attachments.length) {
+              target.querySelector('.msg-attachments-finalized')?.remove();
+              const wrap = document.createElement('div');
+              wrap.className = 'msg-attachments-finalized';
+              wrap.innerHTML = attachmentsHtml(msg.message.attachments);
+              target.appendChild(wrap);
+            }
+            applyTokenBadge(target, msg.message.tokens, msg.message.cached_tokens);
             currentStreamEl = null;
             currentStreamFullText = '';
           } else {
@@ -2916,6 +4807,7 @@
         setWorkingDot(msg.chatId, true);
         if (msg.chatId !== activeChatId) return;
         setStopVisible(true);
+        streamShownLen = 0; // fresh typewriter for the new turn
         ensureStreamEl();
         {
           const status = currentStreamEl?.querySelector('.stream-status');
@@ -2945,12 +4837,9 @@
             status.hidden = true;
           }
         }
-        const body = el.querySelector('.stream-body, .msg-body');
-        if (body) {
-          body.innerHTML = renderMarkdown(currentStreamFullText);
-          decorateMessageBody(body, { deferSyntaxHighlight: true });
-        }
-        scrollToBottom();
+        // Feed the typewriter — it reveals the accumulated text smoothly,
+        // a few chars per frame, instead of dumping each lumpy delta at once.
+        ensureTyping();
         return;
       }
 
@@ -3008,13 +4897,13 @@
         setWorkingDot(msg.chatId, false);
         if (msg.chatId !== activeChatId) return;
         setStopVisible(false);
-        finalizeReasoningBlock();
         // Tear down a streaming element that nobody finalized — e.g. an
         // abort with no streamed text (skipPersist on the server → no
         // `message-appended` to clean it up), or any other edge where the
         // turn ends without an assistant message. Without this, the
         // "Finishing…" / "Thinking…" status would sit on the page until
         // the user reloaded.
+        cancelStreamRender();
         if (currentStreamEl && currentStreamEl.classList.contains('streaming')) {
           const body = currentStreamEl.querySelector('.stream-body, .msg-body');
           const hasContent = !!(body && body.textContent && body.textContent.trim());
@@ -3052,7 +4941,6 @@
           return;
         }
         setStopVisible(false);
-        finalizeReasoningBlock();
         if (currentStreamEl) {
           const st = currentStreamEl.querySelector('.stream-status');
           stopStreamStatusDotAnim(st);
@@ -3069,6 +4957,44 @@
         // In-flight already shifted out of waitingItems when flushed.
         inFlight = false;
         if (waitingItems[0]) flushNextQueued();
+        return;
+      }
+
+      /* ---- incognito (ephemeral; keyed, never persisted) ---- */
+      case 'incognito-turn-delta': {
+        if (msg.key !== activeIncognitoKey) return;
+        const el = ensureStreamEl();
+        currentStreamFullText += msg.text;
+        if (el.classList.contains('stream-waiting') || el.classList.contains('stream-tool')) {
+          el.classList.remove('stream-waiting', 'stream-tool');
+          el.classList.add('stream-generating');
+          const status = el.querySelector('.stream-status');
+          if (status) { stopStreamStatusDotAnim(status); status.hidden = true; }
+        }
+        ensureTyping();
+        return;
+      }
+
+      case 'incognito-turn-tool':
+        // Tool activity indicator could go here; ignored for now.
+        return;
+
+      case 'incognito-error': {
+        if (msg.key !== activeIncognitoKey) return;
+        const div = document.createElement('div');
+        div.className = 'msg system error';
+        div.innerHTML =
+          '<div class="role">error</div>' +
+          '<div class="msg-body">' + escapeHtml('Error: ' + msg.message) + '</div>';
+        messagesAppendRoot()?.appendChild(div);
+        return;
+      }
+
+      case 'incognito-turn-ended': {
+        if (msg.key !== activeIncognitoKey) return;
+        const finishedEl = currentStreamEl;
+        finalizeIncognitoStream();
+        applyTokenBadge(finishedEl, msg.tokens, msg.cached);
         return;
       }
 
@@ -3089,6 +5015,68 @@
       case 'project-fact-suggestion-removed':
         removeFactSuggestionRow(msg.chatId, msg.suggestionId);
         return;
+
+      case 'project-skill-suggestions': {
+        if (msg.chatId !== activeChatId) return;
+        const have = existingSkillSuggestionIds();
+        const fresh = (msg.suggestions || []).filter((s) => s && !have.has(Number(s.id)));
+        if (fresh.length === 0) return;
+        appendSkillSuggestionsCard({
+          projectId: msg.projectId,
+          chatId: msg.chatId,
+          projectName: typeof msg.projectName === 'string' ? msg.projectName : 'project',
+          suggestions: fresh,
+        });
+        return;
+      }
+
+      case 'project-skill-suggestion-removed':
+        removeSkillSuggestionRow(msg.chatId, msg.suggestionId);
+        return;
+
+      case 'project-skill-added': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        const ul = document.getElementById('skills-list');
+        if (!ul) return;
+        ul.querySelector('li.project-chats-empty')?.remove();
+        // Replace if a row with this id already exists (e.g. accept-as-update).
+        ul.querySelector('li.skill[data-skill-id="' + msg.skill.id + '"]')?.remove();
+        ul.insertBefore(buildSkillLi(msg.skill), ul.firstChild);
+        syncProjectSkillsTabCountFromDom();
+        return;
+      }
+
+      case 'project-skill-updated': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        const ul = document.getElementById('skills-list');
+        if (!ul) return;
+        const existing = ul.querySelector('li.skill[data-skill-id="' + msg.skill.id + '"]');
+        const fresh = buildSkillLi(msg.skill);
+        if (existing) existing.replaceWith(fresh);
+        else {
+          ul.querySelector('li.project-chats-empty')?.remove();
+          ul.insertBefore(fresh, ul.firstChild);
+        }
+        syncProjectSkillsTabCountFromDom();
+        return;
+      }
+
+      case 'project-skill-deleted': {
+        if (currentProjectPageId() !== msg.projectId) return;
+        document
+          .querySelector('#skills-list li.skill[data-skill-id="' + msg.skillId + '"]')
+          ?.remove();
+        const ul = document.getElementById('skills-list');
+        if (ul && !ul.querySelector('li.skill')) {
+          const empty = document.createElement('li');
+          empty.className = 'project-chats-empty muted';
+          empty.textContent =
+            'No skills yet. Accept a skill suggestion in a chat for this project.';
+          ul.appendChild(empty);
+        }
+        syncProjectSkillsTabCountFromDom();
+        return;
+      }
 
       case 'project-created': {
         const arr = window.__ICLAW_PROJECTS__;
@@ -3153,7 +5141,7 @@
         });
         window.__ICLAW_PROJECTS__ = (window.__ICLAW_PROJECTS__ || []).filter((p) => p && p.id !== pid);
         removeProjectsHubRow(pid);
-        if (currentProjectPageId() === pid) window.location.assign('/projects');
+        if (currentProjectPageId() === pid) goTo('/projects');
         return;
       }
 
@@ -3288,12 +5276,6 @@
         return;
       }
 
-      case 'turn-reasoning': {
-        if (msg.chatId !== activeChatId) return;
-        appendReasoningChunk(msg.text);
-        return;
-      }
-
       case 'gateway-session-changed':
         // Informational — for now we don't auto-refetch the sidebar. Logging
         // this lets future iterations decide what to do without changing the
@@ -3376,53 +5358,71 @@
   const gatewayBannerStart = document.getElementById('sidebar-gateway-start');
   let gatewayStatusPollTimer = null;
 
-  function setGatewayOfflineBannerVisible(visible) {
-    if (gatewayBanner) gatewayBanner.hidden = !visible;
+  function setGatewayOffline(offline) {
+    gatewayOffline = offline;
+    refreshGatewayOfflineBanner();
+  }
+
+  /**
+   * Show the "Start OpenClaw" banner only when the gateway is offline AND the
+   * user actually wants Full Power. Work / Safe work / Incognito run on the
+   * iclaw-runtime and never touch the gateway, so nudging them to start it is
+   * just noise — same `execute` gate the composer overlay uses. Queries the DOM
+   * directly (not the closure const) so it's safe to call from the early
+   * mode-change funnel before the gateway-banner const is initialised.
+   */
+  function refreshGatewayOfflineBanner() {
+    const banner = document.getElementById('sidebar-gateway-banner');
+    if (!banner) return;
+    banner.hidden = !(gatewayOffline && getComposerMode() === 'execute');
   }
 
   function applyGatewayStatus(status, detail) {
-    const badge = document.getElementById('gateway-badge');
     // "degraded" (gateway answered /health but the WS RPC can't get through)
     // gets its own in-page banner on the home/projects pages, so the sidebar
     // "Start OpenClaw" banner is reserved for a genuinely-offline gateway —
     // there's nothing to "start" when it's already running.
     const offline = status === 'down' || status === 'shutdown';
-    setGatewayOfflineBannerVisible(offline);
+    setGatewayOffline(offline);
 
-    if (!badge) return;
-    badge.classList.remove('ok', 'down', 'degraded', 'shutdown');
-    if (status === 'ok') {
-      badge.classList.add('ok');
-      badge.textContent = 'OpenClaw: connected';
-    } else if (status === 'degraded') {
-      badge.classList.add('degraded');
-      badge.textContent = 'OpenClaw: unreachable';
-    } else if (status === 'shutdown') {
-      badge.classList.add('shutdown');
-      badge.textContent = 'OpenClaw: shutting down';
-    } else {
-      badge.classList.add('down');
-      badge.textContent = 'OpenClaw: off';
-    }
-    const baseUrl = badge.dataset.baseUrl || '';
-    badge.title = baseUrl;
+    // Keep Full Power gating current on every page.
+    gatewayOk = status === 'ok';
+    if (typeof syncExecuteAvailability === 'function') syncExecuteAvailability();
   }
 
   (function initGatewayOfflineBanner() {
-    const badge = document.getElementById('gateway-badge');
     // Only a genuinely-offline gateway shows the sidebar "Start OpenClaw" banner.
     // "degraded" is handled by the in-page banner instead.
-    if (badge && badge.classList.contains('down')) {
-      setGatewayOfflineBannerVisible(true);
-      return;
-    }
     if (!gatewayBanner) return;
     void fetch('/api/gateway/status', { headers: { Accept: 'application/json' } })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data && data.up !== true) setGatewayOfflineBannerVisible(true);
+        if (data && data.up !== true) setGatewayOffline(true);
       })
       .catch(() => {});
+  })();
+
+  // ── Connect-a-model chooser ───────────────────────────────────────────────
+  // Shown when someone who skipped onboarding (no OpenRouter key, no reachable
+  // OpenClaw) actually tries to send — re-offers the onboarding choice instead
+  // of a dead end. The submit handler calls openConnectChooser(); this is a
+  // function declaration so it's callable regardless of definition order.
+  function openConnectChooser() {
+    const modal = document.getElementById('connect-modal');
+    if (modal) modal.hidden = false;
+  }
+  (function initConnectChooser() {
+    const modal = document.getElementById('connect-modal');
+    if (!modal) return;
+    const close = () => { modal.hidden = true; };
+    modal.querySelectorAll('[data-connect-close]').forEach((el) => {
+      el.addEventListener('click', close);
+    });
+    const pick = document.getElementById('connect-pick-openrouter');
+    if (pick) pick.addEventListener('click', () => { window.location.href = '/welcome'; });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.hidden) close();
+    });
   })();
 
   function stopGatewayStatusPoll() {
@@ -3517,10 +5517,38 @@
     if (item.serverId != null) ownQueueIds.delete(item.serverId);
     renderQueue();
     inFlight = true;
+
+    // Incognito: ephemeral turn — render locally, stream over `incognito-*`
+    // events, never persist. No pending-id (no message-appended adopts it) and
+    // no server chat is created.
+    if (item.mode === 'incognito') {
+      if (!activeIncognitoKey) activeIncognitoKey = newIncognitoKey();
+      appendMessage({ role: 'user', content: item.content, mode: 'incognito' });
+      currentStreamFullText = '';
+      streamShownLen = 0;
+      currentStreamEl = ensureStreamEl();
+      setStopVisible(true);
+      const wf = (typeof getWorkFolders === 'function' ? getWorkFolders() : [])
+        .map((f) => ({ path: f.path, readonly: true }));
+      const ok = wsSend({
+        type: 'incognito-send',
+        key: activeIncognitoKey,
+        requestId: 'r-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        content: item.content,
+        workFolders: wf.length ? wf : undefined,
+      });
+      if (!ok) {
+        inFlight = false;
+        addWaitingItem(item, { at: 'front' });
+        renderQueue();
+      }
+      return;
+    }
+
     // Optimistically append user msg. Mark it as pending-id so the
     // upcoming `message-appended` for the same user msg adopts this node
     // instead of duplicating.
-    const optimistic = { role: 'user', content: item.content };
+    const optimistic = { role: 'user', content: item.content, mode: item.mode };
     if (item.replyTo) {
       optimistic.reply_to_message_id = item.replyTo.messageId;
       optimistic.reply_quote = item.replyTo.quote;
@@ -3539,12 +5567,32 @@
     }
     appendMessage(optimistic, { pendingId: true });
     currentStreamFullText = '';
+    streamShownLen = 0;
     currentStreamEl = ensureStreamEl();
     const payload = {
       type: 'send',
       requestId: 'r-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
       content: item.content,
     };
+    if (item.mode) payload.mode = item.mode;
+    if (item.mode === 'work') {
+      const wf = getWorkFolders ? getWorkFolders() : [];
+      if (wf.length > 0) {
+        payload.workFolders = wf.map((f) => ({ path: f.path, readonly: !f.write }));
+      }
+    }
+    if (item.mode === 'secure') {
+      payload.networkEnabled = typeof getNetworkEnabled === 'function' ? getNetworkEnabled() : false;
+      // Reset TTL countdown on each message + send TTL to runtime
+      if (typeof saveSecureTtl === 'function') {
+        const cur = getSecureTtl();
+        payload.ttlDays = cur.ttlDays;
+        saveSecureTtl(cur.ttlDays);
+        // Session is created host-side during this turn; re-check a few times
+        // so the bar appears as soon as it exists (not before the first message).
+        [250, 800, 1600, 3000].forEach((d) => setTimeout(refreshSecureBar, d));
+      }
+    }
     if (item.replyTo) {
       payload.replyTo = {
         messageId: item.replyTo.messageId,
@@ -4140,6 +6188,14 @@
    * selection-only changes are correct without waiting for debounce.
    */
   function applyComposerSecretStripLayout() {
+    applyComposerSecretStripLayoutInner();
+    // Secret strip and the secure-workspace bar share the bottom row; whenever
+    // the strip's visibility changes, re-evaluate the bar so it yields to the
+    // strip ("Selection in message") and reappears once the strip is gone.
+    if (typeof refreshSecureBar === 'function') refreshSecureBar();
+  }
+
+  function applyComposerSecretStripLayoutInner() {
     if (!composerSecretUi) return;
     if (composerSecretModal && !composerSecretModal.hidden) {
       cancelComposerSelectionHintReveal();
@@ -4617,6 +6673,19 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (startedOnDraft && !draftProjectLocked) return;
+      // Don't send into a dead end. Full Power needs a reachable OpenClaw; the
+      // runtime modes (incl. a Work default with no OpenClaw on the device) need
+      // an OpenRouter key. When neither is usable, re-offer connecting a model.
+      const _sendMode = getComposerMode();
+      const _modeRunnable =
+        _sendMode === 'execute' ? isExecuteAvailable() : openRouterReady;
+      if (!_modeRunnable) {
+        // Full Power with a key has usable runtime fallbacks → nudge to switch
+        // mode; otherwise there's no working backend → re-offer connecting.
+        if (_sendMode === 'execute' && openRouterReady) syncExecuteAvailability();
+        else openConnectChooser();
+        return;
+      }
       // If the schedule menu was just opened by a long-press, the bubbling
       // click on the send button would otherwise submit a regular message.
       if (scheduleMenuJustOpened || isScheduleMenuOpen()) {
@@ -4651,6 +6720,7 @@
         replyTo: replySnap || undefined,
         attachments: attachmentsSnap.length > 0 ? attachmentsSnap : undefined,
         inlineSecrets,
+        mode: getComposerMode(),
       };
       let queued;
       const persistOnServer =
@@ -5330,7 +7400,7 @@
       openBtn.dataset.bound = '1';
       openBtn.addEventListener('click', () => {
         removeTaskCreateBanner(pendingId);
-        window.location.href = '/tasks/' + encodeURIComponent(taskId);
+        goTo('/tasks/' + encodeURIComponent(taskId));
       });
     }
   }
@@ -6128,43 +8198,20 @@
   }
   if (stopBtn) {
     stopBtn.addEventListener('click', () => {
+      // Incognito has no DB chat — abort by ephemeral key and finalize locally.
+      if (getComposerMode() === 'incognito' && activeIncognitoKey) {
+        wsSend({ type: 'incognito-abort', key: activeIncognitoKey });
+        finalizeIncognitoStream();
+        stopBtn.disabled = true;
+        setTimeout(() => { stopBtn.disabled = false; }, 3000);
+        return;
+      }
       if (activeChatId == null) return;
       wsSend({ type: 'abort', chatId: activeChatId });
       // Optimistically disable until server confirms via turn-error/ended,
       // so a frustrated double-click doesn't spam the gateway.
       stopBtn.disabled = true;
       setTimeout(() => { stopBtn.disabled = false; }, 3000);
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Chat header extras: Reasoning toggle
-  // (Interrupt moved to per-queue-item buttons; Compact removed — OpenClaw
-  // auto-compacts at context limit, and users who want it can still type
-  // /compact in the composer.)
-  // -------------------------------------------------------------------------
-  const reasoningToggle = document.getElementById('chat-reasoning-toggle');
-
-  if (reasoningToggle && activeChatId != null) {
-    reasoningToggle.addEventListener('change', async () => {
-      const mode = reasoningToggle.checked ? 'on' : 'off';
-      try {
-        // Server route does two things atomically: persists the iClaw mirror
-        // and calls `sessions.patch({ reasoningLevel })` on the OpenClaw
-        // gateway. No more /reasoning slash kludge.
-        const res = await fetch(
-          '/chats/' + encodeURIComponent(activeChatId) + '/reasoning',
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ mode }),
-          },
-        );
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-      } catch {
-        // revert if the server didn't accept
-        reasoningToggle.checked = !reasoningToggle.checked;
-      }
     });
   }
 
@@ -6593,38 +8640,6 @@
   }
 
   // -------------------------------------------------------------------------
-  // Reasoning text rendering
-  // -------------------------------------------------------------------------
-  function appendReasoningChunk(text) {
-    if (!messagesEl || !text) return;
-    let block = messagesEl.querySelector('.reasoning-block.active');
-    if (!block) {
-      block = document.createElement('div');
-      block.className = 'msg assistant reasoning-block active';
-      block.innerHTML =
-        '<div class="role">reasoning</div>' +
-        '<div class="msg-body reasoning-body"></div>';
-      // Insert above any currently-streaming assistant element so the user
-      // sees thinking → answer, not answer → thinking.
-      const appendRoot = messagesAppendRoot();
-      if (currentStreamEl && appendRoot && currentStreamEl.parentElement === appendRoot) {
-        appendRoot.insertBefore(block, currentStreamEl);
-      } else if (appendRoot) {
-        appendRoot.appendChild(block);
-      }
-    }
-    const body = block.querySelector('.reasoning-body');
-    if (body) body.textContent += text;
-    scrollToBottom();
-  }
-  function finalizeReasoningBlock() {
-    if (!messagesEl) return;
-    messagesEl.querySelectorAll('.reasoning-block.active').forEach((b) => {
-      b.classList.remove('active');
-    });
-  }
-
-  // -------------------------------------------------------------------------
   // Slash autocomplete (`/` at composer start → commands.list)
   // -------------------------------------------------------------------------
   /** @type {Array<{name:string,description:string,aliases:string[]}>} */
@@ -6707,7 +8722,7 @@
     const taskAskModal = document.getElementById('task-ask-modal');
     if (taskAskModal && !taskAskModal.hidden) return;
     if (location.pathname === '/' || location.pathname === '') return;
-    window.location.assign('/');
+    goTo('/');
   });
 
   function renderSlashMenu() {
@@ -6838,6 +8853,70 @@
         )
           .then((res) => {
             if (res.ok) ta.dataset.saved = next;
+          })
+          .catch(() => {});
+      },
+      true,
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // project page — skills list (fetch + WS sync from other tabs)
+  // -------------------------------------------------------------------------
+  const skillsListEl = document.getElementById('skills-list');
+  if (skillsListEl && projectPageId != null) {
+    skillsListEl
+      .querySelectorAll('.skill-name, .skill-description, .skill-body')
+      .forEach((el) => {
+        el.dataset.saved = el.value.trim();
+      });
+    skillsListEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.skill-delete');
+      if (!btn) return;
+      const li = btn.closest('li.skill');
+      const skillId = li?.dataset.skillId;
+      if (!skillId) return;
+      e.preventDefault();
+      fetch(
+        '/projects/' +
+          encodeURIComponent(projectPageId) +
+          '/skills/' +
+          encodeURIComponent(skillId) +
+          '/delete',
+        { method: 'POST', headers: { Accept: 'application/json' } },
+      ).catch(() => {});
+    });
+    skillsListEl.addEventListener(
+      'blur',
+      (e) => {
+        const el = e.target.closest('.skill-name, .skill-description, .skill-body');
+        if (!el || !skillsListEl.contains(el)) return;
+        const li = el.closest('li.skill');
+        const skillId = li?.dataset.skillId;
+        if (!skillId) return;
+        const next = el.value.trim();
+        if (!next) return;
+        if (next === (el.dataset.saved || '').trim()) return;
+        const field = el.classList.contains('skill-name')
+          ? 'name'
+          : el.classList.contains('skill-description')
+            ? 'description'
+            : 'body';
+        const payload = {};
+        payload[field] = next;
+        fetch(
+          '/projects/' +
+            encodeURIComponent(projectPageId) +
+            '/skills/' +
+            encodeURIComponent(skillId),
+          {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(payload),
+          },
+        )
+          .then((res) => {
+            if (res.ok) el.dataset.saved = next;
           })
           .catch(() => {});
       },
@@ -6984,6 +9063,7 @@
     const panels = {
       chats: document.getElementById('project-panel-chats'),
       memory: document.getElementById('project-panel-memory'),
+      skills: document.getElementById('project-panel-skills'),
       links: document.getElementById('project-panel-links'),
       files: document.getElementById('project-panel-files'),
       secrets: document.getElementById('project-panel-secrets'),
@@ -6992,6 +9072,7 @@
       !tabs.length ||
       !panels.chats ||
       !panels.memory ||
+      !panels.skills ||
       !panels.links ||
       !panels.files ||
       !panels.secrets
@@ -7035,7 +9116,7 @@
     const sel = document.getElementById('task-project-filter');
     if (!sel) return;
     sel.addEventListener('change', () => {
-      window.location.href = '/tasks' + tasksBoardQueryFromFilterValue(sel.value);
+      goTo('/tasks' + tasksBoardQueryFromFilterValue(sel.value));
     });
   }
 
@@ -7165,7 +9246,7 @@
         at: Date.now(),
       }),
     );
-    window.location.href = '/tasks';
+    goTo('/tasks');
   }
 
   function redirectToTasksAfterRetry(taskId, title) {
@@ -7177,7 +9258,7 @@
         at: Date.now(),
       }),
     );
-    window.location.href = '/tasks';
+    goTo('/tasks');
   }
 
   function redirectToTasksAfterResumeSubmit(taskId, title, humanInput) {
@@ -7190,7 +9271,7 @@
         at: Date.now(),
       }),
     );
-    window.location.href = '/tasks';
+    goTo('/tasks');
   }
 
   async function hydrateTaskApproveRunFlash() {
@@ -7764,8 +9845,8 @@
     div.className = 'msg assistant streaming stream-waiting';
     div.innerHTML =
       '<div class="role">assistant</div>' +
-      '<div class="stream-status"></div>' +
-      '<div class="msg-body stream-body"></div>';
+      '<div class="msg-body stream-body"></div>' +
+      '<div class="stream-status"></div>';
     taskAskLive.thread.appendChild(div);
     const st = div.querySelector('.stream-status');
     if (st) setStreamStatusLabel(st, 'Thinking…');
@@ -8312,7 +10393,7 @@
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || res.statusText);
-          window.location.href = '/tasks';
+          goTo('/tasks');
         } catch (err) {
           alert(err instanceof Error ? err.message : String(err));
           deleteBtn.disabled = false;
@@ -8338,7 +10419,7 @@
         if (failBtn) failBtn.disabled = true;
         try {
           await postAction('/complete', { status: 'done' });
-          window.location.href = '/tasks';
+          goTo('/tasks');
         } catch (err) {
           alert(err instanceof Error ? err.message : String(err));
           doneBtn.disabled = false;
@@ -8352,7 +10433,7 @@
         if (doneBtn) doneBtn.disabled = true;
         try {
           await postAction('/complete', { status: 'failed' });
-          window.location.href = '/tasks';
+          goTo('/tasks');
         } catch (err) {
           alert(err instanceof Error ? err.message : String(err));
           failBtn.disabled = false;

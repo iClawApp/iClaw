@@ -28,6 +28,71 @@ export interface HistoryMessageLike {
   toolName?: string;
   timestamp?: number;
   isError?: boolean;
+  /**
+   * Per-message token usage, present on assistant rows in OpenClaw's
+   * UI-normalized `chat.history`. The gateway sanitizes it to a flat object
+   * of numeric fields (field names vary by provider — see `pickUsageTotal`).
+   */
+  usage?: unknown;
+}
+
+/** Pull a finite number from a usage object under the first matching key. */
+function firstNumber(u: Record<string, unknown>, keys: string[]): number | null {
+  for (const k of keys) {
+    const v = u[k];
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+/**
+ * Total tokens for one assistant row's `usage`. Prefers an explicit total;
+ * otherwise sums input + output. Field names cover OpenClaw's sanitized set
+ * (camelCase, snake_case, and Anthropic-style). Returns `null` when the row
+ * carries no usable usage numbers.
+ */
+function pickUsageTotal(usage: unknown): number | null {
+  if (!usage || typeof usage !== 'object') return null;
+  const u = usage as Record<string, unknown>;
+  const total = firstNumber(u, ['total_tokens', 'totalTokens', 'total']);
+  if (total != null) return total;
+  const input = firstNumber(u, ['input_tokens', 'inputTokens', 'input', 'prompt_tokens', 'promptTokens']);
+  const output = firstNumber(u, ['output_tokens', 'outputTokens', 'output', 'completion_tokens', 'completionTokens']);
+  if (input == null && output == null) return null;
+  return (input ?? 0) + (output ?? 0);
+}
+
+/** Prompt tokens served from cache for one assistant row's `usage`, or null. */
+function pickUsageCached(usage: unknown): number | null {
+  if (!usage || typeof usage !== 'object') return null;
+  return firstNumber(usage as Record<string, unknown>, [
+    'cacheRead',
+    'cache_read_input_tokens',
+    'cachedTokens',
+    'cached_tokens',
+  ]);
+}
+
+/**
+ * Sum token usage across every assistant row in a turn-scoped slice. A native
+ * tool loop commits multiple assistant segments per turn (preamble + post-tool
+ * reply), each with its own `usage`, so the turn's true cost is their sum.
+ * Returns `null` for a field when no assistant row reported it.
+ */
+export function extractTurnUsage(slice: HistoryMessageLike[]): {
+  tokens: number | null;
+  cached: number | null;
+} {
+  let tokens: number | null = null;
+  let cached: number | null = null;
+  for (const row of slice) {
+    if (row.role !== 'assistant') continue;
+    const t = pickUsageTotal(row.usage);
+    if (t != null) tokens = (tokens ?? 0) + t;
+    const c = pickUsageCached(row.usage);
+    if (c != null) cached = (cached ?? 0) + c;
+  }
+  return { tokens, cached };
 }
 
 /**

@@ -23,8 +23,6 @@ CREATE TABLE IF NOT EXISTS chats (
   shares_to_project   INTEGER NOT NULL DEFAULT 1,
   -- Optional per-session model override applied via sessions.patch.
   model_override      TEXT,
-  -- Reasoning visibility mirror; actual state lives on the gateway.
-  reasoning_mode      TEXT NOT NULL DEFAULT 'off',
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
   title_manual        INTEGER NOT NULL DEFAULT 0,
@@ -44,6 +42,8 @@ CREATE TABLE IF NOT EXISTS messages (
   reply_to_role        TEXT,
   /** JSON array of {url, mimeType, fileName, sizeBytes} for user-attached files. NULL when no attachments. */
   attachments          TEXT,
+  /** Send mode: 'ask' | 'execute' (see services/chatModes.ts). Legacy rows default to 'execute'. */
+  mode                 TEXT NOT NULL DEFAULT 'execute',
   created_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -73,6 +73,45 @@ CREATE TABLE IF NOT EXISTS project_fact_suggestions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fact_suggestions_chat ON project_fact_suggestions(chat_id, id);
+
+-- Active, accepted project skills (procedural memory). Stored as SKILL.md.
+-- The declarative half is project_facts; this is the procedural half.
+CREATE TABLE IF NOT EXISTS project_skills (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id     INTEGER REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = global skill
+  name           TEXT NOT NULL,            -- kebab-case, unique within scope
+  description    TEXT NOT NULL,            -- one-line summary (shown to user + prompt index)
+  body           TEXT NOT NULL,            -- full SKILL.md (frontmatter + procedure)
+  tags           TEXT,                     -- JSON array of strings (optional)
+  source_chat_id INTEGER REFERENCES chats(id) ON DELETE SET NULL,
+  usage_count    INTEGER NOT NULL DEFAULT 0,
+  version        INTEGER NOT NULL DEFAULT 1,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_skills_project ON project_skills(project_id, id);
+-- Uniqueness within a scope (project_id may be NULL for global). SQLite treats
+-- NULLs as distinct, so global uniqueness is also enforced in the store layer.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_scope_name
+  ON project_skills(project_id, name);
+
+-- Inbox: proposed skills awaiting user acceptance. Never active until accepted.
+CREATE TABLE IF NOT EXISTS project_skill_suggestions (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id           INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  chat_id              INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  kind                 TEXT NOT NULL DEFAULT 'new',     -- 'new' | 'patch'
+  target_skill_id      INTEGER REFERENCES project_skills(id) ON DELETE CASCADE,  -- for 'patch'
+  name                 TEXT NOT NULL,
+  description          TEXT NOT NULL,
+  body                 TEXT NOT NULL,          -- full proposed SKILL.md
+  tags                 TEXT,                   -- JSON array (optional)
+  untrusted            INTEGER NOT NULL DEFAULT 0,      -- 1 if source turn ingested untrusted content
+  assistant_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+  created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_skill_suggestions_chat ON project_skill_suggestions(chat_id, id);
+CREATE INDEX IF NOT EXISTS idx_skill_suggestions_project ON project_skill_suggestions(project_id, id);
 
 CREATE TABLE IF NOT EXISTS project_secrets (
   id                   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,6 +150,8 @@ CREATE TABLE IF NOT EXISTS queued_messages (
   attachments          TEXT,
   /** JSON array of {slot, label, plain} for [[iclaw:sN]] markers; resolved on flush. */
   inline_secrets       TEXT,
+  /** Send mode chosen at enqueue time; preserved so flush sends with it. */
+  mode                 TEXT NOT NULL DEFAULT 'execute',
   /** Lower sorts first; promote-to-front uses values below the current min. */
   position             INTEGER NOT NULL DEFAULT 0,
   created_at           TEXT NOT NULL DEFAULT (datetime('now'))
@@ -232,6 +273,17 @@ CREATE TABLE IF NOT EXISTS remote_access_state (
   updated_at  INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
 );
 
+-- Context compaction cache. One row per chat: a rolling summary of all turns
+-- up to (and including) up_to_message_id. Lets us feed the model
+-- [summary] + [recent verbatim] so a chat's context is never cleared, only
+-- compressed. Rebuilt incrementally as the chat grows.
+CREATE TABLE IF NOT EXISTS chat_summaries (
+  chat_id           INTEGER PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+  up_to_message_id  INTEGER NOT NULL,
+  summary           TEXT NOT NULL,
+  updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Robustness: any new message bumps the parent chat's updated_at so sidebar
 -- sorting is always correct even if a caller forgets the manual chats.touch().
 CREATE TRIGGER IF NOT EXISTS trg_chats_touch_on_message
@@ -257,7 +309,15 @@ function ensureColumn(table: string, column: string, ddl: string): void {
   }
 }
 ensureColumn('messages', 'attachments', 'TEXT');
+ensureColumn('messages', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
+ensureColumn('messages', 'tokens', 'INTEGER'); // dev-mode token usage (runtime modes)
+ensureColumn('messages', 'cached_tokens', 'INTEGER'); // dev-mode: prompt tokens served from cache
+ensureColumn('queued_messages', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
 ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
+// Sticky composer send-mode per chat (null = use UI default). Persisted on change
+// so it survives page navigation and syncs across devices — previously only the
+// last sent message's mode + per-browser localStorage tracked this.
+ensureColumn('chats', 'mode', 'TEXT');
 ensureColumn('remote_access_tunnels', 'access_token', 'TEXT');
 ensureColumn('remote_access_tunnels', 'opaque_registration_record', 'TEXT');
 // Tunnel ownership secret. Proves to the relay that a re-registering client is

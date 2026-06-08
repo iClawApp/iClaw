@@ -6,12 +6,15 @@ import {
   projects,
   projectFactSuggestions,
   projectFacts,
+  projectSkills,
+  projectSkillSuggestions,
   projectSecrets,
   secretUsableInChat,
   scheduledMessages,
   queuedMessages,
   tasks,
   enrichFactWithSourceChatTitle,
+  enrichSkillWithSourceChatTitle,
 } from '../services/store';
 import { persistIncomingAttachments, type IncomingAttachment } from '../services/uploads';
 import {
@@ -24,8 +27,18 @@ import { openclawWs } from '../services/openclawWs';
 import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
-import { sendMessage } from '../services/chatRunner';
+import { sendMessage, getWorkSessionId, destroyWorkSession, exportChatSandbox, applyChatSandboxChanges } from '../services/chatRunner';
+import { getWorkspaceInfo } from '../services/workRuntime';
+import {
+  defaultComposerMode,
+  isSelectableMode,
+  isEphemeralMode,
+  listComposerModes,
+  normalizeChatMode,
+} from '../services/chatModes';
+import type { ChatMode } from '../types';
 import { shouldShowSendHint } from '../services/sendHint';
+import { openRouterEnabled } from '../services/openRouter';
 
 export const chatsRouter: Router = Router();
 
@@ -152,23 +165,169 @@ chatsRouter.post('/:id/fact-suggestions/:suggestionId/reject', (req, res) => {
   res.type('application/json').json({ ok: true });
 });
 
+/* ---------------- project skill suggestions (inbox-gated) ---------------- */
+
+function parseTags(raw: unknown): string[] | null {
+  if (!Array.isArray(raw)) return null;
+  const tags = raw.filter((t): t is string => typeof t === 'string' && t.trim().length > 0);
+  return tags.length > 0 ? tags : null;
+}
+
+/** Pending project-skill suggestions for this chat (JSON, includes full bodies). */
+chatsRouter.get('/:id/skill-suggestions', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || !chats.get(id)) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const suggestions = projectSkillSuggestions.listByChat(id);
+  const first = suggestions[0];
+  const projectName =
+    first != null ? (projects.get(first.project_id)?.name?.trim() ?? 'project') : null;
+  res.type('application/json').json({ suggestions, projectName });
+});
+
+chatsRouter.post('/:id/skill-suggestions/:suggestionId/accept', (req, res) => {
+  const chatId = Number(req.params.id);
+  const sid = Number(req.params.suggestionId);
+  if (!Number.isFinite(chatId) || !Number.isFinite(sid)) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+  const chat = chats.get(chatId);
+  const sug = projectSkillSuggestions.get(sid);
+  if (!chat || !sug || sug.chat_id !== chatId) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  if (!chat.project_id || chat.project_id !== sug.project_id) {
+    res.status(400).json({ error: 'project mismatch' });
+    return;
+  }
+
+  // Optional user edits submitted alongside the accept.
+  const name = typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name : sug.name;
+  const description =
+    typeof req.body?.description === 'string' && req.body.description.trim()
+      ? req.body.description
+      : sug.description;
+  const body = typeof req.body?.body === 'string' && req.body.body.trim() ? req.body.body : sug.body;
+  const tags = parseTags(req.body?.tags) ?? (sug.tags ? (JSON.parse(sug.tags) as string[]) : null);
+  const scope = req.body?.scope === 'global' ? 'global' : 'project';
+  const projectId = scope === 'global' ? null : sug.project_id;
+
+  try {
+    if (sug.kind === 'patch' && sug.target_skill_id != null && projectSkills.get(sug.target_skill_id)) {
+      projectSkills.update(sug.target_skill_id, { name, description, body, tags });
+      const updated = projectSkills.get(sug.target_skill_id)!;
+      projectSkillSuggestions.remove(sid);
+      wsHub.broadcastAll({
+        type: 'project-skill-updated',
+        projectId: updated.project_id ?? sug.project_id,
+        skill: enrichSkillWithSourceChatTitle(updated),
+      });
+      wsHub.broadcastAll({ type: 'project-skill-suggestion-removed', chatId, suggestionId: sid });
+      res.type('application/json').json({ skill: updated });
+      return;
+    }
+
+    // 'new' (or a patch whose target vanished). Same-scope name collision →
+    // treat as an update of the existing skill rather than a duplicate insert.
+    const existing = projectSkills.getByName(projectId, name);
+    if (existing) {
+      projectSkills.update(existing.id, { name, description, body, tags });
+      const updated = projectSkills.get(existing.id)!;
+      projectSkillSuggestions.remove(sid);
+      wsHub.broadcastAll({
+        type: 'project-skill-updated',
+        projectId: updated.project_id ?? sug.project_id,
+        skill: enrichSkillWithSourceChatTitle(updated),
+      });
+      wsHub.broadcastAll({ type: 'project-skill-suggestion-removed', chatId, suggestionId: sid });
+      res.type('application/json').json({ skill: updated });
+      return;
+    }
+
+    const skill = projectSkills.create({
+      projectId,
+      name,
+      description,
+      body,
+      tags,
+      sourceChatId: chatId,
+    });
+    projectSkillSuggestions.remove(sid);
+    wsHub.broadcastAll({
+      type: 'project-skill-added',
+      projectId: skill.project_id ?? sug.project_id,
+      skill: enrichSkillWithSourceChatTitle(skill),
+    });
+    wsHub.broadcastAll({ type: 'project-skill-suggestion-removed', chatId, suggestionId: sid });
+    res.type('application/json').json({ skill });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'accept failed' });
+  }
+});
+
+chatsRouter.post('/:id/skill-suggestions/:suggestionId/reject', (req, res) => {
+  const chatId = Number(req.params.id);
+  const sid = Number(req.params.suggestionId);
+  if (!Number.isFinite(chatId) || !Number.isFinite(sid)) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+  const sug = projectSkillSuggestions.get(sid);
+  if (!sug || sug.chat_id !== chatId) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  projectSkillSuggestions.remove(sid);
+  wsHub.broadcastAll({ type: 'project-skill-suggestion-removed', chatId, suggestionId: sid });
+  res.type('application/json').json({ ok: true });
+});
+
 chatsRouter.get('/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const chat = chats.get(id);
     if (!chat) {
-      res.status(404).send('chat not found');
+      // Stale link / deleted chat → send the user home instead of a dead-end
+      // 404 page. Keeps navigation friendly for non-technical users.
+      res.redirect('/');
       return;
     }
     if (chats.markRead(id)) wsHub.broadcastAll({ type: 'chat-read', chatId: id });
     const { agents, error: agentsError } = await getAgentsSafe();
+    const chatMessages = messages.listByChat(id);
+    // The chat's "current" composer mode. Prefer the explicitly persisted
+    // chats.mode (set the moment the user picks a mode — survives navigation and
+    // syncs across devices). Fall back to the most recent message's mode for
+    // legacy chats that predate the column, then to the UI default (empty string).
+    let chatCurrentMode = '';
+    if (chat.mode && isSelectableMode(chat.mode) && !isEphemeralMode(chat.mode as ChatMode)) {
+      chatCurrentMode = chat.mode;
+    } else {
+      // Only USER rows carry a user-chosen mode. Assistant rows mirror it, but
+      // synthetic system rows (e.g. the "saved X% tokens" savings badge) default
+      // to 'execute' — and being the newest rows they'd otherwise hijack this
+      // fallback, reopening a Work chat as Full Power. Walk back to the last
+      // user message instead.
+      for (let i = chatMessages.length - 1; i >= 0; i--) {
+        if (chatMessages[i].role !== 'user') continue;
+        const m = chatMessages[i].mode;
+        if (m && isSelectableMode(m) && !isEphemeralMode(m as ChatMode)) {
+          chatCurrentMode = m;
+          break;
+        }
+      }
+    }
     res.render('chat', {
       chats: chats.list(),
       allProjects: projects.list(),
       hasAnyTasks: tasks.hasAny(),
       taskStatusSignals: tasks.statusSignals(),
       activeChat: chat,
-      chatMessages: messages.listByChat(id),
+      chatMessages,
       agents,
       agentsError,
       defaultAgent: DEFAULT_AGENT,
@@ -180,6 +339,16 @@ chatsRouter.get('/:id', async (req, res, next) => {
       scheduledList: scheduledMessages.listByChat(id),
       queueList: queuedMessages.listByChat(id),
       sendHintShow: shouldShowSendHint(),
+      chatModes: listComposerModes(),
+      defaultChatMode: defaultComposerMode(),
+      chatCurrentMode,
+      sttEnabled: openRouterEnabled(),
+      // Lets the composer lock the runtime modes (and the connect chooser fire)
+      // when no key is configured.
+      openRouterReady: openRouterEnabled(),
+      // Full Power (Execute) needs the gateway; agents.list succeeding implies it's
+      // reachable. Seeds the composer's Full Power gating (no badge on this page).
+      gatewayOk: !agentsError,
     });
   } catch (err) {
     next(err);
@@ -251,42 +420,34 @@ chatsRouter.post('/:id/shares', (req, res) => {
   res.redirect(`/chats/${id}`);
 });
 
-/**
- * Toggle reasoning visibility on the active session by sending the slash
- * command through the normal chat flow. The mode is mirrored locally so the
- * UI toggle stays in sync across reloads.
- */
-chatsRouter.post('/:id/reasoning', async (req, res) => {
+// Persist the chat's sticky composer send-mode the moment the user picks it, so it
+// survives navigation and syncs across devices instead of living only in this
+// browser's localStorage. Pure iClaw UI state — the mode rides along with each
+// sent message, so there's no gateway patch to make here.
+chatsRouter.post('/:id/mode', (req, res) => {
   const id = Number(req.params.id);
-  const chat = chats.get(id);
-  if (!chat) {
+  if (!chats.get(id)) {
     res.status(404).json({ error: 'chat not found' });
     return;
   }
   const raw = String(req.body?.mode ?? '').trim().toLowerCase();
-  const mode: 'off' | 'on' | 'stream' =
-    raw === 'on' ? 'on' : raw === 'stream' ? 'stream' : 'off';
-  // Mirror locally first — UI source of truth even if the gateway hiccups.
-  chats.setReasoningMode(id, mode);
+  // Only persist real, selectable, non-ephemeral modes — incognito is transient.
+  if (!isSelectableMode(raw) || isEphemeralMode(raw as ChatMode)) {
+    res.status(400).json({ error: 'invalid mode' });
+    return;
+  }
+  chats.setChatMode(id, raw);
+  // A draft is hidden from the sidebar until its first user message. The client
+  // upserts a sidebar row on any `updatedAt`, so omit it for drafts — otherwise
+  // switching mode would leak the empty draft into the list. `mode` still
+  // broadcasts for cross-tab sync.
   wsHub.broadcastAll({
     type: 'chat-updated',
     chatId: id,
-    reasoningMode: mode,
-    updatedAt: chats.get(id)!.updated_at,
+    mode: raw,
+    ...(chats.isDraft(id) ? {} : { updatedAt: chats.get(id)!.updated_at }),
   });
-  // Push the real flip to OpenClaw. `sessions.patch` is the proper channel —
-  // it's what the dashboard uses. Failure here doesn't roll back the mirror;
-  // we surface the error to the caller so the UI can warn.
-  let gatewayWarning: string | null = null;
-  try {
-    await openclawWs.patchSession({
-      sessionKey: chat.openclaw_session_id,
-      reasoningLevel: mode === 'off' ? null : mode,
-    });
-  } catch (err) {
-    gatewayWarning = err instanceof Error ? err.message : String(err);
-  }
-  res.json({ id, mode, ...(gatewayWarning ? { gatewayWarning } : {}) });
+  res.json({ id, mode: raw });
 });
 
 chatsRouter.post('/:id/unread', (req, res) => {
@@ -619,6 +780,7 @@ chatsRouter.post('/:id/queue', (req, res) => {
       replyTo: replyTo ?? null,
       attachments: persistedAttachments,
       inlineSecrets: inlineSecrets ?? null,
+      mode: normalizeChatMode(req.body?.mode),
     });
     wsHub.broadcastAll({ type: 'queue-added', chatId: id, item: row });
     res.json({ item: row });
@@ -696,6 +858,7 @@ chatsRouter.post('/:id/queue/:queueId/flush', async (req, res) => {
       prePersistedAttachments:
         row.attachments && row.attachments.length > 0 ? row.attachments : undefined,
       requestId: String(req.body?.requestId ?? '').trim() || undefined,
+      mode: row.mode,
     });
     res.json({ ok: true });
   } catch (err) {
@@ -932,5 +1095,51 @@ chatsRouter.patch('/:id/scheduled/:scheduledId', (req, res) => {
     res
       .status(400)
       .json({ error: err instanceof Error ? err.message : 'failed to update' });
+  }
+});
+
+/** GET /chats/:id/workspace-info — workspace size for Work/Secure Mode. */
+chatsRouter.get('/:id/workspace-info', async (req, res) => {
+  const chatId = Number(req.params.id);
+  const sessionId = getWorkSessionId(chatId);
+  if (!sessionId) return res.json({ active: false });
+  const info = await getWorkspaceInfo(sessionId);
+  res.json({ active: true, sessionId, ...info });
+});
+
+/**
+ * POST /chats/:id/destroy-workspace — tear down the chat's Safe/Work sandbox:
+ * stops the container and deletes the workspace (the Safe-mode copy and all of
+ * its contents). The next message starts a fresh sandbox.
+ */
+chatsRouter.post('/:id/destroy-workspace', async (req, res) => {
+  const chatId = Number(req.params.id);
+  if (!Number.isFinite(chatId)) return res.status(400).json({ error: 'bad chat id' });
+  const destroyed = await destroyWorkSession(chatId);
+  res.json({ destroyed });
+});
+
+/** POST /chats/:id/export-sandbox — copy the Safe sandbox out to a host folder. */
+chatsRouter.post('/:id/export-sandbox', async (req, res) => {
+  const chatId = Number(req.params.id);
+  if (!Number.isFinite(chatId)) return res.status(400).json({ error: 'bad chat id' });
+  const destDir = typeof req.body?.destDir === 'string' ? req.body.destDir : undefined;
+  try {
+    const result = await exportChatSandbox(chatId, destDir);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** POST /chats/:id/apply-sandbox — apply the sandbox's changes to the originals. */
+chatsRouter.post('/:id/apply-sandbox', async (req, res) => {
+  const chatId = Number(req.params.id);
+  if (!Number.isFinite(chatId)) return res.status(400).json({ error: 'bad chat id' });
+  try {
+    const results = await applyChatSandboxChanges(chatId);
+    res.json({ results });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });

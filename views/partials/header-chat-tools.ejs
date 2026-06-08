@@ -1,0 +1,84 @@
+<%
+  // Shared chat-header tool cluster (suggest-facts / stop / share /
+  // delete). Rendered live in chat.ejs and, in a dormant "draft" form, in
+  // index.ejs (the new-chat screen). On the draft the chat row doesn't exist
+  // yet, so the id-bound controls render hidden + action-less; adoptDraftChat()
+  // in iclaw.js reveals them and fills in the /chats/:id actions the moment the
+  // first message creates the row. Keeping ONE copy of this markup is what stops
+  // a header tool from silently going missing on freshly-started chats.
+  const _draft = typeof draftHeader !== 'undefined' && draftHeader;
+  const _cid = _draft ? '' : activeChat.id;
+  const _hasProject = !_draft && Boolean(activeChat.project_id);
+  const _sharesOn = !_draft && activeChat.shares_to_project;
+  const _working = typeof isWorking !== 'undefined' && isWorking;
+%>
+      <% if (_draft || _hasProject) { %>
+        <form
+          method="post"
+          action="<%= _draft ? '' : '/chats/' + _cid + '/shares' %>"
+          class="share-form"
+          title="When on, after each assistant reply you get suggested facts to add to the project (you confirm each)."
+          <%= _draft ? 'hidden' : '' %>
+        >
+          <label
+            class="share-toggle"
+            title="Suggest facts for project"
+            aria-label="Suggest facts for project"
+          >
+            <input
+              type="checkbox"
+              name="shares"
+              value="1"
+              <%= _sharesOn ? 'checked' : '' %>
+              onchange="this.form.requestSubmit()"
+            />
+            <%- include('header-tool-icon', { icon: 'facts' }) %>
+            <span class="header-tool-label">Suggest facts for project</span>
+          </label>
+        </form>
+      <% } %>
+
+      <button
+        type="button"
+        class="stop-btn btn btn--ghost btn--sm header-action-btn"
+        id="stop-btn"
+        aria-label="Stop generation"
+        title="Stop this turn"
+        <%= _working ? '' : 'hidden' %>
+      >
+        <%- include('header-tool-icon', { icon: 'stop' }) %>
+        <span class="header-tool-label">Stop</span>
+      </button>
+
+      <% if (cloudShareBaseUrl) { %>
+        <button
+          type="button"
+          class="share-btn btn btn--ghost btn--sm header-action-btn"
+          id="share-btn"
+          data-cloud-base-url="<%= cloudShareBaseUrl %>"
+          title="Encrypted in your browser; the key is in the # part of the link. Optional password."
+          aria-label="Share this chat"
+          <%= _draft ? 'hidden' : '' %>
+        >
+          <%- include('header-tool-icon', { icon: 'share' }) %>
+          <span class="header-tool-label">Share</span>
+        </button>
+      <% } %>
+
+      <form
+        method="post"
+        action="<%= _draft ? '' : '/chats/' + _cid + '/delete' %>"
+        class="delete-form"
+        <%= _draft ? 'hidden' : '' %>
+      >
+        <button
+          type="submit"
+          class="btn btn--ghost btn--sm header-action-btn chat-delete-btn"
+          onclick="return confirm('Delete this chat?')"
+          aria-label="Delete chat"
+          title="Delete this chat"
+        >
+          <%- include('header-tool-icon', { icon: 'delete' }) %>
+          <span class="header-tool-label">Delete</span>
+        </button>
+      </form>

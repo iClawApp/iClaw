@@ -6,6 +6,8 @@ import { openclaw } from './services/openclaw';
 import { scheduler } from './services/scheduler';
 import { gatewayEvents } from './services/gatewayEvents';
 import { remoteAccess, setRemoteAccessQuiet } from './services/remoteAccess';
+import { runtimeProcess } from './services/runtimeProcess';
+import { probeOpenClawInstalled } from './services/openclawInstall';
 import { setBoundLocalAddress } from './services/localAddress';
 import {
   findAvailablePort,
@@ -26,6 +28,12 @@ import {
   writeLockFile,
 } from './startup';
 import { offerRemoteAccessOnboarding } from './remoteAccessOnboarding';
+import { ensureColimaEnv } from './services/colima';
+
+// macOS: set up the Colima engine env (PATH to colima/docker + docker context)
+// before we spawn the runtime sidecar, so the child — and its container
+// commands — inherit it.
+ensureColimaEnv();
 
 const preferredPort = Number(process.env.PORT ?? 3000);
 const host = '127.0.0.1';
@@ -44,6 +52,7 @@ function gracefulShutdown(
   }
   removeLockFileIfOwned();
   scheduler.stop();
+  runtimeProcess.stop();
   remoteAccess.shutdown();
 
   const exitCode = signal === 'SIGINT' ? 130 : 0;
@@ -108,7 +117,12 @@ async function main(): Promise<void> {
   server = createServer(app);
   attachWsServer(server);
   scheduler.start();
+  runtimeProcess.start();
   gatewayEvents.start();
+  // Prime the OpenClaw install check before serving — the composer's default
+  // mode (Full Power vs Work) keys off it. Fast: present → quick; absent →
+  // ENOENT immediately. Never fatal.
+  await probeOpenClawInstalled().catch(() => {});
 
   const stop = () => gracefulShutdown(server, 'SIGINT');
   process.on('SIGINT', () => stop());

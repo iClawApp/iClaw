@@ -1,9 +1,9 @@
 /**
  * GET /settings — Settings page.
  *
- * For now the only section is Remote Access, but the page is built as a
- * sectioned scaffold so future settings can land alongside without a
- * separate URL.
+ * Sectioned scaffold: Remote Access + OpenRouter (the key that unlocks voice
+ * messages, Ask mode, and smart titles). The key is stored in the local DB via
+ * Settings — not an env var — and takes effect on the next page load.
  */
 
 import { Router } from 'express';
@@ -12,12 +12,20 @@ import { chats, projects, tasks } from '../services/store';
 import { chatStatus } from '../services/chatStatus';
 import { openclaw } from '../services/openclaw';
 import { remoteAccess, ALLOWED_DURATIONS_MS } from '../services/remoteAccess';
+import {
+  maskOpenRouterApiKey,
+  setOpenRouterApiKey,
+  clearOpenRouterApiKey,
+} from '../services/config';
+import { openRouterEnabled, fetchUsage, isOpenRouterFailure, validateKey } from '../services/openRouter';
+import { runtimeProcess } from '../services/runtimeProcess';
+
 export const settingsRouter = Router();
 
-settingsRouter.get('/settings', (_req, res) => {
-  res.render('settings', {
+/** Locals every settings sub-page needs for the shared sidebar + shell. */
+function sidebarLocals() {
+  return {
     title: 'Settings — iClaw',
-    // Sidebar locals.
     chats: chats.list(),
     workingIds: chatStatus.workingIds(),
     allProjects: projects.list(),
@@ -29,8 +37,95 @@ settingsRouter.get('/settings', (_req, res) => {
     activeTasksList: false,
     activeSettings: true,
     openclawBaseUrl: openclaw.baseUrl,
-    // Page-specific.
+  };
+}
+
+/** /settings → first sub-page. Each section is now its own page. */
+settingsRouter.get('/settings', (_req, res) => {
+  res.redirect('/settings/voice-ask');
+});
+
+settingsRouter.get('/settings/voice-ask', (_req, res) => {
+  res.render('settings', {
+    ...sidebarLocals(),
+    settingsTab: 'voice-ask',
+    openRouter: {
+      hasKey: openRouterEnabled(),
+      maskedKey: maskOpenRouterApiKey(),
+    },
+  });
+});
+
+settingsRouter.get('/settings/remote-access', (_req, res) => {
+  res.render('settings', {
+    ...sidebarLocals(),
+    settingsTab: 'remote-access',
     tunnels: remoteAccess.list(),
     allowedDurationsMs: ALLOWED_DURATIONS_MS,
   });
+});
+
+/**
+ * Validate a key WITHOUT saving it — onboarding (and Settings) calls this before
+ * committing, so a dead/zero-balance key is caught up front instead of in chat.
+ */
+settingsRouter.post('/api/openrouter/validate', async (req, res) => {
+  const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
+  if (!key) {
+    res.status(400).json({ valid: false, reason: 'empty' });
+    return;
+  }
+  try {
+    const result = await validateKey(key);
+    res.json(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(502).json({ valid: false, reason: 'network', error: msg });
+  }
+});
+
+/** Save / update the OpenRouter API key. Takes effect on the next page load. */
+settingsRouter.post('/api/openrouter/key', (req, res) => {
+  const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
+  if (!key) {
+    res.status(400).json({ error: 'Paste your OpenRouter API key first.' });
+    return;
+  }
+  // OpenRouter keys look like `sk-or-...`. Be lenient (warn-not-block) so a
+  // future key format still works, but catch obvious paste mistakes.
+  if (!/^sk-or-/.test(key)) {
+    res.status(400).json({ error: 'That doesn’t look like an OpenRouter key (expected to start with “sk-or-”).' });
+    return;
+  }
+  setOpenRouterApiKey(key);
+  // The runtime reads the key from the DB only at spawn — restart it so Work /
+  // Safe / Incognito modes work immediately after onboarding, without an app
+  // restart.
+  runtimeProcess.restart();
+  res.json({ ok: true, maskedKey: maskOpenRouterApiKey() });
+});
+
+/** Disconnect — remove the stored key. */
+settingsRouter.delete('/api/openrouter/key', (_req, res) => {
+  clearOpenRouterApiKey();
+  // Drop the key from the running runtime too.
+  runtimeProcess.restart();
+  res.json({ ok: true });
+});
+
+/** Spend / credits readout for the connected key. */
+settingsRouter.get('/api/openrouter/usage', async (_req, res) => {
+  if (!openRouterEnabled()) {
+    res.status(404).json({ error: 'No OpenRouter key connected.' });
+    return;
+  }
+  try {
+    const usage = await fetchUsage();
+    res.json({ ok: true, usage });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res
+      .status(502)
+      .json({ error: isOpenRouterFailure(err) ? 'Could not load usage from OpenRouter.' : msg });
+  }
 });

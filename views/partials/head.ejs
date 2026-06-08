@@ -17,7 +17,11 @@
   <meta name="iclaw-ra-relay-binding" content="<%= typeof raRelayBindingB64url !== 'undefined' ? raRelayBindingB64url : '' %>" />
   <script type="module">
     window.__iclawRaE2eBoot = import('/js/ra-e2e-transport.mjs?v=ra-gate-9').then(function (m) {
-      return m.installRaE2eTransport();
+      window.iclawE2eNavigate = m.e2eNavigate;
+      return Promise.resolve(m.installRaE2eTransport()).then(function (ok) {
+        m.setupE2eSpaNavigation();
+        return ok;
+      });
     });
   </script>
   <% } %>
@@ -26,6 +30,7 @@
     window.__ICLAW_PROJECT_LOGO_EMOJIS__ = <%- JSON.stringify(projectLogoEmojis || []) %>;
     window.__ICLAW_PROJECTS__ = <%- JSON.stringify(typeof projectsMini !== 'undefined' ? projectsMini : []) %>;
     window.__ICLAW_SCHEDULED_CHAT_COUNTS__ = <%- JSON.stringify(typeof scheduledChatCounts !== 'undefined' ? scheduledChatCounts : {}) %>;
+    window.__ICLAW_DEV__ = <%- JSON.stringify(typeof devMode !== 'undefined' ? !!devMode : false) %>;
   </script>
 </head>
 <body>

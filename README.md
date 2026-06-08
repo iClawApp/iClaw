@@ -5,13 +5,12 @@
 <h1 align="center">iClaw</h1>
 
 <p align="center">
-  Chat UI for <a href="https://openclaw.ai">OpenClaw Gateway</a> — runs on your machine, stores history locally.
+  Minimalist agent UI - give it a project, it works only within it. Isolated memory, isolated folders
 </p>
 
 <p align="center">
-  <a href="https://github.com/iClawApp/iClaw/actions/workflows/ci.yml?branch=main"><img src="https://img.shields.io/github/actions/workflow/status/iClawApp/iClaw/ci.yml?branch=main&style=for-the-badge" alt="CI"></a>
-  <a href="https://www.npmjs.com/package/@iclawapp/iclaw"><img src="https://img.shields.io/npm/v/@iclawapp/iclaw?style=for-the-badge" alt="npm"></a>
   <a href="https://www.npmjs.com/package/@iclawapp/iclaw"><img src="https://img.shields.io/npm/dm/@iclawapp/iclaw?style=for-the-badge" alt="npm downloads"></a>
+  <a href="https://www.reddit.com/r/iClaw_ai_agent/"><img src="https://img.shields.io/badge/Reddit-r%2FiClaw__ai__agent-FF4500?style=for-the-badge&logo=reddit&logoColor=white" alt="Reddit"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT"></a>
 </p>
 
@@ -19,41 +18,33 @@
 
 ## Install
 
-Requires [Node.js 20+](https://nodejs.org) and a running [OpenClaw Gateway](https://docs.openclaw.ai).
+Requires [Node.js 20+](https://nodejs.org)
 
 ```bash
 npx @iclawapp/iclaw
 ```
 
-The terminal shows a short status line and **press `g`** to open the UI in your browser. It picks the next free port if `3000` is busy, and exits without starting a second copy if iClaw is already running.
+Press **`g`** in the terminal to open the UI in your browser
 
-Your chat history is saved to `~/.iclaw/data/iclaw.db`.
+## Star history
 
-Optional env vars: `PORT` (preferred port, default `3000`), `ICLAW_OPEN_BROWSER=1` (also open the browser tab on start).
+[![Star History Chart](https://api.star-history.com/svg?repos=iClawApp/iClaw&type=Date)](https://www.star-history.com/#iClawApp/iClaw&Date)
 
-## Encrypted chat sharing (optional)
+## Chat modes
 
-Hit **Share** in any chat to get an encrypted link. The chat is encrypted in your browser (AES-256-GCM); the server stores ciphertext only. Supports password protection, burn-after-read, and TTL.
+| Mode | What it does | Backend |
+| --- | --- | --- |
+| **Work** | AI edits files in folders you pick; you approve every change. | iClaw runtime |
+| **Safe work & Internet research** | Locked Docker sandbox — run untrusted code and research the web. | iClaw runtime |
+| **Full Power** (default) | The full OpenClaw agent — files, tools, shell, browser. | OpenClaw Gateway |
+| **Incognito** | Private, read-only research — reads files & the web, never writes, nothing saved. | iClaw runtime |
 
-Powered by [iClaw-cloud](https://github.com/iClawApp/iClaw-cloud) — defaults to `https://app.iclaw.digital`.
+The three runtime modes need **Docker** running and an **OpenRouter key** (Settings); without either the composer falls back to Full Power. Architecture: [AGENTS.md](AGENTS.md).
 
-## Remote Access (alpha)
+## More
 
-Open the iClaw UI from another device through an **iclaw-relay** tunnel (Settings → Remote Access).
-
-**Security model (summary):**
-
-- **Relay access token** — blocks visitors who only guess the subdomain.
-- **OPAQUE login** — passphrase is not sent in plaintext over the tunnel.
-- **Encrypted HTTP/WebSocket** (E2E alpha) — payloads are encrypted between the browser and **local** iClaw; the relay forwards encrypted frames only.
-- **Device sessions** — trusted browsers can reconnect without retyping the passphrase.
-- **Alpha** — not externally audited. The relay still sees metadata (subdomain, timing, sizes, E2E endpoint paths).
-
-Two setups: **local mode** (iClaw + OpenClaw on the same laptop) and **host mode** (always-on machine, browse from phone/laptop). See [docs/REMOTE_ACCESS.md](../docs/REMOTE_ACCESS.md).
-
-Env on the iClaw host: `ICLAW_RELAY_URL` and `OPAQUE_SERVER_SETUP` (required when Remote Access is enabled).
-
----
+- **Encrypted chat sharing** — hit **Share** in any chat for an end-to-end encrypted link (AES-256-GCM; password, burn-after-read, TTL). Powered by [iClaw-cloud](https://github.com/iClawApp/iClaw-cloud).
+- **Remote Access** (alpha) — reach the UI from another device over an iclaw-relay tunnel (Settings → Remote Access). Not externally audited yet — see [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md).
 
 ## For developers
 
@@ -62,28 +53,9 @@ git clone https://github.com/iClawApp/iClaw.git
 cd iClaw && npm install && npm run dev
 ```
 
-| | Default |
-| --- | --- |
-| Web UI | http://localhost:3000 |
-| Gateway | http://127.0.0.1:18789 (`OPENCLAW_BASE_URL`) |
+Web UI on http://localhost:3000, Gateway on http://127.0.0.1:18789 (`OPENCLAW_BASE_URL`). Env vars: [.env.example](.env.example) · Architecture & coding rules: [AGENTS.md](AGENTS.md).
 
-Optional env vars: [.env.example](.env.example).  
-Architecture + coding rules: [AGENTS.md](AGENTS.md).  
-Remote Access alpha: [docs/REMOTE_ACCESS.md](../docs/REMOTE_ACCESS.md), smoke [docs/REMOTE_ACCESS_SMOKE.md](../docs/REMOTE_ACCESS_SMOKE.md).
-
-```bash
-npm run test:ra-smoke          # E2E adversarial smoke (vitest)
-npm run scan:relay-capture -- frames.ndjson   # scan relay frame capture
-```
-
-## Star history
-
-[![Star History Chart](https://api.star-history.com/svg?repos=iClawApp/iClaw&type=Date)](https://www.star-history.com/#iClawApp/iClaw&Date)
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md), [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md). Bug reports and small PRs welcome — for bigger changes open an issue first.
-
-## License
+## License and contributing
+[CONTRIBUTING.md](CONTRIBUTING.md) · [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md)
 
 MIT — see [LICENSE](LICENSE).
