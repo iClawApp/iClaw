@@ -30,6 +30,7 @@
 
 import type { ChatMode } from '../types';
 import { openRouterEnabled } from './openRouter';
+import { isOpenClawInstalled } from './openclawInstall';
 
 export interface ChatModeDef {
   /** Wire/DB value. */
@@ -138,9 +139,22 @@ function modeAvailable(def: ChatModeDef): boolean {
   return true;
 }
 
-/** Available modes only — feeds the composer selector (EJS locals / client). */
+/** Available modes only — backend source of truth for what may actually run. */
 export function listSelectableModes(): ChatModeDef[] {
   return CHAT_MODES.filter(modeAvailable);
+}
+
+/**
+ * Every ENABLED mode, each tagged with whether its backend is reachable right
+ * now. The composer always shows the full selector (so users discover the
+ * modes) and locks the ones that aren't usable yet — e.g. the runtime modes
+ * before an OpenRouter key is added.
+ */
+export function listComposerModes(): Array<ChatModeDef & { available: boolean }> {
+  return CHAT_MODES.filter((m) => m.enabled).map((m) => ({
+    ...m,
+    available: modeAvailable(m),
+  }));
 }
 
 function findMode(id: string): ChatModeDef | undefined {
@@ -154,12 +168,19 @@ export function isSelectableMode(id: string): boolean {
 }
 
 /**
- * UI default for the composer, with a graceful fallback: Work is runtime-backed,
- * so when it isn't currently selectable (e.g. no OpenRouter key) we fall back to
- * the always-available DEFAULT_MODE instead of pre-selecting a hidden mode.
+ * UI default for the composer's mode selector on a new chat — picks whatever is
+ * actually usable right now:
+ *   - OpenClaw gateway reachable → Full Power.
+ *   - gateway off but an OpenRouter key is set → Work (works immediately; don't
+ *     drop the user into a dead Full Power).
+ *   - gateway off, no key, OpenClaw installed → Full Power (startable on demand).
+ *   - otherwise → Work (locked until a key is added; the composer then surfaces
+ *     the connect chooser on first send).
  */
-export function defaultComposerMode(): ChatMode {
-  return isSelectableMode(DEFAULT_COMPOSER_MODE) ? DEFAULT_COMPOSER_MODE : DEFAULT_MODE;
+export function defaultComposerMode(gatewayReachable = false): ChatMode {
+  if (gatewayReachable) return 'execute';
+  if (openRouterEnabled()) return DEFAULT_COMPOSER_MODE;
+  return isOpenClawInstalled() ? 'execute' : DEFAULT_COMPOSER_MODE;
 }
 
 /**

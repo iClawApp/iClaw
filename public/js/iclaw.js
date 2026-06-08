@@ -77,6 +77,23 @@
     : [composerModeDefault];
   let selectedComposerMode = composerModeDefault;
 
+  // True when an OpenRouter key is configured. Derived from the rendered menu:
+  // locked (needs-key) items are only emitted when there's no key. Drives the
+  // connect chooser + the Full Power "switch mode" overlay (the runtime modes
+  // are the only fallback for a dead gateway, and they need the key).
+  const openRouterReady =
+    !!composerModeMenu &&
+    !composerModeMenu.querySelector('.composer-mode-menu-item[data-requires-key="1"]');
+
+  /** True when a mode is shown but locked behind a missing OpenRouter key. */
+  function isModeLocked(id) {
+    if (!composerModeMenu) return false;
+    const el = composerModeMenu.querySelector(
+      '.composer-mode-menu-item[data-mode="' + id + '"]',
+    );
+    return !!el && el.dataset.requiresKey === '1';
+  }
+
   /** Currently selected send mode (always one of the rendered, enabled ids). */
   function getComposerMode() {
     return composerModeIds.includes(selectedComposerMode)
@@ -85,7 +102,12 @@
   }
 
   function setComposerMode(mode, opts) {
-    const next = composerModeIds.includes(mode) ? mode : composerModeDefault;
+    let next = composerModeIds.includes(mode) ? mode : composerModeDefault;
+    // Don't land on a locked mode that isn't the default (e.g. a chat last used
+    // in a runtime mode after the key was removed) — fall back to the default.
+    // The default itself MAY be a locked Work (no OpenClaw + no key); that's
+    // intended, and the connect chooser fires on first send.
+    if (isModeLocked(next)) next = composerModeDefault;
     // Remember the mode we leave when entering Incognito, so the × can restore it.
     if (next === 'incognito' && selectedComposerMode !== 'incognito') {
       incognitoReturnMode = selectedComposerMode;
@@ -169,6 +191,12 @@
     return true; // no signal → don't block
   })();
 
+  // The sidebar "Start OpenClaw" banner only makes sense when the user actually
+  // wants Full Power — the runtime modes (Work / Safe work / Incognito) never
+  // touch the gateway. Tracked here so BOTH a gateway-status change and a mode
+  // change re-evaluate the banner (see refreshGatewayOfflineBanner).
+  let gatewayOffline = false;
+
   /** True only when OpenClaw is reachable for Full Power (Execute). */
   function isExecuteAvailable() {
     return gatewayOk;
@@ -183,12 +211,20 @@
       );
       if (execItem) execItem.classList.toggle('is-unavailable', !avail);
     }
-    const blocked = !avail && getComposerMode() === 'execute';
+    // Full Power with the gateway down is only a "switch mode below" situation
+    // when the runtime modes are actually usable — i.e. an OpenRouter key is
+    // set. Without a key those modes are locked, so don't disable the input
+    // here; the submit handler surfaces the connect chooser instead.
+    const blocked =
+      !avail && getComposerMode() === 'execute' && openRouterReady;
     if (form) form.classList.toggle('is-exec-disabled', blocked);
     if (composerExecMsg) {
       composerExecMsg.setAttribute('aria-hidden', blocked ? 'false' : 'true');
     }
     refreshComposerInputDisabled();
+    // The mode may have just changed — the sidebar "Start OpenClaw" banner is
+    // gated on Full Power too, so keep it in sync from the same funnel.
+    refreshGatewayOfflineBanner();
   }
 
   /**
@@ -230,7 +266,8 @@
     if (composerModeMenu) {
       composerModeMenu.querySelectorAll('.composer-mode-menu-item').forEach((el) => {
         if (el.dataset.requiresDocker === '1') {
-          el.classList.toggle('is-unavailable', missing);
+          // A key-locked mode (no OpenRouter) stays locked regardless of Docker.
+          el.classList.toggle('is-unavailable', missing || el.dataset.requiresKey === '1');
         }
       });
     }
@@ -457,6 +494,13 @@
     composerModeMenu.addEventListener('click', (e) => {
       const item = e.target.closest('.composer-mode-menu-item');
       if (!item) return;
+      // Locked behind a missing OpenRouter key — re-offer connecting instead of
+      // switching into a mode that can't run.
+      if (item.dataset.requiresKey === '1') {
+        closeComposerModeMenu();
+        openConnectChooser();
+        return;
+      }
       // Incognito is a separate ephemeral surface, not a flag on the current
       // chat: open a fresh blank chat instead of converting this one. Remember
       // where we came from so the × can bring us back.
@@ -1675,6 +1719,21 @@
       const card = e.target.closest('.project-pick-card');
       if (!card || draftProjectLocked) return;
       void commitDraftFromCard(card);
+    });
+
+    // Space = "No project" — a quick skip past project selection. Guarded to the
+    // active picking stage so it never fires afterwards, and ignored while a text
+    // field is focused. commitDraftFromCard's re-entry guard makes this safe even
+    // if a card button also has focus.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== ' ' && e.code !== 'Space') return;
+      if (draftProjectLocked || !draftBody.classList.contains('is-picking')) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const none = projectPickEl.querySelector('.project-pick-card--none');
+      if (!none) return;
+      e.preventDefault();
+      void commitDraftFromCard(none);
     });
 
     const initSel = (projectPickEl.dataset.initialProjectId || '').trim();
@@ -5314,8 +5373,23 @@
   const gatewayBannerStart = document.getElementById('sidebar-gateway-start');
   let gatewayStatusPollTimer = null;
 
-  function setGatewayOfflineBannerVisible(visible) {
-    if (gatewayBanner) gatewayBanner.hidden = !visible;
+  function setGatewayOffline(offline) {
+    gatewayOffline = offline;
+    refreshGatewayOfflineBanner();
+  }
+
+  /**
+   * Show the "Start OpenClaw" banner only when the gateway is offline AND the
+   * user actually wants Full Power. Work / Safe work / Incognito run on the
+   * iclaw-runtime and never touch the gateway, so nudging them to start it is
+   * just noise — same `execute` gate the composer overlay uses. Queries the DOM
+   * directly (not the closure const) so it's safe to call from the early
+   * mode-change funnel before the gateway-banner const is initialised.
+   */
+  function refreshGatewayOfflineBanner() {
+    const banner = document.getElementById('sidebar-gateway-banner');
+    if (!banner) return;
+    banner.hidden = !(gatewayOffline && getComposerMode() === 'execute');
   }
 
   function applyGatewayStatus(status, detail) {
@@ -5324,7 +5398,7 @@
     // "Start OpenClaw" banner is reserved for a genuinely-offline gateway —
     // there's nothing to "start" when it's already running.
     const offline = status === 'down' || status === 'shutdown';
-    setGatewayOfflineBannerVisible(offline);
+    setGatewayOffline(offline);
 
     // Keep Full Power gating current on every page.
     gatewayOk = status === 'ok';
@@ -5338,9 +5412,32 @@
     void fetch('/api/gateway/status', { headers: { Accept: 'application/json' } })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data && data.up !== true) setGatewayOfflineBannerVisible(true);
+        if (data && data.up !== true) setGatewayOffline(true);
       })
       .catch(() => {});
+  })();
+
+  // ── Connect-a-model chooser ───────────────────────────────────────────────
+  // Shown when someone who skipped onboarding (no OpenRouter key, no reachable
+  // OpenClaw) actually tries to send — re-offers the onboarding choice instead
+  // of a dead end. The submit handler calls openConnectChooser(); this is a
+  // function declaration so it's callable regardless of definition order.
+  function openConnectChooser() {
+    const modal = document.getElementById('connect-modal');
+    if (modal) modal.hidden = false;
+  }
+  (function initConnectChooser() {
+    const modal = document.getElementById('connect-modal');
+    if (!modal) return;
+    const close = () => { modal.hidden = true; };
+    modal.querySelectorAll('[data-connect-close]').forEach((el) => {
+      el.addEventListener('click', close);
+    });
+    const pick = document.getElementById('connect-pick-openrouter');
+    if (pick) pick.addEventListener('click', () => { window.location.href = '/welcome'; });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.hidden) close();
+    });
   })();
 
   function stopGatewayStatusPoll() {
@@ -6591,10 +6688,17 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (startedOnDraft && !draftProjectLocked) return;
-      // Full Power needs OpenClaw — don't send into a dead gateway. The input is
-      // already disabled in this state; this is the belt-and-braces guard.
-      if (getComposerMode() === 'execute' && !isExecuteAvailable()) {
-        syncExecuteAvailability();
+      // Don't send into a dead end. Full Power needs a reachable OpenClaw; the
+      // runtime modes (incl. a Work default with no OpenClaw on the device) need
+      // an OpenRouter key. When neither is usable, re-offer connecting a model.
+      const _sendMode = getComposerMode();
+      const _modeRunnable =
+        _sendMode === 'execute' ? isExecuteAvailable() : openRouterReady;
+      if (!_modeRunnable) {
+        // Full Power with a key has usable runtime fallbacks → nudge to switch
+        // mode; otherwise there's no working backend → re-offer connecting.
+        if (_sendMode === 'execute' && openRouterReady) syncExecuteAvailability();
+        else openConnectChooser();
         return;
       }
       // If the schedule menu was just opened by a long-press, the bubbling

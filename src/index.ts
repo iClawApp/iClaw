@@ -7,6 +7,7 @@ import { scheduler } from './services/scheduler';
 import { gatewayEvents } from './services/gatewayEvents';
 import { remoteAccess, setRemoteAccessQuiet } from './services/remoteAccess';
 import { runtimeProcess } from './services/runtimeProcess';
+import { probeOpenClawInstalled } from './services/openclawInstall';
 import { setBoundLocalAddress } from './services/localAddress';
 import {
   findAvailablePort,
@@ -118,6 +119,10 @@ async function main(): Promise<void> {
   scheduler.start();
   runtimeProcess.start();
   gatewayEvents.start();
+  // Prime the OpenClaw install check before serving — the composer's default
+  // mode (Full Power vs Work) keys off it. Fast: present → quick; absent →
+  // ENOENT immediately. Never fatal.
+  await probeOpenClawInstalled().catch(() => {});
 
   const stop = () => gracefulShutdown(server, 'SIGINT');
   process.on('SIGINT', () => stop());

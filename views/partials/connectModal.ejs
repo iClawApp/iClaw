@@ -1,0 +1,47 @@
+<%# Connect-a-model chooser. Shown when someone who skipped onboarding (no
+    OpenRouter key, no reachable OpenClaw) actually tries to send — instead of a
+    dead-end error we re-offer the onboarding choice. Toggled by iclaw.js
+    (openConnectChooser) from the composer submit guard. %>
+<div
+  class="connect-modal"
+  id="connect-modal"
+  hidden
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="connect-modal-title"
+>
+  <div class="connect-modal__backdrop" data-connect-close aria-hidden="true"></div>
+  <div class="connect-modal__card onb-card-shell" role="document">
+    <button type="button" class="connect-modal__close" data-connect-close aria-label="Close">×</button>
+
+    <h2 class="onb-title" id="connect-modal-title">Connect a model to start</h2>
+    <p class="onb-sub">iClaw needs an AI model to reply — connect one to begin.</p>
+
+    <button type="button" class="onb-option" id="connect-pick-openrouter">
+      <span class="onb-option-main">
+        <span class="onb-option-name">Connect OpenRouter</span>
+        <span class="onb-option-desc">
+          Pay as you go - about $5 lasts a long time, and we’ll guide you
+        </span>
+      </span>
+      <span class="onb-option-chevron" aria-hidden="true">›</span>
+    </button>
+
+    <button type="button" class="onb-option onb-option--disabled" disabled>
+      <span class="onb-option-main">
+        <span class="onb-option-name">
+          Use iClaw credits
+          <span class="onb-badge">Coming soon</span>
+        </span>
+        <span class="onb-option-desc">
+          No setup - we handle the AI for you
+        </span>
+      </span>
+    </button>
+
+    <p class="connect-modal__note">
+      Already running OpenClaw? Switch to <strong>Full Power</strong> and start it
+      from the sidebar.
+    </p>
+  </div>
+</div>

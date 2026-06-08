@@ -3690,10 +3690,25 @@ code {
   background: transparent;
 }
 .project-pick-title {
-  margin: 0 0 22px;
+  margin: 0 0 6px;
   font-size: 1.05rem;
   font-weight: 650;
   letter-spacing: -0.02em;
+}
+.project-pick-hint {
+  margin: 0 0 22px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.project-pick-hint kbd {
+  font: inherit;
+  font-size: 0.8em;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 5%, var(--surface));
+  color: var(--text);
 }
 .project-pick-grid {
   display: flex;
@@ -5321,6 +5336,13 @@ code {
 }
 .composer-mode-menu-item.is-unavailable[data-requires-docker="1"] .menu-item__title::after {
   content: ' · needs Docker';
+  font-weight: 400;
+  color: var(--muted);
+}
+/* Last so it wins for Safe work (needs both Docker and a key) — the key is the
+ * blocker to surface first. */
+.composer-mode-menu-item.is-unavailable[data-requires-key="1"] .menu-item__title::after {
+  content: ' · needs OpenRouter';
   font-weight: 400;
   color: var(--muted);
 }
@@ -8292,6 +8314,57 @@ body.incognito-mode .composer-mode-btn__label {
   padding: var(--space-4);
 }
 .onb-skip:hover { color: var(--text); text-decoration: underline; }
+
+/* Connect-a-model chooser modal — shown when a user who skipped onboarding
+   (no OpenRouter key, no reachable OpenClaw) tries to send. Reuses .onb-* rows. */
+.connect-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+}
+.connect-modal[hidden] { display: none; }
+.connect-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+.connect-modal__card {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  text-align: center;
+  animation: onb-fade 0.18s ease;
+}
+.connect-modal__close {
+  position: absolute;
+  top: var(--space-5);
+  right: var(--space-5);
+  width: 1.75rem;
+  height: 1.75rem;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--radius-lg);
+  color: var(--muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.connect-modal__close:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.connect-modal__note {
+  margin: var(--space-6) 0 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  line-height: 1.45;
+}
 
 .onb-back {
   position: absolute;

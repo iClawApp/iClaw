@@ -52,8 +52,11 @@
   // each chat's own mode instead of resetting to the default.
   const _chatCurrentMode =
     typeof chatCurrentMode !== 'undefined' && chatCurrentMode ? chatCurrentMode : '';
+  const _curModeDef = _modes.find(function (m) { return m.id === _chatCurrentMode; });
+  // Don't pre-select a locked mode (e.g. a chat last used in Work after the key
+  // was removed) — fall back to the default, which is always usable.
   const _initialMode =
-    _modes.find(function (m) { return m.id === _chatCurrentMode; }) ? _chatCurrentMode : _defaultMode;
+    _curModeDef && _curModeDef.available !== false ? _chatCurrentMode : _defaultMode;
   const _initialModeDef =
     _modes.find(function (m) { return m.id === _initialMode; }) || _defaultModeDef;
 %>
@@ -173,7 +176,7 @@
           <div id="composer-mode-menu" class="menu composer-mode-menu" role="menu" aria-label="Message mode" hidden>
             <% _modes.forEach(function (m) { %>
             <% if (m.ephemeral) { %><div class="composer-mode-menu-sep" role="separator" aria-hidden="true"></div><% } %>
-            <button type="button" class="menu-item composer-mode-menu-item" role="menuitemradio" data-mode="<%= m.id %>" data-requires-docker="<%= m.requiresDocker ? '1' : '0' %>" aria-checked="<%= m.id === _initialMode ? 'true' : 'false' %>">
+            <button type="button" class="menu-item composer-mode-menu-item<%= m.available === false ? ' is-unavailable' : '' %>" role="menuitemradio" data-mode="<%= m.id %>" data-requires-docker="<%= m.requiresDocker ? '1' : '0' %>" data-requires-key="<%= m.available === false ? '1' : '0' %>" aria-checked="<%= m.id === _initialMode ? 'true' : 'false' %>">
               <span class="menu-item__title"><%= m.label %></span>
               <span class="composer-mode-menu-item__desc"><%= m.description %></span>
             </button>
@@ -459,3 +462,5 @@
     <ul class="work-folders-list" id="work-folders-list"></ul>
   </div>
 </div>
+
+<%- include('connectModal') %>
