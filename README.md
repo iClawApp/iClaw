@@ -40,7 +40,13 @@ Press **`g`** in the terminal to open the UI in your browser
 
 ## Star history
 
-[![Star History Chart](https://api.star-history.com/svg?repos=iClawApp/iClaw&type=Date)](https://www.star-history.com/#iClawApp/iClaw&Date)
+<a href="https://www.star-history.com/#iClawApp/iClaw&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=iClawApp/iClaw&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=iClawApp/iClaw&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=iClawApp/iClaw&type=Date" />
+  </picture>
+</a>
 
 ## Chat modes
 
