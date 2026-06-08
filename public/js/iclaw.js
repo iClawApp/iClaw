@@ -1721,6 +1721,21 @@
       void commitDraftFromCard(card);
     });
 
+    // Space = "No project" — a quick skip past project selection. Guarded to the
+    // active picking stage so it never fires afterwards, and ignored while a text
+    // field is focused. commitDraftFromCard's re-entry guard makes this safe even
+    // if a card button also has focus.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== ' ' && e.code !== 'Space') return;
+      if (draftProjectLocked || !draftBody.classList.contains('is-picking')) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const none = projectPickEl.querySelector('.project-pick-card--none');
+      if (!none) return;
+      e.preventDefault();
+      void commitDraftFromCard(none);
+    });
+
     const initSel = (projectPickEl.dataset.initialProjectId || '').trim();
     if (initSel !== '') {
       const esc =

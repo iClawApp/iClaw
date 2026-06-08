@@ -3690,10 +3690,25 @@ code {
   background: transparent;
 }
 .project-pick-title {
-  margin: 0 0 22px;
+  margin: 0 0 6px;
   font-size: 1.05rem;
   font-weight: 650;
   letter-spacing: -0.02em;
+}
+.project-pick-hint {
+  margin: 0 0 22px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.project-pick-hint kbd {
+  font: inherit;
+  font-size: 0.8em;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 5%, var(--surface));
+  color: var(--text);
 }
 .project-pick-grid {
   display: flex;
