@@ -16,6 +16,18 @@
 
 ![iClaw screenshot](./docs/readme-screenshot.png)
 
+## Demo
+
+<p align="center">
+  <a href="./docs/iClaw_video.mp4">
+    <img src="./docs/iClaw-demo-poster.png" alt="iClaw demo — pick a mode, then watch it inspect an untrusted shell script in an isolated sandbox" width="560">
+  </a>
+</p>
+
+<p align="center">
+  ▶ <a href="./docs/iClaw_video.mp4"><b>Watch the demo</b></a> — iClaw inspects an untrusted shell script inside an isolated sandbox (~50s, no sound)
+</p>
+
 ## Install
 
 Requires [Node.js 20+](https://nodejs.org)
