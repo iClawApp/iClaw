@@ -878,7 +878,6 @@ code {
    `hidden` attribute — these carry explicit `display`, so the UA [hidden] rule
    alone wouldn't win. Agent also hides in non-Full-Power modes (see iclaw.js). */
 .agent-form[hidden],
-.reasoning-toggle[hidden],
 .share-form[hidden],
 .delete-form[hidden],
 .share-btn[hidden] {
@@ -891,34 +890,6 @@ code {
   height: 32px;
   padding: 0 12px;
   border-radius: 10px;
-}
-
-.reasoning-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 10px;
-  font-size: 0.78rem;
-  color: var(--muted);
-  border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--border) 60%, var(--header-surface));
-  background: transparent;
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.12s ease;
-}
-.reasoning-toggle:hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--hover) 50%, transparent);
-  border-color: color-mix(in srgb, var(--border) 95%, var(--header-surface));
-}
-.reasoning-toggle input[type="checkbox"] {
-  margin: 0;
-  width: 14px;
-  height: 14px;
-  accent-color: var(--md-link);
-  cursor: pointer;
 }
 
 /* ---------- Exec approval card ---------- */
@@ -990,33 +961,6 @@ code {
 .exec-approval-trace {
   font-size: 0.85em;
   opacity: 0.7;
-}
-
-/* ---------- Reasoning block ---------- */
-
-.reasoning-block {
-  border-left: 3px solid color-mix(in srgb, var(--text) 25%, transparent);
-  background: color-mix(in srgb, var(--text) 3%, var(--surface));
-  padding: 8px 12px;
-  font-size: 0.88em;
-  color: var(--muted);
-  font-style: italic;
-}
-.reasoning-block .role {
-  font-size: 0.75em;
-  text-transform: lowercase;
-  opacity: 0.7;
-  margin-bottom: 4px;
-}
-.reasoning-block .reasoning-body {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: inherit;
-}
-.reasoning-block.active::after {
-  content: "…";
-  margin-left: 4px;
-  opacity: 0.5;
 }
 
 /* ---------- Slash autocomplete menu ---------- */
@@ -3585,7 +3529,6 @@ code {
   flex-shrink: 0;
 }
 
-.chat-header .reasoning-toggle .header-tool-icon,
 .chat-header .share-toggle .header-tool-icon {
   display: none;
 }
@@ -7367,12 +7310,10 @@ a.project-tab.project-tab--tasks:hover {
     display: none;
   }
 
-  .chat-header .reasoning-toggle .header-tool-icon,
   .chat-header .share-toggle .header-tool-icon {
     display: block;
   }
 
-  .chat-header .reasoning-toggle,
   .chat-header .share-toggle {
     position: relative;
     justify-content: center;
@@ -7384,7 +7325,6 @@ a.project-tab.project-tab--tasks:hover {
     gap: 0;
   }
 
-  .chat-header .reasoning-toggle input[type="checkbox"],
   .chat-header .share-toggle input[type="checkbox"] {
     position: absolute;
     inset: 0;
@@ -7396,7 +7336,6 @@ a.project-tab.project-tab--tasks:hover {
     accent-color: transparent;
   }
 
-  .chat-header .reasoning-toggle:has(input:checked),
   .chat-header .share-toggle:has(input:checked) {
     color: var(--md-link);
     background: color-mix(in srgb, var(--md-link) 12%, transparent);

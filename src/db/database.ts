@@ -23,8 +23,6 @@ CREATE TABLE IF NOT EXISTS chats (
   shares_to_project   INTEGER NOT NULL DEFAULT 1,
   -- Optional per-session model override applied via sessions.patch.
   model_override      TEXT,
-  -- Reasoning visibility mirror; actual state lives on the gateway.
-  reasoning_mode      TEXT NOT NULL DEFAULT 'off',
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
   title_manual        INTEGER NOT NULL DEFAULT 0,

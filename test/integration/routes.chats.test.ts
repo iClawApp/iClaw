@@ -223,30 +223,6 @@ describe('POST /chats/:id/delete', () => {
   });
 });
 
-describe('POST /chats/:id/reasoning', () => {
-  it('mirrors the requested mode (on/off/stream)', async () => {
-    const c = chats.create('openclaw/default');
-    for (const mode of ['on', 'stream', 'off'] as const) {
-      const res = await request(app)
-        .post(`/chats/${c.id}/reasoning`)
-        .set('content-type', 'application/json')
-        .send({ mode });
-      expect(res.status).toBe(200);
-      expect(chats.get(c.id)!.reasoning_mode).toBe(mode);
-    }
-  });
-
-  it('falls back to "off" for unknown modes', async () => {
-    const c = chats.create('openclaw/default');
-    const res = await request(app)
-      .post(`/chats/${c.id}/reasoning`)
-      .set('content-type', 'application/json')
-      .send({ mode: 'gibberish' });
-    expect(res.status).toBe(200);
-    expect(chats.get(c.id)!.reasoning_mode).toBe('off');
-  });
-});
-
 describe('Composer queue routes', () => {
   it('POST /chats/:id/queue creates + GET lists + DELETE removes', async () => {
     const c = chats.create('openclaw/default');

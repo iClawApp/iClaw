@@ -420,44 +420,6 @@ chatsRouter.post('/:id/shares', (req, res) => {
   res.redirect(`/chats/${id}`);
 });
 
-/**
- * Toggle reasoning visibility on the active session by sending the slash
- * command through the normal chat flow. The mode is mirrored locally so the
- * UI toggle stays in sync across reloads.
- */
-chatsRouter.post('/:id/reasoning', async (req, res) => {
-  const id = Number(req.params.id);
-  const chat = chats.get(id);
-  if (!chat) {
-    res.status(404).json({ error: 'chat not found' });
-    return;
-  }
-  const raw = String(req.body?.mode ?? '').trim().toLowerCase();
-  const mode: 'off' | 'on' | 'stream' =
-    raw === 'on' ? 'on' : raw === 'stream' ? 'stream' : 'off';
-  // Mirror locally first — UI source of truth even if the gateway hiccups.
-  chats.setReasoningMode(id, mode);
-  wsHub.broadcastAll({
-    type: 'chat-updated',
-    chatId: id,
-    reasoningMode: mode,
-    updatedAt: chats.get(id)!.updated_at,
-  });
-  // Push the real flip to OpenClaw. `sessions.patch` is the proper channel —
-  // it's what the dashboard uses. Failure here doesn't roll back the mirror;
-  // we surface the error to the caller so the UI can warn.
-  let gatewayWarning: string | null = null;
-  try {
-    await openclawWs.patchSession({
-      sessionKey: chat.openclaw_session_id,
-      reasoningLevel: mode === 'off' ? null : mode,
-    });
-  } catch (err) {
-    gatewayWarning = err instanceof Error ? err.message : String(err);
-  }
-  res.json({ id, mode, ...(gatewayWarning ? { gatewayWarning } : {}) });
-});
-
 // Persist the chat's sticky composer send-mode the moment the user picks it, so it
 // survives navigation and syncs across devices instead of living only in this
 // browser's localStorage. Pure iClaw UI state — the mode rides along with each

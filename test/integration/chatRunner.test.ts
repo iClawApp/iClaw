@@ -304,34 +304,6 @@ describe('sendMessage — reply-to (quoted message)', () => {
   });
 });
 
-describe('sendMessage — reasoning gate', () => {
-  it('does not broadcast turn-reasoning when chat.reasoning_mode = "off"', async () => {
-    openclawWsMock.runTurn.mockImplementationOnce(async (params) => {
-      params.onEvent({ type: 'reasoning', text: 'inner monologue' });
-      params.onEvent({ type: 'text-final', text: 'final answer' });
-      return { runId: 'r', text: 'final answer' };
-    });
-    await sendMessage({ content: 'plain' });
-    expect(findChatBroadcast('turn-reasoning')).toBeUndefined();
-  });
-
-  it('broadcasts turn-reasoning when chat.reasoning_mode != "off"', async () => {
-    // Create chat first, flip mode, then call sendMessage with that chatId.
-    openclawWsMock.runTurn.mockResolvedValueOnce({ runId: 'r0', text: 'ok' });
-    const { chatId } = await sendMessage({ content: 'init' });
-    chats.setReasoningMode(chatId, 'on');
-
-    broadcasts.toChat = [];
-    openclawWsMock.runTurn.mockImplementationOnce(async (params) => {
-      params.onEvent({ type: 'reasoning', text: 'analyzing…' });
-      params.onEvent({ type: 'text-final', text: 'done' });
-      return { runId: 'r1', text: 'done' };
-    });
-    await sendMessage({ chatId, content: 'second' });
-    expect(findChatBroadcast('turn-reasoning')).toBeDefined();
-  });
-});
-
 describe('sendMessage — attachment handling', () => {
   it('rewrites /api/chat/media URLs through /media proxy and inlines markdown', async () => {
     openclawWsMock.runTurn.mockImplementationOnce(async (params) => {

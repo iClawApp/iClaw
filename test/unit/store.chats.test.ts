@@ -15,7 +15,6 @@ describe('store.chats', () => {
     expect(typeof c.openclaw_session_id).toBe('string');
     expect(c.openclaw_session_id.length).toBeGreaterThan(8);
     expect(c.shares_to_project).toBe(1);
-    expect(c.reasoning_mode).toBe('off');
   });
 
   it('list() returns chats newest-updated first', () => {
@@ -102,16 +101,6 @@ describe('store.chats', () => {
     expect(chats.list().map((c) => c.id)).toEqual(orderBefore);
     expect(chats.get(b.id)!.updated_at).toBe(bRowBefore.updated_at);
     expect(chats.get(b.id)!.unread).toBe(1);
-  });
-
-  it('setReasoningMode persists allowed values', () => {
-    const c = chats.create('openclaw/default');
-    chats.setReasoningMode(c.id, 'on');
-    expect(chats.get(c.id)!.reasoning_mode).toBe('on');
-    chats.setReasoningMode(c.id, 'stream');
-    expect(chats.get(c.id)!.reasoning_mode).toBe('stream');
-    chats.setReasoningMode(c.id, 'off');
-    expect(chats.get(c.id)!.reasoning_mode).toBe('off');
   });
 
   it('SQLite trigger bumps chats.updated_at on message insert', () => {

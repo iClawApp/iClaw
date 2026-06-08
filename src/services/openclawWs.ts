@@ -63,8 +63,6 @@ export type TurnEvent =
   | { type: 'tool-end'; name: string; itemId?: string }
   | { type: 'lifecycle'; phase: string; label: string }
   | { type: 'attachment'; url: string; mime: string; label?: string; itemId?: string }
-  /** Model reasoning / analysis text — only emitted, chatRunner decides whether to surface. */
-  | { type: 'reasoning'; text: string }
   | { type: 'text-final'; text: string };
 
 // ---------- helpers --------------------------------------------------------
@@ -306,27 +304,6 @@ export const openclawWs = {
   /** Slash-command catalog for an agent — feeds the `/` autocomplete. */
   async listCommands(opts: { agentId?: string } = {}): Promise<unknown> {
     return gatewayWs.request('commands.list', opts as Record<string, unknown>);
-  },
-
-  /**
-   * Patch a session's per-turn defaults (reasoning, model, thinking, etc.).
-   * Only the fields you pass are touched; the gateway leaves the rest alone.
-   * No-op when the session key isn't a real `agent:...` one yet.
-   */
-  async patchSession(opts: {
-    sessionKey: string;
-    reasoningLevel?: string | null;
-    model?: string | null;
-    thinkingLevel?: string | null;
-    fastMode?: boolean | null;
-  }): Promise<void> {
-    if (!opts.sessionKey.startsWith('agent:')) return;
-    const params: Record<string, unknown> = { key: opts.sessionKey };
-    if (opts.reasoningLevel !== undefined) params.reasoningLevel = opts.reasoningLevel;
-    if (opts.model !== undefined) params.model = opts.model;
-    if (opts.thinkingLevel !== undefined) params.thinkingLevel = opts.thinkingLevel;
-    if (opts.fastMode !== undefined) params.fastMode = opts.fastMode;
-    await gatewayWs.request('sessions.patch', params);
   },
 
   /** Read the gateway's current full config (incl. `hash` needed for config.patch). */
@@ -582,19 +559,8 @@ export const openclawWs = {
 
       if (stream === 'item') {
         const kind = safeString(data.kind);
-        if (kind === 'analysis') {
-          // Reasoning / chain-of-thought. We always emit; chatRunner gates
-          // delivery to subscribers based on per-chat reasoning_mode.
-          const phase = data.phase;
-          if (phase === 'start' || phase === 'end' || phase === 'completed') return;
-          const text =
-            safeString(data.text) ??
-            safeString(data.deltaText) ??
-            safeString(data.content) ??
-            '';
-          if (text) opts.onEvent({ type: 'reasoning', text });
-          return;
-        }
+        // Reasoning / chain-of-thought items are dropped (Reasoning feature removed).
+        if (kind === 'analysis') return;
         const name = safeString(data.name) ?? kind ?? 'tool';
         const phase = data.phase;
         const itemId = safeString(data.itemId);

@@ -136,8 +136,6 @@ export type ServerMsg =
       projectName?: string | null;
       /** Toggle on whether the chat writes facts back to the project. */
       sharesToProject?: boolean;
-      /** Reasoning visibility mode mirror — 'off' | 'on' | 'stream'. */
-      reasoningMode?: 'off' | 'on' | 'stream';
       /** Sticky composer send-mode mirror (e.g. 'work' | 'secure' | 'execute'). */
       mode?: string;
       /** Present after mutations that bump `chats.updated_at` — flat sidebar order. */
@@ -289,8 +287,6 @@ export type ServerMsg =
       approvalId: string;
       decision: string;
     }
-  /** A turn lost a reasoning/analysis chunk — only emitted when reasoning is on. */
-  | { type: 'turn-reasoning'; chatId: number; text: string }
 
   /** Live mirror of the OpenClaw gateway health — drives the header badge. */
   | {
