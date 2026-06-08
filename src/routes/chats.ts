@@ -340,7 +340,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
       queueList: queuedMessages.listByChat(id),
       sendHintShow: shouldShowSendHint(),
       chatModes: listComposerModes(),
-      defaultChatMode: defaultComposerMode(),
+      defaultChatMode: defaultComposerMode(!agentsError),
       chatCurrentMode,
       sttEnabled: openRouterEnabled(),
       // Lets the composer lock the runtime modes (and the connect chooser fire)
