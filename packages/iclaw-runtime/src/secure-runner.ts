@@ -353,8 +353,8 @@ Preinstalled CLIs: git, rg (ripgrep), jq, curl, node, unzip/zip, less, tree.
 You can install more tools yourself, no root needed${networkEnabled ? '' : ' (requires network, which is currently OFF — ask the user to enable it)'}: download a static binary into /workspace/.tools/bin (already on PATH) with curl, or run \`npm i -g <pkg>\`. Self-installed tools live in the workspace, so they persist across turns and are removed automatically when the workspace expires.
 Network is ${networkEnabled ? 'enabled' : 'disabled'}.${
     networkEnabled
-      ? '\nTo fetch web pages or APIs, use run_command with `curl -s <url>` (there is no browser in this sandbox).' +
-        '\nFor a link\'s actual content, prefer the analyze_link tool (YouTube videos: subtitles/transcript). ' +
+      ? '\nTo read a web page, use the web_fetch tool (returns clean text, or a cheap summary by default) — do NOT hand-roll `curl ... | jq`; only drop to `curl -s <url>` in run_command for an API or download web_fetch can\'t handle. To find pages, use web_search. There is no browser in this sandbox.' +
+        '\nFor a link\'s actual content, prefer analyze_link (YouTube videos: subtitles/transcript) and social_search (Reddit / HackerNews). ' +
         'Use mode:"summary" with a short purpose by default to save tokens; mode:"full" only when you need exact wording.'
       : ''
   }
@@ -395,17 +395,23 @@ async function* runSecureAgentLoop(
   networkEnabled: boolean,
 ): AsyncGenerator<SecureEvent> {
   const OpenAI = (await import('openai')).default;
-  const { TOOL_DEFINITIONS, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, analyzeLink, clampMiddle, compressCommandOutput, TOOL_OUTPUT_MAX_CHARS } =
-    await import('./agent/tools.js');
+  const {
+    TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL,
+    analyzeLink, webFetchSandboxed, webSearchSecure, clampMiddle, compressCommandOutput, TOOL_OUTPUT_MAX_CHARS,
+  } = await import('./agent/tools.js');
   const { SOCIAL_SEARCH_TOOL, socialSearch } = await import('./agent/social.js');
 
-  // analyze_link and social_search are appended (not part of core TOOL_DEFINITIONS)
-  // and run their network work INSIDE this container, so they respect the same
-  // network gate. show_image lets the agent surface an image it produced in /workspace.
-  const tools = [...TOOL_DEFINITIONS, ANALYZE_LINK_TOOL, SOCIAL_SEARCH_TOOL, SHOW_IMAGE_TOOL];
+  // web_fetch, analyze_link and social_search are appended (not part of core
+  // TOOL_DEFINITIONS) and run their network work INSIDE this container via curl/
+  // node, so they respect the same --network gate. web_search rides the OpenRouter
+  // web plugin (host→OpenRouter, like the chat stream), gated on network. show_image
+  // lets the agent surface an image it produced in /workspace.
+  const tools = [...TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, ANALYZE_LINK_TOOL, SOCIAL_SEARCH_TOOL, SHOW_IMAGE_TOOL];
 
   // Buffer for analyze_link savings notes, flushed as `note` events per tool call.
   const savingsNotes: SavingsNote[] = [];
+  // Within-turn cache for web_fetch — dedup repeat pulls of the same URL this turn.
+  const fetchCache = new Map<string, string>();
   // Buffer for show_image requests, flushed as `image` events per tool call.
   const pendingImages: { path: string; mime: string; fileName: string; bytes: number }[] = [];
   const SECURE_IMAGE_MIME: Record<string, string> = {
@@ -567,6 +573,16 @@ async function* runSecureAgentLoop(
         result = await execInContainer(containerName, 'ls -la /workspace');
       } else if (tc.name === 'search_files') {
         result = await execInContainer(containerName, `grep -r ${JSON.stringify(String(args.query ?? ''))} /workspace 2>/dev/null | head -20`);
+      } else if (tc.name === 'web_fetch') {
+        // The fetch runs as curl inside this container, so it honours the gate.
+        result = await webFetchSandboxed(args, {
+          runInSandbox: (command) => execInContainer(containerName, command),
+          networkEnabled,
+          fetchCache,
+        });
+      } else if (tc.name === 'web_search') {
+        // OpenRouter web plugin (host→OpenRouter, like the chat stream); gated on network.
+        result = await webSearchSecure(args, { networkEnabled });
       } else if (tc.name === 'analyze_link') {
         // Runs its fetch inside this same container (network honours the gate).
         result = await analyzeLink(args, {

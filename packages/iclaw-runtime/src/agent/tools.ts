@@ -24,6 +24,13 @@ const MAX_FILE_BYTES = Number(process.env.ICLAW_MAX_FILE_BYTES) || 5_000_000;
 const COMMAND_TIMEOUT = 30_000;
 const WEB_FETCH_TIMEOUT = 20_000;
 const WEB_FETCH_MAX_CHARS = 20_000;
+// web_fetch in Secure Mode runs the fetch as `curl` INSIDE the sandbox; cap the
+// body we pull back over the `docker exec` stdout pipe (well under its ~1MB
+// buffer). The host then strips/summarizes it down to WEB_FETCH_MAX_CHARS anyway,
+// so this only bounds the transport, not what the model sees.
+const WEB_FETCH_SANDBOX_BODY_CAP = Number(process.env.ICLAW_WEB_FETCH_BODY_CAP) || 800_000;
+const CURL_META_MARKER = '__ICLAW_FETCH_META__';
+const CURL_ERR_MARKER = '__ICLAW_FETCH_ERR__';
 
 // ── Token-saving output caps ──────────────────────────────────────────────────
 // Tool outputs are the biggest token sink in multi-turn chats: they land in the
@@ -985,6 +992,105 @@ async function webFetch(args: Record<string, unknown>, ctx?: ToolContext): Promi
   return `${note}HTTP ${status} — ${url}\n\n${text || '(empty response body)'}`;
 }
 
+// ── web_fetch (Secure Mode: fetch runs INSIDE the sandbox) ────────────────────
+//
+// Same ergonomics as webFetch (canonicalize → clean text → optional cheap summary
+// → caps + within-turn cache), but the network fetch itself runs as `curl` inside
+// the container via runInSandbox, so it honours the same --network gate as
+// run_command. A host-side fetch (the plain webFetch above) would bypass a
+// network-OFF sandbox, which is exactly why that one is never exposed to Secure.
+// The optional summary is a host→OpenRouter call — the same trusted channel as
+// the chat stream — so it doesn't widen the sandbox boundary.
+
+/**
+ * Build the sandbox curl command. Body → temp file (-o), headers → temp (-D),
+ * status+content-type → stdout via -w (captured into $meta). We echo the META
+ * marker line FIRST, then `head -c` the body, so even a huge page that overruns
+ * the `docker exec` stdout buffer still yields the status/type plus the head of
+ * the body. The URL is single-quoted (shQuote) so a model-chosen URL can't break
+ * out of the shell ($(), backticks, ;). Every step is guarded so we exit 0 with a
+ * parseable result (curl's --max-time bounds it below CONTAINER_TIMEOUT).
+ */
+function buildCurlFetchCommand(url: string): string {
+  const secs = Math.round(WEB_FETCH_TIMEOUT / 1000);
+  return [
+    'B=$(mktemp); H=$(mktemp)',
+    `meta=$(curl -sSL --max-time ${secs} --compressed ` +
+      `-A 'iClaw-Secure/1.0' ` +
+      `-H 'Accept: text/html,application/json;q=0.9,*/*;q=0.8' ` +
+      `-o "$B" -D "$H" -w '%{http_code} %{content_type}' ${shQuote(url)}) ` +
+      `|| { echo "${CURL_ERR_MARKER}exit $?"; rm -f "$B" "$H"; exit 0; }`,
+    `echo "${CURL_META_MARKER}$meta"`,
+    `head -c ${WEB_FETCH_SANDBOX_BODY_CAP} "$B"`,
+    'rm -f "$B" "$H"',
+  ].join('\n');
+}
+
+/** Parse buildCurlFetchCommand output: a leading META marker line + body, or an ERR marker. */
+function parseCurlFetch(raw: string): { body: string; status: number; contentType: string; error?: string } {
+  const errIdx = raw.indexOf(CURL_ERR_MARKER);
+  if (errIdx !== -1) {
+    const after = raw.slice(errIdx + CURL_ERR_MARKER.length).trim().slice(0, 200);
+    return { body: '', status: 0, contentType: '', error: `curl failed (${after || 'network error'})` };
+  }
+  const idx = raw.indexOf(CURL_META_MARKER);
+  if (idx === -1) return { body: '', status: 0, contentType: '', error: raw.trim().slice(0, 200) || 'no response' };
+  const after = raw.slice(idx + CURL_META_MARKER.length);
+  const nl = after.indexOf('\n');
+  const metaLine = (nl === -1 ? after : after.slice(0, nl)).trim();
+  const body = nl === -1 ? '' : after.slice(nl + 1);
+  const sp = metaLine.indexOf(' ');
+  const status = Number(sp === -1 ? metaLine : metaLine.slice(0, sp)) || 0;
+  const contentType = sp === -1 ? '' : metaLine.slice(sp + 1).trim();
+  return { body, status, contentType };
+}
+
+export async function webFetchSandboxed(
+  args: Record<string, unknown>,
+  deps: {
+    runInSandbox: (command: string) => Promise<string>;
+    networkEnabled: boolean;
+    fetchCache?: Map<string, string>;
+  },
+): Promise<string> {
+  const inputUrl = String(args.url ?? '').trim();
+  if (!/^https?:\/\/\S+$/i.test(inputUrl)) return 'Only absolute http(s) URLs are allowed.';
+  if (!deps.networkEnabled) {
+    return 'web_fetch needs network, which is currently OFF for this chat. Ask the user to enable network, then retry.';
+  }
+  // GitHub repo/file → raw, reddit → old.reddit, before cache + fetch (as host webFetch).
+  const url = canonicalizeFetchUrl(inputUrl);
+  const key = normalizeFetchUrl(url);
+  const cache = deps.fetchCache;
+
+  let text = cache?.get(key);
+  const fromCache = text !== undefined;
+  let status = 200;
+  if (text === undefined) {
+    let raw: string;
+    try {
+      raw = await deps.runInSandbox(buildCurlFetchCommand(url));
+    } catch (err) {
+      return `Fetch failed (${url}): ${err instanceof Error ? err.message : String(err)}`;
+    }
+    const parsed = parseCurlFetch(raw);
+    if (parsed.error) return `Fetch failed (${url}): ${parsed.error}`;
+    status = parsed.status || 200;
+    text = /html/i.test(parsed.contentType) ? htmlToText(parsed.body) : parsed.body.trim();
+    cache?.set(key, text);
+  }
+
+  const note = fromCache ? '(already fetched this turn — served from cache; no new request)\n\n' : '';
+  if (args.summarize !== false && text) {
+    const summary = await summarizeText(text, args.focus ? String(args.focus) : undefined);
+    return `${note}Summary of ${url}:\n\n${summary}`;
+  }
+  if (text.length > WEB_FETCH_MAX_CHARS) {
+    text = text.slice(0, WEB_FETCH_MAX_CHARS) + `\n\n[truncated at ${WEB_FETCH_MAX_CHARS} chars]`;
+  }
+  return `${note}HTTP ${status} — ${url}\n\n${text || '(empty response body)'}`;
+}
+
 // ── cheap-model summarizer (read_summary, web_fetch summarize) ────────────────
 
 /**
@@ -1112,6 +1218,41 @@ async function webSearch(args: Record<string, unknown>): Promise<string> {
     }
     // 2) Keyless last resort.
     return formatHits(query, await duckDuckGoSearch(query, count, ctrl.signal), 'DuckDuckGo');
+  } catch (err) {
+    const msg = err instanceof Error && err.name === 'AbortError'
+      ? `timed out after ${WEB_FETCH_TIMEOUT / 1000}s`
+      : err instanceof Error ? err.message : String(err);
+    return `Search failed for "${query}": ${msg}.`;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * web_search for Secure Mode. Uses ONLY the OpenRouter web plugin: the search
+ * runs on OpenRouter's servers, so the host makes the same kind of API call it
+ * already makes for the chat stream — no arbitrary host-side egress, and no
+ * DuckDuckGo fallback (that one fetches from the host and would dodge the
+ * sandbox's network gate). Gated on networkEnabled so a network-OFF chat does no
+ * web research.
+ */
+export async function webSearchSecure(
+  args: Record<string, unknown>,
+  deps: { networkEnabled: boolean },
+): Promise<string> {
+  const query = String(args.query ?? '').trim();
+  if (!query) return 'web_search requires a query.';
+  if (!deps.networkEnabled) {
+    return 'web_search needs network, which is currently OFF for this chat. Ask the user to enable network, then retry.';
+  }
+  if (!process.env.ICLAW_OPENROUTER_API_KEY) {
+    return 'web_search is unavailable here (no OpenRouter key configured). Use run_command with curl for a specific API instead.';
+  }
+  const count = Math.min(10, Math.max(1, Number(args.count) || 6));
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), WEB_FETCH_TIMEOUT);
+  try {
+    return formatHits(query, await openRouterSearch(query, count, ctrl.signal), 'OpenRouter');
   } catch (err) {
     const msg = err instanceof Error && err.name === 'AbortError'
       ? `timed out after ${WEB_FETCH_TIMEOUT / 1000}s`
