@@ -18,15 +18,9 @@
 
 ## Demo
 
-<p align="center">
-  <a href="./docs/iClaw_video.mp4">
-    <img src="./docs/iClaw-demo-poster.png" alt="iClaw demo — pick a mode, then watch it inspect an untrusted shell script in an isolated sandbox" width="560">
-  </a>
-</p>
+https://github.com/user-attachments/assets/14a844e3-c1bb-4baf-98af-f52efefe77aa
 
-<p align="center">
-  ▶ <a href="./docs/iClaw_video.mp4"><b>Watch the demo</b></a> — iClaw inspects an untrusted shell script inside an isolated sandbox (~50s, no sound)
-</p>
+_Pick a mode, then watch iClaw inspect an untrusted shell script inside an isolated sandbox — ~50s, no sound._
 
 ## Install
 
