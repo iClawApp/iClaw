@@ -711,9 +711,15 @@
   const secureChangeBtn = document.getElementById('secure-workspace-change');
   const secureTtlMenu = document.getElementById('secure-ttl-menu');
 
+  // Read the chat id live, not from the page-load `rawChatId` const. A chat that
+  // starts as a draft has no id until the first message adopts it (adoptDraftChat
+  // updates messagesEl.dataset.chatId); `rawChatId` stays empty, so keying the
+  // bar off it left it hidden until a reload re-rendered at /chats/:id.
+  const secureChatId = () => messagesEl?.dataset.chatId || '';
+
   function secureTtlKey() {
     const pid = messagesEl?.dataset.projectId;
-    return `iclaw:secure-ttl:${pid ? 'project:' + pid : 'chat:' + rawChatId}`;
+    return `iclaw:secure-ttl:${pid ? 'project:' + pid : 'chat:' + secureChatId()}`;
   }
 
   function getSecureTtl() {
@@ -770,11 +776,12 @@
   async function refreshSecureBar() {
     if (!secureBar) return;
     const mode = getComposerMode();
+    const cid = secureChatId();
     // Hide if not in Secure Mode, or if the secret UI is currently showing.
-    if (mode !== 'secure' || secretUiVisible() || !rawChatId) { secureBar.hidden = true; return; }
+    if (mode !== 'secure' || secretUiVisible() || !cid) { secureBar.hidden = true; return; }
 
     try {
-      const res = await fetch(`/chats/${rawChatId}/workspace-info`);
+      const res = await fetch(`/chats/${cid}/workspace-info`);
       const data = await res.json();
       // Only surface the bar once a secure session actually exists — i.e. after
       // the first message. Nothing is created on the host until then.
@@ -819,12 +826,13 @@
   const secureExportBtn = document.getElementById('secure-workspace-export');
   secureExportBtn?.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!rawChatId) return;
+    const cid = secureChatId();
+    if (!cid) return;
     secureExportBtn.disabled = true;
     const prev = secureExportBtn.textContent;
     secureExportBtn.textContent = 'Exporting…';
     try {
-      const res = await fetch(`/chats/${rawChatId}/export-sandbox`, {
+      const res = await fetch(`/chats/${cid}/export-sandbox`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: '{}',
@@ -842,13 +850,14 @@
   const secureApplyBtn = document.getElementById('secure-workspace-apply');
   secureApplyBtn?.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!rawChatId) return;
+    const cid = secureChatId();
+    if (!cid) return;
     if (!confirm('Apply the sandbox\'s new and changed files back to your original folders? Existing files may be overwritten; nothing is deleted.')) return;
     secureApplyBtn.disabled = true;
     const prev = secureApplyBtn.textContent;
     secureApplyBtn.textContent = 'Applying…';
     try {
-      const res = await fetch(`/chats/${rawChatId}/apply-sandbox`, {
+      const res = await fetch(`/chats/${cid}/apply-sandbox`, {
         method: 'POST',
         headers: { Accept: 'application/json' },
       });
@@ -872,13 +881,14 @@
   const secureDestroyBtn = document.getElementById('secure-workspace-destroy');
   secureDestroyBtn?.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!rawChatId) return;
+    const cid = secureChatId();
+    if (!cid) return;
     if (!confirm('Destroy this sandbox? The copied files and anything created in it are deleted. Your original files are untouched.')) return;
     secureDestroyBtn.disabled = true;
     const prev = secureDestroyBtn.textContent;
     secureDestroyBtn.textContent = 'Destroying…';
     try {
-      await fetch(`/chats/${rawChatId}/destroy-workspace`, {
+      await fetch(`/chats/${cid}/destroy-workspace`, {
         method: 'POST',
         headers: { Accept: 'application/json' },
       });
@@ -4952,6 +4962,11 @@
         setWorkingDot(msg.chatId, false);
         if (msg.chatId !== activeChatId) return;
         setStopVisible(false);
+        // The first secure turn creates the sandbox host-side; surface the bar
+        // as soon as the turn finishes (no-op outside Secure Mode). The fixed
+        // retry timers on send can miss a slow container start, so refresh here
+        // too rather than wait for a reload.
+        refreshSecureBar();
         // Tear down a streaming element that nobody finalized — e.g. an
         // abort with no streamed text (skipPersist on the server → no
         // `message-appended` to clean it up), or any other edge where the
