@@ -27,7 +27,7 @@ import { openclawWs } from '../services/openclawWs';
 import { openclaw, cloudShareBaseUrl } from '../services/openclaw';
 import { chatStatus } from '../services/chatStatus';
 import { wsHub } from '../services/wsHub';
-import { sendMessage, getWorkSessionId, destroyWorkSession, exportChatSandbox, applyChatSandboxChanges } from '../services/chatRunner';
+import { sendMessage, getWorkSessionId, destroyWorkSession, exportChatSandbox } from '../services/chatRunner';
 import { getWorkspaceInfo } from '../services/workRuntime';
 import {
   defaultComposerMode,
@@ -1129,17 +1129,5 @@ chatsRouter.post('/:id/export-sandbox', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-/** POST /chats/:id/apply-sandbox — apply the sandbox's changes to the originals. */
-chatsRouter.post('/:id/apply-sandbox', async (req, res) => {
-  const chatId = Number(req.params.id);
-  if (!Number.isFinite(chatId)) return res.status(400).json({ error: 'bad chat id' });
-  try {
-    const results = await applyChatSandboxChanges(chatId);
-    res.json({ results });
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });

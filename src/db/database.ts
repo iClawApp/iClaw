@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS messages (
   reply_to_role        TEXT,
   /** JSON array of {url, mimeType, fileName, sizeBytes} for user-attached files. NULL when no attachments. */
   attachments          TEXT,
-  /** Send mode: 'ask' | 'execute' (see services/chatModes.ts). Legacy rows default to 'execute'. */
+  /** Send mode: see services/chatModes.ts (execute/work/secure/incognito). Legacy rows default to 'execute'. */
   mode                 TEXT NOT NULL DEFAULT 'execute',
   created_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );

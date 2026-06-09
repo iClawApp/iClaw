@@ -1,23 +1,18 @@
 /**
- * Direct OpenRouter client — the FIRST non-OpenClaw LLM path in iClaw.
- *
- * Used for the lightweight, tool-less features that should NOT spin up a full
- * OpenClaw agent run:
+ * Direct OpenRouter client — a non-OpenClaw LLM path for the lightweight,
+ * tool-less features that should NOT spin up a full OpenClaw agent run:
  *   - Chat titles   → a cheap single-shot completion.
  *   - Background sub-tasks (fact extraction, fact compaction, skill review) via
  *     services/subtaskLlm.ts (preferred over a throwaway OpenClaw turn).
  *   - Speech-to-text → audio transcription via a multimodal model.
  *
  * Talks the OpenAI-compatible `/chat/completions` endpoint OpenRouter exposes.
- * Streaming responses are parsed here (server-sent events over `fetch`) and the
- * caller re-emits deltas through `wsHub` — the same shape `openclawWs.runTurn`
- * uses, so the browser stream renderer is identical for both backends.
  *
- * No SDK / extra deps: Node 18+ (we run 25) ships global `fetch` + streams.
+ * No SDK / extra deps: Node 18+ (we run 25) ships global `fetch`.
  *
- * Availability is config-driven: when `OPENROUTER_API_KEY` is unset, the
- * features that REQUIRE OpenRouter (Ask, STT) are hidden/refused, and title
- * generation falls back to the OpenClaw path. See `loadOpenRouterConfig`.
+ * Availability is config-driven: when `OPENROUTER_API_KEY` is unset, STT is
+ * hidden/refused and title generation falls back to the OpenClaw path. See
+ * `loadOpenRouterConfig`.
  */
 
 import { loadOpenRouterConfig } from './config';
@@ -27,7 +22,7 @@ export interface OpenRouterMessage {
   content: string;
 }
 
-/** True when an API key is configured — gates Ask/STT and title routing. */
+/** True when an API key is configured — gates STT and title routing. */
 export function openRouterEnabled(): boolean {
   return Boolean(loadOpenRouterConfig().apiKey);
 }
@@ -59,8 +54,8 @@ function buildHeaders(apiKey: string, referer: string, appTitle: string): Record
 
 interface ChatCompletionOpts {
   messages: OpenRouterMessage[];
-  /** Defaults to the configured Ask model. */
-  model?: string;
+  /** OpenRouter model slug to call. */
+  model: string;
   temperature?: number;
   maxTokens?: number;
   /** Abort the in-flight request (Stop button). */
@@ -74,7 +69,7 @@ interface ChatCompletionOpts {
 export async function complete(opts: ChatCompletionOpts): Promise<string> {
   const cfg = loadOpenRouterConfig();
   if (!cfg.apiKey) fail('no API key configured (set OPENROUTER_API_KEY)');
-  const model = opts.model ?? cfg.askModel;
+  const model = opts.model;
 
   let res: Response;
   try {
@@ -100,94 +95,6 @@ export async function complete(opts: ChatCompletionOpts): Promise<string> {
     choices?: Array<{ message?: { content?: string } }>;
   } | null;
   return json?.choices?.[0]?.message?.content ?? '';
-}
-
-interface StreamCompletionOpts extends ChatCompletionOpts {
-  /** Fires for every text delta as it streams in. */
-  onDelta: (text: string) => void;
-}
-
-/**
- * Streaming completion. Calls `onDelta` for each token chunk and resolves with
- * the full accumulated text. Parses OpenRouter's SSE stream (`data: {json}`
- * lines, terminated by `data: [DONE]`).
- */
-export async function streamComplete(opts: StreamCompletionOpts): Promise<string> {
-  const cfg = loadOpenRouterConfig();
-  if (!cfg.apiKey) fail('no API key configured (set OPENROUTER_API_KEY)');
-  const model = opts.model ?? cfg.askModel;
-
-  let res: Response;
-  try {
-    res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: buildHeaders(cfg.apiKey, cfg.referer, cfg.appTitle),
-      body: JSON.stringify({
-        model,
-        messages: opts.messages,
-        stream: true,
-        // Disable extended thinking — Ask mode is for quick answers, not deep reasoning
-        thinking: { type: 'disabled' },
-        ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
-        ...(opts.maxTokens != null ? { max_tokens: opts.maxTokens } : {}),
-      }),
-      signal: opts.signal,
-    });
-  } catch (err) {
-    fail(`request failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  if (!res.ok) fail(`HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
-  if (!res.body) fail('no response body to stream');
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let full = '';
-
-  // SSE frames are separated by a blank line. We accumulate across chunks
-  // because a single network chunk can split a `data:` line mid-JSON.
-  const consumeLine = (line: string): boolean => {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('data:')) return false;
-    const payload = trimmed.slice('data:'.length).trim();
-    if (payload === '[DONE]') return true;
-    try {
-      const json = JSON.parse(payload) as {
-        choices?: Array<{ delta?: { content?: string } }>;
-      };
-      const delta = json.choices?.[0]?.delta?.content;
-      if (delta) {
-        full += delta;
-        opts.onDelta(delta);
-      }
-    } catch {
-      // OpenRouter sends `: OPENROUTER PROCESSING` keep-alive comments and the
-      // occasional partial line — ignore anything that isn't valid JSON.
-    }
-    return false;
-  };
-
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, nl);
-        buffer = buffer.slice(nl + 1);
-        if (consumeLine(line)) {
-          await reader.cancel().catch(() => {});
-          return full;
-        }
-      }
-    }
-    // Flush any trailing buffered line (stream ended without final newline).
-    if (buffer.trim()) consumeLine(buffer);
-  } finally {
-    reader.releaseLock?.();
-  }
-  return full;
 }
 
 /**

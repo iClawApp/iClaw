@@ -11,12 +11,12 @@
       </header>
 
       <nav class="settings-tabs" aria-label="Settings sections">
-        <a class="settings-tab<%= settingsTab === 'voice-ask' ? ' is-active' : '' %>" href="/settings/voice-ask"<%- settingsTab === 'voice-ask' ? ' aria-current="page"' : '' %>>Voice &amp; Ask</a>
+        <a class="settings-tab<%= settingsTab === 'voice-ask' ? ' is-active' : '' %>" href="/settings/voice-ask"<%- settingsTab === 'voice-ask' ? ' aria-current="page"' : '' %>>Voice</a>
         <a class="settings-tab<%= settingsTab === 'remote-access' ? ' is-active' : '' %>" href="/settings/remote-access"<%- settingsTab === 'remote-access' ? ' aria-current="page"' : '' %>>Remote Access</a>
       </nav>
 
       <% if (settingsTab === 'voice-ask') { %>
-      <!-- ─────────── Voice & Ask (OpenRouter) ─────────── -->
+      <!-- ─────────── Voice (OpenRouter) ─────────── -->
       <section class="settings-section">
         <header class="settings-section-head">
           <div class="settings-section-head-text">
@@ -24,14 +24,13 @@
               <svg class="settings-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/><path d="M5 3v4"/><path d="M3 5h4"/>
               </svg>
-              Voice &amp; Ask
+              Voice
             </h2>
             <p class="settings-section-desc">
               Paste your OpenRouter key to unlock:
             </p>
             <ul class="settings-section-feature-list">
               <li>🎙 <strong>Voice messages</strong> — speak instead of type</li>
-              <li>💬 <strong>Ask mode</strong> — quick answers without agent execution</li>
               <li>🗂 <strong>Work mode</strong> — AI works inside your selected folders only, file writes need your approval</li>
               <li>✏️ <strong>Auto-named chats</strong> — titles generated automatically</li>
             </ul>
@@ -807,7 +806,7 @@
   padding: 0 var(--space-5) var(--space-5);
 }
 
-/* ───────────── Voice & Ask (OpenRouter) ───────────── */
+/* ───────────── Voice (OpenRouter) ───────────── */
 .or-card {
   background: var(--surface);
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
@@ -1511,7 +1510,7 @@
   const disconnectBtn = document.getElementById('or-disconnect');
   if (disconnectBtn) {
     disconnectBtn.addEventListener('click', async function () {
-      if (!confirm('Disconnect OpenRouter? Voice messages, Ask mode, and Work mode turn off until you add a key again.')) return;
+      if (!confirm('Disconnect OpenRouter? Voice messages and Work mode turn off until you add a key again.')) return;
       disconnectBtn.disabled = true;
       const orig = disconnectBtn.textContent;
       disconnectBtn.textContent = 'Disconnecting…';

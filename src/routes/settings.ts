@@ -2,7 +2,7 @@
  * GET /settings — Settings page.
  *
  * Sectioned scaffold: Remote Access + OpenRouter (the key that unlocks voice
- * messages, Ask mode, and smart titles). The key is stored in the local DB via
+ * messages and smart titles). The key is stored in the local DB via
  * Settings — not an env var — and takes effect on the next page load.
  */
 

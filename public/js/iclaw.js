@@ -707,13 +707,21 @@
   // ── Secure workspace bar ─────────────────────────────────────────────────
   const secureBar = document.getElementById('secure-workspace-bar');
   const secureSizeEl = document.getElementById('secure-workspace-size');
-  const secureTtlEl = document.getElementById('secure-workspace-ttl');
-  const secureChangeBtn = document.getElementById('secure-workspace-change');
+  const secureTtlPrefixEl = document.getElementById('secure-workspace-ttl-prefix');
+  const secureTtlValueBtn = document.getElementById('secure-workspace-ttl-value');
   const secureTtlMenu = document.getElementById('secure-ttl-menu');
 
+  // Read the chat id live, not from the page-load `rawChatId` const. A chat that
+  // starts as a draft has no id until the first message adopts it (adoptDraftChat
+  // updates messagesEl.dataset.chatId); `rawChatId` stays empty, so keying the
+  // bar off it left it hidden until a reload re-rendered at /chats/:id.
+  const secureChatId = () => messagesEl?.dataset.chatId || '';
+
   function secureTtlKey() {
-    const pid = messagesEl?.dataset.projectId;
-    return `iclaw:secure-ttl:${pid ? 'project:' + pid : 'chat:' + rawChatId}`;
+    // Per-chat TTL: every new chat starts from the 7-day default, and changing
+    // it affects only that chat. (Previously chats in a project shared one TTL,
+    // so a new project chat could inherit 30 — we don't want that.)
+    return `iclaw:secure-ttl:chat:${secureChatId()}`;
   }
 
   function getSecureTtl() {
@@ -735,23 +743,27 @@
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
+  // Returns { prefix, value } so the value can render as a separate inline,
+  // clickable element ("deletes in [6d]") while the prefix stays plain text.
   function formatTtlRemaining(ttlDays, lastActivity) {
-    if (ttlDays === 0) return 'never expires';
+    if (ttlDays === 0) return { prefix: '', value: 'never deleted' };
     // +15s demo buffer: holds the full day count for ~15s after each reset so
     // users can see the countdown tick down (proof the TTL resets on activity).
     const expiresAt = lastActivity + ttlDays * 86400_000 + 15_000;
     const remaining = expiresAt - Date.now();
-    if (remaining <= 0) return 'expired';
+    if (remaining <= 0) return { prefix: '', value: 'deleted' };
     const days = Math.floor(remaining / 86400_000);
     const hours = Math.floor((remaining % 86400_000) / 3600_000);
     const mins = Math.floor((remaining % 3600_000) / 60_000);
     const secs = Math.floor((remaining % 60_000) / 1000);
+    let value;
     // More than 2 days: show only days (no hours)
-    if (days > 2) return `expires in ${days}d`;
-    if (days > 0) return `expires in ${days}d ${hours}h`;
-    if (hours > 0) return `expires in ${hours}h ${mins}m`;
-    if (mins > 0) return `expires in ${mins}m ${secs}s`;
-    return `expires in ${secs}s`;
+    if (days > 2) value = `${days}d`;
+    else if (days > 0) value = `${days}d ${hours}h`;
+    else if (hours > 0) value = `${hours}h ${mins}m`;
+    else if (mins > 0) value = `${mins}m ${secs}s`;
+    else value = `${secs}s`;
+    return { prefix: 'deletes in', value };
   }
 
   // True when the secret hint UI is visible — it takes priority over the secure bar.
@@ -764,42 +776,42 @@
   function tickSecureTtl() {
     if (!secureBar || secureBar.hidden) return;
     const ttl = getSecureTtl();
-    if (secureTtlEl) secureTtlEl.textContent = formatTtlRemaining(ttl.ttlDays, ttl.lastActivity);
+    const { prefix, value } = formatTtlRemaining(ttl.ttlDays, ttl.lastActivity);
+    // Trailing space separates the plain prefix from the clickable value.
+    if (secureTtlPrefixEl) secureTtlPrefixEl.textContent = prefix ? prefix + ' ' : '';
+    if (secureTtlValueBtn) secureTtlValueBtn.textContent = value;
   }
 
   async function refreshSecureBar() {
     if (!secureBar) return;
     const mode = getComposerMode();
+    const cid = secureChatId();
     // Hide if not in Secure Mode, or if the secret UI is currently showing.
-    if (mode !== 'secure' || secretUiVisible() || !rawChatId) { secureBar.hidden = true; return; }
+    if (mode !== 'secure' || secretUiVisible() || !cid) { secureBar.hidden = true; return; }
 
     try {
-      const res = await fetch(`/chats/${rawChatId}/workspace-info`);
+      const res = await fetch(`/chats/${cid}/workspace-info`);
       const data = await res.json();
       // Only surface the bar once a secure session actually exists — i.e. after
       // the first message. Nothing is created on the host until then.
-      if (!data.active) { secureBar.hidden = true; return; }
+      // Show the bar only once the sandbox actually holds something — an empty
+      // workspace has nothing to time, save, or destroy, so we surface nothing
+      // (not even the "Secure workspace" label) until the agent writes a file.
+      const size = data.active && data.workspaceSize != null ? data.workspaceSize : 0;
+      if (!size) { secureBar.hidden = true; return; }
       secureBar.hidden = false;
-      tickSecureTtl();
       if (secureSizeEl) {
-        // Only show a size once there's actually something in the workspace —
-        // "0 B" is noise.
-        const size = data.workspaceSize != null ? data.workspaceSize : 0;
-        if (size > 0) {
-          secureSizeEl.textContent = formatBytes(size);
-          secureSizeEl.hidden = false;
-        } else {
-          secureSizeEl.textContent = '';
-          secureSizeEl.hidden = true;
-        }
+        secureSizeEl.textContent = formatBytes(size);
+        secureSizeEl.hidden = false;
       }
+      tickSecureTtl();
     } catch { secureBar.hidden = true; }
   }
 
   // Live countdown — updates the TTL text every second.
   setInterval(tickSecureTtl, 1000);
 
-  secureChangeBtn?.addEventListener('click', (e) => {
+  secureTtlValueBtn?.addEventListener('click', (e) => {
     e.stopPropagation();
     if (secureTtlMenu) {
       secureTtlMenu.hidden = !secureTtlMenu.hidden;
@@ -814,57 +826,34 @@
     refreshSecureBar();
   });
 
-  // Export the sandbox out to a host folder (default ~/Downloads). Read-only —
-  // copies the sandbox contents to a fresh place, touches nothing of the user's.
+  // Save a copy of the sandbox out to a host folder (default ~/Downloads).
+  // Read-only — copies the sandbox contents to a fresh place, touches nothing of
+  // the user's. Confirmed first with a plain-language explanation.
   const secureExportBtn = document.getElementById('secure-workspace-export');
   secureExportBtn?.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!rawChatId) return;
+    const cid = secureChatId();
+    if (!cid) return;
+    if (!confirm(
+      'Save a copy of this secure workspace to your Downloads folder?\n\n'
+      + 'Heads up - these files leave the safe sandbox and land on your real computer. '
+      + 'If anything was downloaded in here, it could carry viruses or other nasty surprises\n\n'
+      + 'That\'s exactly what the sandbox is for - to keep anything dangerous trapped in there'
+    )) return;
+    // The button holds an icon + label (not text), so don't touch textContent —
+    // just disable it for the duration of the copy.
     secureExportBtn.disabled = true;
-    const prev = secureExportBtn.textContent;
-    secureExportBtn.textContent = 'Exporting…';
     try {
-      const res = await fetch(`/chats/${rawChatId}/export-sandbox`, {
+      const res = await fetch(`/chats/${cid}/export-sandbox`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: '{}',
       });
       const data = await res.json();
-      if (data && data.ok) alert(`Exported ${data.files != null ? data.files + ' files' : 'sandbox'} to:\n${data.path}`);
-      else alert(`Export failed: ${(data && data.error) || 'unknown error'}`);
-    } catch { alert('Export failed.'); }
+      if (data && data.ok) alert(`Saved a copy${data.files != null ? ` (${data.files} files)` : ''} here:\n${data.path}`);
+      else alert(`Couldn't save the copy: ${(data && data.error) || 'unknown error'}`);
+    } catch { alert("Couldn't save the copy."); }
     secureExportBtn.disabled = false;
-    secureExportBtn.textContent = prev || 'Export';
-  });
-
-  // Apply: copy the sandbox's new/changed files back to the ORIGINAL folders.
-  // This writes to the user's real files, so it's confirmed and additive only.
-  const secureApplyBtn = document.getElementById('secure-workspace-apply');
-  secureApplyBtn?.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    if (!rawChatId) return;
-    if (!confirm('Apply the sandbox\'s new and changed files back to your original folders? Existing files may be overwritten; nothing is deleted.')) return;
-    secureApplyBtn.disabled = true;
-    const prev = secureApplyBtn.textContent;
-    secureApplyBtn.textContent = 'Applying…';
-    try {
-      const res = await fetch(`/chats/${rawChatId}/apply-sandbox`, {
-        method: 'POST',
-        headers: { Accept: 'application/json' },
-      });
-      const data = await res.json();
-      const results = (data && data.results) || [];
-      if (results.length === 0) {
-        alert('Nothing to apply — no folders were copied into this sandbox.');
-      } else {
-        const lines = results.map((r) => r.ok
-          ? `• ${r.source}: ${(r.applied && r.applied.length) || 0} file(s)`
-          : `✗ ${r.source}: ${r.error}`);
-        alert('Applied changes:\n' + lines.join('\n'));
-      }
-    } catch { alert('Apply failed.'); }
-    secureApplyBtn.disabled = false;
-    secureApplyBtn.textContent = prev || 'Apply changes';
   });
 
   // Destroy the sandbox: deletes the copied workspace + container. The next
@@ -872,24 +861,24 @@
   const secureDestroyBtn = document.getElementById('secure-workspace-destroy');
   secureDestroyBtn?.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!rawChatId) return;
-    if (!confirm('Destroy this sandbox? The copied files and anything created in it are deleted. Your original files are untouched.')) return;
+    const cid = secureChatId();
+    if (!cid) return;
+    if (!confirm('Delete this sandbox now? Everything copied or created inside it is removed right away - your original files on your computer are not touched')) return;
+    // The button holds an icon + label (not text), so don't touch textContent —
+    // just disable it; the bar refreshes (and usually hides) once it's gone.
     secureDestroyBtn.disabled = true;
-    const prev = secureDestroyBtn.textContent;
-    secureDestroyBtn.textContent = 'Destroying…';
     try {
-      await fetch(`/chats/${rawChatId}/destroy-workspace`, {
+      await fetch(`/chats/${cid}/destroy-workspace`, {
         method: 'POST',
         headers: { Accept: 'application/json' },
       });
     } catch { /* best-effort */ }
     secureDestroyBtn.disabled = false;
-    secureDestroyBtn.textContent = prev || 'Destroy';
     refreshSecureBar();
   });
 
   document.addEventListener('click', (e) => {
-    if (secureTtlMenu && !secureTtlMenu.hidden && !secureChangeBtn?.contains(e.target) && !secureTtlMenu.contains(e.target)) {
+    if (secureTtlMenu && !secureTtlMenu.hidden && !secureTtlValueBtn?.contains(e.target) && !secureTtlMenu.contains(e.target)) {
       secureTtlMenu.hidden = true;
     }
   });
@@ -948,6 +937,13 @@
     let meterRaf = 0;
     let timeData = null;
     let waveSamples = [];
+    // Advance the waveform on a fixed cadence (not once per animation frame) so
+    // the bars scroll at a calm, readable speed regardless of the display's
+    // refresh rate. Between pushes we keep the loudest level seen, so a brief
+    // peak still lands as a tall bar.
+    const WAVE_SAMPLE_MS = 55;
+    let lastWaveAt = 0;
+    let wavePeak = 0;
     let accentColor = '#4f8cff';
     let dangerColor = '#e5484d';
 
@@ -1166,6 +1162,8 @@
         sourceNode.connect(analyser);
         timeData = new Uint8Array(analyser.fftSize);
         waveSamples = [];
+        lastWaveAt = 0;
+        wavePeak = 0;
       } catch (_) {
         // Meter is best-effort; recording still works without it.
       }
@@ -1196,11 +1194,22 @@
           const v = (timeData[i] - 128) / 128;
           sum += v * v;
         }
-        level = Math.min(1, Math.sqrt(sum / timeData.length) * 2.4);
+        // Higher gain so normal speech clearly pushes the bars up: quiet stays
+        // near the baseline, loud reaches (near) full height.
+        level = Math.min(1, Math.sqrt(sum / timeData.length) * 3.0);
       }
+      // The halo tracks the live level every frame for a smooth pulse…
       micBtn.style.setProperty('--mic-amp', level.toFixed(3));
-      waveSamples.push(level);
-      drawWave();
+      // …but the waveform only advances every WAVE_SAMPLE_MS, carrying the peak
+      // level from the in-between frames so loud moments read as tall bars.
+      wavePeak = Math.max(wavePeak, level);
+      const now = performance.now();
+      if (now - lastWaveAt >= WAVE_SAMPLE_MS) {
+        lastWaveAt = now;
+        waveSamples.push(wavePeak);
+        wavePeak = 0;
+        drawWave();
+      }
     }
 
     function drawWave() {
@@ -1301,11 +1310,10 @@
       setCancelArmed(false);
       setMicState('locked');
       if (recEl) recEl.classList.add('is-locked');
-      if (recHintEl) recHintEl.textContent = 'tap mic to send';
-      if (lockHintEl) {
-        lockHintEl.classList.add('is-locked');
-        setLockProgress(1);
-      }
+      // Lock confirmed — hide the floating lock pill so it doesn't sit over the
+      // bar; the mic itself turns into the send button and Cancel drops to the
+      // toolbar row.
+      if (lockHintEl) lockHintEl.hidden = true;
       try { micBtn.releasePointerCapture(activePointerId); } catch (_) {}
       sizeWaveCanvas();
     }
@@ -3276,19 +3284,53 @@
           '</span>'
         : '<span class="scheduled-item-when">' + escapeHtml(opts.metaText) + '</span>';
     return (
-      '<div class="scheduled-item-main">' +
+      '<div class="scheduled-item-text">' +
+      escapeHtml(opts.content) +
+      '</div>' +
+      '<div class="scheduled-item-footer">' +
       '<div class="scheduled-item-meta">' +
       '<span class="scheduled-item-clock" aria-hidden="true">' +
       opts.metaIcon +
       '</span>' +
       whenEl +
       '</div>' +
-      '<div class="scheduled-item-text">' +
-      escapeHtml(opts.content) +
-      '</div>' +
-      '</div>' +
-      opts.actionsHtml
+      '<button type="button" class="scheduled-item-toggle" aria-expanded="false">Show more</button>' +
+      opts.actionsHtml +
+      '</div>'
     );
+  }
+
+  // Measure whether a pending-row's message overflows its collapsed height and
+  // wire the "Show more" toggle accordingly. The full text always stays in the
+  // DOM (only visually clipped via CSS), so edit/read paths still see it all.
+  // Re-runnable: preserves an already-expanded row across content updates.
+  function applyPendingRowClamp(row) {
+    if (!row) return;
+    const textEl = row.querySelector('.scheduled-item-text');
+    const toggle = row.querySelector('.scheduled-item-toggle');
+    if (!textEl || !toggle) return;
+    const wasExpanded = row.classList.contains('is-expanded');
+    // Collapse first so scrollHeight/clientHeight reflect the clamped box.
+    row.classList.remove('is-expanded');
+    const clampable = textEl.scrollHeight - textEl.clientHeight > 4;
+    row.classList.toggle('is-clampable', clampable);
+    const expanded = clampable && wasExpanded;
+    row.classList.toggle('is-expanded', expanded);
+    toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    toggle.textContent = expanded ? 'Show less' : 'Show more';
+  }
+
+  // Shared click handler for the "Show more"/"Show less" toggle in either list.
+  // Returns true if it handled the event (so callers can early-return).
+  function handlePendingRowToggleClick(e) {
+    const toggle = e.target.closest('.scheduled-item-toggle');
+    if (!toggle) return false;
+    const row = toggle.closest('.scheduled-item');
+    if (!row) return false;
+    const expanded = row.classList.toggle('is-expanded');
+    toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    toggle.textContent = expanded ? 'Show less' : 'Show more';
+    return true;
   }
 
   function queueItemActionsHtml(id) {
@@ -3324,6 +3366,7 @@
         actionsHtml: queueItemActionsHtml(rowId),
       });
       queueListEl.appendChild(row);
+      applyPendingRowClamp(row);
     });
     queueListEl.classList.toggle('is-empty', waitingItems.length === 0);
   }
@@ -3479,6 +3522,7 @@
   // Delete from queue + interrupt-and-promote via event delegation.
   if (queueListEl) {
     queueListEl.addEventListener('click', (e) => {
+      if (handlePendingRowToggleClick(e)) return;
       const row = e.target.closest('.scheduled-item--queue');
       if (!row) return;
       const id = row.dataset.queueId;
@@ -4897,6 +4941,11 @@
         setWorkingDot(msg.chatId, false);
         if (msg.chatId !== activeChatId) return;
         setStopVisible(false);
+        // The first secure turn creates the sandbox host-side; surface the bar
+        // as soon as the turn finishes (no-op outside Secure Mode). The fixed
+        // retry timers on send can miss a slow container start, so refresh here
+        // too rather than wait for a reload.
+        refreshSecureBar();
         // Tear down a streaming element that nobody finalized — e.g. an
         // abort with no streamed text (skipPersist on the server → no
         // `message-appended` to clean it up), or any other edge where the
@@ -7044,6 +7093,7 @@
       actionsHtml: scheduledItemActionsHtml(scheduled.id),
     });
     scheduledListEl.appendChild(row);
+    applyPendingRowClamp(row);
     scheduledListEl.classList.remove('is-empty');
     sortScheduledListDom();
   }
@@ -7064,6 +7114,7 @@
     }
     const textEl = row.querySelector('.scheduled-item-text');
     if (textEl) textEl.textContent = scheduled.content;
+    applyPendingRowClamp(row);
     sortScheduledListDom();
   }
 
@@ -8071,6 +8122,7 @@
 
   if (scheduledListEl) {
     scheduledListEl.addEventListener('click', async (e) => {
+      if (handlePendingRowToggleClick(e)) return;
       const sendNowBtn = e.target.closest('.scheduled-item-send-now');
       if (sendNowBtn) {
         const sid = Number(sendNowBtn.dataset.scheduledId);
@@ -8102,6 +8154,8 @@
     });
     sortScheduledListDom();
     refreshScheduledTimes();
+    // Server-rendered rows (first paint) need the same overflow measurement.
+    scheduledListEl.querySelectorAll('.scheduled-item').forEach(applyPendingRowClamp);
   }
 
   // -------------------------------------------------------------------------

@@ -2383,17 +2383,21 @@ code {
 }
 .scheduled-item {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 6px;
   padding: 8px 12px;
   background: color-mix(in srgb, var(--accent, var(--text)) 6%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--accent, var(--text)) 16%, var(--border));
   border-radius: 12px;
   font-size: 0.9em;
 }
-.scheduled-item-main {
-  flex: 1;
-  min-width: 0;
+/* Bottom strip: schedule time + "Show more" on the left, action buttons pushed
+   to the far right, spanning the full card width. */
+.scheduled-item-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
 }
 .scheduled-item-meta {
   display: flex;
@@ -2401,7 +2405,6 @@ code {
   gap: 6px;
   color: var(--muted);
   font-size: 0.85em;
-  margin-bottom: 2px;
 }
 .scheduled-item-clock {
   font-size: 0.9em;
@@ -2412,6 +2415,49 @@ code {
   word-break: break-word;
   color: var(--text);
   line-height: 1.35;
+  position: relative;
+  /* Collapse long scheduled/queue messages so a single card can't take over
+     the whole composer area. 2 lines is enough to preview; the footer's
+     "Show more" reveals the rest. Short messages stay fully visible. */
+  max-height: calc(1.35em * 2);
+  overflow: hidden;
+}
+.scheduled-item.is-expanded .scheduled-item-text {
+  max-height: none;
+}
+/* Fade the last visible line of a collapsed, overflowing card so the cut feels
+   intentional. Mirrors the card background (see .scheduled-item). */
+.scheduled-item.is-clampable:not(.is-expanded) .scheduled-item-text::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.1em;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--accent, var(--text)) 6%, var(--surface))
+  );
+  pointer-events: none;
+}
+.scheduled-item-toggle {
+  display: none;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent, var(--text));
+  font: inherit;
+  font-size: 0.82em;
+  font-weight: 600;
+  cursor: pointer;
+}
+.scheduled-item-toggle:hover {
+  text-decoration: underline;
+}
+.scheduled-item.is-clampable .scheduled-item-toggle {
+  display: inline-block;
 }
 /* Schedule menu — popover anchored to send button */
 .composer-field {
@@ -2618,7 +2664,7 @@ code {
 .scheduled-item-actions {
   display: flex;
   flex-shrink: 0;
-  align-self: center;
+  margin-left: auto;
   align-items: center;
   gap: 2px;
 }
@@ -3542,6 +3588,24 @@ code {
 .project-header .project-delete-btn:hover {
   color: var(--danger);
   --_btn-bg-hover: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+/* Chat-header Share + Delete: icon-only by default, the label slides in on
+   hover/focus (matching the secure-workspace actions). Mobile already hides
+   these labels entirely; this only affects the desktop pill buttons. */
+.chat-header .share-btn .header-tool-label,
+.chat-header .chat-delete-btn .header-tool-label {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-width 0.2s ease, opacity 0.2s ease;
+}
+.chat-header .share-btn:hover .header-tool-label,
+.chat-header .share-btn:focus-visible .header-tool-label,
+.chat-header .chat-delete-btn:hover .header-tool-label,
+.chat-header .chat-delete-btn:focus-visible .header-tool-label {
+  max-width: 80px;
+  opacity: 1;
 }
 
 .project-header .project-delete-btn.header-action-btn {
@@ -5011,16 +5075,38 @@ code {
 .composer-recording__cancel:hover {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
-.composer-recording.is-locked .composer-recording__cancel { display: inline-flex; }
+/* Locked: Cancel drops out of the bar and down to the toolbar row — pinned
+   bottom-left, vertically level with the send button — so the wave gets the
+   whole top row. (Field is position:relative, so this anchors to it.) */
+.composer-recording.is-locked .composer-recording__cancel {
+  display: inline-flex;
+  align-items: center;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 8px;
+  height: 36px;
+}
+/* Locked: no text hint — the mic (now a send arrow) + Cancel say it all. */
+.composer-recording.is-locked .composer-recording__hint { display: none; }
 .composer-recording.is-cancel .composer-recording__dot { background: var(--danger); }
 .composer-recording.is-cancel .composer-recording__time,
 .composer-recording.is-cancel .composer-recording__hint { color: var(--danger); }
-/* Quick-tap coaching hint */
+/* Quick-tap coaching hint — the lone "hold the mic to record" line sits dead
+   centre of the bar (both axes) instead of hugging the left edge. */
+.composer-recording.is-hint {
+  justify-content: center;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
 .composer-recording.is-hint .composer-recording__dot,
 .composer-recording.is-hint .composer-recording__time,
 .composer-recording.is-hint .composer-recording__wave,
 .composer-recording.is-hint .composer-recording__cancel { display: none; }
-.composer-recording.is-hint .composer-recording__hint { color: var(--muted); }
+.composer-recording.is-hint .composer-recording__hint {
+  color: var(--muted);
+  text-align: center;
+}
 
 /* Floating lock indicator above the mic. */
 .composer-lock-hint {
@@ -7662,43 +7748,79 @@ a.project-tab.project-tab--tasks:hover {
 .secure-workspace-bar[hidden] { display: none; }
 .secure-workspace-bar__size[hidden] { display: none; }
 .secure-workspace-bar__sep { opacity: 0.4; }
-.secure-workspace-bar__change {
+/* TTL text + its inline, clickable value (opens the retention menu). The span is
+   the positioning context so the menu anchors right under "expires in 6d". */
+.secure-workspace-bar__ttl { position: relative; }
+.secure-workspace-bar__ttl-value {
   border: none;
   background: transparent;
   color: var(--muted);
   font: inherit;
   font-size: var(--text-xs);
   cursor: pointer;
-  text-decoration: underline;
+  /* Dotted underline marks it as an inline control, distinct from the solid
+     underline on the Save a copy / Apply / Destroy actions. */
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
   padding: 0;
 }
-.secure-workspace-bar__change:hover { color: var(--text); }
+.secure-workspace-bar__ttl-value:hover { color: var(--text); }
 .secure-workspace-bar__action {
+  display: inline-flex;
+  align-items: center;
   border: none;
   background: transparent;
   color: var(--muted);
   font: inherit;
   font-size: var(--text-xs);
   cursor: pointer;
-  text-decoration: underline;
   padding: 0;
   margin-left: 8px;
 }
+.secure-workspace-bar__action svg { display: block; }
 .secure-workspace-bar__action:hover { color: var(--text); }
-.secure-workspace-bar__action:disabled { opacity: 0.6; cursor: default; text-decoration: none; }
+.secure-workspace-bar__action:disabled { opacity: 0.6; cursor: default; }
+/* Download icon by default; the "Save to my computer" label slides in on hover. */
+.secure-workspace-bar__action-label {
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0;
+  transition: max-width 0.2s ease, opacity 0.2s ease;
+}
+.secure-workspace-bar__action:hover .secure-workspace-bar__action-label,
+.secure-workspace-bar__action:focus-visible .secure-workspace-bar__action-label {
+  max-width: 160px;
+  opacity: 1;
+}
 .secure-workspace-bar__destroy {
+  display: inline-flex;
+  align-items: center;
   border: none;
   background: transparent;
   color: var(--muted);
   font: inherit;
   font-size: var(--text-xs);
   cursor: pointer;
-  text-decoration: underline;
   padding: 0;
   margin-left: 8px;
 }
+.secure-workspace-bar__destroy svg { display: block; }
 .secure-workspace-bar__destroy:hover { color: var(--down, #d9534f); }
-.secure-workspace-bar__destroy:disabled { opacity: 0.6; cursor: default; text-decoration: none; }
+.secure-workspace-bar__destroy:disabled { opacity: 0.6; cursor: default; }
+/* Trash icon by default; the "Delete now" label slides in on hover/focus. */
+.secure-workspace-bar__destroy-label {
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0;
+  transition: max-width 0.18s ease, opacity 0.18s ease;
+}
+.secure-workspace-bar__destroy:hover .secure-workspace-bar__destroy-label,
+.secure-workspace-bar__destroy:focus-visible .secure-workspace-bar__destroy-label {
+  max-width: 90px;
+  opacity: 1;
+}
 
 /* ── Incognito (ephemeral, read-only) ─────────────────────────────────────── */
 /* "Blacked out" identity — neutral/dark, no colour. */
@@ -7789,8 +7911,8 @@ body.incognito-mode .composer-mode-btn__label {
 .secure-ttl-menu {
   top: auto;
   bottom: calc(100% + 4px);
-  right: calc(var(--space-2) * 2);
-  left: auto;
+  left: 0;
+  right: auto;
   min-width: 120px;
 }
 
