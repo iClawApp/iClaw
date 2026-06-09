@@ -16,6 +16,12 @@
 
 ![iClaw screenshot](./docs/readme-screenshot.png)
 
+## Demo
+
+https://github.com/user-attachments/assets/14a844e3-c1bb-4baf-98af-f52efefe77aa
+
+_Pick a mode, then watch iClaw inspect an untrusted shell script inside an isolated sandbox — ~50s, no sound._
+
 ## Install
 
 Requires [Node.js 20+](https://nodejs.org)
@@ -28,7 +34,13 @@ Press **`g`** in the terminal to open the UI in your browser
 
 ## Star history
 
-[![Star History Chart](https://api.star-history.com/svg?repos=iClawApp/iClaw&type=Date)](https://www.star-history.com/#iClawApp/iClaw&Date)
+<a href="https://www.star-history.com/#iClawApp/iClaw&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=iClawApp/iClaw&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=iClawApp/iClaw&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=iClawApp/iClaw&type=Date" />
+  </picture>
+</a>
 
 ## Chat modes
 
@@ -40,6 +52,45 @@ Press **`g`** in the terminal to open the UI in your browser
 | **Incognito** | Private, read-only research — reads files & the web, never writes, nothing saved. | iClaw runtime |
 
 The three runtime modes need **Docker** running and an **OpenRouter key** (Settings); without either the composer falls back to Full Power. Architecture: [AGENTS.md](AGENTS.md).
+
+## Why iClaw
+
+Today's agents run **as you** — your shell, your files, your credentials, your
+cloud bill. That's exactly where it hurts:
+
+**🔒 "It ran `rm -rf ~/` and wiped my Mac."** A real [1,500-upvote thread](https://www.docker.com/blog/coding-agent-horror-stories-the-rm-rf-incident/) —
+the agent runs on your filesystem with nothing between the model and the shell.
+iClaw runs untrusted code in a Docker sandbox where the command *literally cannot
+see the rest of your computer*, and touches real files only in folders you pick.
+
+**💸 $20 gone in a day, then rate-limited mid-task.** One vendor, one price they
+can double overnight. iClaw is model-agnostic — cheap DeepSeek + Gemini out of
+the box, or bring GPT / Claude / anything via OpenRouter. No lock-in, no per-seat plan.
+
+**📁 It forgot what it was doing and mixed two projects up.** iClaw seals each
+project off — its own chats, memory and folders. Nothing bleeds between them, and
+nothing leaves your machine: it's local and loopback-only.
+
+**⚡ No setup marathon.** `npx`, paste one OpenRouter key, and you're in — iClaw
+pre-pulls the sandbox in the background and hands you one-click Install buttons
+for Docker and OpenClaw. No compose files, no config to hand-edit.
+
+**✨ A clean UI, not a cockpit.** A minimalist, ChatGPT-style surface —
+light/dark, a tight design system, nothing you don't need.
+
+| | **iClaw** | OpenClaw | Hermes | Claude Code |
+|---|---|---|---|---|
+| **Surface** | Local browser GUI | CLI | CLI + chat apps | Terminal |
+| **Setup pain** | 💀💀 | 💀💀💀💀💀 | 💀💀💀💀 | 💀 |
+| **Projects sealed off** — own chats, memory, folders | ✅ | ❌ | ❌ | ~ per-repo file |
+| **Pick your trust level per chat** | ✅ 4 modes | ❌ | ~ | ~ |
+| **Untrusted code can't escape its folders** | ✅ Docker | ❌ | ~ | ~ |
+| **Any model · no lock-in** | ✅ | ✅ | ✅ | ❌ Anthropic only |
+| **Encrypted, self-destructing share links** | ✅ | ❌ | ❌ | ❌ |
+
+<sub>✅ yes · ~ partial · ❌ no · 💀 = setup hassle (fewer = easier)</sub>
+
+**→ Only iClaw gives you sealed projects, a per-folder sandbox, and a GUI — with any model you want.**
 
 ## More
 

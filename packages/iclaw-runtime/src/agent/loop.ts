@@ -9,6 +9,7 @@ import OpenAI from 'openai';
 import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
 import { SOCIAL_SEARCH_TOOL } from './social.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
+import { resolveTurnModel } from './model-capabilities.js';
 
 export interface AgentOptions {
   apiKey: string;
@@ -59,7 +60,7 @@ export type Message = OpenAI.Chat.ChatCompletionMessageParam;
 const MAX_ROUNDS = Math.max(1, Number(process.env.ICLAW_MAX_ROUNDS) || 40);
 
 /** Turn a provider/SDK error into a concise, user-facing message. */
-function describeApiError(err: unknown): string {
+export function describeApiError(err: unknown): string {
   const e = err as {
     status?: number;
     code?: number | string;
@@ -72,7 +73,16 @@ function describeApiError(err: unknown): string {
     return 'Rate limit reached on the model provider (429). Wait a few seconds and try again, ' +
       'or switch to a model with higher limits (ICLAW_MODEL).';
   }
-  return e?.message || String(err);
+  const msg = e?.message || String(err);
+  // Non-vision model handed an image → OpenRouter 404 "No endpoints found that
+  // support image input". The vision gate (resolveTurnModel) pre-empts this for
+  // confirmed text-only models; this is the safety net for the unknown-capability
+  // path (registry lookup failed, so we left the model as-is).
+  if (code === 404 && /image input|support image/i.test(msg)) {
+    return `This model can't accept images. Set ICLAW_VISION_MODEL to a vision-capable ` +
+      `OpenRouter model (e.g. google/gemini-2.5-flash) to use photos.`;
+  }
+  return msg;
 }
 
 // Mid-turn compaction budget: once the in-flight message array passes this many
@@ -358,6 +368,21 @@ export async function* runAgentTurn(
     userMsg,
   ];
 
+  // Vision gate: an image-bearing turn on a text-only model would 404 at
+  // OpenRouter ("No endpoints found that support image input"). Route it to a
+  // vision-capable fallback (ICLAW_VISION_MODEL) when needed; text turns are
+  // untouched and pay no lookup. See ./model-capabilities.ts.
+  const modelDecision = await resolveTurnModel({
+    model: opts.model,
+    apiKey: opts.apiKey,
+    hasImages: !!opts.images?.length,
+  });
+  if (modelDecision.error) {
+    yield { type: 'error', message: modelDecision.error };
+    return;
+  }
+  const effectiveModel = modelDecision.model;
+
   // Token usage across all rounds (dev-mode display). `turnCached` = how many
   // prompt tokens were served from the provider's prefix cache.
   let turnTokens = 0;
@@ -388,13 +413,13 @@ export async function* runAgentTurn(
     const toolCallBuffers: Record<string, { name: string; arguments: string }> = {};
 
     // Dev mode: persist exactly what we're about to send (incl. tool schemas).
-    dumpPrompt({ turnId: dumpTurnId, mode: dumpMode, model: opts.model, round, messages, tools });
+    dumpPrompt({ turnId: dumpTurnId, mode: dumpMode, model: effectiveModel, round, messages, tools });
 
     let stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
     try {
       stream = await client.chat.completions.create(
         {
-          model: opts.model,
+          model: effectiveModel,
           messages: withPromptCaching(messages),
           tools: tools as unknown as OpenAI.Chat.ChatCompletionTool[],
           // Normally 'auto'; after the dead-round breaker trips we send 'none' so

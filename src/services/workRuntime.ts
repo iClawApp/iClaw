@@ -203,25 +203,12 @@ export async function getWorkspaceInfo(sessionId: string): Promise<{ workspaceSi
 }
 
 export interface ExportResult { ok: boolean; path?: string; files?: number; error?: string }
-export interface ApplyResult {
-  ok: boolean;
-  source?: string;
-  applied?: { path: string; kind: 'created' | 'modified' }[];
-  error?: string;
-}
 
 /** Export a Safe sandbox to a host folder (default ~/Downloads). */
 export async function exportSandbox(sessionId: string, destDir?: string): Promise<ExportResult> {
   const res = await request('POST', `/sessions/${sessionId}/export`, destDir ? { destDir } : {});
   if (res.status !== 200) throw new Error(`Export failed: ${JSON.stringify(res.data)}`);
   return res.data as ExportResult;
-}
-
-/** Apply a Safe sandbox's changes back to the originally-ingested folders. */
-export async function applySandboxChanges(sessionId: string): Promise<ApplyResult[]> {
-  const res = await request('POST', `/sessions/${sessionId}/apply`, {});
-  if (res.status !== 200) throw new Error(`Apply failed: ${JSON.stringify(res.data)}`);
-  return (res.data as { results: ApplyResult[] }).results;
 }
 
 /** True if the runtime service appears to be running. */

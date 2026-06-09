@@ -17,14 +17,14 @@
     data-scheduled-at="<%= scheduledAt %>"
   <% } %>
 >
-  <div class="scheduled-item-main">
+  <div class="scheduled-item-text"><%= content %></div>
+  <div class="scheduled-item-footer">
     <div class="scheduled-item-meta">
       <span class="scheduled-item-clock" aria-hidden="true"><%= metaIcon %></span>
       <span class="scheduled-item-when"<% if (kind === 'scheduled' && scheduledAt) { %> data-when="<%= scheduledAt %>"<% } %>><%= metaText %></span>
     </div>
-    <div class="scheduled-item-text"><%= content %></div>
-  </div>
-  <div class="scheduled-item-actions">
+    <button type="button" class="scheduled-item-toggle" aria-expanded="false">Show more</button>
+    <div class="scheduled-item-actions">
     <% if (kind === 'scheduled') { %>
       <button
         type="button"
@@ -76,5 +76,6 @@
         title="Remove from queue"
       >×</button>
     <% } %>
+    </div>
   </div>
 </div>

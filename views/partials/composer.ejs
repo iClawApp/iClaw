@@ -351,17 +351,21 @@
     <span class="secure-workspace-bar__label">Secure workspace</span>
     <span class="secure-workspace-bar__size" id="secure-workspace-size" hidden></span>
     <span class="secure-workspace-bar__sep" id="secure-workspace-sep">·</span>
-    <span class="secure-workspace-bar__ttl" id="secure-workspace-ttl"></span>
-    <button type="button" class="secure-workspace-bar__change" id="secure-workspace-change">change</button>
-    <button type="button" class="secure-workspace-bar__action" id="secure-workspace-export" title="Copy the sandbox out to a folder on your computer">Export</button>
-    <button type="button" class="secure-workspace-bar__action" id="secure-workspace-apply" title="Copy the sandbox's new/changed files back to your original folders">Apply changes</button>
-    <button type="button" class="secure-workspace-bar__destroy" id="secure-workspace-destroy" title="Delete the sandbox copy and everything in it">Destroy</button>
-    <!-- Anchored to the bar so it pops up in place instead of shifting layout -->
-    <div class="secure-ttl-menu menu" id="secure-ttl-menu" role="menu" hidden>
-      <button type="button" class="menu-item" data-ttl="1" role="menuitem">1 day</button>
-      <button type="button" class="menu-item" data-ttl="7" role="menuitem">7 days</button>
-      <button type="button" class="menu-item" data-ttl="30" role="menuitem">30 days</button>
-    </div>
+    <span class="secure-workspace-bar__ttl" id="secure-workspace-ttl">
+      <span class="secure-workspace-bar__ttl-prefix" id="secure-workspace-ttl-prefix"></span><button type="button" class="secure-workspace-bar__ttl-value" id="secure-workspace-ttl-value" aria-haspopup="menu" title="Change how long this workspace is kept before it's deleted"></button>
+      <!-- Anchored to the TTL value so the menu pops up right under it -->
+      <div class="secure-ttl-menu menu" id="secure-ttl-menu" role="menu" hidden>
+        <button type="button" class="menu-item" data-ttl="1" role="menuitem">1 day</button>
+        <button type="button" class="menu-item" data-ttl="7" role="menuitem">7 days</button>
+        <button type="button" class="menu-item" data-ttl="30" role="menuitem">30 days</button>
+      </div>
+    </span>
+    <button type="button" class="secure-workspace-bar__destroy" id="secure-workspace-destroy" aria-label="Delete now">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg><span class="secure-workspace-bar__destroy-label"> Delete now</span>
+    </button>
+    <button type="button" class="secure-workspace-bar__action" id="secure-workspace-export" aria-label="Save to my computer">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span class="secure-workspace-bar__action-label"> Save to my computer</span>
+    </button>
   </div>
   <div class="composer-secret-modal" id="composer-secret-modal" hidden>
     <div class="composer-secret-modal__backdrop" id="composer-secret-modal-backdrop"></div>
