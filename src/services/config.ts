@@ -82,7 +82,7 @@ export function loadOpenRouterConfig(): OpenRouterConfig {
   const titleModel = process.env.ICLAW_TITLE_MODEL?.trim() || 'google/gemini-2.5-flash';
   // Cheap/fast model for compaction; overridable. Falls back to truncation if
   // the call fails, so an invalid slug degrades gracefully.
-  const summaryModel = process.env.ICLAW_SUMMARY_MODEL?.trim() || 'google/gemini-2.5-flash-lite';
+  const summaryModel = process.env.ICLAW_SUMMARY_MODEL?.trim() || 'tencent/hy3-preview';
   const sttModel = process.env.ICLAW_STT_MODEL?.trim() || 'google/gemini-2.5-flash';
   const referer = process.env.OPENROUTER_REFERER?.trim() || 'https://iclaw.digital';
   const appTitle = process.env.OPENROUTER_APP_TITLE?.trim() || 'iClaw';
