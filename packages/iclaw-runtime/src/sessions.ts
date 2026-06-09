@@ -119,7 +119,7 @@ const HISTORY_KEEP_RECENT = Number(process.env.ICLAW_HISTORY_KEEP_RECENT) || 16;
 // Also compact by SIZE, not just message count: a few big messages bloat the
 // resent context as much as many small ones. ~24k chars ≈ ~6k tokens.
 const HISTORY_COMPACT_CHARS = Number(process.env.ICLAW_HISTORY_COMPACT_CHARS) || 24_000;
-const SUMMARY_MODEL = process.env.ICLAW_SUMMARY_MODEL || 'google/gemini-2.5-flash-lite';
+const SUMMARY_MODEL = process.env.ICLAW_SUMMARY_MODEL || 'minimax/minimax-m2.7';
 const OPENROUTER_BASE = process.env.OPENROUTER_BASE_URL?.replace(/\/+$/, '') || 'https://openrouter.ai/api/v1';
 const SUMMARY_SYSTEM =
   'You compress conversation history into a concise, information-dense summary. ' +

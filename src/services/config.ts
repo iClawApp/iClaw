@@ -46,11 +46,9 @@ export function loadCloudShareBaseUrl(): string {
 }
 
 export interface OpenRouterConfig {
-  /** Empty when unconfigured — gates Ask/STT and title routing. */
+  /** Empty when unconfigured — gates STT and title routing. */
   apiKey: string;
   baseUrl: string;
-  /** Model for Ask turns. */
-  askModel: string;
   /** Model for chat-title generation (cheapest sensible default). */
   titleModel: string;
   /** Cheap model for context compaction (summarizing old turns). */
@@ -66,27 +64,28 @@ export interface OpenRouterConfig {
 const OPENROUTER_API_KEY_KV = 'openrouter.api_key';
 
 /**
- * Direct OpenRouter access for the tool-less features (Ask, titles, STT).
+ * Direct OpenRouter access for the tool-less features (titles, STT, sub-tasks).
  *
  * The API key is entered by the user in Settings and stored in the local DB
- * (`iclaw_kv`) — NOT an env var. Models default to a cheap, fast, multimodal
- * flash model; advanced users can still override per-feature via the optional
- * `ICLAW_*_MODEL` env vars (undocumented).
+ * (`iclaw_kv`) — NOT an env var. Chat titles reuse the cheap summary-tier
+ * model; STT keeps a multimodal flash default. Advanced users can still
+ * override per-feature via the optional `ICLAW_*_MODEL` env vars (undocumented).
  */
 export function loadOpenRouterConfig(): OpenRouterConfig {
   const apiKey = (kvGet(OPENROUTER_API_KEY_KV) ?? '').trim();
   const baseUrl = (
     process.env.OPENROUTER_BASE_URL?.trim() || 'https://openrouter.ai/api/v1'
   ).replace(/\/+$/, '');
-  const askModel = process.env.ICLAW_ASK_MODEL?.trim() || 'google/gemini-2.5-flash';
-  const titleModel = process.env.ICLAW_TITLE_MODEL?.trim() || 'google/gemini-2.5-flash';
   // Cheap/fast model for compaction; overridable. Falls back to truncation if
   // the call fails, so an invalid slug degrades gracefully.
   const summaryModel = process.env.ICLAW_SUMMARY_MODEL?.trim() || 'tencent/hy3-preview';
+  // Chat titles are a throwaway one-liner — always reuse the summary-tier
+  // model. Tied to summaryModel directly; no separate ICLAW_TITLE_MODEL knob.
+  const titleModel = summaryModel;
   const sttModel = process.env.ICLAW_STT_MODEL?.trim() || 'google/gemini-2.5-flash';
   const referer = process.env.OPENROUTER_REFERER?.trim() || 'https://iclaw.digital';
   const appTitle = process.env.OPENROUTER_APP_TITLE?.trim() || 'iClaw';
-  return { apiKey, baseUrl, askModel, titleModel, summaryModel, sttModel, referer, appTitle };
+  return { apiKey, baseUrl, titleModel, summaryModel, sttModel, referer, appTitle };
 }
 
 /** Persist the user's OpenRouter API key (from Settings). Empty/blank clears it. */

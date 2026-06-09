@@ -52,7 +52,7 @@ const SEARCH_EXCLUDE_DIRS = (process.env.ICLAW_SEARCH_EXCLUDE_DIRS
 // Cheap-model summarizer (read_summary, web_fetch summarize). Moves the cost of
 // reading big content onto a cheap model; the expensive model + history only
 // carry the short summary.
-const SUMMARY_MODEL = process.env.ICLAW_SUMMARY_MODEL || 'google/gemini-2.5-flash-lite';
+const SUMMARY_MODEL = process.env.ICLAW_SUMMARY_MODEL || 'minimax/minimax-m2.7';
 const SUMMARY_MAX_INPUT_CHARS = Number(process.env.ICLAW_SUMMARY_MAX_INPUT) || 60_000;
 
 export const TOOL_OUTPUT_MAX_CHARS = MAX_CMD_OUTPUT_CHARS;
@@ -1053,7 +1053,7 @@ async function openRouterSearch(query: string, count: number, signal: AbortSigna
   const key = process.env.ICLAW_OPENROUTER_API_KEY || '';
   if (!key) throw new Error('no OpenRouter key');
   const base = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
-  const model = process.env.ICLAW_SEARCH_MODEL || process.env.ICLAW_MODEL || 'google/gemini-2.5-flash';
+  const model = process.env.ICLAW_SEARCH_MODEL || process.env.ICLAW_MODEL || 'minimax/minimax-m2.7';
   const res = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     signal,

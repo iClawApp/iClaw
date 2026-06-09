@@ -31,7 +31,7 @@ const PORT = parseInt(process.env.ICLAW_RUNTIME_PORT || '7430', 10);
 const SECRET = process.env.ICLAW_RUNTIME_SECRET || '';
 const API_KEY = process.env.ICLAW_OPENROUTER_API_KEY || '';
 // Default agent model. Override per-install via ICLAW_MODEL in .env.
-const DEFAULT_MODEL = process.env.ICLAW_MODEL || 'deepseek/deepseek-v4-flash';
+const DEFAULT_MODEL = process.env.ICLAW_MODEL || 'minimax/minimax-m2.7';
 
 function authOk(req: http.IncomingMessage): boolean {
   if (!SECRET) {

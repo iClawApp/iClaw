@@ -662,7 +662,7 @@ export async function sendMessage(opts: {
   incomingAttachments?: IncomingAttachment[];
   /** Files already on disk (queued-message flush). */
   prePersistedAttachments?: MessageAttachment[];
-  /** 'ask' | 'execute'. Defaults to 'execute' when omitted. */
+  /** Chat mode (execute/work/secure/incognito); defaults to 'execute' when omitted. */
   mode?: ChatMode;
   /** Allowed folders for Work Mode, each with a read-only / read&write flag. */
   workFolders?: WorkFolder[];
