@@ -117,10 +117,10 @@ export function buildSkillsPromptBlock(projectId: number): string {
 
 interface ReviewedSkill {
   action: 'new' | 'patch';
-  target?: string;
+  target?: string | undefined;
   name: string;
   description: string;
-  tags?: string[];
+  tags?: string[] | undefined;
   body: string;
 }
 

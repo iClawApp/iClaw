@@ -71,7 +71,7 @@ export function buildGatewayUserMessage(
   let usedTokens = 0;
   const lines: string[] = [];
   for (let i = all.length - 1; i >= 0 && lines.length < MAX_FACT_LINES_INJECT; i--) {
-    const raw = all[i].content.replace(/\r?\n/g, ' ').trim();
+    const raw = all[i]!.content.replace(/\r?\n/g, ' ').trim();
     if (!raw) continue;
     let line = `- ${raw.length > MAX_FACT_LINE_CHARS ? raw.slice(0, MAX_FACT_LINE_CHARS - 1) + '…' : raw}`;
     const t = approxTokens(line + '\n');

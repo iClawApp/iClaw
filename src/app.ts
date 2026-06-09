@@ -46,7 +46,7 @@ function resolveProjectDir(
     let dir = path.resolve(start);
     for (let i = 0; i < 50; i++) {
       if (fs.existsSync(path.join(dir, marker))) {
-        return path.join(dir, markerSegments[0]);
+        return path.join(dir, markerSegments[0]!);
       }
       const parent = path.dirname(dir);
       if (parent === dir) break;

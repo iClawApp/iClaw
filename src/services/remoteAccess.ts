@@ -34,7 +34,6 @@ import {
   disableGate,
   disableAllGates,
   generatePassphrase,
-  isValidTunnelSession,
   stripInternalHeaders,
   stripSessionCookie,
   TUNNELED_HEADER,
@@ -60,7 +59,6 @@ import {
   type E2eWsBridge,
 } from './remoteAccessE2eTransport';
 import {
-  ensureOpaqueRegistrationForTunnel,
   ensureOpaqueServerSetup,
   syncOpaqueRegistrationsWithServerSetup,
 } from './remoteAccessOpaque';

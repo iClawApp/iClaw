@@ -52,27 +52,27 @@ function request(
 }
 
 export interface CreateSessionOptions {
-  allowedFolders?: string[];
+  allowedFolders?: string[] | undefined;
   /**
    * Per-folder access levels. When provided, the runtime enforces read-only
    * folders (denies write_file / run_command under them) and derives the
    * allowed-path list from it.
    */
-  folderAccess?: { path: string; readonly: boolean }[];
+  folderAccess?: { path: string; readonly: boolean }[] | undefined;
   /**
    * Safe Mode only: host folders to COPY into the sandbox workspace (originals
    * never touched). Ignored in Work Mode, which bind-mounts folders live.
    */
-  copyFolders?: string[];
-  model?: string;
-  secure?: boolean;
+  copyFolders?: string[] | undefined;
+  model?: string | undefined;
+  secure?: boolean | undefined;
   /** Incognito: read-only, read-anywhere, web_fetch enabled. Mutually exclusive with secure. */
-  incognito?: boolean;
-  systemPrompt?: string;
+  incognito?: boolean | undefined;
+  systemPrompt?: string | undefined;
   /** Stable identity (e.g. "chat:156") so a chat reconnects to its workspace. */
-  key?: string;
+  key?: string | undefined;
   /** Compacted prior history to seed context (used after a restart). */
-  history?: { role: string; content: string }[];
+  history?: { role: string; content: string }[] | undefined;
 }
 
 /** Create a new Work Mode session. Returns sessionId. */

@@ -16,32 +16,32 @@ export interface AgentOptions {
   model: string;
   allowedFolders: string[];
   /** Per-folder access levels. When omitted, all allowed folders are writable. */
-  folderAccess?: { path: string; readonly: boolean }[];
+  folderAccess?: { path: string; readonly: boolean }[] | undefined;
   /** Shell backend for run_command (Docker sandbox). Omit to disable commands. */
-  runShell?: (command: string, cwd: string) => Promise<string>;
+  runShell?: ((command: string, cwd: string) => Promise<string>) | undefined;
   /**
    * Sandbox backend for analyze_link (yt-dlp). Runs in the session's container
    * so yt-dlp never parses untrusted data on the host. Omit to drop the tool
    * (no Docker → analyze_link not offered, falls back to web_fetch/web_search).
    */
-  linkSandbox?: (command: string) => Promise<string>;
+  linkSandbox?: ((command: string) => Promise<string>) | undefined;
   /**
    * Incognito (read-only, ephemeral): file reads are unrestricted (read
    * anywhere; secrets still refused), write_file is disabled, run_command is
    * sandboxed read-only, and the `web_fetch` research tool is exposed.
    */
-  incognito?: boolean;
-  systemPrompt?: string;
+  incognito?: boolean | undefined;
+  systemPrompt?: string | undefined;
   /**
    * Image data URLs (`data:<mime>;base64,…`) for THIS turn's user message —
    * files the user dropped into the chat. Sent once as vision blocks so the
    * model literally sees them; NOT stored in history (one-shot, expensive).
    */
-  images?: string[];
-  onWriteApproval?: (filePath: string, content: string) => Promise<boolean>;
+  images?: string[] | undefined;
+  onWriteApproval?: ((filePath: string, content: string) => Promise<boolean>) | undefined;
   /** Abort the in-flight turn (user pressed Stop). Stops the model stream and
    *  ends the loop cleanly between rounds. */
-  signal?: AbortSignal;
+  signal?: AbortSignal | undefined;
 }
 
 export type AgentEvent =
@@ -51,7 +51,7 @@ export type AgentEvent =
   | { type: 'note'; note: SavingsNote }
   | { type: 'image'; path: string; mime: string; fileName: string; bytes: number }
   | { type: 'approval_request'; changeId: string; path: string; content: string }
-  | { type: 'done'; tokens?: number; cached?: number }
+  | { type: 'done'; tokens?: number | undefined; cached?: number | undefined }
   | { type: 'error'; message: string };
 
 export type Message = OpenAI.Chat.ChatCompletionMessageParam;
@@ -111,11 +111,11 @@ export function shrinkOldToolOutputs(messages: Message[]): void {
   if (total <= INTURN_COMPACT_CHARS) return;
 
   const toolIdx: number[] = [];
-  for (let i = 0; i < messages.length; i++) if (messages[i].role === 'tool') toolIdx.push(i);
+  for (let i = 0; i < messages.length; i++) if (messages[i]!.role === 'tool') toolIdx.push(i);
   const keepFirst = INTURN_KEEP_FIRST_TOOL_MSGS;
   const keepLast = INTURN_KEEP_TOOL_MSGS;
   for (let k = keepFirst; k < toolIdx.length - keepLast; k++) {
-    const i = toolIdx[k];
+    const i = toolIdx[k]!;
     const content = (messages[i] as { content?: unknown }).content;
     if (typeof content === 'string' && content.length > 160) {
       messages[i] = {
@@ -142,7 +142,7 @@ export function withPromptCaching(messages: Message[]): Message[] {
   if (process.env.ICLAW_PROMPT_CACHE === 'off') return messages;
   const i = messages.findIndex((m) => m.role === 'system');
   if (i === -1) return messages;
-  const sys = messages[i];
+  const sys = messages[i]!;
   if (typeof sys.content !== 'string' || !sys.content) return messages;
   const out = messages.slice();
   out[i] = {
@@ -518,7 +518,7 @@ export async function* runAgentTurn(
     // Execute each tool call
     const roundResults: string[] = [];
     for (let i = 0; i < toolCalls.length; i++) {
-      const tc = toolCalls[i];
+      const tc = toolCalls[i]!;
       let parsedArgs: Record<string, unknown> = {};
       try {
         parsedArgs = JSON.parse(tc.arguments);

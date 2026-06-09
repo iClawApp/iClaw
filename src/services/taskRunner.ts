@@ -3,7 +3,6 @@
  * Execution lives in hidden `task_execution` chats; source chats get short system notes only.
  */
 
-import { randomUUID } from 'node:crypto';
 import {
   chats,
   messages,
@@ -53,7 +52,7 @@ export type TaskOutcomeKind =
 export interface ParsedTaskOutcome {
   kind: TaskOutcomeKind;
   /** NEEDS_HUMAN hint, or ADD_HUMAN_STEP plan row title. */
-  instruction?: string;
+  instruction?: string | undefined;
 }
 
 /** Collect secret refs from message placeholders (no plaintext). */
@@ -67,7 +66,7 @@ function secretRefsFromMessages(msgs: { content: string }[]): { id: number; labe
       const id = Number(match[1]);
       if (!Number.isFinite(id) || seen.has(id)) continue;
       seen.add(id);
-      let label = match[2];
+      let label = match[2]!;
       try {
         label = decodeURIComponent(label);
       } catch {
@@ -81,7 +80,7 @@ function secretRefsFromMessages(msgs: { content: string }[]): { id: number; labe
 
 export function buildContextSnapshot(
   sourceChatId: number,
-  extra?: { attachedFiles?: MessageAttachment[]; secretRefIds?: number[] },
+  extra?: { attachedFiles?: MessageAttachment[] | undefined; secretRefIds?: number[] | undefined },
 ): TaskContextSnapshotPayload {
   const chat = chats.get(sourceChatId);
   if (!chat) throw new Error('source chat not found');
@@ -131,8 +130,8 @@ export function parsePlanLines(raw: string): { actor: TaskStepActor; title: stri
   for (const line of lines) {
     const m = line.match(/^(agent|human)\s*:\s*(.+)$/i);
     if (!m) continue;
-    const actor = m[1].toLowerCase() as TaskStepActor;
-    const title = m[2].trim();
+    const actor = m[1]!.toLowerCase() as TaskStepActor;
+    const title = m[2]!.trim();
     if (!title) continue;
     steps.push({ actor, title });
   }
@@ -223,11 +222,11 @@ export function truncateSnapshotForPrompt(payload: TaskContextSnapshotPayload): 
   const parts: string[] = [];
   if (payload.projectFacts.length) {
     parts.push('Project facts:\n' + payload.projectFacts.map((f) => `- ${f}`).join('\n'));
-    used += parts[parts.length - 1].length;
+    used += parts[parts.length - 1]!.length;
   }
   const msgLines: string[] = [];
   for (let i = payload.messages.length - 1; i >= 0; i--) {
-    const m = payload.messages[i];
+    const m = payload.messages[i]!;
     const line = `[${m.role}] ${m.content.slice(0, 800)}`;
     if (used + line.length > SNAPSHOT_MSG_BUDGET_CHARS && msgLines.length > 0) break;
     msgLines.unshift(line);
@@ -303,12 +302,12 @@ function buildExecutionPrompt(opts: {
   goal: string;
   payload: TaskContextSnapshotPayload;
   steps: TaskStep[];
-  resumeNote?: string;
+  resumeNote?: string | undefined;
   /** One-shot user reply to ASK_USER; not stored on plan steps or prior run summary. */
-  ephemeralNote?: string;
-  runSummary?: string | null;
+  ephemeralNote?: string | undefined;
+  runSummary?: string | null | undefined;
   /** Include the full context snapshot (goal+facts+chat). Only the first turn of a loop needs it; the OpenClaw session keeps it in history afterwards. */
-  includeSnapshot?: boolean;
+  includeSnapshot?: boolean | undefined;
 }): string {
   const stepLines = opts.steps
     .map((s, i) => `${i + 1}. [${s.actor}] ${s.title} (${s.status})`)
@@ -1232,8 +1231,8 @@ export function groupTasksForBoard(taskList: TaskWithSteps[]): Record<string, Ta
   }
   for (const t of taskList) {
     const col = TASK_BOARD_COLUMNS.find((c) => c.statuses.includes(t.status));
-    if (col) board[col.key].push(t);
-    else board.ready.push(t);
+    if (col) board[col.key]!.push(t);
+    else board.ready!.push(t);
   }
   return board;
 }

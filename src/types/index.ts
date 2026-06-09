@@ -219,8 +219,8 @@ export interface TaskRun {
 /** Task with steps and optional UI enrichments (not DB columns). */
 export interface TaskWithSteps extends Task {
   steps: TaskStep[];
-  source_chat_title?: string;
-  current_step_title?: string;
+  source_chat_title?: string | undefined;
+  current_step_title?: string | undefined;
 }
 
 export interface Chat {

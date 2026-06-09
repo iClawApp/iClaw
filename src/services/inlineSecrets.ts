@@ -133,7 +133,7 @@ function rangeFromCompactIndices(
 ): { start: number; end: number } | null {
   if (!indices.length || compactStart >= indices.length) return null;
   const endIdx = Math.min(compactEnd, indices.length) - 1;
-  return { start: indices[compactStart], end: indices[endIdx] + 1 };
+  return { start: indices[compactStart]!, end: indices[endIdx]! + 1 };
 }
 
 function selectionOverlapsSecretPlaceholder(

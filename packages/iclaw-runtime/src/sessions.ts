@@ -31,32 +31,32 @@ export interface SessionOptions {
    * When omitted, every allowed folder is treated as writable. Used by Work Mode
    * to enforce read-only folders; Secure Mode leaves it unset (workspace is RW).
    */
-  folderAccess?: { path: string; readonly: boolean }[];
+  folderAccess?: { path: string; readonly: boolean }[] | undefined;
   /**
    * Safe Mode only: host folders to COPY into the sandbox workspace on the first
    * turn (originals never touched). Realizes "I added a folder and it got copied
    * into the sandbox" — distinct from Work Mode's live bind mounts.
    */
-  copyFolders?: string[];
+  copyFolders?: string[] | undefined;
   model: string;
   apiKey: string;
-  secure?: boolean;
+  secure?: boolean | undefined;
   /**
    * Incognito (read-only, ephemeral): runs the host loop like Work, but writes
    * are denied, reads are unrestricted, the shell sandbox forces every folder
    * to :ro, and web_fetch is available. Mutually exclusive with `secure`.
    */
-  incognito?: boolean;
-  networkEnabled?: boolean;
-  systemPrompt?: string;
+  incognito?: boolean | undefined;
+  networkEnabled?: boolean | undefined;
+  systemPrompt?: string | undefined;
   /** Stable identity (e.g. "chat:156") for reconnecting to a workspace. */
-  key?: string;
+  key?: string | undefined;
   /**
    * Optional compacted prior history (from the host's DB) used to seed context
    * after a restart. Only applied when the session has no history yet — never
    * clobbers a live session's accumulated context.
    */
-  history?: { role: string; content: string }[];
+  history?: { role: string; content: string }[] | undefined;
 }
 
 /**
@@ -86,22 +86,22 @@ interface Session {
    * when the network setting changes or after the container is reaped for idle;
    * the workspace dir outlives it either way.
    */
-  secureContainer?: { name: string; networkEnabled: boolean; lastUsed: number; inUse: boolean };
+  secureContainer?: { name: string; networkEnabled: boolean; lastUsed: number; inUse: boolean } | undefined;
   /**
    * Warm Work-Mode command sandbox, reused across turns (parallel to
    * secureContainer — a session is exactly one mode). Holds the user's chosen
    * folders bind-mounted :ro/:rw; only run_command runs inside it.
    */
-  workContainer?: { name: string; lastUsed: number; inUse: boolean };
+  workContainer?: { name: string; lastUsed: number; inUse: boolean } | undefined;
   /** Stable identity for reconnection across restarts. */
-  key?: string;
+  key?: string | undefined;
   /** Last activity timestamp (ms). Updated on each message. */
   lastActivity: number;
   /** TTL in ms after last activity before cleanup. 0 = never. Default 7 days. */
   ttlMs: number;
   /** Controller for the in-flight turn — abort() stops the model stream and
    *  ends the agent loop (user pressed Stop). Set per turn, cleared after. */
-  abort?: AbortController;
+  abort?: AbortController | undefined;
 }
 
 const DEFAULT_TTL_MS = 7 * 86400_000;

@@ -48,7 +48,7 @@ export type ClientMsg =
        */
       mode?: ChatMode;
       /** Reply to an existing user/assistant row in this chat (quote ≤240 chars). */
-      replyTo?: { messageId: number; quote: string; role?: string };
+      replyTo?: { messageId: number; quote: string; role?: string | undefined };
       /**
        * Optional inline attachments. Each `content` is base64 (with or without
        * `data:<mime>;base64,` prefix). Server validates size + count, writes
@@ -111,7 +111,7 @@ export type ServerMsg =
   /* ---- incognito (ephemeral; keyed by the browser's in-RAM chat id) ---- */
   | { type: 'incognito-turn-delta'; key: string; text: string }
   | { type: 'incognito-turn-tool'; key: string; name: string }
-  | { type: 'incognito-turn-ended'; key: string; tokens?: number; cached?: number }
+  | { type: 'incognito-turn-ended'; key: string; tokens?: number | undefined; cached?: number | undefined }
   | { type: 'incognito-error'; key: string; message: string }
 
   /* ---- chat lifecycle ---- */
@@ -161,7 +161,7 @@ export type ServerMsg =
       phase: 'start' | 'end';
       name: string;
       label: string;
-      detail?: string;
+      detail?: string | undefined;
     }
   | { type: 'turn-lifecycle'; chatId: number; phase: string; label: string }
   | {
@@ -169,10 +169,10 @@ export type ServerMsg =
       chatId: number;
       url: string;
       mime: string;
-      label?: string;
+      label?: string | undefined;
     }
   | { type: 'turn-ended'; chatId: number; title: string; aborted?: boolean }
-  | { type: 'turn-error'; chatId: number; requestId?: string; error: string }
+  | { type: 'turn-error'; chatId: number; requestId?: string | undefined; error: string }
 
   /* ---- projects ---- */
   | { type: 'project-created'; project: Project }
@@ -257,7 +257,7 @@ export type ServerMsg =
       phase: 'start' | 'end';
       name: string;
       label: string;
-      detail?: string;
+      detail?: string | undefined;
     }
   | { type: 'task-ask-turn-lifecycle'; taskId: number; sessionId: number; phase: string; label: string }
   | { type: 'task-ask-turn-ended'; taskId: number; sessionId: number; reply: string }

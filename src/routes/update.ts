@@ -5,7 +5,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { Router, type Request } from 'express';
+import { Router } from 'express';
 import { isLocalhostRequest } from '../services/gatewayStart';
 
 export const updateRouter = Router();

@@ -72,7 +72,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /sessions/:id/info
   if (req.method === 'GET' && parts[0] === 'sessions' && parts[2] === 'info') {
-    const info = getSessionInfo(parts[1]);
+    const info = getSessionInfo(parts[1]!);
     if (!info) return json(res, 404, { error: 'session not found' });
     return json(res, 200, info);
   }
@@ -110,7 +110,7 @@ const server = http.createServer(async (req, res) => {
 
   // POST /sessions/:id/messages
   if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'messages') {
-    const sessionId = parts[1];
+    const sessionId = parts[1]!;
     if (!getSession(sessionId)) return json(res, 404, { error: 'session not found' });
     const body = await readBody(req) as { content?: string; networkEnabled?: boolean; ttlDays?: number; attachments?: RuntimeAttachment[]; copyFolders?: string[] };
     if (!body.content?.trim()) return json(res, 400, { error: 'content required' });
@@ -130,14 +130,14 @@ const server = http.createServer(async (req, res) => {
 
   // POST /sessions/:id/abort — stop the in-flight turn (keeps the session).
   if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'abort') {
-    const sessionId = parts[1];
+    const sessionId = parts[1]!;
     if (!getSession(sessionId)) return json(res, 404, { error: 'session not found' });
     return json(res, 200, { aborted: abortSession(sessionId) });
   }
 
   // GET /sessions/:id/events (SSE)
   if (req.method === 'GET' && parts[0] === 'sessions' && parts[2] === 'events') {
-    const sessionId = parts[1];
+    const sessionId = parts[1]!;
     if (!getSession(sessionId)) return json(res, 404, { error: 'session not found' });
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -153,16 +153,16 @@ const server = http.createServer(async (req, res) => {
 
   // POST /sessions/:id/export — copy the Safe sandbox to a host folder.
   if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'export') {
-    if (!getSession(parts[1])) return json(res, 404, { error: 'session not found' });
+    if (!getSession(parts[1]!)) return json(res, 404, { error: 'session not found' });
     const body = await readBody(req) as { destDir?: string };
-    const result = exportSessionWorkspace(parts[1], typeof body.destDir === 'string' ? body.destDir : undefined);
+    const result = exportSessionWorkspace(parts[1]!, typeof body.destDir === 'string' ? body.destDir : undefined);
     if (!result) return json(res, 400, { error: 'not a Safe session' });
     return json(res, 200, result);
   }
 
   // DELETE /sessions/:id
   if (req.method === 'DELETE' && parts[0] === 'sessions' && parts.length === 2) {
-    deleteSession(parts[1]);
+    deleteSession(parts[1]!);
     return json(res, 200, { stopped: true });
   }
 

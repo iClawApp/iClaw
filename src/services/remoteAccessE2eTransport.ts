@@ -3,7 +3,6 @@
  */
 
 import http from 'node:http';
-import { URL } from 'node:url';
 import { WebSocket } from 'ws';
 
 import {
@@ -109,21 +108,21 @@ export interface InnerWsData {
 }
 
 export interface InnerWsClose {
-  code?: number;
-  reason?: string;
+  code?: number | undefined;
+  reason?: string | undefined;
 }
 
 export interface E2ePlaintextTunnelContext {
   method: string;
   path: string;
   tunnelId: string;
-  cookieHeader?: string;
+  cookieHeader?: string | undefined;
   /** Request Accept header — used to tell a page navigation from an XHR. */
-  accept?: string;
+  accept?: string | undefined;
   /** `Sec-Fetch-Mode` (e.g. "navigate") if the browser sent it. */
-  secFetchMode?: string;
+  secFetchMode?: string | undefined;
   /** `Sec-Fetch-Dest` (e.g. "document") if the browser sent it. */
-  secFetchDest?: string;
+  secFetchDest?: string | undefined;
 }
 
 /**
@@ -303,7 +302,7 @@ export async function handleE2eHttpFrame(opts: {
 }
 
 export function handleE2eWsOpen(
-  tunnelId: string,
+  _tunnelId: string,
   streamId: string,
   bridges: Map<string, E2eWsBridge>,
 ): E2eWsBridge {

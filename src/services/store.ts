@@ -1007,7 +1007,7 @@ export const queuedMessages = {
   create(opts: {
     chatId: number;
     content: string;
-    replyTo?: { messageId: number; quote: string; role?: string } | null;
+    replyTo?: { messageId: number; quote: string; role?: string | undefined } | null;
     attachments?: MessageAttachment[] | null;
     inlineSecrets?: InlineSecretWire[] | null;
     mode?: ChatMode;

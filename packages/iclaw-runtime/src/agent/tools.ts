@@ -91,11 +91,12 @@ export function compressCommandOutput(s: string): string {
   const lines = text.split('\n');
   const out: string[] = [];
   for (let i = 0; i < lines.length; ) {
+    const cur = lines[i]!;
     let j = i + 1;
-    while (j < lines.length && lines[j] === lines[i]) j++;
+    while (j < lines.length && lines[j] === cur) j++;
     const run = j - i;
-    if (run >= 3 && lines[i].trim()) out.push(`${lines[i]}  …(×${run})`);
-    else for (let k = i; k < j; k++) out.push(lines[k]);
+    if (run >= 3 && cur.trim()) out.push(`${cur}  …(×${run})`);
+    else for (let k = i; k < j; k++) out.push(lines[k]!);
     i = j;
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n');
@@ -411,7 +412,7 @@ export interface ToolContext {
    * is denied for paths under a read-only folder. When omitted (e.g. restored
    * sessions) all allowed folders are treated as writable.
    */
-  folderAccess?: { path: string; readonly: boolean }[];
+  folderAccess?: { path: string; readonly: boolean }[] | undefined;
   /**
    * Runs a shell command for run_command. Injected so the host never executes
    * bash directly: Work Mode wires this to a Docker container with per-folder
@@ -419,39 +420,39 @@ export interface ToolContext {
    * run_command is disabled and returns a guidance message — the strict
    * fallback that keeps read-only an honest guarantee.
    */
-  runShell?: (command: string, cwd: string) => Promise<string>;
+  runShell?: ((command: string, cwd: string) => Promise<string>) | undefined;
   /**
    * Runs an analyze_link helper command inside the session's sandbox container
    * (warm-reused; yt-dlp self-installs once). Injected so yt-dlp — which parses
    * untrusted YouTube data — never runs on the host. Omitted when no Docker →
    * analyze_link returns a guidance message.
    */
-  linkSandbox?: (command: string) => Promise<string>;
+  linkSandbox?: ((command: string) => Promise<string>) | undefined;
   /**
    * Incognito (read-only): write_file is denied outright (nothing ever hits
    * disk), and run_command is only reachable via a read-only sandbox.
    */
-  readOnly?: boolean;
+  readOnly?: boolean | undefined;
   /**
    * Incognito: file reads (read/list/search) are NOT restricted to
    * allowedFolders — the agent may read anywhere on the host. The secret
    * deny-list (BLOCKED_PATTERNS in security.ts) still applies, so .ssh/.env/
    * credentials etc. are refused regardless.
    */
-  readAnywhere?: boolean;
+  readAnywhere?: boolean | undefined;
   /** Called when agent wants to write — returns true if approved, false if rejected. */
   requestWriteApproval: (filePath: string, content: string) => Promise<boolean>;
   /**
    * Optional sink for a user-visible "saved N% cost" note (analyze_link summary
    * mode). The agent loop wires this to forward a `note` event to the chat.
    */
-  onNote?: (note: SavingsNote) => void;
+  onNote?: ((note: SavingsNote) => void) | undefined;
   /**
    * Optional sink for show_image: an image file (already validated to live
    * inside an allowed folder) the agent wants displayed inline in the chat. The
    * loop wires this to emit an `image` event the host turns into an attachment.
    */
-  onImage?: (image: ImageRef) => void;
+  onImage?: ((image: ImageRef) => void) | undefined;
   /**
    * Within-turn cache of fetched page bodies, keyed by normalized URL
    * (`normalizeFetchUrl`). A research turn often re-fetches the same page with a
@@ -459,7 +460,7 @@ export interface ToolContext {
    * re-summarizes for the new focus instead of re-hitting the network. Created
    * fresh per turn by the loop; absent → caching off (each fetch goes to network).
    */
-  fetchCache?: Map<string, string>;
+  fetchCache?: Map<string, string> | undefined;
 }
 
 /** Folders to validate reads against — empty (anywhere) for Incognito. */
@@ -895,9 +896,9 @@ export function canonicalizeFetchUrl(raw: string): string {
       return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${rest.join('/')}`;
     }
     // /owner/repo (exactly) → raw README on the default branch (HEAD resolves it)
-    if (seg.length === 2 && !GITHUB_NON_REPO.has(seg[0].toLowerCase())) {
+    if (seg.length === 2 && !GITHUB_NON_REPO.has(seg[0]!.toLowerCase())) {
       const [owner, repo] = seg;
-      return `https://raw.githubusercontent.com/${owner}/${repo.replace(/\.git$/, '')}/HEAD/README.md`;
+      return `https://raw.githubusercontent.com/${owner}/${repo!.replace(/\.git$/, '')}/HEAD/README.md`;
     }
     return raw;
   }
@@ -1050,7 +1051,7 @@ export async function webFetchSandboxed(
   deps: {
     runInSandbox: (command: string) => Promise<string>;
     networkEnabled: boolean;
-    fetchCache?: Map<string, string>;
+    fetchCache?: Map<string, string> | undefined;
   },
 ): Promise<string> {
   const inputUrl = String(args.url ?? '').trim();
@@ -1193,10 +1194,10 @@ async function duckDuckGoSearch(query: string, count: number, signal: AbortSigna
   const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) && hits.length < count) {
-    let url = m[1];
+    let url = m[1]!;
     const uddg = /[?&]uddg=([^&]+)/.exec(url); // DDG wraps links in a redirect
-    if (uddg) url = decodeURIComponent(uddg[1]);
-    const title = m[2].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+    if (uddg) url = decodeURIComponent(uddg[1]!);
+    const title = m[2]!.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
     if (url.startsWith('http')) hits.push({ title, url, snippet: '' });
   }
   return hits;
@@ -1294,7 +1295,7 @@ function extractYouTubeId(url: string): string | null {
     if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
       if (u.pathname === '/watch') return u.searchParams.get('v');
       const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([^/?#]+)/);
-      if (m) return m[1];
+      if (m) return m[1] ?? null;
     }
     return null;
   } catch {
@@ -1379,7 +1380,7 @@ export async function analyzeLink(
   deps: {
     runInSandbox: (command: string) => Promise<string>;
     networkEnabled: boolean;
-    onNote?: (note: SavingsNote) => void;
+    onNote?: ((note: SavingsNote) => void) | undefined;
   },
 ): Promise<string> {
   const url = String(args.url ?? '').trim();
@@ -1404,7 +1405,7 @@ export async function analyzeLink(
   }
 
   if (raw.includes('__ERR__')) {
-    return `analyze_link: ${raw.split('__ERR__')[1].trim().slice(0, 300) || 'sandbox error'}`;
+    return `analyze_link: ${(raw.split('__ERR__')[1] ?? '').trim().slice(0, 300) || 'sandbox error'}`;
   }
   if (raw.includes('__NOSUBS__') || (!raw.includes('__VTT__'))) {
     const detail = (raw.split('__NOSUBS__')[1] ?? raw).trim().slice(0, 250);
@@ -1414,7 +1415,7 @@ export async function analyzeLink(
       : `analyze_link: no subtitles available in ${ANALYZE_LINK_SUB_LANGS} (video may have none, or only other languages). ${detail}`;
   }
 
-  const meta = raw.includes('__META__') ? raw.split('__META__')[1].split('__VTT__')[0].trim() : '';
+  const meta = raw.includes('__META__') ? (raw.split('__META__')[1] ?? '').split('__VTT__')[0]!.trim() : '';
   const transcript = cleanVtt(raw.split('__VTT__')[1] ?? '');
   if (!transcript) return 'analyze_link: subtitles were fetched but empty after cleanup.';
   const header = meta ? `Video: ${meta}\n\n` : '';

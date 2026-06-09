@@ -66,7 +66,7 @@ function extractLinkStringsFromMessageContent(text: string): string[] {
   const md = /\[[^\]]*?\]\(([^)\s]+)\)/gi;
   let m: RegExpExecArray | null;
   while ((m = md.exec(text)) !== null) {
-    const raw = normalizeCandidate(m[1]);
+    const raw = normalizeCandidate(m[1]!);
     if (!raw) continue;
     if (/^https?:\/\//i.test(raw)) found.add(raw);
     else if (/^file:/i.test(raw) || looksLikeFilesystemPath(raw)) found.add(raw);
@@ -86,7 +86,7 @@ function extractLinkStringsFromMessageContent(text: string): string[] {
 
   const bt = /`([^`\n]+)`/g;
   while ((m = bt.exec(text)) !== null) {
-    const inner = normalizeCandidate(m[1]);
+    const inner = normalizeCandidate(m[1]!);
     if (!inner || /^https?:\/\//i.test(inner)) continue;
     if (/^file:/i.test(inner) || looksLikeFilesystemPath(inner)) found.add(inner);
   }
@@ -95,25 +95,25 @@ function extractLinkStringsFromMessageContent(text: string): string[] {
 
   const unixAbs = /(?:^|[\s([{'"`])(\/(?:[\w@.+\-]+\/)+[\w@.+\-]+)/g;
   while ((m = unixAbs.exec(masked)) !== null) {
-    const u = normalizeCandidate(m[1]);
+    const u = normalizeCandidate(m[1]!);
     if (u && looksLikeFilesystemPath(u)) found.add(u);
   }
 
   const win = /(?:^|[\s([{'"`])([a-zA-Z]:(?:\\[^\\/:*?"<>\s|]+)+)/g;
   while ((m = win.exec(masked)) !== null) {
-    const u = normalizeCandidate(m[1]);
+    const u = normalizeCandidate(m[1]!);
     if (u && looksLikeFilesystemPath(u)) found.add(u);
   }
 
   const unc = /(?:^|[\s([{'"`])(\\\\[^\s'")\]]+)/g;
   while ((m = unc.exec(masked)) !== null) {
-    const u = normalizeCandidate(m[1]);
+    const u = normalizeCandidate(m[1]!);
     if (u && /^\\\\/.test(u) && looksLikeFilesystemPath(u)) found.add(u);
   }
 
   const rel = /(?:^|[\s([{'"`])((?:\.{1,2}\/|)(?:[\w@.+\-]+\/)+[\w@.+\-]+\.[\w]{1,12})\b/g;
   while ((m = rel.exec(masked)) !== null) {
-    const u = normalizeCandidate(m[1]);
+    const u = normalizeCandidate(m[1]!);
     if (u && looksLikeFilesystemPath(u)) found.add(u);
   }
 

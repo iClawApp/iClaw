@@ -181,7 +181,7 @@ export function extractSourceReplyFromMessageToolResult(
 export function resolveFromHistorySlice(slice: HistoryMessageLike[]): string {
   let assistantFallback = '';
   for (let i = slice.length - 1; i >= 0; i--) {
-    const row = slice[i];
+    const row = slice[i]!;
     const sourceReply = extractSourceReplyFromMessageToolResult(row);
     if (sourceReply) return sourceReply;
     if (row.role === 'assistant' && !assistantFallback) {
@@ -206,7 +206,7 @@ export function sliceFromLastUser(
   history: HistoryMessageLike[],
 ): HistoryMessageLike[] {
   for (let i = history.length - 1; i >= 0; i--) {
-    if (history[i].role === 'user') return history.slice(i + 1);
+    if (history[i]!.role === 'user') return history.slice(i + 1);
   }
   return history.slice();
 }

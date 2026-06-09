@@ -128,7 +128,7 @@ export async function buildCompactedHistory(chatId: number, beforeMsgId: number)
 
   const recent = all.slice(-RECENT_VERBATIM_COUNT);
   const older = all.slice(0, -RECENT_VERBATIM_COUNT);
-  const boundaryId = older[older.length - 1].id;
+  const boundaryId = older[older.length - 1]!.id;
 
   const summary = await getOrBuildSummary(chatId, older, boundaryId);
   const out: OpenRouterMessage[] = [];

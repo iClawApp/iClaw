@@ -92,8 +92,8 @@ export const remoteAccessDevices = {
   register(opts: {
     tunnelId: string;
     publicKey: string;
-    name?: string | null;
-    userAgent?: string | null;
+    name?: string | null | undefined;
+    userAgent?: string | null | undefined;
   }): RemoteAccessDevice {
     const now = Date.now();
     const id = generateDeviceId();

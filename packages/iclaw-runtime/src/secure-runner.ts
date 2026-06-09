@@ -58,7 +58,7 @@ const SECURE_DATA_DIR = process.env.ICLAW_SECURE_DATA_DIR || join(homedir(), '.i
 
 /** Metadata persisted alongside a workspace so sessions survive restarts. */
 export interface SessionMeta {
-  key?: string;          // stable identity (e.g. "chat:156") for reconnection
+  key?: string | undefined;          // stable identity (e.g. "chat:156") for reconnection
   lastActivity: number;  // ms; TTL counts from here
   ttlMs: number;         // 0 = never
   secure: boolean;
@@ -331,11 +331,11 @@ export async function* runSecureTurn(
     model: string;
     workspaceDir: string;
     containerName: string;
-    networkEnabled?: boolean;
-    systemPrompt?: string;
-    signal?: AbortSignal;
+    networkEnabled?: boolean | undefined;
+    systemPrompt?: string | undefined;
+    signal?: AbortSignal | undefined;
     /** Image data URLs for dropped files — shown to the model as vision blocks. */
-    images?: string[];
+    images?: string[] | undefined;
   },
 ): AsyncGenerator<SecureEvent> {
   const networkEnabled = opts.networkEnabled ?? false;
@@ -551,7 +551,7 @@ async function* runSecureAgentLoop(
     } as Message);
 
     for (let i = 0; i < toolCalls.length; i++) {
-      const tc = toolCalls[i];
+      const tc = toolCalls[i]!;
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(tc.arguments); } catch {}
 

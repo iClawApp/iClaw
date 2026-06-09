@@ -313,8 +313,9 @@ chatsRouter.get('/:id', async (req, res, next) => {
       // fallback, reopening a Work chat as Full Power. Walk back to the last
       // user message instead.
       for (let i = chatMessages.length - 1; i >= 0; i--) {
-        if (chatMessages[i].role !== 'user') continue;
-        const m = chatMessages[i].mode;
+        const row = chatMessages[i]!;
+        if (row.role !== 'user') continue;
+        const m = row.mode;
         if (m && isSelectableMode(m) && !isEphemeralMode(m as ChatMode)) {
           chatCurrentMode = m;
           break;
@@ -711,7 +712,7 @@ function parseInlineSecretsBody(body: unknown): InlineSecretWire[] | undefined {
 
 function parseReplyToBody(
   body: unknown,
-): { messageId: number; quote: string; role?: string } | undefined {
+): { messageId: number; quote: string; role?: string | undefined } | undefined {
   if (!body || typeof body !== 'object') return undefined;
   const o = body as Record<string, unknown>;
   const messageId = Number(o.messageId);
@@ -1104,7 +1105,7 @@ chatsRouter.get('/:id/workspace-info', async (req, res) => {
   const sessionId = getWorkSessionId(chatId);
   if (!sessionId) return res.json({ active: false });
   const info = await getWorkspaceInfo(sessionId);
-  res.json({ active: true, sessionId, ...info });
+  return res.json({ active: true, sessionId, ...info });
 });
 
 /**
@@ -1116,7 +1117,7 @@ chatsRouter.post('/:id/destroy-workspace', async (req, res) => {
   const chatId = Number(req.params.id);
   if (!Number.isFinite(chatId)) return res.status(400).json({ error: 'bad chat id' });
   const destroyed = await destroyWorkSession(chatId);
-  res.json({ destroyed });
+  return res.json({ destroyed });
 });
 
 /** POST /chats/:id/export-sandbox — copy the Safe sandbox out to a host folder. */
@@ -1126,8 +1127,8 @@ chatsRouter.post('/:id/export-sandbox', async (req, res) => {
   const destDir = typeof req.body?.destDir === 'string' ? req.body.destDir : undefined;
   try {
     const result = await exportChatSandbox(chatId, destDir);
-    res.json(result);
+    return res.json(result);
   } catch (err) {
-    res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    return res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
 });

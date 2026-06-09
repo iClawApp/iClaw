@@ -52,7 +52,7 @@ export function toolActivityLabel(name: string): string {
  * never dump a large or unexpected input into the UI. Returns undefined when
  * there's nothing useful to show.
  */
-export function toolActivityDetail(name: string, input: unknown): string | undefined {
+export function toolActivityDetail(_name: string, input: unknown): string | undefined {
   if (!input || typeof input !== 'object') return undefined;
   const a = input as Record<string, unknown>;
   const str = (v: unknown): string | undefined =>

@@ -62,7 +62,7 @@ export interface ProcessedAttachment {
  * payloads — greedy `.*` + `$` on huge strings has caused RangeError/stack
  * issues in some JS runtimes.
  */
-function stripDataUrl(content: string): { mime?: string; base64: string } {
+function stripDataUrl(content: string): { mime?: string | undefined; base64: string } {
   const trimmed = content.trim();
   if (!trimmed.startsWith('data:')) {
     return { base64: trimmed };

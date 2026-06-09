@@ -48,7 +48,7 @@ export function deriveTitle(firstMessage: string): string {
 export function normalizeSuggestedTitle(raw: string): string {
   let t = raw
     .trim()
-    .split('\n')[0]
+    .split('\n')[0]!
     .trim()
     // strip wrapping quotes / fancy quotes
     .replace(/^["'«»“”`]+|["'«»“”`]+$/g, '')

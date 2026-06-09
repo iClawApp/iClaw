@@ -15,14 +15,14 @@
 
 export type ChatActivity =
   | { kind: 'thinking'; label: string }
-  | { kind: 'tool'; name: string; label: string; detail?: string }
+  | { kind: 'tool'; name: string; label: string; detail?: string | undefined }
   | { kind: 'lifecycle'; phase: string; label: string }
   | { kind: 'generating'; label: string };
 
 interface Entry {
   active: number;
   tail: Promise<void>;
-  activity?: ChatActivity;
+  activity?: ChatActivity | undefined;
 }
 
 const map = new Map<number, Entry>();
@@ -51,8 +51,8 @@ export const chatStatus = {
   },
 
   /** Snapshot of every working chat with its current activity. */
-  snapshot(): Array<{ id: number; activity?: ChatActivity }> {
-    const out: Array<{ id: number; activity?: ChatActivity }> = [];
+  snapshot(): Array<{ id: number; activity?: ChatActivity | undefined }> {
+    const out: Array<{ id: number; activity?: ChatActivity | undefined }> = [];
     for (const [id, e] of map) {
       if (e.active > 0) out.push({ id, activity: e.activity });
     }

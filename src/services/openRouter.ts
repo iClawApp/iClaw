@@ -56,10 +56,10 @@ interface ChatCompletionOpts {
   messages: OpenRouterMessage[];
   /** OpenRouter model slug to call. */
   model: string;
-  temperature?: number;
-  maxTokens?: number;
+  temperature?: number | undefined;
+  maxTokens?: number | undefined;
   /** Abort the in-flight request (Stop button). */
-  signal?: AbortSignal;
+  signal?: AbortSignal | undefined;
 }
 
 /**
@@ -84,7 +84,7 @@ export async function complete(opts: ChatCompletionOpts): Promise<string> {
         ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
         ...(opts.maxTokens != null ? { max_tokens: opts.maxTokens } : {}),
       }),
-      signal: opts.signal,
+      ...(opts.signal ? { signal: opts.signal } : {}),
     });
   } catch (err) {
     fail(`request failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -142,7 +142,7 @@ export async function transcribeAudio(opts: {
           },
         ],
       }),
-      signal: opts.signal,
+      ...(opts.signal ? { signal: opts.signal } : {}),
     });
   } catch (err) {
     fail(`request failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -161,9 +161,9 @@ export interface KeyValidation {
   /** USD remaining if known; null when unlimited/unknown. */
   remaining: number | null;
   /** Optional key label from OpenRouter. */
-  label?: string;
+  label?: string | undefined;
   /** Machine-readable reason when invalid: 'empty' | 'unauthorized' | 'http' | 'network'. */
-  reason?: string;
+  reason?: string | undefined;
 }
 
 /**
@@ -183,7 +183,7 @@ export async function validateKey(key: string, signal?: AbortSignal): Promise<Ke
 
   let res: Response;
   try {
-    res = await fetch(`${cfg.baseUrl}/auth/key`, { headers, signal });
+    res = await fetch(`${cfg.baseUrl}/auth/key`, { headers, ...(signal ? { signal } : {}) });
   } catch {
     return { valid: false, remaining: null, reason: 'network' };
   }
@@ -211,8 +211,8 @@ export interface OpenRouterUsage {
   /** USD remaining, or null when unknown/unlimited. */
   remaining: number | null;
   /** Optional key label from OpenRouter. */
-  label?: string;
-  isFreeTier?: boolean;
+  label?: string | undefined;
+  isFreeTier?: boolean | undefined;
 }
 
 /**
@@ -228,7 +228,7 @@ export async function fetchUsage(signal?: AbortSignal): Promise<OpenRouterUsage>
 
   // Preferred: /credits → { data: { total_credits, total_usage } }.
   try {
-    const res = await fetch(`${cfg.baseUrl}/credits`, { headers, signal });
+    const res = await fetch(`${cfg.baseUrl}/credits`, { headers, ...(signal ? { signal } : {}) });
     if (res.ok) {
       const j = (await res.json().catch(() => null)) as {
         data?: { total_credits?: number; total_usage?: number };
@@ -250,14 +250,14 @@ export async function fetchUsage(signal?: AbortSignal): Promise<OpenRouterUsage>
   // Fallback: /auth/key → { data: { label, usage, limit, limit_remaining, is_free_tier } }.
   let res: Response;
   try {
-    res = await fetch(`${cfg.baseUrl}/auth/key`, { headers, signal });
+    res = await fetch(`${cfg.baseUrl}/auth/key`, { headers, ...(signal ? { signal } : {}) });
   } catch (err) {
     fail(`request failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (!res.ok) fail(`HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
   const j = (await res.json().catch(() => null)) as {
     data?: {
-      label?: string;
+      label?: string | undefined;
       usage?: number;
       limit?: number | null;
       limit_remaining?: number | null;

@@ -231,16 +231,16 @@ async function runTurnLocked(opts: {
   chatId: number;
   content: string;
   isFirstTurn: boolean;
-  replyTo?: unknown;
-  incomingAttachments?: IncomingAttachment[];
+  replyTo?: unknown | undefined;
+  incomingAttachments?: IncomingAttachment[] | undefined;
   /** Attachments already saved under data/uploads (queued-message flush). */
-  prePersistedAttachments?: MessageAttachment[];
-  inlineSecrets?: InlineSecretWire[];
+  prePersistedAttachments?: MessageAttachment[] | undefined;
+  inlineSecrets?: InlineSecretWire[] | undefined;
   /** 'execute' | 'work' | 'secure' | 'incognito'. Defaults to 'execute'. */
-  mode?: ChatMode;
-  workFolders?: WorkFolder[];
-  networkEnabled?: boolean;
-  ttlDays?: number;
+  mode?: ChatMode | undefined;
+  workFolders?: WorkFolder[] | undefined;
+  networkEnabled?: boolean | undefined;
+  ttlDays?: number | undefined;
 }): Promise<void> {
   const {
     chatId,
@@ -642,34 +642,34 @@ function promoteDraftChatIfNeeded(chatId: number, subscriber?: WebSocket): boole
 import type { WebSocket } from 'ws';
 
 export async function sendMessage(opts: {
-  chatId?: number;
+  chatId?: number | undefined;
   content: string;
-  agentLabel?: string;
+  agentLabel?: string | undefined;
   /** Project to attach this NEW chat to. Ignored when chatId is provided. */
-  projectId?: number | null;
-  requestId?: string;
+  projectId?: number | null | undefined;
+  requestId?: string | undefined;
   /** Optional reply-to snippet (validated server-side). */
-  replyTo?: unknown;
+  replyTo?: unknown | undefined;
   /** Optional inline secrets matching `[[iclaw:sN]]` in `content`. */
-  inlineSecrets?: InlineSecretWire[];
+  inlineSecrets?: InlineSecretWire[] | undefined;
   /**
    * Optional socket to subscribe to the chat the moment it's resolved/created.
    * Without this the originating socket would miss events emitted before the
    * `await sendMessage(...)` returns (the entire streaming turn).
    */
-  subscriber?: WebSocket;
+  subscriber?: WebSocket | undefined;
   /** Inline attachments from the browser. Decoded + persisted in runTurnLocked. */
-  incomingAttachments?: IncomingAttachment[];
+  incomingAttachments?: IncomingAttachment[] | undefined;
   /** Files already on disk (queued-message flush). */
-  prePersistedAttachments?: MessageAttachment[];
+  prePersistedAttachments?: MessageAttachment[] | undefined;
   /** Chat mode (execute/work/secure/incognito); defaults to 'execute' when omitted. */
-  mode?: ChatMode;
+  mode?: ChatMode | undefined;
   /** Allowed folders for Work Mode, each with a read-only / read&write flag. */
-  workFolders?: WorkFolder[];
+  workFolders?: WorkFolder[] | undefined;
   /** Network toggle for Secure Mode. */
-  networkEnabled?: boolean;
+  networkEnabled?: boolean | undefined;
   /** TTL in days for Secure Mode workspace. */
-  ttlDays?: number;
+  ttlDays?: number | undefined;
 }): Promise<{ chatId: number }> {
   let chatId = opts.chatId;
   let isFirstTurn = false;
@@ -690,7 +690,6 @@ export async function sendMessage(opts: {
     isFirstTurn = true;
     // Seed a placeholder title so the sidebar entry shows up immediately.
     chats.trySetAutoTitle(chatId, deriveTitle(stripSecretMarkersForTitle(opts.content)));
-    const created = chats.get(chatId)!;
     // Subscribe the originating socket BEFORE we emit chat-created or start
     // the turn — otherwise it would miss every event in this turn.
     if (opts.subscriber) wsHub.subscribe(opts.subscriber, chatId);
@@ -866,7 +865,7 @@ const SECURE_WORKSPACE_ROOT = process.env.ICLAW_SECURE_DATA_DIR || joinPath(home
  * — its granted Work folders, or (Secure) the runtime's workspace root — before
  * copying anything into the chat's uploads.
  */
-function imagePathAllowed(hostPath: string, opts: { workFolders?: WorkFolder[]; secure?: boolean }): boolean {
+function imagePathAllowed(hostPath: string, opts: { workFolders?: WorkFolder[] | undefined; secure?: boolean | undefined }): boolean {
   const abs = resolvePath(hostPath);
   const roots: string[] = [];
   if (opts.secure) roots.push(resolvePath(SECURE_WORKSPACE_ROOT));
@@ -882,16 +881,16 @@ async function runWorkModeTurn(opts: {
   chatId: number;
   content: string;
   onEvent: (event: TurnEvent) => void;
-  workFolders?: WorkFolder[];
-  secure?: boolean;
-  networkEnabled?: boolean;
-  ttlDays?: number;
+  workFolders?: WorkFolder[] | undefined;
+  secure?: boolean | undefined;
+  networkEnabled?: boolean | undefined;
+  ttlDays?: number | undefined;
   /** Current user message id — history before it seeds the session context. */
-  beforeMsgId?: number;
+  beforeMsgId?: number | undefined;
   /** Original (stored) user text for skill review — without injected project prefix. */
-  reviewUserMessage?: string;
+  reviewUserMessage?: string | undefined;
   /** Dropped files (absolute host paths) to forward to the runtime agent. */
-  attachments?: { path: string; mimeType: string; fileName: string }[];
+  attachments?: { path: string; mimeType: string; fileName: string }[] | undefined;
 }): Promise<void> {
   const { chatId, content, onEvent } = opts;
 
@@ -1111,9 +1110,9 @@ export type IncognitoEvent =
 export async function runIncognitoTurn(opts: {
   key: string;
   content: string;
-  workFolders?: WorkFolder[];
+  workFolders?: WorkFolder[] | undefined;
   onEvent: (event: IncognitoEvent) => void;
-}): Promise<{ tokens?: number; cached?: number }> {
+}): Promise<{ tokens?: number | undefined; cached?: number | undefined }> {
   const { key, content, onEvent } = opts;
 
   // Recreate the runtime session if the selected folders changed (the shell's
@@ -1153,7 +1152,7 @@ export async function runIncognitoTurn(opts: {
     return {};
   }
 
-  return await new Promise<{ tokens?: number; cached?: number }>((resolve) => {
+  return await new Promise<{ tokens?: number | undefined; cached?: number | undefined }>((resolve) => {
     const unsubscribe = subscribeWorkEvents(
       sessionId!,
       (event) => {

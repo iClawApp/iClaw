@@ -76,7 +76,7 @@ export function exportWorkspace(workspaceDir: string, destDir?: string): ExportR
       filter: (src) => {
         const rel = relative(workspaceDir, src);
         if (!rel) return true; // the root itself
-        const top = rel.split(sep)[0];
+        const top = rel.split(sep)[0]!;
         return !INTERNAL.has(top);
       },
     });

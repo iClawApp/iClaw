@@ -37,7 +37,7 @@ export interface OpenClawAgent {
 export interface OpenClawSession {
   key: string;
   sessionId: string;
-  agentId?: string;
+  agentId?: string | undefined;
 }
 
 export interface HistoryMessage {
@@ -57,12 +57,12 @@ export type TurnEvent =
       name: string;
       label: string;
       /** Human-readable detail from data.meta — e.g. the actual command summary. */
-      detail?: string;
-      itemId?: string;
+      detail?: string | undefined;
+      itemId?: string | undefined;
     }
-  | { type: 'tool-end'; name: string; itemId?: string }
+  | { type: 'tool-end'; name: string; itemId?: string | undefined }
   | { type: 'lifecycle'; phase: string; label: string }
-  | { type: 'attachment'; url: string; mime: string; label?: string; itemId?: string }
+  | { type: 'attachment'; url: string; mime: string; label?: string | undefined; itemId?: string | undefined }
   | { type: 'text-final'; text: string };
 
 // ---------- helpers --------------------------------------------------------
@@ -291,7 +291,7 @@ export const openclawWs = {
   async resolveExecApproval(opts: {
     approvalId: string;
     decision: 'approved' | 'denied';
-    reason?: string;
+    reason?: string | undefined;
   }): Promise<void> {
     const params: Record<string, unknown> = {
       approvalId: opts.approvalId,
@@ -302,7 +302,7 @@ export const openclawWs = {
   },
 
   /** Slash-command catalog for an agent — feeds the `/` autocomplete. */
-  async listCommands(opts: { agentId?: string } = {}): Promise<unknown> {
+  async listCommands(opts: { agentId?: string | undefined } = {}): Promise<unknown> {
     return gatewayWs.request('commands.list', opts as Record<string, unknown>);
   },
 
@@ -409,7 +409,7 @@ export const openclawWs = {
     message: string;
     onEvent: (ev: TurnEvent) => void;
     /** Optional custom idempotency key — defaults to random uuid. */
-    idempotencyKey?: string;
+    idempotencyKey?: string | undefined;
     /**
      * Optional inline attachments forwarded verbatim to OpenClaw `chat.send`.
      * Shape matches the dashboard's normalized payload — `content` is base64
@@ -420,7 +420,7 @@ export const openclawWs = {
       mimeType: string;
       fileName: string;
       content: string;
-    }>;
+    }> | undefined;
   }): Promise<{
     runId: string;
     text: string;

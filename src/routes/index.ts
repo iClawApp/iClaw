@@ -58,14 +58,14 @@ indexRouter.post('/api/pick-folder', async (_req, res) => {
       return res.status(400).json({ error: 'Folder picker not supported on this platform' });
     }
     if (!folderPath) return res.status(400).json({ error: 'No folder selected' });
-    res.json({ path: folderPath });
+    return res.json({ path: folderPath });
   } catch (err: unknown) {
     // User cancelled dialog — not an error
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('User canceled') || msg.includes('cancelled') || msg.includes('-128')) {
       return res.status(204).end();
     }
-    res.status(500).json({ error: msg });
+    return res.status(500).json({ error: msg });
   }
 });
 

@@ -54,7 +54,7 @@ export function registerTrustedDevice(opts: {
   return { deviceId: device.id };
 }
 
-function parseDeviceBody(req: Request): { deviceId?: string; challengeId?: string; signature?: string } {
+function parseDeviceBody(req: Request): { deviceId?: string | undefined; challengeId?: string | undefined; signature?: string | undefined } {
   const body = req.body as Record<string, unknown> | undefined;
   return {
     deviceId: typeof body?.deviceId === 'string' ? body.deviceId : undefined,

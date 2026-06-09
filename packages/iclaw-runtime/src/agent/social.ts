@@ -145,7 +145,7 @@ function formatPayload(d: SocialPayload): string {
  */
 export async function socialSearch(
   args: Record<string, unknown>,
-  deps: { runInSandbox: (command: string) => Promise<string>; networkEnabled: boolean; onNote?: (note: SavingsNote) => void },
+  deps: { runInSandbox: (command: string) => Promise<string>; networkEnabled: boolean; onNote?: ((note: SavingsNote) => void) | undefined },
 ): Promise<string> {
   const query = String(args.query ?? '').trim();
   const url = String(args.url ?? '').trim();
