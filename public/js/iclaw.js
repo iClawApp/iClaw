@@ -3276,19 +3276,53 @@
           '</span>'
         : '<span class="scheduled-item-when">' + escapeHtml(opts.metaText) + '</span>';
     return (
-      '<div class="scheduled-item-main">' +
+      '<div class="scheduled-item-text">' +
+      escapeHtml(opts.content) +
+      '</div>' +
+      '<div class="scheduled-item-footer">' +
       '<div class="scheduled-item-meta">' +
       '<span class="scheduled-item-clock" aria-hidden="true">' +
       opts.metaIcon +
       '</span>' +
       whenEl +
       '</div>' +
-      '<div class="scheduled-item-text">' +
-      escapeHtml(opts.content) +
-      '</div>' +
-      '</div>' +
-      opts.actionsHtml
+      '<button type="button" class="scheduled-item-toggle" aria-expanded="false">Show more</button>' +
+      opts.actionsHtml +
+      '</div>'
     );
+  }
+
+  // Measure whether a pending-row's message overflows its collapsed height and
+  // wire the "Show more" toggle accordingly. The full text always stays in the
+  // DOM (only visually clipped via CSS), so edit/read paths still see it all.
+  // Re-runnable: preserves an already-expanded row across content updates.
+  function applyPendingRowClamp(row) {
+    if (!row) return;
+    const textEl = row.querySelector('.scheduled-item-text');
+    const toggle = row.querySelector('.scheduled-item-toggle');
+    if (!textEl || !toggle) return;
+    const wasExpanded = row.classList.contains('is-expanded');
+    // Collapse first so scrollHeight/clientHeight reflect the clamped box.
+    row.classList.remove('is-expanded');
+    const clampable = textEl.scrollHeight - textEl.clientHeight > 4;
+    row.classList.toggle('is-clampable', clampable);
+    const expanded = clampable && wasExpanded;
+    row.classList.toggle('is-expanded', expanded);
+    toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    toggle.textContent = expanded ? 'Show less' : 'Show more';
+  }
+
+  // Shared click handler for the "Show more"/"Show less" toggle in either list.
+  // Returns true if it handled the event (so callers can early-return).
+  function handlePendingRowToggleClick(e) {
+    const toggle = e.target.closest('.scheduled-item-toggle');
+    if (!toggle) return false;
+    const row = toggle.closest('.scheduled-item');
+    if (!row) return false;
+    const expanded = row.classList.toggle('is-expanded');
+    toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    toggle.textContent = expanded ? 'Show less' : 'Show more';
+    return true;
   }
 
   function queueItemActionsHtml(id) {
@@ -3324,6 +3358,7 @@
         actionsHtml: queueItemActionsHtml(rowId),
       });
       queueListEl.appendChild(row);
+      applyPendingRowClamp(row);
     });
     queueListEl.classList.toggle('is-empty', waitingItems.length === 0);
   }
@@ -3479,6 +3514,7 @@
   // Delete from queue + interrupt-and-promote via event delegation.
   if (queueListEl) {
     queueListEl.addEventListener('click', (e) => {
+      if (handlePendingRowToggleClick(e)) return;
       const row = e.target.closest('.scheduled-item--queue');
       if (!row) return;
       const id = row.dataset.queueId;
@@ -7044,6 +7080,7 @@
       actionsHtml: scheduledItemActionsHtml(scheduled.id),
     });
     scheduledListEl.appendChild(row);
+    applyPendingRowClamp(row);
     scheduledListEl.classList.remove('is-empty');
     sortScheduledListDom();
   }
@@ -7064,6 +7101,7 @@
     }
     const textEl = row.querySelector('.scheduled-item-text');
     if (textEl) textEl.textContent = scheduled.content;
+    applyPendingRowClamp(row);
     sortScheduledListDom();
   }
 
@@ -8071,6 +8109,7 @@
 
   if (scheduledListEl) {
     scheduledListEl.addEventListener('click', async (e) => {
+      if (handlePendingRowToggleClick(e)) return;
       const sendNowBtn = e.target.closest('.scheduled-item-send-now');
       if (sendNowBtn) {
         const sid = Number(sendNowBtn.dataset.scheduledId);
@@ -8102,6 +8141,8 @@
     });
     sortScheduledListDom();
     refreshScheduledTimes();
+    // Server-rendered rows (first paint) need the same overflow measurement.
+    scheduledListEl.querySelectorAll('.scheduled-item').forEach(applyPendingRowClamp);
   }
 
   // -------------------------------------------------------------------------

@@ -2383,17 +2383,21 @@ code {
 }
 .scheduled-item {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 6px;
   padding: 8px 12px;
   background: color-mix(in srgb, var(--accent, var(--text)) 6%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--accent, var(--text)) 16%, var(--border));
   border-radius: 12px;
   font-size: 0.9em;
 }
-.scheduled-item-main {
-  flex: 1;
-  min-width: 0;
+/* Bottom strip: schedule time + "Show more" on the left, action buttons pushed
+   to the far right, spanning the full card width. */
+.scheduled-item-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
 }
 .scheduled-item-meta {
   display: flex;
@@ -2401,7 +2405,6 @@ code {
   gap: 6px;
   color: var(--muted);
   font-size: 0.85em;
-  margin-bottom: 2px;
 }
 .scheduled-item-clock {
   font-size: 0.9em;
@@ -2412,6 +2415,49 @@ code {
   word-break: break-word;
   color: var(--text);
   line-height: 1.35;
+  position: relative;
+  /* Collapse long scheduled/queue messages so a single card can't take over
+     the whole composer area. 2 lines is enough to preview; the footer's
+     "Show more" reveals the rest. Short messages stay fully visible. */
+  max-height: calc(1.35em * 2);
+  overflow: hidden;
+}
+.scheduled-item.is-expanded .scheduled-item-text {
+  max-height: none;
+}
+/* Fade the last visible line of a collapsed, overflowing card so the cut feels
+   intentional. Mirrors the card background (see .scheduled-item). */
+.scheduled-item.is-clampable:not(.is-expanded) .scheduled-item-text::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.1em;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--accent, var(--text)) 6%, var(--surface))
+  );
+  pointer-events: none;
+}
+.scheduled-item-toggle {
+  display: none;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent, var(--text));
+  font: inherit;
+  font-size: 0.82em;
+  font-weight: 600;
+  cursor: pointer;
+}
+.scheduled-item-toggle:hover {
+  text-decoration: underline;
+}
+.scheduled-item.is-clampable .scheduled-item-toggle {
+  display: inline-block;
 }
 /* Schedule menu — popover anchored to send button */
 .composer-field {
@@ -2618,7 +2664,7 @@ code {
 .scheduled-item-actions {
   display: flex;
   flex-shrink: 0;
-  align-self: center;
+  margin-left: auto;
   align-items: center;
   gap: 2px;
 }
