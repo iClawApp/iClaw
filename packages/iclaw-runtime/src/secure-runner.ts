@@ -19,7 +19,8 @@ import { promisify } from 'node:util';
 import type OpenAI from 'openai';
 import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
 import type { SavingsNote } from './agent/tools.js';
-import { shrinkOldToolOutputs, withPromptCaching, makeToolGuard, HOST_INSTALL_POLICY } from './agent/loop.js';
+import { shrinkOldToolOutputs, withPromptCaching, makeToolGuard, HOST_INSTALL_POLICY, describeApiError } from './agent/loop.js';
+import { resolveTurnModel } from './agent/model-capabilities.js';
 import { log } from './log.js';
 import { INSTALL_LABEL } from './install-id.js';
 import { dumpPrompt, newTurnId } from './agent/prompt-dump.js';
@@ -434,6 +435,20 @@ async function* runSecureAgentLoop(
     userMsg,
   ];
 
+  // Vision gate (see agent/model-capabilities.ts): route an image turn to a
+  // vision-capable model when the configured one is text-only, else OpenRouter
+  // 404s on the image_url block. Text turns are untouched.
+  const modelDecision = await resolveTurnModel({
+    model: opts.model,
+    apiKey: opts.apiKey,
+    hasImages: !!opts.images?.length,
+  });
+  if (modelDecision.error) {
+    yield { type: 'error', message: modelDecision.error };
+    return;
+  }
+  const effectiveModel = modelDecision.model;
+
   let turnTokens = 0;
   let turnCached = 0;
   const dumpTurnId = newTurnId();
@@ -450,14 +465,14 @@ async function* runSecureAgentLoop(
     let textBuffer = '';
     const toolCallBuffers: Record<string, { name: string; arguments: string }> = {};
 
-    dumpPrompt({ turnId: dumpTurnId, mode: 'secure', model: opts.model, round, messages, tools });
+    dumpPrompt({ turnId: dumpTurnId, mode: 'secure', model: effectiveModel, round, messages, tools });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let stream: AsyncIterable<any>;
     try {
       stream = await client.chat.completions.create(
         {
-          model: opts.model,
+          model: effectiveModel,
           messages: withPromptCaching(messages),
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           tools: tools as any,
@@ -472,7 +487,7 @@ async function* runSecureAgentLoop(
         yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
         return;
       }
-      yield { type: 'error', message: err instanceof Error ? err.message : String(err) };
+      yield { type: 'error', message: describeApiError(err) };
       return;
     }
 
@@ -508,7 +523,7 @@ async function* runSecureAgentLoop(
         yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
         return;
       }
-      yield { type: 'error', message: err instanceof Error ? err.message : String(err) };
+      yield { type: 'error', message: describeApiError(err) };
       return;
     }
 
