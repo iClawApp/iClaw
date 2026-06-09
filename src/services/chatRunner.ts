@@ -29,7 +29,7 @@ import { homedir } from 'node:os';
 import type { ChatMode, Message, MessageAttachment } from '../types';
 import { DEFAULT_MODE } from './chatModes';
 import { buildCompactedHistory } from './contextCompaction';
-import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession, abortWorkSession, exportSandbox, applySandboxChanges, type ExportResult, type ApplyResult } from './workRuntime';
+import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession, abortWorkSession, exportSandbox, type ExportResult } from './workRuntime';
 import {
   expandStoredSecretPlaceholdersForGateway,
   resolveInlineSecretMarkersInContent,
@@ -854,13 +854,6 @@ export async function exportChatSandbox(chatId: number, destDir?: string): Promi
   const sessionId = workSessions.get(chatId)?.sessionId;
   if (!sessionId) return { ok: false, error: 'no active sandbox for this chat' };
   return exportSandbox(sessionId, destDir);
-}
-
-/** Apply a chat's Safe sandbox changes back to the original folders. */
-export async function applyChatSandboxChanges(chatId: number): Promise<ApplyResult[]> {
-  const sessionId = workSessions.get(chatId)?.sessionId;
-  if (!sessionId) return [];
-  return applySandboxChanges(sessionId);
 }
 
 /** Secure workspaces live here (mirrors the runtime's SECURE_DATA_DIR default). */

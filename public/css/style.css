@@ -3590,6 +3590,24 @@ code {
   --_btn-bg-hover: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 
+/* Chat-header Share + Delete: icon-only by default, the label slides in on
+   hover/focus (matching the secure-workspace actions). Mobile already hides
+   these labels entirely; this only affects the desktop pill buttons. */
+.chat-header .share-btn .header-tool-label,
+.chat-header .chat-delete-btn .header-tool-label {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-width 0.2s ease, opacity 0.2s ease;
+}
+.chat-header .share-btn:hover .header-tool-label,
+.chat-header .share-btn:focus-visible .header-tool-label,
+.chat-header .chat-delete-btn:hover .header-tool-label,
+.chat-header .chat-delete-btn:focus-visible .header-tool-label {
+  max-width: 80px;
+  opacity: 1;
+}
+
 .project-header .project-delete-btn.header-action-btn {
   border: 1px solid color-mix(in srgb, var(--border) 60%, var(--header-surface));
 }
@@ -7730,43 +7748,79 @@ a.project-tab.project-tab--tasks:hover {
 .secure-workspace-bar[hidden] { display: none; }
 .secure-workspace-bar__size[hidden] { display: none; }
 .secure-workspace-bar__sep { opacity: 0.4; }
-.secure-workspace-bar__change {
+/* TTL text + its inline, clickable value (opens the retention menu). The span is
+   the positioning context so the menu anchors right under "expires in 6d". */
+.secure-workspace-bar__ttl { position: relative; }
+.secure-workspace-bar__ttl-value {
   border: none;
   background: transparent;
   color: var(--muted);
   font: inherit;
   font-size: var(--text-xs);
   cursor: pointer;
-  text-decoration: underline;
+  /* Dotted underline marks it as an inline control, distinct from the solid
+     underline on the Save a copy / Apply / Destroy actions. */
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
   padding: 0;
 }
-.secure-workspace-bar__change:hover { color: var(--text); }
+.secure-workspace-bar__ttl-value:hover { color: var(--text); }
 .secure-workspace-bar__action {
+  display: inline-flex;
+  align-items: center;
   border: none;
   background: transparent;
   color: var(--muted);
   font: inherit;
   font-size: var(--text-xs);
   cursor: pointer;
-  text-decoration: underline;
   padding: 0;
   margin-left: 8px;
 }
+.secure-workspace-bar__action svg { display: block; }
 .secure-workspace-bar__action:hover { color: var(--text); }
-.secure-workspace-bar__action:disabled { opacity: 0.6; cursor: default; text-decoration: none; }
+.secure-workspace-bar__action:disabled { opacity: 0.6; cursor: default; }
+/* Download icon by default; the "Save to my computer" label slides in on hover. */
+.secure-workspace-bar__action-label {
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0;
+  transition: max-width 0.2s ease, opacity 0.2s ease;
+}
+.secure-workspace-bar__action:hover .secure-workspace-bar__action-label,
+.secure-workspace-bar__action:focus-visible .secure-workspace-bar__action-label {
+  max-width: 160px;
+  opacity: 1;
+}
 .secure-workspace-bar__destroy {
+  display: inline-flex;
+  align-items: center;
   border: none;
   background: transparent;
   color: var(--muted);
   font: inherit;
   font-size: var(--text-xs);
   cursor: pointer;
-  text-decoration: underline;
   padding: 0;
   margin-left: 8px;
 }
+.secure-workspace-bar__destroy svg { display: block; }
 .secure-workspace-bar__destroy:hover { color: var(--down, #d9534f); }
-.secure-workspace-bar__destroy:disabled { opacity: 0.6; cursor: default; text-decoration: none; }
+.secure-workspace-bar__destroy:disabled { opacity: 0.6; cursor: default; }
+/* Trash icon by default; the "Delete now" label slides in on hover/focus. */
+.secure-workspace-bar__destroy-label {
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0;
+  transition: max-width 0.18s ease, opacity 0.18s ease;
+}
+.secure-workspace-bar__destroy:hover .secure-workspace-bar__destroy-label,
+.secure-workspace-bar__destroy:focus-visible .secure-workspace-bar__destroy-label {
+  max-width: 90px;
+  opacity: 1;
+}
 
 /* ── Incognito (ephemeral, read-only) ─────────────────────────────────────── */
 /* "Blacked out" identity — neutral/dark, no colour. */
@@ -7857,8 +7911,8 @@ body.incognito-mode .composer-mode-btn__label {
 .secure-ttl-menu {
   top: auto;
   bottom: calc(100% + 4px);
-  right: calc(var(--space-2) * 2);
-  left: auto;
+  left: 0;
+  right: auto;
   min-width: 120px;
 }
 

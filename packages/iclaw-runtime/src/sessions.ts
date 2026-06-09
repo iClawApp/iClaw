@@ -20,7 +20,7 @@ import {
 } from './work-container.js';
 import { ingestSources, describeIngest, type IngestSource } from './secure-ingest.js';
 import {
-  exportWorkspace, applyChanges, type ExportResult, type ApplyResult,
+  exportWorkspace, type ExportResult,
 } from './secure-export.js';
 import { ensureDockerForTask, markDockerUse } from './docker-lifecycle.js';
 
@@ -402,13 +402,6 @@ export function exportSessionWorkspace(id: string, destDir?: string): ExportResu
   const session = sessions.get(id);
   if (!session?.secureWorkspaceDir) return null;
   return exportWorkspace(session.secureWorkspaceDir, destDir);
-}
-
-/** Apply a Safe session's changes back to the original ingested folders. */
-export function applySessionChanges(id: string): ApplyResult[] | null {
-  const session = sessions.get(id);
-  if (!session?.secureWorkspaceDir) return null;
-  return applyChanges(session.secureWorkspaceDir);
 }
 
 function getDirSize(dir: string): number {

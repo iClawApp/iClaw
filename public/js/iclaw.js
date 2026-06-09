@@ -707,8 +707,8 @@
   // ── Secure workspace bar ─────────────────────────────────────────────────
   const secureBar = document.getElementById('secure-workspace-bar');
   const secureSizeEl = document.getElementById('secure-workspace-size');
-  const secureTtlEl = document.getElementById('secure-workspace-ttl');
-  const secureChangeBtn = document.getElementById('secure-workspace-change');
+  const secureTtlPrefixEl = document.getElementById('secure-workspace-ttl-prefix');
+  const secureTtlValueBtn = document.getElementById('secure-workspace-ttl-value');
   const secureTtlMenu = document.getElementById('secure-ttl-menu');
 
   // Read the chat id live, not from the page-load `rawChatId` const. A chat that
@@ -718,8 +718,10 @@
   const secureChatId = () => messagesEl?.dataset.chatId || '';
 
   function secureTtlKey() {
-    const pid = messagesEl?.dataset.projectId;
-    return `iclaw:secure-ttl:${pid ? 'project:' + pid : 'chat:' + secureChatId()}`;
+    // Per-chat TTL: every new chat starts from the 7-day default, and changing
+    // it affects only that chat. (Previously chats in a project shared one TTL,
+    // so a new project chat could inherit 30 — we don't want that.)
+    return `iclaw:secure-ttl:chat:${secureChatId()}`;
   }
 
   function getSecureTtl() {
@@ -741,23 +743,27 @@
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
+  // Returns { prefix, value } so the value can render as a separate inline,
+  // clickable element ("deletes in [6d]") while the prefix stays plain text.
   function formatTtlRemaining(ttlDays, lastActivity) {
-    if (ttlDays === 0) return 'never expires';
+    if (ttlDays === 0) return { prefix: '', value: 'never deleted' };
     // +15s demo buffer: holds the full day count for ~15s after each reset so
     // users can see the countdown tick down (proof the TTL resets on activity).
     const expiresAt = lastActivity + ttlDays * 86400_000 + 15_000;
     const remaining = expiresAt - Date.now();
-    if (remaining <= 0) return 'expired';
+    if (remaining <= 0) return { prefix: '', value: 'deleted' };
     const days = Math.floor(remaining / 86400_000);
     const hours = Math.floor((remaining % 86400_000) / 3600_000);
     const mins = Math.floor((remaining % 3600_000) / 60_000);
     const secs = Math.floor((remaining % 60_000) / 1000);
+    let value;
     // More than 2 days: show only days (no hours)
-    if (days > 2) return `expires in ${days}d`;
-    if (days > 0) return `expires in ${days}d ${hours}h`;
-    if (hours > 0) return `expires in ${hours}h ${mins}m`;
-    if (mins > 0) return `expires in ${mins}m ${secs}s`;
-    return `expires in ${secs}s`;
+    if (days > 2) value = `${days}d`;
+    else if (days > 0) value = `${days}d ${hours}h`;
+    else if (hours > 0) value = `${hours}h ${mins}m`;
+    else if (mins > 0) value = `${mins}m ${secs}s`;
+    else value = `${secs}s`;
+    return { prefix: 'deletes in', value };
   }
 
   // True when the secret hint UI is visible — it takes priority over the secure bar.
@@ -770,7 +776,10 @@
   function tickSecureTtl() {
     if (!secureBar || secureBar.hidden) return;
     const ttl = getSecureTtl();
-    if (secureTtlEl) secureTtlEl.textContent = formatTtlRemaining(ttl.ttlDays, ttl.lastActivity);
+    const { prefix, value } = formatTtlRemaining(ttl.ttlDays, ttl.lastActivity);
+    // Trailing space separates the plain prefix from the clickable value.
+    if (secureTtlPrefixEl) secureTtlPrefixEl.textContent = prefix ? prefix + ' ' : '';
+    if (secureTtlValueBtn) secureTtlValueBtn.textContent = value;
   }
 
   async function refreshSecureBar() {
@@ -785,28 +794,24 @@
       const data = await res.json();
       // Only surface the bar once a secure session actually exists — i.e. after
       // the first message. Nothing is created on the host until then.
-      if (!data.active) { secureBar.hidden = true; return; }
+      // Show the bar only once the sandbox actually holds something — an empty
+      // workspace has nothing to time, save, or destroy, so we surface nothing
+      // (not even the "Secure workspace" label) until the agent writes a file.
+      const size = data.active && data.workspaceSize != null ? data.workspaceSize : 0;
+      if (!size) { secureBar.hidden = true; return; }
       secureBar.hidden = false;
-      tickSecureTtl();
       if (secureSizeEl) {
-        // Only show a size once there's actually something in the workspace —
-        // "0 B" is noise.
-        const size = data.workspaceSize != null ? data.workspaceSize : 0;
-        if (size > 0) {
-          secureSizeEl.textContent = formatBytes(size);
-          secureSizeEl.hidden = false;
-        } else {
-          secureSizeEl.textContent = '';
-          secureSizeEl.hidden = true;
-        }
+        secureSizeEl.textContent = formatBytes(size);
+        secureSizeEl.hidden = false;
       }
+      tickSecureTtl();
     } catch { secureBar.hidden = true; }
   }
 
   // Live countdown — updates the TTL text every second.
   setInterval(tickSecureTtl, 1000);
 
-  secureChangeBtn?.addEventListener('click', (e) => {
+  secureTtlValueBtn?.addEventListener('click', (e) => {
     e.stopPropagation();
     if (secureTtlMenu) {
       secureTtlMenu.hidden = !secureTtlMenu.hidden;
@@ -821,16 +826,23 @@
     refreshSecureBar();
   });
 
-  // Export the sandbox out to a host folder (default ~/Downloads). Read-only —
-  // copies the sandbox contents to a fresh place, touches nothing of the user's.
+  // Save a copy of the sandbox out to a host folder (default ~/Downloads).
+  // Read-only — copies the sandbox contents to a fresh place, touches nothing of
+  // the user's. Confirmed first with a plain-language explanation.
   const secureExportBtn = document.getElementById('secure-workspace-export');
   secureExportBtn?.addEventListener('click', async (e) => {
     e.stopPropagation();
     const cid = secureChatId();
     if (!cid) return;
+    if (!confirm(
+      'Save a copy of this secure workspace to your Downloads folder?\n\n'
+      + 'Heads up - these files leave the safe sandbox and land on your real computer. '
+      + 'If anything was downloaded in here, it could carry viruses or other nasty surprises\n\n'
+      + 'That\'s exactly what the sandbox is for - to keep anything dangerous trapped in there'
+    )) return;
+    // The button holds an icon + label (not text), so don't touch textContent —
+    // just disable it for the duration of the copy.
     secureExportBtn.disabled = true;
-    const prev = secureExportBtn.textContent;
-    secureExportBtn.textContent = 'Exporting…';
     try {
       const res = await fetch(`/chats/${cid}/export-sandbox`, {
         method: 'POST',
@@ -838,42 +850,10 @@
         body: '{}',
       });
       const data = await res.json();
-      if (data && data.ok) alert(`Exported ${data.files != null ? data.files + ' files' : 'sandbox'} to:\n${data.path}`);
-      else alert(`Export failed: ${(data && data.error) || 'unknown error'}`);
-    } catch { alert('Export failed.'); }
+      if (data && data.ok) alert(`Saved a copy${data.files != null ? ` (${data.files} files)` : ''} here:\n${data.path}`);
+      else alert(`Couldn't save the copy: ${(data && data.error) || 'unknown error'}`);
+    } catch { alert("Couldn't save the copy."); }
     secureExportBtn.disabled = false;
-    secureExportBtn.textContent = prev || 'Export';
-  });
-
-  // Apply: copy the sandbox's new/changed files back to the ORIGINAL folders.
-  // This writes to the user's real files, so it's confirmed and additive only.
-  const secureApplyBtn = document.getElementById('secure-workspace-apply');
-  secureApplyBtn?.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    const cid = secureChatId();
-    if (!cid) return;
-    if (!confirm('Apply the sandbox\'s new and changed files back to your original folders? Existing files may be overwritten; nothing is deleted.')) return;
-    secureApplyBtn.disabled = true;
-    const prev = secureApplyBtn.textContent;
-    secureApplyBtn.textContent = 'Applying…';
-    try {
-      const res = await fetch(`/chats/${cid}/apply-sandbox`, {
-        method: 'POST',
-        headers: { Accept: 'application/json' },
-      });
-      const data = await res.json();
-      const results = (data && data.results) || [];
-      if (results.length === 0) {
-        alert('Nothing to apply — no folders were copied into this sandbox.');
-      } else {
-        const lines = results.map((r) => r.ok
-          ? `• ${r.source}: ${(r.applied && r.applied.length) || 0} file(s)`
-          : `✗ ${r.source}: ${r.error}`);
-        alert('Applied changes:\n' + lines.join('\n'));
-      }
-    } catch { alert('Apply failed.'); }
-    secureApplyBtn.disabled = false;
-    secureApplyBtn.textContent = prev || 'Apply changes';
   });
 
   // Destroy the sandbox: deletes the copied workspace + container. The next
@@ -883,10 +863,10 @@
     e.stopPropagation();
     const cid = secureChatId();
     if (!cid) return;
-    if (!confirm('Destroy this sandbox? The copied files and anything created in it are deleted. Your original files are untouched.')) return;
+    if (!confirm('Delete this sandbox now? Everything copied or created inside it is removed right away - your original files on your computer are not touched')) return;
+    // The button holds an icon + label (not text), so don't touch textContent —
+    // just disable it; the bar refreshes (and usually hides) once it's gone.
     secureDestroyBtn.disabled = true;
-    const prev = secureDestroyBtn.textContent;
-    secureDestroyBtn.textContent = 'Destroying…';
     try {
       await fetch(`/chats/${cid}/destroy-workspace`, {
         method: 'POST',
@@ -894,12 +874,11 @@
       });
     } catch { /* best-effort */ }
     secureDestroyBtn.disabled = false;
-    secureDestroyBtn.textContent = prev || 'Destroy';
     refreshSecureBar();
   });
 
   document.addEventListener('click', (e) => {
-    if (secureTtlMenu && !secureTtlMenu.hidden && !secureChangeBtn?.contains(e.target) && !secureTtlMenu.contains(e.target)) {
+    if (secureTtlMenu && !secureTtlMenu.hidden && !secureTtlValueBtn?.contains(e.target) && !secureTtlMenu.contains(e.target)) {
       secureTtlMenu.hidden = true;
     }
   });

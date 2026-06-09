@@ -17,7 +17,7 @@
 import http from 'node:http';
 
 import { ensureColimaEnv } from './colima.js';
-import { createSession, getSession, deleteSession, abortSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, exportSessionWorkspace, applySessionChanges, sweepExpiredSessions, startContainerReaper, loadPersistedSessions, type RuntimeAttachment } from './sessions.js';
+import { createSession, getSession, deleteSession, abortSession, attachSseClient, detachSseClient, sendMessage, getSessionInfo, exportSessionWorkspace, sweepExpiredSessions, startContainerReaper, loadPersistedSessions, type RuntimeAttachment } from './sessions.js';
 import { killOrphanContainers } from './secure-runner.js';
 import { startDockerIdleReaper, stopDockerOnShutdown } from './docker-lifecycle.js';
 import { killOrphanWorkContainers } from './work-container.js';
@@ -158,14 +158,6 @@ const server = http.createServer(async (req, res) => {
     const result = exportSessionWorkspace(parts[1], typeof body.destDir === 'string' ? body.destDir : undefined);
     if (!result) return json(res, 400, { error: 'not a Safe session' });
     return json(res, 200, result);
-  }
-
-  // POST /sessions/:id/apply — copy the sandbox's changes back to the originals.
-  if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'apply') {
-    if (!getSession(parts[1])) return json(res, 404, { error: 'session not found' });
-    const results = applySessionChanges(parts[1]);
-    if (!results) return json(res, 400, { error: 'not a Safe session' });
-    return json(res, 200, { results });
   }
 
   // DELETE /sessions/:id
