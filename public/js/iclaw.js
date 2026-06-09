@@ -948,6 +948,13 @@
     let meterRaf = 0;
     let timeData = null;
     let waveSamples = [];
+    // Advance the waveform on a fixed cadence (not once per animation frame) so
+    // the bars scroll at a calm, readable speed regardless of the display's
+    // refresh rate. Between pushes we keep the loudest level seen, so a brief
+    // peak still lands as a tall bar.
+    const WAVE_SAMPLE_MS = 55;
+    let lastWaveAt = 0;
+    let wavePeak = 0;
     let accentColor = '#4f8cff';
     let dangerColor = '#e5484d';
 
@@ -1166,6 +1173,8 @@
         sourceNode.connect(analyser);
         timeData = new Uint8Array(analyser.fftSize);
         waveSamples = [];
+        lastWaveAt = 0;
+        wavePeak = 0;
       } catch (_) {
         // Meter is best-effort; recording still works without it.
       }
@@ -1196,11 +1205,22 @@
           const v = (timeData[i] - 128) / 128;
           sum += v * v;
         }
-        level = Math.min(1, Math.sqrt(sum / timeData.length) * 2.4);
+        // Higher gain so normal speech clearly pushes the bars up: quiet stays
+        // near the baseline, loud reaches (near) full height.
+        level = Math.min(1, Math.sqrt(sum / timeData.length) * 3.0);
       }
+      // The halo tracks the live level every frame for a smooth pulse…
       micBtn.style.setProperty('--mic-amp', level.toFixed(3));
-      waveSamples.push(level);
-      drawWave();
+      // …but the waveform only advances every WAVE_SAMPLE_MS, carrying the peak
+      // level from the in-between frames so loud moments read as tall bars.
+      wavePeak = Math.max(wavePeak, level);
+      const now = performance.now();
+      if (now - lastWaveAt >= WAVE_SAMPLE_MS) {
+        lastWaveAt = now;
+        waveSamples.push(wavePeak);
+        wavePeak = 0;
+        drawWave();
+      }
     }
 
     function drawWave() {
@@ -1301,11 +1321,10 @@
       setCancelArmed(false);
       setMicState('locked');
       if (recEl) recEl.classList.add('is-locked');
-      if (recHintEl) recHintEl.textContent = 'tap mic to send';
-      if (lockHintEl) {
-        lockHintEl.classList.add('is-locked');
-        setLockProgress(1);
-      }
+      // Lock confirmed — hide the floating lock pill so it doesn't sit over the
+      // bar; the mic itself turns into the send button and Cancel drops to the
+      // toolbar row.
+      if (lockHintEl) lockHintEl.hidden = true;
       try { micBtn.releasePointerCapture(activePointerId); } catch (_) {}
       sizeWaveCanvas();
     }

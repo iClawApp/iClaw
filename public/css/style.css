@@ -5057,16 +5057,38 @@ code {
 .composer-recording__cancel:hover {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
-.composer-recording.is-locked .composer-recording__cancel { display: inline-flex; }
+/* Locked: Cancel drops out of the bar and down to the toolbar row — pinned
+   bottom-left, vertically level with the send button — so the wave gets the
+   whole top row. (Field is position:relative, so this anchors to it.) */
+.composer-recording.is-locked .composer-recording__cancel {
+  display: inline-flex;
+  align-items: center;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 8px;
+  height: 36px;
+}
+/* Locked: no text hint — the mic (now a send arrow) + Cancel say it all. */
+.composer-recording.is-locked .composer-recording__hint { display: none; }
 .composer-recording.is-cancel .composer-recording__dot { background: var(--danger); }
 .composer-recording.is-cancel .composer-recording__time,
 .composer-recording.is-cancel .composer-recording__hint { color: var(--danger); }
-/* Quick-tap coaching hint */
+/* Quick-tap coaching hint — the lone "hold the mic to record" line sits dead
+   centre of the bar (both axes) instead of hugging the left edge. */
+.composer-recording.is-hint {
+  justify-content: center;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
 .composer-recording.is-hint .composer-recording__dot,
 .composer-recording.is-hint .composer-recording__time,
 .composer-recording.is-hint .composer-recording__wave,
 .composer-recording.is-hint .composer-recording__cancel { display: none; }
-.composer-recording.is-hint .composer-recording__hint { color: var(--muted); }
+.composer-recording.is-hint .composer-recording__hint {
+  color: var(--muted);
+  text-align: center;
+}
 
 /* Floating lock indicator above the mic. */
 .composer-lock-hint {
