@@ -14,7 +14,7 @@ import { projectSkills } from './store';
 import { chatStatus } from './chatStatus';
 import { openclawWs, type TurnEvent } from './openclawWs';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
-import { toolActivityLabel, toolActivityDetail } from './toolLabels';
+import { toolActivityLabel, toolActivityDetail, toolOutcome } from './toolLabels';
 import { wsHub } from './wsHub';
 import {
   gatewayAttachmentsFromPersisted,
@@ -26,12 +26,13 @@ import {
 } from './uploads';
 import { resolve as resolvePath, sep as pathSep, join as joinPath } from 'node:path';
 import { homedir } from 'node:os';
-import type { ChatMode, Message, MessageAttachment } from '../types';
+import type { ChatMode, Message, MessageAttachment, ToolTraceEntry } from '../types';
 import { DEFAULT_MODE } from './chatModes';
 import { buildCompactedHistory } from './contextCompaction';
 import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession, abortWorkSession, exportSandbox, type ExportResult } from './workRuntime';
 import {
   expandStoredSecretPlaceholdersForGateway,
+  redactSecretValuesForChat,
   resolveInlineSecretMarkersInContent,
   stripSecretMarkersForTitle,
   type InlineSecretWire,
@@ -989,6 +990,22 @@ async function runWorkModeTurn(opts: {
     // Images the agent surfaced via show_image this turn — attached to the reply
     // row so they render inline (on `done`, and again from the DB on reload).
     const turnAttachments: MessageAttachment[] = [];
+    // Verified tool outcomes for this turn. Persisted on the assistant row so
+    // the model's claims stay auditable (UI) and so compacted history can be
+    // re-seeded from facts, not from the model's own narration. tool_start /
+    // tool_result arrive strictly in execution order, so a FIFO of open indexes
+    // pairs them without ids.
+    const toolTrace: ToolTraceEntry[] = [];
+    const openToolIdx: number[] = [];
+    const TOOL_TRACE_MAX = 200;
+    // Once a secret is expanded for a turn, the model may type it into a tool
+    // call (e.g. `curl -H "Authorization: token ghp_…"`). Scrub known secret
+    // values from everything we surface or persist about tool activity — the
+    // live status detail AND the stored trace — or the placeholder system
+    // would leak the plaintext into the DB and the UI.
+    const chatScopeForRedact = chats.get(chatId);
+    const redact = (s: string): string =>
+      chatScopeForRedact ? redactSecretValuesForChat(s, chatScopeForRedact) : s;
     // Savings notes arrive mid-stream (when a tool truncates), but we want them
     // rendered BELOW the assistant's reply, not above it. So buffer them and
     // flush as system rows only after the assistant row is appended on `done`.
@@ -1003,13 +1020,35 @@ async function runWorkModeTurn(opts: {
           // Surface what the agent is doing right now (live status label, e.g.
           // "Searching social media…"). Reuses the same turn-tool pipeline the
           // gateway path uses; without this Work/Secure showed only "Thinking…".
+          // Redaction happens INSIDE toolActivityDetail, before its 70-char
+          // clip — redacting the clipped string instead would miss secrets the
+          // clip already cut in half (a 40-char PAT leaked as 36 chars once).
+          const detail = toolActivityDetail(event.name, event.input, redact);
+          if (toolTrace.length < TOOL_TRACE_MAX) {
+            openToolIdx.push(toolTrace.length);
+            toolTrace.push({
+              name: event.name,
+              ...(detail ? { detail } : {}),
+              ok: true,
+              outcome: '',
+            });
+          }
           onEvent({
             type: 'tool-start',
             name: event.name,
             label: toolActivityLabel(event.name),
-            detail: toolActivityDetail(event.name, event.input),
+            detail,
           });
         } else if (event.type === 'tool_result') {
+          const idx = openToolIdx.shift();
+          const entry = idx != null ? toolTrace[idx] : undefined;
+          if (entry) {
+            // Redact the FULL result before toolOutcome's line-pick + clip,
+            // for the same clip-vs-redaction reason as the detail above.
+            const { ok, outcome } = toolOutcome(redact(event.result ?? ''));
+            entry.ok = ok;
+            entry.outcome = outcome;
+          }
           onEvent({ type: 'tool-end', name: event.name });
         } else if (event.type === 'note') {
           // A tool gave the model less than the full content — surface the saving
@@ -1044,6 +1083,7 @@ async function runWorkModeTurn(opts: {
               chatId, 'assistant', accumulated, null, null,
               turnAttachments.length > 0 ? turnAttachments : null,
               opts.secure ? 'secure' : 'work', event.tokens ?? null, event.cached ?? null,
+              toolTrace.length > 0 ? toolTrace : null,
             );
             wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });
 

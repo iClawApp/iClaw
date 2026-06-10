@@ -152,6 +152,25 @@
                   <% }); %>
                 </div>
               <% } %>
+              <%# Tool trace UI is dev-only for now; the trace itself is always persisted (compaction/seed needs it). %>
+              <% if (typeof devMode !== 'undefined' && devMode && m.role === 'assistant' && Array.isArray(m.tool_trace) && m.tool_trace.length > 0) { %>
+                <% const _failed = m.tool_trace.filter(function (t) { return !t.ok; }).length; %>
+                <details class="msg-tool-trace">
+                  <summary><%= m.tool_trace.length %> tool call<%= m.tool_trace.length === 1 ? '' : 's' %><% if (_failed > 0) { %> · <span class="tt-failed"><%= _failed %> failed</span><% } %></summary>
+                  <ul>
+                    <% m.tool_trace.forEach(function (t) { %>
+                      <%# Row: tool name + request target; ✗ only on failures. Full args → verdict in the tooltip. The `cd … && ` shell prefix is display noise — the target is the command after it. %>
+                      <% const _tip = [t.detail, t.outcome].filter(Boolean).join(' → '); %>
+                      <% const _target = (t.detail || '').replace(/^(cd [^&|;]+ && )+/, ''); %>
+                      <li class="<%= t.ok ? 'tt-ok' : 'tt-err' %>"<% if (_tip) { %> title="<%= _tip %>"<% } %>>
+                        <% if (!t.ok) { %><span class="tt-mark">✗</span><% } %>
+                        <span class="tt-name"><%= t.name %></span>
+                        <% if (_target) { %><span class="tt-detail"><%= _target %></span><% } %>
+                      </li>
+                    <% }); %>
+                  </ul>
+                </details>
+              <% } %>
               <% if (typeof devMode !== 'undefined' && devMode && m.tokens) { %>
                 <span class="msg-tokens" title="Tokens spent on this reply"><%= Number(m.tokens).toLocaleString() %> tok<% if (m.cached_tokens) { %> · <%= Number(m.cached_tokens).toLocaleString() %> cached<% } %></span>
               <% } %>

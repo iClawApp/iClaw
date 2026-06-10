@@ -105,6 +105,56 @@ export function expandStoredSecretPlaceholdersForGateway(
   });
 }
 
+/**
+ * Replace any occurrence of a chat-usable secret VALUE with `[secret:label]`.
+ * For text that the MODEL produced or echoed (tool args, tool outputs): once a
+ * secret is expanded for a turn, the model may type it into a command, and
+ * without this scrub the plaintext would be persisted (tool traces) or pushed
+ * to the UI (live status line) — undoing the placeholder system. Values shorter
+ * than 6 chars are skipped (too collision-prone); longest values are replaced
+ * first so one secret embedded in another can't leave a partial leak.
+ */
+export function redactSecretValuesForChat(
+  text: string,
+  chat: { id: number; project_id: number | null },
+): string {
+  if (!text) return text;
+  const rows = projectSecrets
+    .listUsableInChat(chat)
+    .filter((r) => r.value.length >= 6)
+    .sort((a, b) => b.value.length - a.value.length);
+  let out = text;
+  for (const r of rows) {
+    if (out.includes(r.value)) {
+      out = out.split(r.value).join(`[secret:${r.label}]`);
+    }
+    // Truncated occurrences: any clip between the secret's source and this
+    // scrub (the 70-char detail cap, the 140-char outcome cap, the runtime's
+    // own output clamps) can cut the value mid-token, and then an exact match
+    // misses it — exactly how a 40-char GitHub PAT leaked as its first 36
+    // chars. Catch any leading fragment of ≥16 chars and extend the match as
+    // far as the text still follows the secret.
+    out = redactPrefixFragments(out, r.value, r.label);
+  }
+  return out;
+}
+
+const SECRET_PREFIX_MIN = 16;
+
+function redactPrefixFragments(text: string, value: string, label: string): string {
+  if (value.length < SECRET_PREFIX_MIN) return text;
+  const probe = value.slice(0, SECRET_PREFIX_MIN);
+  let out = text;
+  let i = out.indexOf(probe);
+  while (i !== -1) {
+    let len = SECRET_PREFIX_MIN;
+    while (len < value.length && i + len < out.length && out[i + len] === value[len]) len++;
+    out = out.slice(0, i) + `[secret:${label}]` + out.slice(i + len);
+    i = out.indexOf(probe, i + 1);
+  }
+  return out;
+}
+
 /** Strip client/server secret markers so auto-titles never echo token-shaped text. */
 export function stripSecretMarkersForTitle(text: string): string {
   return String(text ?? '')

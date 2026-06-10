@@ -257,6 +257,23 @@ export interface MessageAttachment {
   sizeBytes: number;
 }
 
+/**
+ * One executed tool call in a Work/Secure turn — the runtime-verified outcome,
+ * independent of whatever the model narrates. Persisted on the assistant row so
+ * claims ("pushed", "PR updated") stay auditable after the in-memory session is
+ * gone, and so compacted history can be seeded from facts instead of prose.
+ */
+export interface ToolTraceEntry {
+  /** Runtime tool name, e.g. 'run_command'. */
+  name: string;
+  /** Short argument summary (command / path / url), same source as the live status line. */
+  detail?: string;
+  /** False when the result reads as a failure/empty outcome (exit marker, error prefix). */
+  ok: boolean;
+  /** Clipped verdict line from the tool result ("Edited: README.md", "[exit code 128 — command FAILED]"). */
+  outcome: string;
+}
+
 export interface Message {
   id: number;
   chat_id: number;
@@ -281,5 +298,7 @@ export interface Message {
   tokens?: number | null;
   /** Of `tokens`, how many prompt tokens were served from the provider cache. Dev-mode. */
   cached_tokens?: number | null;
+  /** Verified tool outcomes for the turn that produced this (assistant) row. */
+  tool_trace?: ToolTraceEntry[] | null;
   created_at: string;
 }

@@ -2600,6 +2600,43 @@
     bumpChatTokenTotal(tokens);
   }
 
+  /**
+   * Collapsible verified-tool-outcomes block for an assistant message (runtime
+   * modes). Mirrors the server-side render in chat.ejs — the trace is the
+   * runtime's record of what actually ran, so claims in the prose above it can
+   * be checked at a glance.
+   */
+  function toolTraceHtml(trace) {
+    // Dev-only UI (like the token badge); the trace is still persisted for all
+    // installs — context compaction seeds from it regardless of display.
+    if (!window.__ICLAW_DEV__) return '';
+    if (!Array.isArray(trace) || trace.length === 0) return '';
+    const failed = trace.filter(function (t) { return !t.ok; }).length;
+    const items = trace
+      .map(function (t) {
+        // Row: tool name + request target; ✗ only on failures. Full args →
+        // verdict in the hover tooltip. The `cd … && ` shell prefix is display
+        // noise — the target is the command after it.
+        const tip = [t.detail, t.outcome].filter(Boolean).join(' → ');
+        const target = (t.detail || '').replace(/^(cd [^&|;]+ && )+/, '');
+        return (
+          '<li class="' + (t.ok ? 'tt-ok' : 'tt-err') + '"' +
+          (tip ? ' title="' + escapeHtml(tip) + '"' : '') + '>' +
+          (t.ok ? '' : '<span class="tt-mark">✗</span>') +
+          '<span class="tt-name">' + escapeHtml(t.name || '') + '</span>' +
+          (target ? '<span class="tt-detail">' + escapeHtml(target) + '</span>' : '') +
+          '</li>'
+        );
+      })
+      .join('');
+    return (
+      '<details class="msg-tool-trace"><summary>' +
+      trace.length + ' tool call' + (trace.length === 1 ? '' : 's') +
+      (failed > 0 ? ' · <span class="tt-failed">' + failed + ' failed</span>' : '') +
+      '</summary><ul>' + items + '</ul></details>'
+    );
+  }
+
   function appendMessage(msg, opts) {
     if (!messagesEl) return null;
     clearEmptyState();
@@ -2635,7 +2672,8 @@
       '<div class="role">' + escapeHtml(msg.role || 'system') + '</div>' +
       (replyHtml ? replyHtml : '') +
       '<div class="msg-body">' + renderMessageHtml(msg.content || '') + '</div>' +
-      attachmentsHtml(msg.attachments);
+      attachmentsHtml(msg.attachments) +
+      (msg.role === 'assistant' ? toolTraceHtml(msg.tool_trace) : '');
     decorateMessageBody(div);
     applyTokenBadge(div, msg.tokens, msg.cached_tokens);
     messagesAppendRoot().appendChild(div);
@@ -4833,6 +4871,12 @@
               wrap.className = 'msg-attachments-finalized';
               wrap.innerHTML = attachmentsHtml(msg.message.attachments);
               target.appendChild(wrap);
+            }
+            // Tool trace (runtime modes): the streaming bubble has no trace
+            // block, so attach it on finalize — same as attachments above.
+            if (Array.isArray(msg.message.tool_trace) && msg.message.tool_trace.length) {
+              target.querySelector('.msg-tool-trace')?.remove();
+              target.insertAdjacentHTML('beforeend', toolTraceHtml(msg.message.tool_trace));
             }
             applyTokenBadge(target, msg.message.tokens, msg.message.cached_tokens);
             currentStreamEl = null;

@@ -312,6 +312,7 @@ ensureColumn('messages', 'attachments', 'TEXT');
 ensureColumn('messages', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
 ensureColumn('messages', 'tokens', 'INTEGER'); // dev-mode token usage (runtime modes)
 ensureColumn('messages', 'cached_tokens', 'INTEGER'); // dev-mode: prompt tokens served from cache
+ensureColumn('messages', 'tool_trace', 'TEXT'); // JSON ToolTraceEntry[] — verified tool outcomes (runtime modes)
 ensureColumn('queued_messages', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
 ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
 // Sticky composer send-mode per chat (null = use UI default). Persisted on change

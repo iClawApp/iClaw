@@ -283,7 +283,11 @@ async function execInContainer(containerName: string, command: string): Promise<
         `Likely a network hang (this sandbox has no internet unless the user turns the network toggle ON) ` +
         `or an interactive prompt. Do not assume it completed.]`;
     }
-    return partial || e.message || 'Error';
+    // Explicit verdict line on failure — same contract as Work Mode's rawExec:
+    // the model and the host-side tool trace need a machine-readable FAILED
+    // marker, not just whatever the command printed to stderr.
+    const marker = `[exit code ${e.code ?? 'unknown'} — command FAILED]`;
+    return partial ? `${partial}\n${marker}` : `${e.message ? e.message + '\n' : ''}${marker}`;
   }
 }
 
@@ -351,6 +355,7 @@ Work efficiently — each tool call is one step and steps are limited. Chain rel
 shell commands into a single run_command with && (e.g. \`git clone <url> repo && cd repo && pip install -r requirements.txt\`) instead of one command per step, and don't re-run exploratory commands you've already seen.
 Preinstalled CLIs: git, rg (ripgrep), jq, curl, node, unzip/zip, less, tree.
 You can install more tools yourself, no root needed${networkEnabled ? '' : ' (requires network, which is currently OFF — ask the user to enable it)'}: download a static binary into /workspace/.tools/bin (already on PATH) with curl, or run \`npm i -g <pkg>\`. Self-installed tools live in the workspace, so they persist across turns and are removed automatically when the workspace expires.
+Credentials & claims (critical): this sandbox starts with NO saved credentials — no GitHub/GitLab tokens, no SSH keys, no logged-in CLIs. Any authenticated remote action (git push, creating/updating a PR, posting, API writes) FAILS unless the user gave you a token in this conversation and you passed it to the command explicitly. Never report a remote action as done unless a tool result in THIS turn confirms it — a "[exit code N — command FAILED]" marker means it did NOT happen. If something failed or you didn't run it, say exactly that; never smooth it over, even if earlier conversation claimed it was already done.
 Network is ${networkEnabled ? 'enabled' : 'disabled'}.${
     networkEnabled
       ? '\nTo read a web page, use the web_fetch tool (returns clean text, or a cheap summary by default) — do NOT hand-roll `curl ... | jq`; only drop to `curl -s <url>` in run_command for an API or download web_fetch can\'t handle. To find pages, use web_search. There is no browser in this sandbox.' +

@@ -25,6 +25,7 @@ import type {
   TaskStepActor,
   TaskStepStatus,
   TaskWithSteps,
+  ToolTraceEntry,
 } from '../types';
 import type { InlineSecretWire } from './inlineSecrets';
 import { DEFAULT_MODE } from './chatModes';
@@ -180,9 +181,12 @@ export function enrichFactsWithSourceChatTitles(facts: ProjectFact[]): ProjectFa
 
 // ---------- messages ----------
 
-type MessageRow = Omit<Message, 'attachments'> & { attachments: string | null };
+type MessageRow = Omit<Message, 'attachments' | 'tool_trace'> & {
+  attachments: string | null;
+  tool_trace: string | null;
+};
 
-/** Parse the `attachments` TEXT column (JSON string) into the typed array shape. */
+/** Parse the `attachments` / `tool_trace` TEXT columns (JSON strings) into typed arrays. */
 function hydrateMessage(row: MessageRow | undefined): Message | undefined {
   if (!row) return undefined;
   let attachments: Message['attachments'] = null;
@@ -194,7 +198,16 @@ function hydrateMessage(row: MessageRow | undefined): Message | undefined {
       // Corrupt JSON — treat as no attachments rather than crashing the read path.
     }
   }
-  return { ...row, attachments };
+  let tool_trace: Message['tool_trace'] = null;
+  if (row.tool_trace) {
+    try {
+      const parsed = JSON.parse(row.tool_trace);
+      if (Array.isArray(parsed)) tool_trace = parsed;
+    } catch {
+      // Corrupt JSON — drop the trace, keep the message readable.
+    }
+  }
+  return { ...row, attachments, tool_trace };
 }
 
 export const messages = {
@@ -221,17 +234,21 @@ export const messages = {
     tokens: number | null = null,
     /** Of `tokens`, prompt tokens served from cache (dev-mode). */
     cachedTokens: number | null = null,
+    /** Verified tool outcomes for the turn (assistant rows in runtime modes). */
+    toolTrace: ToolTraceEntry[] | null = null,
   ): Message {
     const rid = reply?.replyToMessageId ?? null;
     const rq = reply?.replyQuote ?? null;
     const rrole = reply?.replyToRole ?? null;
     const att =
       attachments && attachments.length > 0 ? JSON.stringify(attachments) : null;
+    const trace =
+      toolTrace && toolTrace.length > 0 ? JSON.stringify(toolTrace) : null;
     const info = db
       .prepare(
-        'INSERT INTO messages (chat_id, role, content, finish_reason, reply_to_message_id, reply_quote, reply_to_role, attachments, mode, tokens, cached_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO messages (chat_id, role, content, finish_reason, reply_to_message_id, reply_quote, reply_to_role, attachments, mode, tokens, cached_tokens, tool_trace) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(chatId, role, content, finishReason, rid, rq, rrole, att, mode, tokens, cachedTokens);
+      .run(chatId, role, content, finishReason, rid, rq, rrole, att, mode, tokens, cachedTokens, trace);
     // chats.updated_at is bumped by the trg_chats_touch_on_message SQLite
     // trigger; no manual touch() needed here. We keep chats.touch() public
     // for callers that mutate parents without writing a message (e.g.
@@ -757,6 +774,17 @@ export const projectSecrets = {
          FROM project_secrets WHERE project_id = ? ORDER BY created_at DESC, id DESC`,
       )
       .all(projectId) as (Omit<ProjectSecret, 'value'> & { value_length: number })[];
+  },
+  /** Full rows (with values) expandable in this chat — same scope rule as secretUsableInChat. */
+  listUsableInChat(chat: { id: number; project_id: number | null }): ProjectSecret[] {
+    if (chat.project_id != null) {
+      return db
+        .prepare('SELECT * FROM project_secrets WHERE project_id = ?')
+        .all(chat.project_id) as ProjectSecret[];
+    }
+    return db
+      .prepare('SELECT * FROM project_secrets WHERE project_id IS NULL AND source_chat_id = ?')
+      .all(chat.id) as ProjectSecret[];
   },
   get(id: number): ProjectSecret | undefined {
     return db.prepare('SELECT * FROM project_secrets WHERE id = ?').get(id) as

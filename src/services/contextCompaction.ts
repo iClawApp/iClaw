@@ -15,6 +15,7 @@ import { db } from '../db/database';
 import { messages } from './store';
 import { loadOpenRouterConfig } from './config';
 import { complete, type OpenRouterMessage } from './openRouter';
+import type { ToolTraceEntry } from '../types';
 
 /** Keep this many most-recent messages verbatim; older ones get summarized. */
 const RECENT_VERBATIM_COUNT = 16;
@@ -47,10 +48,46 @@ function upsertSummaryRow(chatId: number, upToId: number, summary: string): void
   ).run(chatId, upToId, summary);
 }
 
-interface TurnMsg { id: number; role: string; content: string }
+interface TurnMsg { id: number; role: string; content: string; tool_trace?: ToolTraceEntry[] | null }
+
+/** Show at most this many trace lines per turn in seeded context (head + tail). */
+const TRACE_HEAD_LINES = 4;
+const TRACE_TAIL_LINES = 8;
+
+/**
+ * Render an assistant turn's verified tool outcomes as a compact block appended
+ * to its content. This is the anti-laundering step: without it, re-seeding a
+ * runtime session feeds the model its own past narration as ground truth, so a
+ * once-claimed "pushed ✓" hardens into a "fact" no later turn can dislodge. The
+ * trace is runtime-recorded, so the seeded context always carries what actually
+ * happened next to what the model said happened.
+ */
+function traceBlock(trace: ToolTraceEntry[] | null | undefined): string {
+  if (!trace || trace.length === 0) return '';
+  const lines = trace.map((t) => {
+    const detail = t.detail ? ` ${t.detail}` : '';
+    const outcome = t.outcome ? ` → ${t.outcome}` : '';
+    return `${t.ok ? '✓' : '✗'} ${t.name}${detail}${outcome}`;
+  });
+  const failed = trace.filter((t) => !t.ok).length;
+  let shown = lines;
+  if (lines.length > TRACE_HEAD_LINES + TRACE_TAIL_LINES + 1) {
+    shown = [
+      ...lines.slice(0, TRACE_HEAD_LINES),
+      `… ${lines.length - TRACE_HEAD_LINES - TRACE_TAIL_LINES} more calls …`,
+      ...lines.slice(-TRACE_TAIL_LINES),
+    ];
+  }
+  return (
+    `\n\n[Tool execution record — ${trace.length} call(s), ${failed} failed. ` +
+    `Recorded by the runtime; where the reply above disagrees with it, this record is the truth:\n` +
+    `${shown.join('\n')}]`
+  );
+}
 
 function toModelMsg(m: TurnMsg): OpenRouterMessage {
-  return { role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content.replace(/\s+$/, '') };
+  const content = m.content.replace(/\s+$/, '') + (m.role === 'assistant' ? traceBlock(m.tool_trace) : '');
+  return { role: m.role === 'assistant' ? 'assistant' : 'user', content };
 }
 
 function formatForSummary(msgs: TurnMsg[]): string {
@@ -59,6 +96,9 @@ function formatForSummary(msgs: TurnMsg[]): string {
       const who = m.role === 'assistant' ? 'Assistant' : 'User';
       let text = m.content.trim();
       if (text.length > SUMMARIZE_PER_MSG_CHARS) text = text.slice(0, SUMMARIZE_PER_MSG_CHARS) + '…';
+      // The trace rides along uncapped-by-prose: even when the narration is
+      // clipped, the verified outcomes reach the summarizer.
+      if (m.role === 'assistant') text += traceBlock(m.tool_trace);
       return `${who}: ${text}`;
     })
     .join('\n\n');
@@ -68,6 +108,9 @@ const SUMMARY_SYSTEM_PROMPT = [
   'You compress conversation history into a concise, information-dense summary.',
   'Preserve: facts, user preferences and decisions, established context, names,',
   'numbers, file/work state, and any open threads or unfinished tasks.',
+  '[Tool execution record] blocks are runtime-verified ground truth: when the',
+  "assistant's prose claims an action succeeded but the record shows it failed",
+  'or never ran, the summary must state the recorded outcome, not the claim.',
   'Merge the existing summary with the new messages into one updated summary.',
   'Do not add commentary, greetings, or meta text — output only the summary.',
 ].join(' ');
@@ -120,7 +163,7 @@ export async function buildCompactedHistory(chatId: number, beforeMsgId: number)
   const all = messages
     .listByChat(chatId)
     .filter((m) => m.id < beforeMsgId && (m.role === 'user' || m.role === 'assistant') && m.content.trim())
-    .map((m) => ({ id: m.id, role: m.role, content: m.content }));
+    .map((m) => ({ id: m.id, role: m.role, content: m.content, tool_trace: m.tool_trace ?? null }));
 
   if (all.length <= RECENT_VERBATIM_COUNT + MIN_OLDER_TO_SUMMARIZE) {
     return all.map(toModelMsg);

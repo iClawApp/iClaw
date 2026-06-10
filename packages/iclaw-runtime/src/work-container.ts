@@ -359,7 +359,12 @@ async function rawExec(name: string, command: string, cwd: string): Promise<stri
         `Most likely it hung on the network (npm/pip/git/curl with no connectivity in this sandbox) or on an ` +
         `interactive prompt. Do not assume anything it was downloading or building completed.]`;
     }
-    return partial || e.message || 'Error';
+    // Always end a failed run with an explicit verdict line. stderr alone is not
+    // enough: the model (and the host's persisted tool trace) must be able to
+    // tell "ran fine" from "failed" without parsing tool-specific error prose —
+    // a credential-less `git push`, for instance, otherwise reads like chatter.
+    const marker = `[exit code ${e.code ?? 'unknown'} — command FAILED]`;
+    return partial ? `${partial}\n${marker}` : `${e.message ? e.message + '\n' : ''}${marker}`;
   }
 }
 

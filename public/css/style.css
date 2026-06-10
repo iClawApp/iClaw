@@ -1169,6 +1169,44 @@ code {
 }
 .msg.user .msg-tokens { text-align: right; }
 
+/* Verified tool-outcome trace (Work/Secure turns) — collapsed audit line under
+   the reply. The summary row stays as quiet as the token badge; failures get a
+   red count so a "done ✅" reply with failed calls is visibly suspect. */
+.msg-tool-trace {
+  margin-top: 4px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--text) 42%, transparent);
+}
+.msg-tool-trace summary {
+  cursor: pointer;
+  user-select: none;
+  width: fit-content;
+}
+.msg-tool-trace summary:hover { color: color-mix(in srgb, var(--text) 70%, transparent); }
+.msg-tool-trace .tt-failed { color: var(--danger, #e5484d); }
+.msg-tool-trace ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--text) 14%, transparent);
+  display: grid;
+  gap: 2px;
+}
+.msg-tool-trace li {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.msg-tool-trace .tt-mark { flex: none; }
+.msg-tool-trace li.tt-err .tt-mark,
+.msg-tool-trace li.tt-err .tt-outcome { color: var(--danger, #e5484d); }
+.msg-tool-trace .tt-name { font-weight: 600; }
+.msg-tool-trace .tt-detail { opacity: 0.8; }
+
 /* Dev-mode chat-wide token total (chat header). */
 .chat-token-total {
   align-self: center;

@@ -52,7 +52,13 @@ export function toolActivityLabel(name: string): string {
  * never dump a large or unexpected input into the UI. Returns undefined when
  * there's nothing useful to show.
  */
-export function toolActivityDetail(_name: string, input: unknown): string | undefined {
+export function toolActivityDetail(
+  _name: string,
+  input: unknown,
+  /** Applied to the extracted text BEFORE the 70-char clip — clipping after
+   *  redaction can't split a secret into an unmatchable prefix. */
+  redact?: (s: string) => string,
+): string | undefined {
   if (!input || typeof input !== 'object') return undefined;
   const a = input as Record<string, unknown>;
   const str = (v: unknown): string | undefined =>
@@ -78,8 +84,43 @@ export function toolActivityDetail(_name: string, input: unknown): string | unde
   }
   if (!raw) return undefined;
 
+  if (redact) raw = redact(raw);
   raw = raw.replace(/\s+/g, ' ');
   return raw.length > 70 ? raw.slice(0, 69) + '…' : raw;
+}
+
+/**
+ * Failure shapes of iClaw-runtime tool results. Mirrors the runtime's own
+ * "nothing useful" prefixes (loop.ts isLowValueResult) plus file-tool errors and
+ * the shell exit/timeout markers — keep in sync when runtime tools change how
+ * they report failure.
+ */
+const TOOL_RESULT_ERROR_RE =
+  /^(Error\b|error:|Fetch failed|Search failed|Guardrail:|No results for|No files found|\(empty|Only absolute http|Security error:|File not found|old_string |edit_file requires|run_command is unavailable|Refused:|HTTP [45]\d\d\b)/;
+const TOOL_RESULT_VERDICT_RE = /^\[(exit code |command killed )/;
+
+/**
+ * Classify a finished tool call from its result text: did it succeed, and what
+ * one-line verdict should the persisted trace carry? The verdict prefers an
+ * explicit shell marker line ("[exit code 128 — command FAILED]", "[command
+ * killed after 60s …]") anywhere in the output, then the first line carrying a
+ * word character (a leading "{" of a JSON body says nothing — the next line,
+ * e.g. `"message": "Bad credentials"`, is the actual signal).
+ * Heuristic by design — when nothing matches, the call counts as ok.
+ */
+export function toolOutcome(result: string): { ok: boolean; outcome: string } {
+  const text = String(result ?? '');
+  const lines = text.split('\n');
+  const marker = lines.find((l) => TOOL_RESULT_VERDICT_RE.test(l.trim()));
+  const firstWordy = lines.find((l) => /[A-Za-z0-9]/.test(l));
+  const firstLine = lines.find((l) => l.trim()) ?? '';
+  const pick = (marker ?? firstWordy ?? firstLine).trim().replace(/\s+/g, ' ');
+  const ok =
+    !marker &&
+    !TOOL_RESULT_ERROR_RE.test(text.trimStart()) &&
+    !/\btimed out after\b/.test(text) &&
+    !/did NOT finish/.test(text);
+  return { ok, outcome: pick.length > 140 ? pick.slice(0, 139) + '…' : pick };
 }
 
 /** Human-readable label for gateway lifecycle phases. */

@@ -120,10 +120,29 @@ export function shrinkOldToolOutputs(messages: Message[]): void {
     if (typeof content === 'string' && content.length > 160) {
       messages[i] = {
         ...messages[i],
-        content: `[earlier tool output omitted to save context — was ${content.length.toLocaleString()} chars; re-run the tool if you need it again]`,
+        content: `[earlier tool output omitted to save context — was ${content.length.toLocaleString()} chars; verdict: "${toolResultVerdict(content)}"; re-run the tool if you need it again]`,
       } as Message;
     }
   }
+}
+
+/**
+ * The one line of a tool result worth keeping when its body is compacted away:
+ * an explicit shell verdict marker if present ("[exit code 128 — command
+ * FAILED]", "[command killed after 60s …]"), else the first non-empty line.
+ * Without this, mid-turn compaction erased the very evidence that an action
+ * FAILED, leaving only the model's own optimistic narration in context — the
+ * model then "remembered" failed pushes as successes.
+ */
+export function toolResultVerdict(content: string): string {
+  const lines = content.split('\n');
+  const marker = lines.find((l) => /^\[(exit code |command killed )/.test(l.trim()));
+  // Prefer a line with a word character: the "{" opening a JSON body carries no
+  // signal, the line after it ("message": "Bad credentials") does.
+  const firstWordy = lines.find((l) => /[A-Za-z0-9]/.test(l));
+  const first = lines.find((l) => l.trim()) ?? '';
+  const pick = (marker ?? firstWordy ?? first).trim().replace(/\s+/g, ' ');
+  return pick.length > 120 ? pick.slice(0, 119) + '…' : pick;
 }
 
 /**
@@ -240,7 +259,8 @@ export function isLowValueResult(s: string): boolean {
 const DEFAULT_SYSTEM = `Work Mode: read/search/edit/create files in the selected folders, run shell commands, and research the web (web_search then web_fetch).
 Prefer edit_file over rewriting whole files. For a large file you only need the gist of, use read_summary (cheap) instead of read_file. The user approves every write in the UI — don't paste file contents or ask "is this correct?"; just act, then briefly say what you did.
 Be efficient: chain shell steps with && in one call, don't repeat commands. Never go outside the allowed folders.
-Keep replies short — don't echo back long file listings or file contents; summarize in a line or two.`;
+Keep replies short — don't echo back long file listings or file contents; summarize in a line or two.
+Report only what tool results confirm. Never state that a command succeeded, a file changed, or a remote action (push, PR, message, API call) happened unless a tool result in THIS turn shows it — watch for "[exit code N — command FAILED]" markers. A step that failed or never ran must be reported as failed or not done, even if earlier conversation claimed otherwise.`;
 
 /**
  * System-install policy (Section 3): the agent must not change the user's

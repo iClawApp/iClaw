@@ -3,6 +3,7 @@ import {
   toolActivityLabel,
   toolActivityDetail,
   lifecycleActivityLabel,
+  toolOutcome,
 } from '../../src/services/toolLabels';
 
 describe('toolActivityLabel', () => {
@@ -96,6 +97,74 @@ describe('toolActivityDetail', () => {
     const d = toolActivityDetail('web_search', { query: 'a'.repeat(120) });
     expect(d).toHaveLength(70);
     expect(d?.endsWith('…')).toBe(true);
+  });
+
+  it('applies the redactor BEFORE the 70-char clip', () => {
+    const token = 'ghp_' + 'z'.repeat(36);
+    const cmd = 'curl -s -H "Authorization: token ' + token + '" https://api.github.com/repos';
+    const redact = (s) => s.split(token).join('[secret:GitHub PR]');
+    const d = toolActivityDetail('run_command', { command: cmd }, redact);
+    // Redacting after the clip would have left a 36-char token prefix here.
+    expect(d).not.toContain('ghp_');
+    expect(d).toContain('[secret:GitHub PR]');
+  });
+});
+
+describe('toolOutcome', () => {
+  it('marks a clean result ok with its first line as the verdict', () => {
+    const r = toolOutcome('Edited: /workspace/README.md\nmore detail here');
+    expect(r.ok).toBe(true);
+    expect(r.outcome).toBe('Edited: /workspace/README.md');
+  });
+
+  it('fails on the shell exit marker and surfaces it even when buried in output', () => {
+    const r = toolOutcome(
+      'remote: Permission denied\nfatal: unable to access repo\n[exit code 128 — command FAILED]',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.outcome).toBe('[exit code 128 — command FAILED]');
+  });
+
+  it('fails on the timeout-kill marker', () => {
+    const r = toolOutcome(
+      'partial output\n\n[command killed after 60s — it timed out and did NOT finish. …]',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.outcome).toMatch(/^\[command killed after 60s/);
+  });
+
+  it('fails on runtime error prefixes (fetch/search/file/guardrail)', () => {
+    for (const text of [
+      'Fetch failed (HTTP 403)',
+      'Search failed: provider error',
+      'File not found: README.md',
+      'old_string not found — copy the exact text from the file.',
+      'Guardrail: you’ve already fetched this URL 3 times this turn',
+      'Security error: path escapes the allowed folders',
+    ]) {
+      expect(toolOutcome(text).ok, text).toBe(false);
+    }
+  });
+
+  it('clips long verdict lines to 140 chars', () => {
+    const r = toolOutcome('x'.repeat(400));
+    expect(r.outcome).toHaveLength(140);
+    expect(r.outcome.endsWith('…')).toBe(true);
+  });
+
+  it('treats empty results as ok with an empty verdict', () => {
+    expect(toolOutcome('')).toEqual({ ok: true, outcome: '' });
+  });
+
+  it('fails web_fetch results with HTTP 4xx/5xx status lines', () => {
+    expect(toolOutcome('HTTP 404 — https://github.com/x/pull/118\n\n(empty response body)').ok).toBe(false);
+    expect(toolOutcome('HTTP 503 — https://api.example.com').ok).toBe(false);
+    expect(toolOutcome('HTTP 200 — https://github.com/x/pull/46\n\nSome page text').ok).toBe(true);
+  });
+
+  it('skips bare-punctuation lines when picking the verdict (JSON bodies)', () => {
+    const r = toolOutcome('{\n  "message": "Bad credentials",\n  "status": "401"\n}');
+    expect(r.outcome).toBe('"message": "Bad credentials",');
   });
 });
 
