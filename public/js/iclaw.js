@@ -1721,32 +1721,58 @@
   function initDraftProjectPick() {
     if (!startedOnDraft || !projectPickEl || !composerWrap || !draftBody) return;
 
+    const hintNone = projectPickEl.querySelector('#project-pick-hint-none');
+    const pickGrid = projectPickEl.querySelector('.project-pick-grid');
+
+    const escAttr = (v) =>
+      typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+        ? CSS.escape(v)
+        : v.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+    // The hint pill holds the project that the Space shortcut commits — "No
+    // project" by default, or whatever the user substitutes in by picking a tile
+    // while in "change the default" mode. Substituting does NOT open a chat.
+    function setHintDefault(card) {
+      if (!hintNone) return;
+      hintNone.dataset.projectId = card.getAttribute('data-project-id') || '';
+      hintNone.textContent = card.getAttribute('data-project-name') || 'No project';
+      hintNone.classList.remove('is-emptied');
+      hintNone.setAttribute('aria-pressed', 'false');
+      pickGrid?.classList.remove('is-choosing');
+    }
+
     projectPickEl.addEventListener('click', (e) => {
       const card = e.target.closest('.project-pick-card');
       if (!card || draftProjectLocked) return;
+      // While the tiles are jiggling (the user clicked the pill to change the
+      // default), a tile click SUBSTITUTES that project into the pill / Space
+      // shortcut instead of opening a chat. Otherwise it commits, as before.
+      if (pickGrid && pickGrid.classList.contains('is-choosing')) {
+        setHintDefault(card);
+        return;
+      }
       void commitDraftFromCard(card);
     });
 
-    // Space = "No project" — a quick skip past project selection. Guarded to the
-    // active picking stage so it never fires afterwards, and ignored while a text
-    // field is focused. commitDraftFromCard's re-entry guard makes this safe even
-    // if a card button also has focus.
+    // Space commits with the hint pill's current default project (No project, or
+    // whatever the user substituted in). Guarded to the active picking stage and
+    // ignored while a text field is focused.
     document.addEventListener('keydown', (e) => {
       if (e.key !== ' ' && e.code !== 'Space') return;
       if (draftProjectLocked || !draftBody.classList.contains('is-picking')) return;
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      const none = projectPickEl.querySelector('.project-pick-card--none');
-      if (!none) return;
       e.preventDefault();
-      void commitDraftFromCard(none);
+      const defId = (hintNone?.dataset.projectId || '').trim();
+      const card = defId
+        ? projectPickEl.querySelector('.project-pick-card[data-project-id="' + escAttr(defId) + '"]')
+        : projectPickEl.querySelector('.project-pick-card--none');
+      if (card) void commitDraftFromCard(card);
     });
 
-    // Hint "No project" pill → playful "pick a project" mode: the pill empties
-    // with a light sheen and the project tiles jiggle iOS-home-screen style to
-    // invite the user to choose which project to open. Toggles off on re-click.
-    const hintNone = projectPickEl.querySelector('#project-pick-hint-none');
-    const pickGrid = projectPickEl.querySelector('.project-pick-grid');
+    // Click the pill → "change the default" mode: it empties with a light sheen
+    // and the project tiles jiggle iOS-home-screen style, inviting a pick. Click
+    // a tile to substitute it (above); re-click the pill to cancel.
     if (hintNone && pickGrid) {
       hintNone.addEventListener('click', () => {
         const choosing = pickGrid.classList.toggle('is-choosing');
