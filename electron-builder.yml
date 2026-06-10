@@ -44,5 +44,25 @@ extraResources:
     to: node
 mac:
   category: public.app-category.productivity
+  # Hardened runtime + entitlements are required for notarization. The bundled
+  # stock Node JITs and loads non-Apple-signed binaries, so the entitlements
+  # grant allow-jit / disable-library-validation (see build/entitlements.mac.plist).
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Notarization is OFF by default so local/CI builds never stall on an upload.
+  # To produce a distributable, set notarize: true (or --config.mac.notarize=true)
+  # with APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID in the env, and a
+  # "Developer ID Application" cert in the keychain (the $99 program — NOT the
+  # "Apple Development" cert).
+  notarize: false
+  # dmg = the download; zip = the artifact electron-updater consumes on macOS.
   target:
-    - dir
+    - dmg
+    - zip
+# Update feed: electron-updater pulls newer signed builds from GitHub Releases.
+publish:
+  provider: github
+  owner: iClawApp
+  repo: iClaw

@@ -161,6 +161,8 @@ async function createWindow() {
   mainWindow.webContents.once('did-finish-load', () => {
     logger.log('[iclaw-desktop] window loaded', url);
     mainWindow.show();
+    // Check GitHub Releases for a newer signed build (packaged builds only).
+    require('./updater').initAutoUpdates(logger);
   });
 
   await mainWindow.loadURL(url);
