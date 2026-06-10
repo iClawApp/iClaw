@@ -7,6 +7,7 @@
 import OpenAI from 'openai';
 
 import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
+import { NOTION_TOOLS, type NotionDeliverable } from './notion-tool.js';
 import { SOCIAL_SEARCH_TOOL } from './social.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 import { resolveTurnModel } from './model-capabilities.js';
@@ -32,6 +33,13 @@ export interface AgentOptions {
    */
   incognito?: boolean | undefined;
   systemPrompt?: string | undefined;
+  /**
+   * Verified Notion token for a Role run. Present → the notion_* tools are
+   * offered (host-side; the container stays offline). Absent → not exposed.
+   */
+  notionToken?: string | undefined;
+  /** Sink for the role run's Notion deliverable (DB url + row count) as it grows. */
+  onNotionDeliverable?: ((d: NotionDeliverable) => void) | undefined;
   /**
    * Image data URLs (`data:<mime>;base64,…`) for THIS turn's user message —
    * files the user dropped into the chat. Sent once as vision blocks so the
@@ -357,6 +365,8 @@ export async function* runAgentTurn(
     // Fresh per turn → web_fetch dedups repeat pulls of the same URL within this
     // turn (and never leaks fetched bodies across turns).
     fetchCache: new Map<string, string>(),
+    notionToken: opts.notionToken,
+    onNotionDeliverable: opts.onNotionDeliverable,
   };
 
   // Per-mode tool set. Incognito is read-only, so don't ship write_file/edit_file
@@ -376,6 +386,8 @@ export async function* runAgentTurn(
     // analyze_link + social_search both run in the session container, so both
     // are offered only when a sandbox backend is wired.
     ...(opts.linkSandbox ? [ANALYZE_LINK_TOOL, SOCIAL_SEARCH_TOOL] : []),
+    // Notion tools (Role runs) run host-side, gated on a verified token.
+    ...(opts.notionToken ? NOTION_TOOLS : []),
   ];
 
   // When the user dropped image(s), send the turn's user message as a

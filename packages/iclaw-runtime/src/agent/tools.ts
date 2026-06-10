@@ -342,7 +342,8 @@ export const ANALYZE_LINK_TOOL = {
 
 export type ToolName =
   | 'list_files' | 'read_file' | 'read_summary' | 'search_files' | 'write_file' | 'edit_file'
-  | 'run_command' | 'web_fetch' | 'web_search' | 'analyze_link' | 'social_search' | 'show_image';
+  | 'run_command' | 'web_fetch' | 'web_search' | 'analyze_link' | 'social_search' | 'show_image'
+  | 'notion_search' | 'notion_create_database' | 'notion_add_row';
 
 /** A host image the agent asked to display inline (via show_image). */
 export interface ImageRef {
@@ -461,6 +462,18 @@ export interface ToolContext {
    * fresh per turn by the loop; absent → caching off (each fetch goes to network).
    */
   fetchCache?: Map<string, string> | undefined;
+  /**
+   * Verified Notion integration token for a Role run. Present → the notion_*
+   * tools are offered and run host-side (the role's container never touches
+   * Notion). Absent → those tools aren't exposed at all.
+   */
+  notionToken?: string | undefined;
+  /**
+   * Sink for the Notion deliverable (database URL + running row count) as the
+   * agent builds it, so the run flow can show the user a finished thing to
+   * review. Wired by the role run; absent elsewhere.
+   */
+  onNotionDeliverable?: ((d: import('./notion-tool.js').NotionDeliverable) => void) | undefined;
 }
 
 /** Folders to validate reads against — empty (anywhere) for Incognito. */
@@ -498,6 +511,12 @@ export async function executeTool(
         }
         const { socialSearch } = await import('./social.js');
         return await socialSearch(args, { runInSandbox: ctx.linkSandbox, networkEnabled: true, onNote: ctx.onNote });
+      }
+      case 'notion_search':
+      case 'notion_create_database':
+      case 'notion_add_row': {
+        const { executeNotionTool } = await import('./notion-tool.js');
+        return await executeNotionTool(name, args, ctx.notionToken, ctx.onNotionDeliverable);
       }
       default: return `Unknown tool: ${name}`;
     }

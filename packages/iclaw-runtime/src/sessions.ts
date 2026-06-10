@@ -7,6 +7,7 @@ import { readdirSync, statSync, readFileSync, copyFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 import { runAgentTurn, type Message } from './agent/loop.js';
+import { type NotionDeliverable } from './agent/notion-tool.js';
 import type { AgentEvent } from './agent/loop.js';
 import { validateMountRoot } from './agent/security.js';
 import {
@@ -49,6 +50,11 @@ export interface SessionOptions {
   incognito?: boolean | undefined;
   networkEnabled?: boolean | undefined;
   systemPrompt?: string | undefined;
+  /**
+   * Verified Notion token for a Role run. Enables the host-side notion_* tools
+   * for this session's turns (the role's container, if any, stays offline).
+   */
+  notionToken?: string | undefined;
   /** Stable identity (e.g. "chat:156") for reconnecting to a workspace. */
   key?: string | undefined;
   /**
@@ -95,6 +101,12 @@ interface Session {
   workContainer?: { name: string; lastUsed: number; inUse: boolean } | undefined;
   /** Stable identity for reconnection across restarts. */
   key?: string | undefined;
+  /**
+   * The Notion deliverable a Role run has produced so far (database URL + a
+   * running row count), captured from the notion_* tools so the host can show
+   * the user a finished thing to review. Set on the work path only.
+   */
+  notionDeliverable?: NotionDeliverable | undefined;
   /** Last activity timestamp (ms). Updated on each message. */
   lastActivity: number;
   /** TTL in ms after last activity before cleanup. 0 = never. Default 7 days. */
@@ -387,14 +399,20 @@ export function deleteSession(id: string): void {
 }
 
 /** Get workspace info for a session. */
-export function getSessionInfo(id: string): { workspaceSize: number; secure: boolean } | null {
+export function getSessionInfo(
+  id: string,
+): { workspaceSize: number; secure: boolean; notionDeliverable?: NotionDeliverable } | null {
   const session = sessions.get(id);
   if (!session) return null;
   let workspaceSize = 0;
   if (session.secureWorkspaceDir) {
     workspaceSize = getDirSize(session.secureWorkspaceDir);
   }
-  return { workspaceSize, secure: session.opts.secure ?? false };
+  return {
+    workspaceSize,
+    secure: session.opts.secure ?? false,
+    ...(session.notionDeliverable ? { notionDeliverable: session.notionDeliverable } : {}),
+  };
 }
 
 /** Export a Safe session's sandbox to a host folder. Null if not a Safe session. */
@@ -750,6 +768,17 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     linkSandbox,
     incognito,
     systemPrompt: session.opts.systemPrompt,
+    notionToken: session.opts.notionToken,
+    // Capture the deliverable as it grows: notion_create_database seeds it (0
+    // rows), each notion_add_row to the same DB bumps the count. The host reads
+    // it from getSessionInfo to show a finished thing for review.
+    onNotionDeliverable: (d) => {
+      const prev = session.notionDeliverable;
+      session.notionDeliverable =
+        prev && prev.databaseId === d.databaseId
+          ? { ...prev, url: d.url || prev.url, title: d.title || prev.title, rows: prev.rows + d.rows }
+          : d;
+    },
     signal: abort.signal,
     images,
     onWriteApproval: async (filePath, fileContent) => {
