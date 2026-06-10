@@ -19,7 +19,7 @@ import { promisify } from 'node:util';
 import type OpenAI from 'openai';
 import type { AgentEvent, AgentOptions, Message } from './agent/loop.js';
 import type { SavingsNote } from './agent/tools.js';
-import { shrinkOldToolOutputs, withPromptCaching, makeToolGuard, HOST_INSTALL_POLICY, describeApiError } from './agent/loop.js';
+import { shrinkOldToolOutputs, withPromptCaching, makeToolGuard, HOST_INSTALL_POLICY, CITATION_POLICY, describeApiError } from './agent/loop.js';
 import { resolveTurnModel } from './agent/model-capabilities.js';
 import { log } from './log.js';
 import { INSTALL_LABEL } from './install-id.js';
@@ -360,7 +360,8 @@ Network is ${networkEnabled ? 'enabled' : 'disabled'}.${
     networkEnabled
       ? '\nTo read a web page, use the web_fetch tool (returns clean text, or a cheap summary by default) — do NOT hand-roll `curl ... | jq`; only drop to `curl -s <url>` in run_command for an API or download web_fetch can\'t handle. To find pages, use web_search. There is no browser in this sandbox.' +
         '\nFor a link\'s actual content, prefer analyze_link (YouTube videos: subtitles/transcript) and social_search (Reddit / HackerNews). ' +
-        'Use mode:"summary" with a short purpose by default to save tokens; mode:"full" only when you need exact wording.'
+        'Use mode:"summary" with a short purpose by default to save tokens; mode:"full" only when you need exact wording.' +
+        `\n${CITATION_POLICY}`
       : ''
   }
 Be concise.

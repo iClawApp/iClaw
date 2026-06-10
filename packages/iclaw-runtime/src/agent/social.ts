@@ -217,9 +217,15 @@ export async function socialSearch(
     return `social_search found nothing for "${url || query}".${errs ? ` Source errors — ${errs}.` : ''}${url ? ' Check the Reddit URL is a post link.' : ' Try different keywords or sources.'}`;
   }
 
+  // Co-located citation nudge: the system prompt's "cite sources" rule sits far
+  // from the URLs and gets ignored (esp. by weaker models); the same instruction
+  // placed right next to the data — and last, so it's the most recent thing the
+  // model reads before answering — lands far more reliably. Survives truncation.
+  const citeNudge =
+    '\n\n[If you mention any of these posts in your reply, link the post title to its exact URL above as an inline clickable markdown link — not a bare URL, and never invent a link.]';
   const text = formatPayload(payload);
   if (text.length > SOCIAL_RESULT_MAX_CHARS) {
-    return text.slice(0, SOCIAL_RESULT_MAX_CHARS) + `\n\n…[truncated — narrow the query or lower limit]`;
+    return text.slice(0, SOCIAL_RESULT_MAX_CHARS) + `\n\n…[truncated — narrow the query or lower limit]` + citeNudge;
   }
-  return text;
+  return text + citeNudge;
 }

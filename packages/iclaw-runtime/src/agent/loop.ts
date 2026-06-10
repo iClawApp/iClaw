@@ -271,6 +271,16 @@ Report only what tool results confirm. Never state that a command succeeded, a f
  */
 export const HOST_INSTALL_POLICY = `System changes (important): your run_command runs in an isolated sandbox, so installing tools there is fine for the task but does NOT install anything on the user's actual computer. Never attempt or claim to make host system changes — installing Python, Node, Git, Docker, Homebrew or system packages on their machine, or editing their PATH. If a task genuinely needs something installed on their computer, tell them it changes their system, give the official install command or link, and ask them to run it themselves.`;
 
+/**
+ * Source-citation policy: when an answer rests on specific pages/threads the
+ * agent actually fetched or searched, link them inline so the user can click
+ * through — and only ever with a real URL from a tool result (models otherwise
+ * fabricate plausible-but-dead links; the exact URLs are right there in the
+ * web_fetch / social_search output). Cheap in tokens, big for trust. Gated to
+ * web-enabled contexts by the caller. Shared by Secure / Work / Incognito.
+ */
+export const CITATION_POLICY = `Sources: when you use a page, thread or video you fetched or searched, link it inline — make the title itself a clickable markdown link to its exact URL from the tool result, not a bare URL or an end-of-reply list. Never invent a link or cite a source you didn't retrieve.`;
+
 const INCOGNITO_SYSTEM = `Incognito: private, READ-ONLY research. You can read files anywhere, search, run a read-only shell in the selected folders, and use web_search/web_fetch.
 You CANNOT write — never claim you saved or changed anything. This chat is ephemeral: nothing is stored. Be concise; put findings in your reply.`;
 
@@ -287,7 +297,7 @@ function identityLine(model: string): string {
 
 function buildSystemPrompt(opts: AgentOptions): string {
   if (opts.incognito) {
-    const parts = [identityLine(opts.model), INCOGNITO_SYSTEM];
+    const parts = [identityLine(opts.model), INCOGNITO_SYSTEM, CITATION_POLICY];
     if (opts.allowedFolders.length) {
       parts.push(
         `\nShell folders (read-only): ${opts.allowedFolders.join(', ')}. File reads aren't limited to these; secrets are always refused.`,
@@ -299,7 +309,7 @@ function buildSystemPrompt(opts: AgentOptions): string {
     return parts.join('\n');
   }
 
-  const parts = [identityLine(opts.model), DEFAULT_SYSTEM, HOST_INSTALL_POLICY];
+  const parts = [identityLine(opts.model), DEFAULT_SYSTEM, HOST_INSTALL_POLICY, CITATION_POLICY];
 
   const folders = opts.folderAccess?.length
     ? opts.folderAccess
