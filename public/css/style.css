@@ -3755,6 +3755,80 @@ code {
   background: color-mix(in srgb, var(--text) 5%, var(--surface));
   color: var(--text);
 }
+
+/* The "No project" hint is now a clickable pill (styled like the old <kbd>).
+   Click it to enter "pick a project" mode: the pill empties with a light sheen
+   and the project tiles jiggle iOS-home-screen style to invite a choice. */
+.project-pick-hint-none {
+  font: inherit;
+  font-size: 0.8em;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 5%, var(--surface));
+  color: var(--text);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  vertical-align: baseline;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.project-pick-hint-none:hover {
+  border-color: color-mix(in srgb, var(--text) 28%, var(--border));
+}
+.project-pick-hint-none.is-emptied {
+  color: transparent;
+  min-width: 4.6em; /* hold the pill's width once the text is gone */
+}
+.project-pick-hint-none.is-emptied::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-130%);
+  background: linear-gradient(
+    110deg,
+    transparent 25%,
+    color-mix(in srgb, var(--text) 16%, transparent) 50%,
+    transparent 75%
+  );
+  animation: iclaw-pill-sheen 1.3s ease-in-out infinite;
+}
+@keyframes iclaw-pill-sheen {
+  to {
+    transform: translateX(130%);
+  }
+}
+
+/* iOS "edit mode" jiggle — slightly desynced per tile so it feels organic. */
+@keyframes iclaw-jiggle-a {
+  0%, 100% { transform: rotate(-1.15deg); }
+  50% { transform: rotate(1.15deg); }
+}
+@keyframes iclaw-jiggle-b {
+  0%, 100% { transform: rotate(1deg) translateY(-0.4px); }
+  50% { transform: rotate(-1deg) translateY(0.4px); }
+}
+.project-pick-grid.is-choosing .project-pick-card:not(.project-pick-card--none) {
+  animation: iclaw-jiggle-a 0.3s ease-in-out infinite;
+}
+.project-pick-grid.is-choosing .project-pick-card--none {
+  opacity: 0.5; /* dim the "skip" option while the real projects invite a pick */
+}
+.project-pick-grid.is-choosing .project-pick-card:not(.project-pick-card--none):nth-child(2n) {
+  animation-name: iclaw-jiggle-b;
+  animation-duration: 0.34s;
+}
+.project-pick-grid.is-choosing .project-pick-card:not(.project-pick-card--none):nth-child(3n) {
+  animation-duration: 0.27s;
+  animation-delay: -0.1s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .project-pick-grid.is-choosing .project-pick-card,
+  .project-pick-hint-none.is-emptied::after {
+    animation: none;
+  }
+}
 .project-pick-grid {
   display: flex;
   flex-wrap: wrap;

@@ -1742,6 +1742,19 @@
       void commitDraftFromCard(none);
     });
 
+    // Hint "No project" pill → playful "pick a project" mode: the pill empties
+    // with a light sheen and the project tiles jiggle iOS-home-screen style to
+    // invite the user to choose which project to open. Toggles off on re-click.
+    const hintNone = projectPickEl.querySelector('#project-pick-hint-none');
+    const pickGrid = projectPickEl.querySelector('.project-pick-grid');
+    if (hintNone && pickGrid) {
+      hintNone.addEventListener('click', () => {
+        const choosing = pickGrid.classList.toggle('is-choosing');
+        hintNone.classList.toggle('is-emptied', choosing);
+        hintNone.setAttribute('aria-pressed', choosing ? 'true' : 'false');
+      });
+    }
+
     const initSel = (projectPickEl.dataset.initialProjectId || '').trim();
     if (initSel !== '') {
       const esc =
