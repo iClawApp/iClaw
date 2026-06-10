@@ -1,0 +1,90 @@
+<%- include('partials/head', { title: role.name + ' — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main role-page" data-role-id="<%= role.id %>">
+    <div class="role-inner">
+      <% if (typeof agentsError !== 'undefined' && agentsError) { %>
+      <%- include('partials/gatewayError', { agentsError, gatewayUp, openclawBaseUrl }) %>
+      <% } %>
+
+      <header class="role-head">
+        <%- include('partials/mobile-nav-toggle') %>
+        <a class="role-back" href="/roles" aria-label="All roles">← Roles</a>
+        <div class="role-hero">
+          <span class="role-hero-icon" aria-hidden="true"><%= role.icon %></span>
+          <div class="role-hero-text">
+            <h1 class="role-hero-name"><%= role.name %></h1>
+            <p class="role-hero-tagline"><%= role.tagline %></p>
+          </div>
+        </div>
+      </header>
+
+      <!-- Connect the role's tools (one-tap). -->
+      <% role.tools.forEach(function (t) { %>
+        <div class="role-connect<%= t.connected ? ' role-connect--on' : '' %>" data-tool="<%= t.id %>">
+          <% if (t.connected) { %>
+            <span class="role-connect-dot" aria-hidden="true"></span>
+            <span class="role-connect-label"><%= t.id.charAt(0).toUpperCase() + t.id.slice(1) %> connected</span>
+            <button type="button" class="role-connect-manage" data-action="disconnect">Disconnect</button>
+          <% } else { %>
+            <span class="role-connect-need">This role works in your <strong><%= t.id %></strong> (<%= t.scope === 'read_write' ? 'read + write' : 'read-only' %>).</span>
+            <button type="button" class="role-connect-btn" data-action="connect"><%= t.connectLabel %></button>
+          <% } %>
+        </div>
+      <% }); %>
+
+      <!-- Delegation examples — the cure for the blank screen. -->
+      <section class="role-examples" aria-label="Things this role can do">
+        <p class="role-examples-lead muted">Hand it something:</p>
+        <div class="role-examples-grid">
+          <% role.delegationExamples.forEach(function (ex) { %>
+            <button type="button" class="role-example" data-fill="<%= ex.replace(/\"/g, '&quot;') %>">
+              <%= ex %>
+            </button>
+          <% }); %>
+        </div>
+      </section>
+
+      <!-- Task input — give it one line. -->
+      <form class="role-run" id="role-run-form">
+        <textarea
+          id="role-task-input"
+          class="role-task-input"
+          rows="2"
+          placeholder="…or describe the task in one line"
+          autocomplete="off"
+        ></textarea>
+        <button type="submit" class="role-run-btn">Run</button>
+      </form>
+
+      <!-- Deliverable / review surface (filled once a run completes). -->
+      <section class="role-result" id="role-result" hidden aria-live="polite"></section>
+
+      <footer class="role-foot muted">
+        It brings a <strong><%= role.deliverable.type.replace(/_/g, ' ') %></strong> for you to review.
+        Nothing is published, sent, or deleted outside the box without your tap.
+        “Delete” tears the box down — your work stays in the tool.
+      </footer>
+    </div>
+  </main>
+</div>
+
+<script>
+  // Delegation example → fill the task input (and focus it). Run/connect wiring
+  // lands with the container run flow.
+  (function () {
+    var input = document.getElementById('role-task-input');
+    document.querySelectorAll('.role-example').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (!input) return;
+        input.value = btn.getAttribute('data-fill') || btn.textContent.trim();
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
+    });
+  })();
+</script>
+
+<%- include('partials/foot') %>

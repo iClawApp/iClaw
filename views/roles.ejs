@@ -1,0 +1,53 @@
+<%- include('partials/head', { title: 'Roles — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main roles-hub-page">
+    <div class="roles-hub-inner">
+      <% if (typeof agentsError !== 'undefined' && agentsError) { %>
+      <%- include('partials/gatewayError', { agentsError, gatewayUp, openclawBaseUrl }) %>
+      <% } %>
+
+      <header class="roles-hub-head page-toolbar page-toolbar--stack">
+        <%- include('partials/mobile-nav-toggle') %>
+        <h1 class="roles-hub-title">Roles</h1>
+        <p class="roles-hub-intro muted">
+          Hire a digital specialist. Each one works in its own sealed box, on the
+          tools you connect — and brings you a finished result to review. You stay
+          in control: nothing leaves the box without your say-so, and “Delete”
+          fires the worker instantly.
+        </p>
+      </header>
+
+      <ul class="roles-hub-grid" role="list">
+        <% roleRows.forEach(function (r) { %>
+          <li class="role-card-wrap">
+            <a class="role-card" href="/roles/<%= r.id %>">
+              <span class="role-card-icon" aria-hidden="true"><%= r.icon %></span>
+              <span class="role-card-body">
+                <span class="role-card-name"><%= r.name %></span>
+                <span class="role-card-tagline"><%= r.tagline %></span>
+                <span class="role-card-meta">
+                  <span class="role-card-audience"><%= r.audience %></span>
+                  <% if (r.connected) { %>
+                    <span class="role-card-conn role-card-conn--on">Connected</span>
+                  <% } else if (r.connectDifficulty === 'easy') { %>
+                    <span class="role-card-conn">1-tap connect</span>
+                  <% } %>
+                </span>
+              </span>
+            </a>
+          </li>
+        <% }); %>
+      </ul>
+
+      <p class="roles-hub-foot muted">
+        More specialists unlock as you go — this isn’t a marketplace of a thousand
+        bots, it’s a short bench of workers that actually deliver.
+      </p>
+    </div>
+  </main>
+</div>
+
+<%- include('partials/foot') %>

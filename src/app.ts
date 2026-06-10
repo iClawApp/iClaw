@@ -33,6 +33,7 @@ import { remoteAccessApiRouter } from './routes/remoteAccessApi';
 import { settingsRouter } from './routes/settings';
 import { shareRouter } from './routes/share';
 import { uiStateRouter } from './routes/uiState';
+import { rolesRouter } from './routes/roles';
 import { kvGetByPrefix } from './db/kv';
 
 import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
@@ -136,6 +137,7 @@ export function createApp(): express.Express {
   app.use('/', indexRouter);
   app.use('/chats', chatsRouter);
   app.use('/projects', projectsRouter);
+  app.use('/roles', rolesRouter);
   app.use('/tasks', tasksRouter);
   app.use('/', settingsRouter);
   app.use('/api/agents', agentsRouter);
