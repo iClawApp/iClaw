@@ -14,6 +14,10 @@
 appId: app.iclaw.desktop
 productName: iClaw
 copyright: © iClaw
+# Version-LESS artifact names so the website can link to a stable URL
+# (github.com/iClawApp/iClaw/releases/latest/download/iClaw-arm64.dmg). The
+# version still lives inside latest-mac.yml, which is what auto-update reads.
+artifactName: ${productName}-${arch}.${ext}
 directories:
   output: release
 asar: false
@@ -45,6 +49,9 @@ extraResources:
     # server runs compiled dist, not tsx). Excluding them trims ~400 MB.
     filter:
       - "**/*"
+      # .bin holds CLI shims (symlinks) — unused at runtime, and pruning their
+      # targets below leaves them DANGLING, which breaks codesign. Drop them.
+      - "!.bin/**"
       - "!electron/**"
       - "!electron-builder/**"
       - "!app-builder-lib/**"

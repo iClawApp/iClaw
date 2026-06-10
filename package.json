@@ -52,7 +52,9 @@
     "electron:dev": "npm run build:desktop && npm run electron",
     "vendor:node": "node scripts/vendor-node.mjs",
     "pack:mac": "npm run build:desktop && npm run vendor:node && electron-builder --mac --dir",
-    "dist:mac": "npm run build:desktop && npm run vendor:node && electron-builder --mac"
+    "dist:mac": "npm run build:desktop && npm run vendor:node && electron-builder --mac",
+    "release": "bash scripts/release.sh",
+    "release:publish": "bash scripts/release.sh always"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",

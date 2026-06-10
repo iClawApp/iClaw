@@ -4,6 +4,7 @@ dist/
 data/
 .env
 .env.local
+.env.release
 .DS_Store
 *.log
 *.tgz
