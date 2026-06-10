@@ -9,11 +9,17 @@
 
 import type { RoleManifest } from './types';
 import { contentStrategist } from './content-strategist';
+import { copywriter } from './copywriter';
+import { socialMediaManager } from './social-media-manager';
 
 export type { RoleManifest, RoleTool, ToolScope, ConnectMethod } from './types';
 
 /** Every role we ship, in build/disclosure order. */
-export const ALL_ROLES: readonly RoleManifest[] = [contentStrategist];
+export const ALL_ROLES: readonly RoleManifest[] = [
+  contentStrategist,
+  copywriter,
+  socialMediaManager,
+];
 
 const byId = new Map(ALL_ROLES.map((r) => [r.id, r]));
 
