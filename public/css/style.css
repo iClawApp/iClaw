@@ -8797,6 +8797,34 @@ body.incognito-mode .composer-mode-btn__label {
 .role-connect-msg--err { color: var(--warn); }
 .role-connect-btn[disabled] { opacity: 0.6; cursor: default; }
 
+.role-memory { margin-bottom: 22px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.role-memory[open] { background: color-mix(in srgb, var(--text) 2.5%, var(--surface)); }
+.role-memory-summary {
+  display: flex; align-items: center; gap: 10px; padding: 13px 16px; cursor: pointer;
+  list-style: none; font-size: var(--text-sm); user-select: none;
+}
+.role-memory-summary::-webkit-details-marker { display: none; }
+.role-memory-icon { font-size: 16px; line-height: 1; flex: none; }
+.role-memory-label { font-weight: 600; }
+.role-memory[data-set] .role-memory-label { color: var(--text); }
+.role-memory-edit { margin-left: auto; color: var(--muted); font-size: var(--text-sm); }
+.role-memory[open] .role-memory-edit { display: none; }
+.role-memory-form { padding: 0 16px 16px; }
+.role-memory-help { font-size: var(--text-sm); line-height: 1.5; margin: 0 0 10px; }
+.role-memory-input {
+  width: 100%; resize: vertical; min-height: 64px; padding: 10px 12px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface);
+  color: var(--text); font: inherit; font-size: var(--text-sm); line-height: 1.5;
+}
+.role-memory-input:focus { outline: none; box-shadow: var(--focus-ring); border-color: color-mix(in srgb, var(--text) 30%, var(--border)); }
+.role-memory-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.role-memory-save {
+  padding: 7px 18px; border: none; border-radius: var(--radius-md);
+  background: var(--text); color: var(--surface); font-weight: 600; font-size: var(--text-sm); cursor: pointer;
+}
+.role-memory-save:hover { filter: brightness(1.1); }
+.role-memory-msg { font-size: var(--text-sm); }
+
 .role-examples { margin-bottom: 16px; }
 .role-examples-lead { font-size: var(--text-sm); margin: 0 0 10px; }
 .role-examples-grid { display: flex; flex-direction: column; gap: 8px; }

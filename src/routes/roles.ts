@@ -161,7 +161,14 @@ rolesRouter.post('/:id/run', async (req, res) => {
     return;
   }
 
-  const systemPrompt = role.soul + (notionToken ? NOTION_PROCEDURE : '');
+  // Per-role memory: a brand/context note the user set once. Injected so the
+  // role remembers who they are across runs (the thing that makes it a worker,
+  // not a one-shot GPT).
+  const memory = (kvGet(`role.${role.id}.memory`) ?? '').trim();
+  const memoryBlock = memory
+    ? `\n\nWhat you remember about this user (use it; don't ask again):\n${memory}`
+    : '';
+  const systemPrompt = role.soul + memoryBlock + (notionToken ? NOTION_PROCEDURE : '');
   try {
     const sessionId = await createWorkSession({
       systemPrompt,
@@ -263,6 +270,20 @@ rolesRouter.get('/:id', async (req, res) => {
       })),
       egressAllowlist: role.egressAllowlist,
       definitionOfDone: role.definitionOfDone,
+      memory: (kvGet(`role.${role.id}.memory`) ?? '').trim(),
     },
   });
+});
+
+/** Save (or clear) the per-role brand/context memory the user types once. */
+rolesRouter.post('/:id/memory', (req, res) => {
+  const role = getRole(String(req.params.id));
+  if (!role) {
+    res.status(404).json({ ok: false, error: 'Unknown role.' });
+    return;
+  }
+  const note = String(req.body?.note ?? '').trim().slice(0, 4000);
+  if (note) kvSet(`role.${role.id}.memory`, note);
+  else kvDelete(`role.${role.id}.memory`);
+  res.json({ ok: true, saved: Boolean(note) });
 });

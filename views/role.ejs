@@ -67,6 +67,28 @@
         </div>
       <% }); %>
 
+      <!-- Per-role memory — teach it once; it uses this on every run (role ≠ GPT). -->
+      <details class="role-memory"<% if (role.memory) { %> data-set="1"<% } %>>
+        <summary class="role-memory-summary">
+          <span class="role-memory-icon" aria-hidden="true">🧠</span>
+          <span class="role-memory-label"><%= role.memory ? 'Remembers your brand & context' : 'Teach it your brand & context' %></span>
+          <span class="role-memory-edit">Edit</span>
+        </summary>
+        <form class="role-memory-form" id="role-memory-form">
+          <p class="role-memory-help muted">Tell it once who you are — brand, audience, voice, anything it should assume. It uses this on every run instead of asking again.</p>
+          <textarea
+            id="role-memory-input"
+            class="role-memory-input"
+            rows="3"
+            placeholder="e.g. B2B SaaS for ops teams. Voice: direct, concrete, no hype. Audience: heads of operations at 50–200-person companies."
+          ><%= role.memory %></textarea>
+          <div class="role-memory-actions">
+            <button type="submit" class="role-memory-save">Save</button>
+            <span class="role-memory-msg muted" data-role="mem-msg" hidden></span>
+          </div>
+        </form>
+      </details>
+
       <!-- Delegation examples — the cure for the blank screen. -->
       <section class="role-examples" aria-label="Things this role can do">
         <p class="role-examples-lead muted">Hand it something:</p>
@@ -328,6 +350,28 @@
     if (resultEl) {
       resultEl.addEventListener('click', function (e) {
         if (e.target.closest('[data-run-cancel]')) deleteRun();
+      });
+    }
+
+    // 4) Per-role memory — teach it once, it remembers across runs.
+    var memForm = document.getElementById('role-memory-form');
+    if (memForm && roleId) {
+      memForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var inp = document.getElementById('role-memory-input');
+        var msg = memForm.querySelector('[data-role="mem-msg"]');
+        var note = ((inp && inp.value) || '').trim();
+        fetch('/roles/' + encodeURIComponent(roleId) + '/memory', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note: note }),
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (msg) { msg.textContent = j.saved ? 'Saved — it’ll remember.' : 'Cleared.'; msg.hidden = false; }
+            var label = document.querySelector('.role-memory-label');
+            if (label) label.textContent = j.saved ? 'Remembers your brand & context' : 'Teach it your brand & context';
+          })
+          .catch(function () { if (msg) { msg.textContent = 'Could not save — try again.'; msg.hidden = false; } });
       });
     }
   })();
