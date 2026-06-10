@@ -20,8 +20,31 @@ import { probeGateway } from '../services/gatewayProbe';
 import { visibleRoles, getRole } from '../roles';
 import { kvGet, kvSet, kvDelete } from '../db/kv';
 import { verifyNotionToken, type NotionIdentity } from '../services/notion';
+import {
+  createWorkSession,
+  sendWorkMessage,
+  subscribeWorkEvents,
+  stopWorkSession,
+  getWorkspaceInfo,
+} from '../services/workRuntime';
 
 export const rolesRouter: Router = Router();
+
+/** Live role runs (runId === runtime sessionId). In-memory; a run is ephemeral. */
+const activeRuns = new Map<string, { roleId: string; startedAt: number }>();
+
+/**
+ * The working procedure we append to a role's soul when it has a Notion tool, so
+ * every Notion role drives the tools the same reliable way (search → create →
+ * fill → hand back a URL) without each soul having to spell it out.
+ */
+const NOTION_PROCEDURE = `
+
+Working procedure (Notion) — follow exactly:
+1. Call notion_search first to find a page the user has shared with you; use its id as parent_page_id. If nothing is shared, tell the user to open a Notion page → ••• → Connections → add this integration, then stop.
+2. Create ONE database with notion_create_database — give it clear, well-typed columns.
+3. Fill it with notion_add_row, one row per item. Make every row genuinely useful — no filler.
+4. Finish by giving the user the database URL and a one-line summary of what you built. Do NOT ask permission before creating — just build it; it's theirs to review, and they can delete it in one tap.`;
 
 /** Locals every full page needs so the shared head + sidebar render. */
 async function baseLocals(probeLabel: string) {
@@ -109,6 +132,107 @@ rolesRouter.post('/tools/:toolId/disconnect', (req, res) => {
   const toolId = String(req.params.toolId).toLowerCase();
   kvDelete(`tool.${toolId}.token`);
   kvDelete(`tool.${toolId}.workspace`);
+  res.json({ ok: true });
+});
+
+/**
+ * Start a role run. Creates an ephemeral runtime session with the role's soul as
+ * the system prompt and the connected tool token, sends the one-line task, and
+ * returns a runId (the session id). The agent works host-side via the tool; the
+ * box never touches the user's computer. Progress streams over /run/:runId/events.
+ */
+rolesRouter.post('/:id/run', async (req, res) => {
+  const role = getRole(String(req.params.id));
+  if (!role) {
+    res.status(404).json({ ok: false, error: 'Unknown role.' });
+    return;
+  }
+  const task = String(req.body?.task ?? '').trim();
+  if (!task) {
+    res.status(400).json({ ok: false, error: 'Describe the task in one line.' });
+    return;
+  }
+
+  // Any tool the role needs must be connected first.
+  const notionTool = role.tools.find((t) => t.id === 'notion');
+  const notionToken = notionTool ? (kvGet('tool.notion.token') ?? '').trim() : '';
+  if (notionTool && !notionToken) {
+    res.status(400).json({ ok: false, error: 'Connect Notion first.' });
+    return;
+  }
+
+  const systemPrompt = role.soul + (notionToken ? NOTION_PROCEDURE : '');
+  try {
+    const sessionId = await createWorkSession({
+      systemPrompt,
+      ...(notionToken ? { notionToken } : {}),
+      // No folders: the role never touches the user's computer — it works only in
+      // the tools you connected. Delete tears the run down.
+    });
+    await sendWorkMessage(sessionId, task);
+    activeRuns.set(sessionId, { roleId: role.id, startedAt: Date.now() });
+    res.json({ ok: true, runId: sessionId });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err instanceof Error ? err.message : 'Run failed to start.' });
+  }
+});
+
+/** Proxy the runtime's SSE turn events to the browser for this run. */
+rolesRouter.get('/:id/run/:runId/events', (req, res) => {
+  const runId = String(req.params.runId);
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(': connected\n\n');
+  const send = (obj: unknown) => {
+    try {
+      res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    } catch {
+      /* client gone */
+    }
+  };
+  const unsub = subscribeWorkEvents(
+    runId,
+    (event) => {
+      send(event);
+      if (event.type === 'done') {
+        try {
+          res.end();
+        } catch {
+          /* already closed */
+        }
+      }
+    },
+    (err) => {
+      send({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+      try {
+        res.end();
+      } catch {
+        /* already closed */
+      }
+    },
+  );
+  req.on('close', () => unsub());
+});
+
+/** The deliverable for review (Notion database URL + row count), if any yet. */
+rolesRouter.get('/:id/run/:runId/result', async (req, res) => {
+  const info = await getWorkspaceInfo(String(req.params.runId));
+  res.json({ ok: true, deliverable: info?.notionDeliverable ?? null });
+});
+
+/** Kill-switch: tear the run down. "Fire the worker" — the work stays in the tool. */
+rolesRouter.delete('/:id/run/:runId', async (req, res) => {
+  const runId = String(req.params.runId);
+  try {
+    await stopWorkSession(runId);
+  } catch {
+    /* best-effort: the session may already be gone */
+  }
+  activeRuns.delete(runId);
   res.json({ ok: true });
 });
 

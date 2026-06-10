@@ -8811,6 +8811,34 @@ body.incognito-mode .composer-mode-btn__label {
 .role-run-btn:hover { filter: brightness(1.1); }
 
 .role-result { margin: 8px 0 24px; }
+.role-run-status { display: flex; align-items: center; gap: 10px; font-size: var(--text-base); }
+.role-run-activity { color: var(--text); }
+.role-run-spinner {
+  width: 15px; height: 15px; flex: none; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--text) 18%, transparent);
+  border-top-color: var(--text); animation: role-spin 0.7s linear infinite;
+}
+@keyframes role-spin { to { transform: rotate(360deg); } }
+.role-run-cancel {
+  margin-top: 12px; background: none; border: 1px solid var(--border); color: var(--muted);
+  font-size: var(--text-sm); padding: 6px 14px; border-radius: var(--radius-md); cursor: pointer;
+}
+.role-run-cancel:hover { color: var(--text); border-color: color-mix(in srgb, var(--text) 25%, var(--border)); }
+.role-result-err { font-size: var(--text-base); color: var(--warn); margin: 0; }
+.role-result-done { font-size: var(--text-base); margin: 0; }
+
+.role-deliverable {
+  padding: 18px; border: 1px solid color-mix(in srgb, var(--approve) 35%, var(--border));
+  border-radius: var(--radius-lg); background: color-mix(in srgb, var(--approve) 6%, var(--surface));
+}
+.role-deliverable-title { font-weight: 650; font-size: var(--text-md); margin: 0 0 12px; }
+.role-deliverable-link {
+  display: inline-block; padding: 9px 18px; border-radius: var(--radius-md);
+  background: var(--text); color: var(--surface); text-decoration: none; font-weight: 600; font-size: var(--text-sm);
+}
+.role-deliverable-link:hover { filter: brightness(1.1); }
+.role-deliverable .role-run-cancel { margin-left: 10px; }
+.role-deliverable-note { font-size: var(--text-sm); margin: 12px 0 0; }
 .role-foot { font-size: var(--text-sm); line-height: 1.6; border-top: 1px solid var(--border); padding-top: 18px; }
 
 @media (max-width: 600px) {

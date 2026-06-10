@@ -69,6 +69,11 @@ export interface CreateSessionOptions {
   /** Incognito: read-only, read-anywhere, web_fetch enabled. Mutually exclusive with secure. */
   incognito?: boolean | undefined;
   systemPrompt?: string | undefined;
+  /**
+   * Role runs: a verified Notion token. Enables the host-side notion_* tools for
+   * this session (the role's container, if any, stays offline). Never logged.
+   */
+  notionToken?: string | undefined;
   /** Stable identity (e.g. "chat:156") so a chat reconnects to its workspace. */
   key?: string | undefined;
   /** Compacted prior history to seed context (used after a restart). */
@@ -83,6 +88,7 @@ export async function createWorkSession(opts: CreateSessionOptions = {}): Promis
   if (opts.copyFolders?.length) body.copyFolders = opts.copyFolders;
   if (opts.model) body.model = opts.model;
   if (opts.systemPrompt) body.systemPrompt = opts.systemPrompt;
+  if (opts.notionToken) body.notionToken = opts.notionToken;
   if (opts.key) body.key = opts.key;
   if (opts.history?.length) body.history = opts.history;
   const res = await request('POST', '/sessions', body);
@@ -193,12 +199,22 @@ export function subscribeWorkEvents(
   return () => req.destroy();
 }
 
-/** Get workspace info for a session. */
-export async function getWorkspaceInfo(sessionId: string): Promise<{ workspaceSize: number; secure: boolean } | null> {
+/** The Notion deliverable a Role run produced (database URL + row count). */
+export interface RuntimeNotionDeliverable {
+  databaseId: string;
+  url: string;
+  title: string;
+  rows: number;
+}
+
+/** Get workspace info for a session (incl. a Role run's Notion deliverable). */
+export async function getWorkspaceInfo(
+  sessionId: string,
+): Promise<{ workspaceSize: number; secure: boolean; notionDeliverable?: RuntimeNotionDeliverable } | null> {
   try {
     const res = await request('GET', `/sessions/${sessionId}/info`);
     if (res.status !== 200) return null;
-    return res.data as { workspaceSize: number; secure: boolean };
+    return res.data as { workspaceSize: number; secure: boolean; notionDeliverable?: RuntimeNotionDeliverable };
   } catch { return null; }
 }
 

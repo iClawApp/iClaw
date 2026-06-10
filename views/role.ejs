@@ -209,6 +209,110 @@
         });
       }
     });
+
+    // 3) Run the role — start a session, stream progress, surface the deliverable.
+    var roleEl = document.querySelector('.role-page');
+    var roleId = roleEl ? roleEl.getAttribute('data-role-id') : null;
+    var runForm = document.getElementById('role-run-form');
+    var resultEl = document.getElementById('role-result');
+    var currentRun = null; // { runId, es }
+
+    function activityLabel(name) {
+      switch (name) {
+        case 'notion_search': return 'Looking for your Notion page…';
+        case 'notion_create_database': return 'Building the database…';
+        case 'notion_add_row': return 'Filling in rows…';
+        case 'web_search':
+        case 'web_fetch': return 'Researching…';
+        default: return 'Working…';
+      }
+    }
+    function setResult(html) { if (resultEl) { resultEl.innerHTML = html; resultEl.hidden = false; } }
+    function statusHtml(label, cancelText) {
+      return '<div class="role-run-status"><span class="role-run-spinner" aria-hidden="true"></span>' +
+        '<span class="role-run-activity">' + esc(label) + '</span></div>' +
+        '<button type="button" class="role-run-cancel" data-run-cancel>' + esc(cancelText) + '</button>';
+    }
+
+    function startRun(task) {
+      if (!roleId || !task) return;
+      setResult('<div class="role-run-status"><span class="role-run-spinner" aria-hidden="true"></span><span class="role-run-activity">Starting…</span></div>');
+      var btn = runForm ? runForm.querySelector('.role-run-btn') : null;
+      if (btn) btn.disabled = true;
+      fetch('/roles/' + encodeURIComponent(roleId) + '/run', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: task }),
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.j || !res.j.ok) {
+            setResult('<p class="role-result-err">' + esc((res.j && res.j.error) || 'Could not start.') + '</p>');
+            return;
+          }
+          streamRun(res.j.runId);
+        })
+        .catch(function () { setResult('<p class="role-result-err">Network error. Try again.</p>'); })
+        .finally(function () { if (btn) btn.disabled = false; });
+    }
+
+    function streamRun(runId) {
+      currentRun = { runId: runId, es: null };
+      setResult(statusHtml('Thinking…', 'Stop & delete'));
+      var es = new EventSource('/roles/' + encodeURIComponent(roleId) + '/run/' + encodeURIComponent(runId) + '/events');
+      currentRun.es = es;
+      es.onmessage = function (e) {
+        var ev; try { ev = JSON.parse(e.data); } catch (_) { return; }
+        if (ev.type === 'tool_start') setResult(statusHtml(activityLabel(ev.name), 'Stop & delete'));
+        else if (ev.type === 'error') { es.close(); setResult('<p class="role-result-err">' + esc(ev.message || 'Something went wrong.') + '</p>'); }
+        else if (ev.type === 'done') { es.close(); finishRun(runId); }
+      };
+    }
+
+    function finishRun(runId) {
+      fetch('/roles/' + encodeURIComponent(roleId) + '/run/' + encodeURIComponent(runId) + '/result')
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          var d = j && j.deliverable;
+          if (d && d.url) {
+            setResult(
+              '<div class="role-deliverable">' +
+                '<p class="role-deliverable-title">✓ ' + esc(d.title || 'Your deliverable') +
+                  ' — ' + (d.rows || 0) + ' row' + ((d.rows === 1) ? '' : 's') + '</p>' +
+                '<a class="role-deliverable-link" href="' + esc(d.url) + '" target="_blank" rel="noopener noreferrer">Open in Notion →</a>' +
+                '<button type="button" class="role-run-cancel" data-run-cancel>Delete (fire the worker)</button>' +
+                '<p class="role-deliverable-note muted">Your work stays in Notion — Delete just tears down the worker.</p>' +
+              '</div>'
+            );
+          } else {
+            setResult('<div class="role-deliverable"><p class="role-deliverable-title">Done.</p>' +
+              '<button type="button" class="role-run-cancel" data-run-cancel>Delete</button></div>');
+          }
+        })
+        .catch(function () { setResult('<p class="role-result-done">Done.</p>'); });
+    }
+
+    function deleteRun() {
+      if (!currentRun) { if (resultEl) resultEl.hidden = true; return; }
+      var runId = currentRun.runId;
+      if (currentRun.es) { try { currentRun.es.close(); } catch (_) {} }
+      fetch('/roles/' + encodeURIComponent(roleId) + '/run/' + encodeURIComponent(runId), { method: 'DELETE' }).catch(function () {});
+      currentRun = null;
+      setResult('<p class="role-result-done muted">Fired. Your work stays in the tool.</p>');
+    }
+
+    if (runForm) {
+      runForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var task = ((input && input.value) || '').trim();
+        if (!task) { if (input) input.focus(); return; }
+        startRun(task);
+      });
+    }
+    if (resultEl) {
+      resultEl.addEventListener('click', function (e) {
+        if (e.target.closest('[data-run-cancel]')) deleteRun();
+      });
+    }
   })();
 </script>
 
