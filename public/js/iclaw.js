@@ -4395,15 +4395,10 @@
   // above. Pure client gate: once the user right-clicks a chat, the flag
   // is set and the pill never shows again on this device.
   // -------------------------------------------------------------------------
-  const SIDEBAR_HINT_DISCOVERED_KEY = 'iclaw-sidebar-hint-discovered';
-  const SIDEBAR_HINT_LAST_SHOWN_KEY = 'iclaw-sidebar-hint-last-shown';
+  const SIDEBAR_HINT_DISCOVERED_KEY = 'sidebar-hint-discovered';
+  const SIDEBAR_HINT_LAST_SHOWN_KEY = 'sidebar-hint-last-shown';
   function markSidebarHintDiscovered() {
-    try {
-      localStorage.setItem(SIDEBAR_HINT_DISCOVERED_KEY, '1');
-    } catch {
-      // Private mode — best effort; the pill will disappear next time
-      // we successfully store the per-day stamp anyway.
-    }
+    window.iclawUI.set(SIDEBAR_HINT_DISCOVERED_KEY, '1');
     const pill = document.getElementById('sidebar-hint-pill');
     if (pill && pill.parentNode) pill.parentNode.removeChild(pill);
   }
@@ -4414,12 +4409,8 @@
 
     let discovered = null;
     let lastShown = null;
-    try {
-      discovered = localStorage.getItem(SIDEBAR_HINT_DISCOVERED_KEY);
-      lastShown = localStorage.getItem(SIDEBAR_HINT_LAST_SHOWN_KEY);
-    } catch {
-      // ignore
-    }
+    discovered = window.iclawUI.get(SIDEBAR_HINT_DISCOVERED_KEY);
+    lastShown = window.iclawUI.get(SIDEBAR_HINT_LAST_SHOWN_KEY);
     if (discovered === '1') {
       pill.remove();
       return;
@@ -4437,11 +4428,7 @@
       return;
     }
 
-    try {
-      localStorage.setItem(SIDEBAR_HINT_LAST_SHOWN_KEY, todayKey);
-    } catch {
-      // ignore
-    }
+    window.iclawUI.set(SIDEBAR_HINT_LAST_SHOWN_KEY, todayKey);
 
     pill.hidden = false;
     const hideTimer = setTimeout(() => {
