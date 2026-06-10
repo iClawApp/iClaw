@@ -773,10 +773,22 @@ async function hnItem(id) {
   return JSON.parse(await get(`https://hn.algolia.com/api/v1/items/${id}`, { accept: 'application/json', timeoutMs: 12000 }));
 }
 
+// "Show HN: " etc. prefixes dilute title relevance; strip for scoring only.
+const HN_PREFIX = /^(?:Tell|Show|Ask|Launch) HN\s*:\s*/i;
+
 async function fetchHackerNews(query, limit, time, withComments) {
-  let url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=${limit}`;
+  // Algolia ANDs every query token, so a 4-5 word topic matches nothing.
+  // Search on the flattened core subject and mark all-but-the-first token
+  // optional so Algolia ranks by token coverage instead (last30days trick).
+  const core = coreSubject(query).replace(/[-,]/g, ' ').replace(/\s+/g, ' ').trim() || query;
+  let url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(core)}&tags=story&hitsPerPage=${limit}`;
+  const tokens = core.split(' ');
+  if (tokens.length > 1) url += `&optionalWords=${encodeURIComponent(tokens.slice(1).join(' '))}`;
+  // points>2 drops zero-engagement noise (their minimum-engagement filter).
+  const nf = ['points>2'];
   const secs = HN_WINDOW[time];
-  if (secs) url += `&numericFilters=created_at_i>${Math.floor(Date.now() / 1000) - secs}`;
+  if (secs) nf.push(`created_at_i>${Math.floor(Date.now() / 1000) - secs}`);
+  url += `&numericFilters=${encodeURIComponent(nf.join(','))}`;
   const data = JSON.parse(await get(url, { accept: 'application/json' }));
   const prep = prepQuery(query);
   const items = (data.hits || []).slice(0, limit).map((h) => ({
@@ -786,7 +798,7 @@ async function fetchHackerNews(query, limit, time, withComments) {
     hn_id: h.objectID,
     author: h.author ?? null, score: h.points ?? null, num_comments: h.num_comments ?? null,
     created: h.created_at ?? null, snippet: stripTags(h.story_text || '').slice(0, 240),
-    relevance: relevanceTo(prep, h.title || ''),
+    relevance: relevanceTo(prep, (h.title || '').replace(HN_PREFIX, '')),
   }));
   if (withComments) {
     // Same slot rule as Reddit: relevant stories first, then the biggest.
@@ -910,39 +922,89 @@ async function lemmyThread(host, id) {
 }
 
 // ── Polymarket (real-money prediction odds via the public gamma API) ────────────
+
+/** "(name, price)" pairs of a market. Binary Yes/No keeps its natural order
+ * (price-sorting "No 52% / Yes 49%" reads backwards); true multi-outcome
+ * lists (candidate names etc.) sort price-descending to lead with leaders. */
+function marketOutcomes(m) {
+  try {
+    const names = JSON.parse(m.outcomes || '[]');
+    const prices = JSON.parse(m.outcomePrices || '[]');
+    const pairs = names.map((n, i) => [String(n), Number(prices[i]) || 0]);
+    const isBinary = pairs.length === 2 && pairs.every(([n]) => /^(yes|no)$/i.test(n));
+    return isBinary ? pairs : pairs.sort((a, b) => b[1] - a[1]);
+  } catch { return []; }
+}
+
+/** Largest recent price swing, e.g. "↑ 11.7% this week" — trend beats a static
+ * number (their _format_price_movement; <1% is noise). */
+function priceMovement(m) {
+  const candidates = [
+    [m.oneDayPriceChange, 'today'],
+    [m.oneWeekPriceChange, 'this week'],
+    [m.oneMonthPriceChange, 'this month'],
+  ].filter(([v]) => typeof v === 'number' && Math.abs(v) >= 0.01);
+  if (!candidates.length) return '';
+  candidates.sort((a, b) => Math.abs(b[0]) - Math.abs(a[0]));
+  const [v, period] = candidates[0];
+  return `${v > 0 ? '↑' : '↓'} ${(Math.abs(v) * 100).toFixed(1)}% ${period}`;
+}
+
 async function fetchPolymarket(query, limit) {
-  const d = JSON.parse(await get(
-    `https://gamma-api.polymarket.com/public-search?q=${encodeURIComponent(query)}&limit_per_type=12&events_status=active`,
-    { accept: 'application/json' }));
+  // Two-query recall: raw query + core subject (gamma's search is literal-ish).
+  const core = coreSubject(query);
+  const queries = [...new Set([query, core])].filter(Boolean);
+  const responses = await pool(queries.map((q) => () => get(
+    `https://gamma-api.polymarket.com/public-search?q=${encodeURIComponent(q)}&limit_per_type=12&events_status=active`,
+    { accept: 'application/json' })), 2);
   const prep = prepQuery(query);
   const items = [];
-  for (const e of d.events || []) {
-    if (e.closed === true || e.active === false) continue;
-    const rel = relevanceTo(prep, e.title || '');
-    if (rel <= 0) continue; // odds are only signal when the market is on-topic
-    const markets = (e.markets || []).filter((m) => m.active !== false && m.closed !== true);
-    if (!markets.length) continue;
-    markets.sort((a, b) => (Number(b.volume) || 0) - (Number(a.volume) || 0));
-    const m = markets[0];
-    let odds = '';
-    try {
-      const names = JSON.parse(m.outcomes || '[]');
-      const prices = JSON.parse(m.outcomePrices || '[]');
-      odds = names.slice(0, 3).map((n, i) => {
-        const p = Number(prices[i]) * 100;
-        return `${n} ${p > 0 && p < 1 ? p.toFixed(1) : Math.round(p)}%`;
-      }).join(' / ');
-      if (markets.length > 1 && m.groupItemTitle) odds = `${m.groupItemTitle}: ${odds} (+${markets.length - 1} more markets)`;
-    } catch { /* odds stay '' — title + volume still inform */ }
-    const vol = Number(e.volume) || 0;
-    const volTxt = vol >= 1e6 ? `$${(vol / 1e6).toFixed(1)}M` : `$${Math.round(vol / 1e3)}k`;
-    items.push({
-      platform: 'polymarket', type: 'market',
-      title: e.title || '', url: `https://polymarket.com/event/${e.slug}`,
-      author: null, score: null, num_comments: null, created: null,
-      snippet: `${odds}${odds ? ' — ' : ''}${volTxt} volume${e.endDate ? ` — ends ${String(e.endDate).slice(0, 10)}` : ''}`,
-      relevance: rel, _vol: vol,
-    });
+  const seen = new Set();
+  for (const res of responses) {
+    if (!res) continue;
+    let d; try { d = JSON.parse(res); } catch { continue; }
+    for (const e of d.events || []) {
+      if (e.closed === true || e.active === false || seen.has(e.slug)) continue;
+      seen.add(e.slug);
+      const markets = (e.markets || []).filter((m) => m.active !== false && m.closed !== true);
+      if (!markets.length) continue;
+      markets.sort((a, b) => (Number(b.volume) || 0) - (Number(a.volume) || 0));
+      const m = markets[0];
+      const pairs = marketOutcomes(m);
+      // Relevance: the title, or the outcome names — "who wins X" events carry
+      // the entity (candidate/team) in outcomes, not the title. An outcome-only
+      // match is capped (their rule) so it can't outrank a true title match.
+      const titleRel = relevanceTo(prep, e.title || '');
+      const outcomeRel = Math.max(0, ...pairs.map(([n]) => relevanceTo(prep, n)));
+      const rel = Math.max(titleRel, Math.min(0.55, outcomeRel));
+      if (rel <= 0.24) continue; // generic-word matches are noise here
+      const fmtPct = (p) => { const pct = p * 100; return pct > 0 && pct < 1 ? `${pct.toFixed(1)}%` : `${Math.round(pct)}%`; };
+      let odds = pairs.slice(0, 3).map(([n, p]) => `${n} ${fmtPct(p)}`).join(' / ');
+      if (markets.length > 1 && m.groupItemTitle) {
+        // Grouped event ("Who wins X?"): each sub-market is one candidate's
+        // Yes/No. The headline is the FAVOURITE — highest Yes price across
+        // markets — not the biggest-volume market, which may be a longshot.
+        let lead = null, leadP = -1;
+        for (const mk of markets) {
+          const yes = marketOutcomes(mk).find(([n]) => /^yes$/i.test(n));
+          if (yes && yes[1] > leadP && mk.groupItemTitle) { leadP = yes[1]; lead = mk; }
+        }
+        odds = lead
+          ? `leader: ${lead.groupItemTitle} ${fmtPct(leadP)} (of ${markets.length} markets)`
+          : `${m.groupItemTitle}: ${odds} (+${markets.length - 1} more markets)`;
+      }
+      const move = priceMovement(m);
+      const vol = Number(e.volume) || 0;
+      const volTxt = vol >= 1e6 ? `$${(vol / 1e6).toFixed(1)}M` : `$${Math.round(vol / 1e3)}k`;
+      items.push({
+        platform: 'polymarket', type: 'market',
+        title: e.title || '', url: `https://polymarket.com/event/${e.slug}`,
+        author: null, score: null, num_comments: null, created: null,
+        snippet: [odds, move, `${volTxt} volume`, e.endDate ? `ends ${String(e.endDate).slice(0, 10)}` : '']
+          .filter(Boolean).join(' — '),
+        relevance: rel, _vol: vol,
+      });
+    }
   }
   items.sort((a, b) => (b.relevance - a.relevance) || (b._vol - a._vol));
   return items.slice(0, Math.min(limit, 6)).map(({ _vol, ...rest }) => rest);
@@ -1028,31 +1090,65 @@ async function fetchYouTube(query, limit, time) {
       author: (v.ownerText?.runs || [])[0]?.text || null,
       score: views, num_comments: null,
       created: relativeDate(v.publishedTimeText?.simpleText),
-      snippet: '', relevance: relevanceTo(prep, title),
+      snippet: v.lengthText?.simpleText ? `duration ${v.lengthText.simpleText}` : '',
+      relevance: relevanceTo(prep, title),
     };
   });
 }
 
-// ── GitHub (repo search) ─────────────────────────────────────────────────────────
-// Unauthenticated search quota is 10 req/min per IP — exactly ONE call per run.
+// ── GitHub (repos + issue/PR discussions) ────────────────────────────────────────
+// Unauthenticated search quota is 10 req/min per IP — exactly TWO calls per run:
+// repos answer "what exists", issues/PRs answer "what are devs discussing"
+// (last30days searches issues for exactly that signal).
 async function fetchGitHub(query, limit, time) {
-  let q = query;
   const windowMs = WINDOW_MS[time];
-  if (windowMs) q += ` pushed:>${new Date(Date.now() - windowMs).toISOString().slice(0, 10)}`;
-  const d = JSON.parse(await get(
-    `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&per_page=${Math.min(limit, 10)}`,
-    { accept: 'application/vnd.github+json' }));
+  const since = windowMs ? new Date(Date.now() - windowMs).toISOString().slice(0, 10) : '';
+  const enc = (q) => encodeURIComponent(q);
+  const [repoRes, issueRes] = await pool([
+    () => get(
+      `https://api.github.com/search/repositories?q=${enc(query + (since ? ` pushed:>${since}` : ''))}&per_page=${Math.min(limit, 10)}`,
+      { accept: 'application/vnd.github+json' }),
+    () => get(
+      // best-match sort: comments-sorted global search surfaces bot mega-threads
+      `https://api.github.com/search/issues?q=${enc(query + (since ? ` updated:>${since}` : ''))}&per_page=${Math.min(limit, 8)}`,
+      { accept: 'application/vnd.github+json' }),
+  ], 2);
   const prep = prepQuery(query);
-  return (d.items || []).map((r) => ({
-    platform: 'github', type: 'repo',
-    title: r.full_name + (r.description ? ` — ${String(r.description).slice(0, 140)}` : ''),
-    url: r.html_url,
-    author: r.owner?.login || null,
-    score: r.stargazers_count ?? null, // rendered as stars
-    num_comments: null,
-    created: safeDate(r.pushed_at), snippet: r.language || '',
-    relevance: relevanceTo(prep, `${r.full_name.replace(/[/_-]/g, ' ')} ${r.description || ''}`),
-  }));
+  const repoItems = [];
+  const issueItems = [];
+  if (repoRes) {
+    for (const r of JSON.parse(repoRes).items || []) {
+      repoItems.push({
+        platform: 'github', type: 'repo',
+        title: r.full_name + (r.description ? ` — ${String(r.description).slice(0, 140)}` : ''),
+        url: r.html_url,
+        author: r.owner?.login || null,
+        score: r.stargazers_count ?? null, // rendered as stars
+        num_comments: null,
+        created: safeDate(r.pushed_at), snippet: r.language || '',
+        relevance: relevanceTo(prep, `${r.full_name.replace(/[/_-]/g, ' ')} ${r.description || ''}`),
+      });
+    }
+  }
+  if (issueRes) {
+    for (const it of (JSON.parse(issueRes).items || []).slice(0, 6)) {
+      const repo = ((it.html_url || '').match(/github\.com\/([^/]+\/[^/]+)\//) || [])[1] || '';
+      issueItems.push({
+        platform: 'github', type: it.pull_request ? 'pr' : 'issue',
+        title: `[${repo}${it.state ? ` · ${it.state}` : ''}] ${it.title || ''}`,
+        url: it.html_url,
+        author: it.user?.login || null,
+        score: it.reactions?.total_count ?? null,
+        num_comments: it.comments ?? null,
+        created: safeDate(it.updated_at || it.created_at), snippet: '',
+        relevance: relevanceTo(prep, it.title || ''),
+      });
+    }
+  }
+  // Repos lead, but issues keep reserved slots — otherwise a full repo page
+  // always crowds the discussion signal out of the limit window.
+  const reserve = Math.min(3, issueItems.length);
+  return [...repoItems.slice(0, Math.max(1, limit - reserve)), ...issueItems].slice(0, limit);
 }
 
 const SOURCES = {

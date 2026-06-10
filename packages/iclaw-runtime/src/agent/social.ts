@@ -35,8 +35,8 @@ export const SOCIAL_SEARCH_TOOL = {
       'query, discovers the most active subreddits and drills into them); with_comments:true also pulls ' +
       'top comments/answers for the best posts. Default sources: reddit + hackernews. Add per query class: ' +
       'lemmy (fediverse tech/Linux/privacy communities), polymarket (real-money odds on elections/events — ' +
-      'great "will X happen" signal), stackexchange (programming Q&A), youtube (video titles + view counts), ' +
-      'github (repos by topic, stars). ' +
+      'great "will X happen" signal), stackexchange (programming Q&A), youtube (video search with view counts; ' +
+      'pass a result URL to analyze_link for the transcript), github (repos by stars + issue/PR discussions). ' +
       '(2) TARGETED — add `subreddits` to focus on specific Reddit communities. ' +
       '(3) THREAD — pass a post `url` (Reddit post/share/redd.it link, news.ycombinator.com/item, or Lemmy ' +
       '<host>/post/<id>) to fetch THAT post plus its full comment tree. Prefer this over web_fetch for such links.',
