@@ -31,6 +31,7 @@ import {
 } from './services/remoteAccessOpaqueAuth';
 import { remoteAccessApiRouter } from './routes/remoteAccessApi';
 import { settingsRouter } from './routes/settings';
+import { shareRouter } from './routes/share';
 
 import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
 import { resolveUploadsRoot } from './paths';
@@ -131,6 +132,7 @@ export function createApp(): express.Express {
   app.use('/api/update', updateRouter);
   app.use('/api/remote-access', remoteAccessApiRouter);
   app.use('/media', mediaRouter);
+  app.use('/', shareRouter); // browser → local proxy → iClaw-cloud (CORS workaround)
 
   app.use(
     (
