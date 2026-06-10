@@ -18,7 +18,8 @@ import { chatStatus } from '../services/chatStatus';
 import { openclaw } from '../services/openclaw';
 import { probeGateway } from '../services/gatewayProbe';
 import { visibleRoles, getRole } from '../roles';
-import { kvGet } from '../db/kv';
+import { kvGet, kvSet, kvDelete } from '../db/kv';
+import { verifyNotionToken, type NotionIdentity } from '../services/notion';
 
 export const rolesRouter: Router = Router();
 
@@ -42,6 +43,17 @@ async function baseLocals(probeLabel: string) {
 /** Tool-connection state, keyed by tool so it's shared across roles. */
 function toolConnected(toolId: string): boolean {
   return Boolean((kvGet(`tool.${toolId}.token`) ?? '').trim());
+}
+
+/** Friendly name of the connected workspace (proof the token reached the real thing). */
+function toolWorkspace(toolId: string): string | null {
+  return (kvGet(`tool.${toolId}.workspace`) ?? '').trim() || null;
+}
+
+/** Tools we know how to verify on connect; others just store the token as-is. */
+async function verifyToolToken(toolId: string, token: string): Promise<NotionIdentity> {
+  if (toolId === 'notion') return verifyNotionToken(token);
+  return { ok: true };
 }
 
 /** Coarse maturity signal for progressive disclosure (more chats → more roles). */
@@ -68,6 +80,38 @@ rolesRouter.get('/', async (_req, res) => {
   });
 });
 
+/**
+ * Connect a token-based tool (e.g. Notion). The token is verified against the
+ * live API before we store it, so a bad paste fails loudly here instead of
+ * silently at run time. Stored per-tool so one connection serves every role
+ * that uses it. POST is method-distinct from GET /:id, so no route collision.
+ */
+rolesRouter.post('/tools/:toolId/connect', async (req, res) => {
+  const toolId = String(req.params.toolId).toLowerCase();
+  const token = String(req.body?.token ?? '').trim();
+  if (!token) {
+    res.status(400).json({ ok: false, error: 'Paste your token first.' });
+    return;
+  }
+  const result = await verifyToolToken(toolId, token);
+  if (!result.ok) {
+    res.status(400).json({ ok: false, error: result.error ?? 'Could not verify that token.' });
+    return;
+  }
+  kvSet(`tool.${toolId}.token`, token);
+  if (result.workspaceName) kvSet(`tool.${toolId}.workspace`, result.workspaceName);
+  else kvDelete(`tool.${toolId}.workspace`);
+  res.json({ ok: true, workspaceName: result.workspaceName ?? null });
+});
+
+/** Disconnect = forget the token (the "fire the connection" half of the leash). */
+rolesRouter.post('/tools/:toolId/disconnect', (req, res) => {
+  const toolId = String(req.params.toolId).toLowerCase();
+  kvDelete(`tool.${toolId}.token`);
+  kvDelete(`tool.${toolId}.workspace`);
+  res.json({ ok: true });
+});
+
 rolesRouter.get('/:id', async (req, res) => {
   const role = getRole(String(req.params.id));
   if (!role) {
@@ -91,6 +135,7 @@ rolesRouter.get('/:id', async (req, res) => {
         connect: t.connect,
         connectLabel: t.connectLabel ?? `Connect ${t.id}`,
         connected: toolConnected(t.id),
+        connectedWorkspace: toolWorkspace(t.id),
       })),
       egressAllowlist: role.egressAllowlist,
       definitionOfDone: role.definitionOfDone,

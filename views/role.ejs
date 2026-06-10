@@ -21,16 +21,48 @@
         </div>
       </header>
 
-      <!-- Connect the role's tools (one-tap). -->
-      <% role.tools.forEach(function (t) { %>
-        <div class="role-connect<%= t.connected ? ' role-connect--on' : '' %>" data-tool="<%= t.id %>">
-          <% if (t.connected) { %>
-            <span class="role-connect-dot" aria-hidden="true"></span>
-            <span class="role-connect-label"><%= t.id.charAt(0).toUpperCase() + t.id.slice(1) %> connected</span>
-            <button type="button" class="role-connect-manage" data-action="disconnect">Disconnect</button>
-          <% } else { %>
-            <span class="role-connect-need">This role works in your <strong><%= t.id %></strong> (<%= t.scope === 'read_write' ? 'read + write' : 'read-only' %>).</span>
-            <button type="button" class="role-connect-btn" data-action="connect"><%= t.connectLabel %></button>
+      <!-- Connect the role's tools (one-tap, one token, verified server-side). -->
+      <% role.tools.forEach(function (t) {
+        const _label = t.id.charAt(0).toUpperCase() + t.id.slice(1);
+        const _scopeText = t.scope === 'read_write' ? 'read + write' : 'read-only';
+      %>
+        <div class="role-tool" data-tool="<%= t.id %>" data-scope="<%= t.scope %>" data-label="<%= t.connectLabel %>">
+          <div class="role-connect<%= t.connected ? ' role-connect--on' : '' %>" data-role="bar">
+            <% if (t.connected) { %>
+              <span class="role-connect-dot" aria-hidden="true"></span>
+              <span class="role-connect-label"><%= _label %> connected<% if (t.connectedWorkspace) { %> · <span class="role-connect-ws"><%= t.connectedWorkspace %></span><% } %></span>
+              <button type="button" class="role-connect-manage" data-action="disconnect">Disconnect</button>
+            <% } else { %>
+              <span class="role-connect-need">This role works in your <strong><%= t.id %></strong> (<%= _scopeText %>).</span>
+              <button type="button" class="role-connect-btn" data-action="connect"><%= t.connectLabel %></button>
+            <% } %>
+          </div>
+
+          <% if (t.connect === 'token') { %>
+          <form class="role-connect-panel" data-role="panel" hidden>
+            <p class="role-connect-howto">
+              <% if (t.id === 'notion') { %>
+                Open <a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener noreferrer">notion.so/my-integrations</a>,
+                create an internal integration, copy its <strong>Internal Integration Secret</strong>, then share your target
+                page with it (the page’s ••• menu → <em>Connections</em>).
+              <% } else { %>
+                Paste your <%= t.id %> access token.
+              <% } %>
+            </p>
+            <div class="role-connect-row">
+              <input
+                type="password"
+                class="role-connect-input"
+                data-role="token"
+                placeholder="<%= t.id === 'notion' ? 'ntn_… or secret_…' : 'access token' %>"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button type="submit" class="role-connect-btn" data-role="save">Save</button>
+              <button type="button" class="role-connect-cancel" data-action="cancel">Cancel</button>
+            </div>
+            <p class="role-connect-msg" data-role="msg" hidden></p>
+          </form>
           <% } %>
         </div>
       <% }); %>
@@ -72,9 +104,8 @@
 </div>
 
 <script>
-  // Delegation example → fill the task input (and focus it). Run/connect wiring
-  // lands with the container run flow.
   (function () {
+    // 1) Delegation example → fill the task input (and focus it).
     var input = document.getElementById('role-task-input');
     document.querySelectorAll('.role-example').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -83,6 +114,100 @@
         input.focus();
         input.setSelectionRange(input.value.length, input.value.length);
       });
+    });
+
+    // 2) Tool connect / disconnect — one paste, verified server-side, bar
+    //    re-renders in place (no reload). Connection is shared across roles.
+    function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+      });
+    }
+    function showMsg(el, text, isErr) {
+      if (!el) return;
+      el.textContent = text;
+      el.hidden = false;
+      el.classList.toggle('role-connect-msg--err', !!isErr);
+    }
+    function renderConnected(bar, toolId, workspace) {
+      bar.classList.add('role-connect--on');
+      bar.innerHTML =
+        '<span class="role-connect-dot" aria-hidden="true"></span>' +
+        '<span class="role-connect-label">' + esc(cap(toolId)) + ' connected' +
+        (workspace ? ' · <span class="role-connect-ws">' + esc(workspace) + '</span>' : '') +
+        '</span>' +
+        '<button type="button" class="role-connect-manage" data-action="disconnect">Disconnect</button>';
+    }
+    function renderDisconnected(bar, toolId, scope, label) {
+      bar.classList.remove('role-connect--on');
+      var scopeText = scope === 'read_write' ? 'read + write' : 'read-only';
+      bar.innerHTML =
+        '<span class="role-connect-need">This role works in your <strong>' + esc(toolId) +
+        '</strong> (' + scopeText + ').</span>' +
+        '<button type="button" class="role-connect-btn" data-action="connect">' + esc(label) + '</button>';
+    }
+
+    document.querySelectorAll('.role-tool').forEach(function (tool) {
+      var toolId = tool.getAttribute('data-tool');
+      var scope = tool.getAttribute('data-scope') || 'read';
+      var label = tool.getAttribute('data-label') || ('Connect ' + cap(toolId));
+      var bar = tool.querySelector('[data-role="bar"]');
+      var panel = tool.querySelector('[data-role="panel"]');
+
+      function setPanel(open) {
+        if (!panel) return;
+        panel.hidden = !open;
+        var msg = panel.querySelector('[data-role="msg"]');
+        if (msg) { msg.hidden = true; msg.textContent = ''; }
+        if (open) {
+          var inp = panel.querySelector('[data-role="token"]');
+          if (inp) { inp.value = ''; setTimeout(function () { inp.focus(); }, 0); }
+        }
+      }
+
+      // Delegated clicks (bar re-renders, so listen on the stable wrapper).
+      tool.addEventListener('click', function (e) {
+        var hit = e.target.closest('[data-action]');
+        if (!hit || !tool.contains(hit)) return;
+        var action = hit.getAttribute('data-action');
+        if (action === 'connect') setPanel(true);
+        else if (action === 'cancel') setPanel(false);
+        else if (action === 'disconnect') {
+          fetch('/roles/tools/' + encodeURIComponent(toolId) + '/disconnect', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function () { renderDisconnected(bar, toolId, scope, label); })
+            .catch(function () {});
+        }
+      });
+
+      if (panel) {
+        panel.addEventListener('submit', function (e) {
+          e.preventDefault();
+          var inp = panel.querySelector('[data-role="token"]');
+          var msg = panel.querySelector('[data-role="msg"]');
+          var save = panel.querySelector('[data-role="save"]');
+          var token = ((inp && inp.value) || '').trim();
+          if (!token) { showMsg(msg, 'Paste your token first.', true); return; }
+          if (save) { save.disabled = true; save.textContent = 'Connecting…'; }
+          fetch('/roles/tools/' + encodeURIComponent(toolId) + '/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: token }),
+          })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (res) {
+              if (!res.ok || !res.j || !res.j.ok) {
+                showMsg(msg, (res.j && res.j.error) || 'Could not connect.', true);
+                return;
+              }
+              setPanel(false);
+              renderConnected(bar, toolId, res.j.workspaceName);
+            })
+            .catch(function () { showMsg(msg, 'Network error. Try again.', true); })
+            .finally(function () { if (save) { save.disabled = false; save.textContent = 'Save'; } });
+        });
+      }
     });
   })();
 </script>

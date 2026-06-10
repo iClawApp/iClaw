@@ -8767,6 +8767,28 @@ body.incognito-mode .composer-mode-btn__label {
 }
 .role-connect-btn:hover { filter: brightness(1.08); }
 .role-connect-manage { margin-left: auto; background: none; border: none; color: var(--muted); font-size: var(--text-sm); cursor: pointer; text-decoration: underline; }
+.role-connect-ws { font-weight: 600; color: var(--text); }
+
+.role-tool { margin-bottom: 22px; }
+.role-tool .role-connect { margin-bottom: 0; }
+.role-connect-panel {
+  margin-top: 10px; padding: 14px 16px; border: 1px solid var(--border);
+  border-radius: var(--radius-lg); background: color-mix(in srgb, var(--text) 2.5%, var(--surface));
+}
+.role-connect-howto { font-size: var(--text-sm); color: var(--muted); line-height: 1.55; margin: 0 0 12px; }
+.role-connect-howto a { color: var(--text); }
+.role-connect-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.role-connect-input {
+  flex: 1; min-width: 220px; padding: 9px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius-md); background: var(--surface); color: var(--text);
+  font: inherit; font-size: var(--text-sm); letter-spacing: 0.02em;
+}
+.role-connect-input:focus { outline: none; box-shadow: var(--focus-ring); border-color: color-mix(in srgb, var(--text) 30%, var(--border)); }
+.role-connect-cancel { background: none; border: none; color: var(--muted); font-size: var(--text-sm); cursor: pointer; }
+.role-connect-cancel:hover { color: var(--text); }
+.role-connect-msg { font-size: var(--text-sm); margin: 10px 0 0; color: var(--muted); }
+.role-connect-msg--err { color: var(--warn); }
+.role-connect-btn[disabled] { opacity: 0.6; cursor: default; }
 
 .role-examples { margin-bottom: 16px; }
 .role-examples-lead { font-size: var(--text-sm); margin: 0 0 10px; }
