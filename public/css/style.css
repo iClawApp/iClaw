@@ -8837,8 +8837,14 @@ body.incognito-mode .composer-mode-btn__label {
   background: var(--text); color: var(--surface); text-decoration: none; font-weight: 600; font-size: var(--text-sm);
 }
 .role-deliverable-link:hover { filter: brightness(1.1); }
-.role-deliverable .role-run-cancel { margin-left: 10px; }
+.role-deliverable-summary { font-size: var(--text-sm); line-height: 1.55; color: var(--text); margin: 0 0 14px; }
+.role-deliverable-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.role-deliverable-actions .role-run-cancel { margin-top: 0; }
 .role-deliverable-note { font-size: var(--text-sm); margin: 12px 0 0; }
+.role-run-message {
+  padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface);
+}
+.role-run-message-text { font-size: var(--text-base); line-height: 1.6; margin: 0 0 14px; }
 .role-foot { font-size: var(--text-sm); line-height: 1.6; border-top: 1px solid var(--border); padding-top: 18px; }
 
 @media (max-width: 600px) {

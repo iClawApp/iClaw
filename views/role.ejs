@@ -255,20 +255,27 @@
         .finally(function () { if (btn) btn.disabled = false; });
     }
 
+    function textToHtml(s) {
+      var capped = s.length > 1200 ? s.slice(0, 1200) + '…' : s;
+      return esc(capped).replace(/\n/g, '<br>');
+    }
+
     function streamRun(runId) {
       currentRun = { runId: runId, es: null };
+      var finalText = '';
       setResult(statusHtml('Thinking…', 'Stop & delete'));
       var es = new EventSource('/roles/' + encodeURIComponent(roleId) + '/run/' + encodeURIComponent(runId) + '/events');
       currentRun.es = es;
       es.onmessage = function (e) {
         var ev; try { ev = JSON.parse(e.data); } catch (_) { return; }
-        if (ev.type === 'tool_start') setResult(statusHtml(activityLabel(ev.name), 'Stop & delete'));
+        if (ev.type === 'text') { finalText += (ev.content || ''); }
+        else if (ev.type === 'tool_start') setResult(statusHtml(activityLabel(ev.name), 'Stop & delete'));
         else if (ev.type === 'error') { es.close(); setResult('<p class="role-result-err">' + esc(ev.message || 'Something went wrong.') + '</p>'); }
-        else if (ev.type === 'done') { es.close(); finishRun(runId); }
+        else if (ev.type === 'done') { es.close(); finishRun(runId, finalText.trim()); }
       };
     }
 
-    function finishRun(runId) {
+    function finishRun(runId, finalText) {
       fetch('/roles/' + encodeURIComponent(roleId) + '/run/' + encodeURIComponent(runId) + '/result')
         .then(function (r) { return r.json(); })
         .then(function (j) {
@@ -278,14 +285,24 @@
               '<div class="role-deliverable">' +
                 '<p class="role-deliverable-title">✓ ' + esc(d.title || 'Your deliverable') +
                   ' — ' + (d.rows || 0) + ' row' + ((d.rows === 1) ? '' : 's') + '</p>' +
-                '<a class="role-deliverable-link" href="' + esc(d.url) + '" target="_blank" rel="noopener noreferrer">Open in Notion →</a>' +
-                '<button type="button" class="role-run-cancel" data-run-cancel>Delete (fire the worker)</button>' +
+                (finalText ? '<p class="role-deliverable-summary">' + textToHtml(finalText) + '</p>' : '') +
+                '<div class="role-deliverable-actions">' +
+                  '<a class="role-deliverable-link" href="' + esc(d.url) + '" target="_blank" rel="noopener noreferrer">Open in Notion →</a>' +
+                  '<button type="button" class="role-run-cancel" data-run-cancel>Delete (fire the worker)</button>' +
+                '</div>' +
                 '<p class="role-deliverable-note muted">Your work stays in Notion — Delete just tears down the worker.</p>' +
               '</div>'
             );
           } else {
-            setResult('<div class="role-deliverable"><p class="role-deliverable-title">Done.</p>' +
-              '<button type="button" class="role-run-cancel" data-run-cancel>Delete</button></div>');
+            // No database built (e.g. no page shared yet) — show what the worker
+            // said so the user knows the next step, not a bare "Done."
+            setResult(
+              '<div class="role-run-message">' +
+                (finalText ? '<p class="role-run-message-text">' + textToHtml(finalText) + '</p>'
+                           : '<p class="role-run-message-text">Done — but nothing was created. Make sure you’ve shared a Notion page with the integration, then try again.</p>') +
+                '<button type="button" class="role-run-cancel" data-run-cancel>Delete</button>' +
+              '</div>'
+            );
           }
         })
         .catch(function () { setResult('<p class="role-result-done">Done.</p>'); });
