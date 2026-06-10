@@ -8722,6 +8722,11 @@ body.incognito-mode .composer-mode-btn__label {
 .roles-hub-inner, .role-inner { max-width: 860px; margin: 0 auto; padding: 40px 32px 80px; }
 .roles-hub-title { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
 .roles-hub-intro { font-size: var(--text-base); line-height: 1.6; max-width: 62ch; margin: 0 0 28px; }
+/* The shared page-toolbar lays children in a flex row; force the title + intro
+   to each take a full row so they stack cleanly (the long intro otherwise sits
+   awkwardly beside the short title on desktop). */
+.roles-hub-head.page-toolbar .roles-hub-title { flex: 1 1 100%; }
+.roles-hub-head.page-toolbar .roles-hub-intro { flex: 1 1 100%; }
 
 .roles-hub-grid {
   list-style: none; margin: 0; padding: 0;
@@ -8739,8 +8744,10 @@ body.incognito-mode .composer-mode-btn__label {
 .role-card-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .role-card-name { font-weight: 650; font-size: var(--text-md); letter-spacing: -0.01em; }
 .role-card-tagline { font-size: var(--text-sm); color: var(--muted); line-height: 1.45; }
-.role-card-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
-.role-card-audience { font-size: var(--text-xs); color: var(--muted); }
+.role-card-meta { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin-top: 8px; }
+/* Audience takes its own line so the connect badge always sits below it — keeps
+   every card's meta block aligned regardless of audience length. */
+.role-card-audience { font-size: var(--text-xs); color: var(--muted); flex: 1 1 100%; }
 .role-card-conn { font-size: var(--text-xs); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid var(--border); color: var(--muted); }
 .role-card-conn--on { color: var(--approve); border-color: color-mix(in srgb, var(--approve) 40%, var(--border)); }
 .roles-hub-foot { font-size: var(--text-sm); margin-top: 28px; }
@@ -8763,9 +8770,9 @@ body.incognito-mode .composer-mode-btn__label {
 .role-connect-label { font-size: var(--text-sm); font-weight: 600; }
 .role-connect-btn {
   margin-left: auto; padding: 8px 18px; border-radius: var(--radius-md); border: none;
-  background: var(--accent, #2962ff); color: #fff; font-weight: 600; font-size: var(--text-sm); cursor: pointer;
+  background: var(--text); color: var(--surface); font-weight: 600; font-size: var(--text-sm); cursor: pointer;
 }
-.role-connect-btn:hover { filter: brightness(1.08); }
+.role-connect-btn:hover { filter: brightness(1.1); }
 .role-connect-manage { margin-left: auto; background: none; border: none; color: var(--muted); font-size: var(--text-sm); cursor: pointer; text-decoration: underline; }
 .role-connect-ws { font-weight: 600; color: var(--text); }
 

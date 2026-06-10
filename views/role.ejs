@@ -33,7 +33,7 @@
               <span class="role-connect-label"><%= _label %> connected<% if (t.connectedWorkspace) { %> · <span class="role-connect-ws"><%= t.connectedWorkspace %></span><% } %></span>
               <button type="button" class="role-connect-manage" data-action="disconnect">Disconnect</button>
             <% } else { %>
-              <span class="role-connect-need">This role works in your <strong><%= t.id %></strong> (<%= _scopeText %>).</span>
+              <span class="role-connect-need">This role works in your <strong><%= _label %></strong> (<%= _scopeText %>).</span>
               <button type="button" class="role-connect-btn" data-action="connect"><%= t.connectLabel %></button>
             <% } %>
           </div>
@@ -143,7 +143,7 @@
       bar.classList.remove('role-connect--on');
       var scopeText = scope === 'read_write' ? 'read + write' : 'read-only';
       bar.innerHTML =
-        '<span class="role-connect-need">This role works in your <strong>' + esc(toolId) +
+        '<span class="role-connect-need">This role works in your <strong>' + esc(cap(toolId)) +
         '</strong> (' + scopeText + ').</span>' +
         '<button type="button" class="role-connect-btn" data-action="connect">' + esc(label) + '</button>';
     }
