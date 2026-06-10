@@ -19,6 +19,7 @@
  */
 
 const { app } = require('electron');
+const path = require('node:path');
 
 function initAutoUpdates(logger) {
   if (!app.isPackaged) {
@@ -28,7 +29,10 @@ function initAutoUpdates(logger) {
 
   let autoUpdater;
   try {
-    ({ autoUpdater } = require('electron-updater'));
+    // The app dir ships no node_modules (we exclude it to avoid duplicating the
+    // tree). electron-updater lives in the server payload, so load it from there.
+    const mod = path.join(process.resourcesPath, 'server', 'node_modules', 'electron-updater');
+    ({ autoUpdater } = require(mod));
   } catch (err) {
     logger.logError('[iclaw-update] electron-updater unavailable:', err.message);
     return;

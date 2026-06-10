@@ -18,10 +18,15 @@ directories:
   output: release
 asar: false
 npmRebuild: false
-# The Electron app itself is tiny: just the shell (main + logger) + manifest.
+# The Electron app itself is tiny: just the shell (main + logger + updater) +
+# manifest. The main process needs NO node_modules — electron is provided by the
+# runtime, and electron-updater is loaded from the server payload (see
+# electron/updater.js) — so we exclude the auto-included prod deps to avoid
+# duplicating the whole node_modules tree (it already ships under Resources/server).
 files:
   - electron/**/*
   - package.json
+  - "!node_modules/**/*"
 # The server payload + a stock Node, shipped as plain files alongside the app.
 extraResources:
   - from: dist
@@ -34,6 +39,25 @@ extraResources:
     to: server/scripts
   - from: node_modules
     to: server/node_modules
+    # Ship only what the server needs at RUNTIME. The raw tree includes build/
+    # test-only devDependencies — electron alone is ~200 MB — which the server
+    # never loads (electron is provided to the main process by the runtime; the
+    # server runs compiled dist, not tsx). Excluding them trims ~400 MB.
+    filter:
+      - "**/*"
+      - "!electron/**"
+      - "!electron-builder/**"
+      - "!app-builder-lib/**"
+      - "!app-builder-bin/**"
+      - "!dmg-builder/**"
+      - "!@electron/**"
+      - "!@develar/**"
+      - "!typescript/**"
+      - "!tsx/**"
+      - "!vitest/**"
+      - "!@vitest/**"
+      - "!@types/**"
+      - "!supertest/**"
   - from: packages/iclaw-runtime/dist
     to: server/packages/iclaw-runtime/dist
   - from: packages/iclaw-runtime/package.json
@@ -44,6 +68,7 @@ extraResources:
     to: node
 mac:
   category: public.app-category.productivity
+  icon: build/icon.icns
   # Hardened runtime + entitlements are required for notarization. The bundled
   # stock Node JITs and loads non-Apple-signed binaries, so the entitlements
   # grant allow-jit / disable-library-validation (see build/entitlements.mac.plist).
