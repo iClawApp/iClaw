@@ -1731,14 +1731,19 @@
 
     // The hint pill holds the project that the Space shortcut commits — "No
     // project" by default, or whatever the user substitutes in by picking a tile
-    // while in "change the default" mode. Substituting does NOT open a chat.
-    function setHintDefault(card) {
+    // while in "change the default" mode. Substituting does NOT open a chat, and
+    // the choice persists (server-backed window.iclawUI) so it sticks across new
+    // chats and app launches.
+    const SAVED_DEFAULT_KEY = 'new-chat-default-project';
+    function setHintDefault(card, persist) {
       if (!hintNone) return;
-      hintNone.dataset.projectId = card.getAttribute('data-project-id') || '';
+      const id = card.getAttribute('data-project-id') || '';
+      hintNone.dataset.projectId = id;
       hintNone.textContent = card.getAttribute('data-project-name') || 'No project';
       hintNone.classList.remove('is-emptied');
       hintNone.setAttribute('aria-pressed', 'false');
       pickGrid?.classList.remove('is-choosing');
+      if (persist !== false && window.iclawUI) window.iclawUI.set(SAVED_DEFAULT_KEY, id);
     }
 
     projectPickEl.addEventListener('click', (e) => {
@@ -1779,6 +1784,16 @@
         hintNone.classList.toggle('is-emptied', choosing);
         hintNone.setAttribute('aria-pressed', choosing ? 'true' : 'false');
       });
+    }
+
+    // Restore the last chosen default project (the Space target) so it sticks
+    // across new chats / launches. Falls back to "No project" if it's gone.
+    const savedDefault = (window.iclawUI && window.iclawUI.get(SAVED_DEFAULT_KEY)) || '';
+    if (savedDefault) {
+      const savedCard = projectPickEl.querySelector(
+        '.project-pick-card[data-project-id="' + escAttr(savedDefault) + '"]',
+      );
+      if (savedCard) setHintDefault(savedCard, false);
     }
 
     const initSel = (projectPickEl.dataset.initialProjectId || '').trim();
