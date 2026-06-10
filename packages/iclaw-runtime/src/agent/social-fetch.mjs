@@ -7,10 +7,15 @@
 // a failure contributes [] + an error note so the others still return.
 //
 // Sources (all keyless / free — no API keys):
-//   reddit      -> /svc/shreddit/search (scored search) + /search.rss (breadth)
-//                  + /svc/shreddit/community-more-posts (scored listings)
-//                  + /svc/shreddit/comments (comment trees)
-//   hackernews  -> hn.algolia.com/api/v1/search
+//   reddit        -> /svc/shreddit/search (scored search) + /search.rss (breadth)
+//                    + /svc/shreddit/community-more-posts (scored listings)
+//                    + /svc/shreddit/comments (comment trees)
+//   hackernews    -> hn.algolia.com/api/v1/search (+ /items/<id> comment trees)
+//   lemmy         -> lemmy.world/api/v3 search + comment/list (fediverse)
+//   polymarket    -> gamma-api.polymarket.com/public-search (real-money odds)
+//   stackexchange -> api.stackexchange.com 2.3 (300 req/day/IP — 1-2 calls/run)
+//   youtube       -> results-page ytInitialData JSON (titles/views/channels)
+//   github        -> api.github.com/search/repositories (10 req/min/IP — 1 call)
 //
 // Reddit pipeline (relevance/expansion logic adapted from
 // mvanhorn/last30days-skill, MIT; the scored-search partial is our own find —
@@ -39,14 +44,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // One retry with backoff on transient failures (network/timeout/429/5xx) —
 // enough to ride out a hiccup without doubling worst-case latency. Other 4xx
 // are permanent (a 403/404 won't improve on retry), so fail immediately.
-async function get(url, { accept = '*/*', timeoutMs = 15000, retries = 1 } = {}) {
+async function get(url, { accept = '*/*', timeoutMs = 15000, retries = 1, cookie = '' } = {}) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt) await sleep(1200 * attempt);
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: accept }, signal: ctrl.signal });
+      const headers = { 'User-Agent': UA, Accept: accept };
+      if (cookie) headers.Cookie = cookie;
+      const r = await fetch(url, { headers, signal: ctrl.signal });
       if (r.ok) return await r.text();
       lastErr = new Error(`HTTP ${r.status}`);
       if (r.status < 500 && r.status !== 429) break;
@@ -737,25 +744,326 @@ async function fetchReddit(query, limit, time, withComments, targetSubs) {
   };
 }
 
+const EMPTY_SET = new Set();
+
+/** Parse "2 weeks ago"-style relative dates into an approximate ISO string. */
+function relativeDate(s) {
+  const m = (s || '').match(/(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago/);
+  if (!m) return null;
+  const mult = { second: 1e3, minute: 6e4, hour: 36e5, day: 864e5, week: 6048e5, month: 2592e6, year: 315576e5 };
+  return new Date(Date.now() - Number(m[1]) * mult[m[2]]).toISOString();
+}
+
 // ── Hacker News (Algolia) ───────────────────────────────────────────────────────
 const HN_WINDOW = { day: 86400, week: 604800, month: 2592000, year: 31536000 };
-async function fetchHackerNews(query, limit, time) {
+
+// Flatten the Algolia items tree in display order — HN's own ranking, since
+// comments carry no public score. depth preserved for nested rendering.
+function flattenHn(node, depth, out, max) {
+  for (const c of node.children || []) {
+    if (out.length >= max) return;
+    const body = stripTags(c.text || '');
+    if (c.author && body) out.push({ author: c.author, score: null, depth, body: body.slice(0, 300) });
+    flattenHn(c, depth + 1, out, max);
+  }
+}
+
+// Full comment tree for one story via /items/<id> (keyless, one call).
+async function hnItem(id) {
+  return JSON.parse(await get(`https://hn.algolia.com/api/v1/items/${id}`, { accept: 'application/json', timeoutMs: 12000 }));
+}
+
+async function fetchHackerNews(query, limit, time, withComments) {
   let url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=${limit}`;
   const secs = HN_WINDOW[time];
   if (secs) url += `&numericFilters=created_at_i>${Math.floor(Date.now() / 1000) - secs}`;
   const data = JSON.parse(await get(url, { accept: 'application/json' }));
   const prep = prepQuery(query);
-  return (data.hits || []).slice(0, limit).map((h) => ({
+  const items = (data.hits || []).slice(0, limit).map((h) => ({
     platform: 'hackernews', type: 'story', title: h.title || h.story_title || '',
     url: h.url || `https://news.ycombinator.com/item?id=${h.objectID}`,
     hn_url: `https://news.ycombinator.com/item?id=${h.objectID}`,
+    hn_id: h.objectID,
     author: h.author ?? null, score: h.points ?? null, num_comments: h.num_comments ?? null,
-    created: h.created_at ?? null, snippet: (h.story_text || '').slice(0, 240),
+    created: h.created_at ?? null, snippet: stripTags(h.story_text || '').slice(0, 240),
     relevance: relevanceTo(prep, h.title || ''),
+  }));
+  if (withComments) {
+    // Same slot rule as Reddit: relevant stories first, then the biggest.
+    const slots = items.filter((it) => it.relevance >= 0.3)
+      .concat(items.filter((it) => it.relevance < 0.3))
+      .slice(0, 3);
+    await pool(slots.map((it) => async () => {
+      const tree = await hnItem(it.hn_id);
+      const flat = [];
+      flattenHn(tree, 0, flat, 30);
+      const top = flat.filter(isSubstantive).slice(0, 4);
+      if (top.length) it.comments = top;
+    }), 3);
+  }
+  return items.map(({ hn_id, ...rest }) => rest);
+}
+
+// Thread mode for news.ycombinator.com/item?id=N links: story + comment tree.
+async function hnThread(id) {
+  const d = await hnItem(id);
+  const comments = [];
+  flattenHn(d, 0, comments, 60);
+  const total = (function cnt(n) { return (n.children || []).reduce((a, c) => a + cnt(c), n.author ? 1 : 0); })(d) - (d.author ? 1 : 0);
+  return {
+    platform: 'hackernews', type: d.type || 'story',
+    title: d.title || '(untitled)',
+    url: d.url || `https://news.ycombinator.com/item?id=${id}`,
+    hn_url: `https://news.ycombinator.com/item?id=${id}`,
+    author: d.author ?? null, score: d.points ?? null, num_comments: total,
+    created: d.created_at ?? null,
+    selftext: stripTags(d.text || '').slice(0, 1500), snippet: '', relevance: 0,
+    comments: comments.filter(isSubstantive).slice(0, 50),
+  };
+}
+
+// ── Lemmy (fediverse; lemmy.world is the largest instance) ──────────────────────
+const LEMMY_HOST = 'https://lemmy.world';
+const LEMMY_SORT = { day: 'TopDay', week: 'TopWeek', month: 'TopMonth', year: 'TopYear', all: 'TopAll' };
+
+async function lemmyComments(host, postId, limit) {
+  const d = JSON.parse(await get(
+    `${host}/api/v3/comment/list?post_id=${postId}&sort=Top&limit=${limit}&max_depth=3`,
+    { accept: 'application/json', timeoutMs: 12000 }));
+  return (d.comments || [])
+    .map((c) => ({
+      author: c.creator?.name || null,
+      score: c.counts?.score ?? null,
+      // path is "0.<id>.<id>…" — segments past the root encode nesting depth
+      depth: Math.max(0, String(c.comment?.path || '0').split('.').length - 2),
+      body: (c.comment?.content || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+    }))
+    .filter(isSubstantive)
+    .sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+}
+
+async function fetchLemmy(query, limit, time, withComments) {
+  const sort = LEMMY_SORT[time] || 'TopMonth';
+  const d = JSON.parse(await get(
+    `${LEMMY_HOST}/api/v3/search?q=${encodeURIComponent(query)}&type_=Posts&listing_type=All&sort=${sort}&limit=${Math.min(limit, 20)}`,
+    { accept: 'application/json' }));
+  const prep = prepQuery(query);
+  const items = (d.posts || []).map((p) => ({
+    platform: 'lemmy', type: 'post',
+    title: p.post?.name || '',
+    url: p.post?.ap_id || `${LEMMY_HOST}/post/${p.post?.id}`,
+    localId: p.post?.id,
+    subreddit: p.community?.name || null, // rendered as c/<name>
+    author: p.creator?.name || null,
+    score: p.counts?.score ?? null,
+    num_comments: p.counts?.comments ?? null,
+    created: safeDate(p.post?.published),
+    snippet: (p.post?.body || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+    relevance: postRelevance(prep, p.post?.name || '', p.post?.body || ''),
+  }));
+  // Crosspost collapse: on a link aggregator the same article gets posted to
+  // several communities by DIFFERENT users, so the key is the title alone
+  // (unlike Reddit, where author disambiguates recurring thread titles).
+  const byTitle = new Map();
+  for (const it of items) {
+    const key = normPhrase(it.title);
+    const prev = byTitle.get(key);
+    if (!prev || (it.score ?? -1) > (prev.score ?? -1)) byTitle.set(key, it);
+  }
+  // Top* sort ranks purely by score; re-rank with the shared composite so
+  // relevance dominates here too.
+  const now = Date.now();
+  const windowMs = WINDOW_MS[time] ?? Infinity;
+  const deduped = [...byTitle.values()];
+  deduped.sort((a, b) => finalScore(b, now, windowMs, EMPTY_SET) - finalScore(a, now, windowMs, EMPTY_SET));
+  const top = deduped.slice(0, limit);
+  if (withComments) {
+    await pool(top.slice(0, 3).map((it) => async () => {
+      if (!it.localId) return;
+      const comments = await lemmyComments(LEMMY_HOST, it.localId, 20);
+      if (comments.length) it.comments = comments.slice(0, 4);
+    }), 3);
+  }
+  return top.map(({ localId, ...rest }) => rest);
+}
+
+// Thread mode for <host>/post/<id> links — works on any Lemmy instance, since
+// every instance exposes the same /api/v3 (failure falls through gracefully).
+async function lemmyThread(host, id) {
+  const [postRes, comments] = await Promise.all([
+    get(`${host}/api/v3/post?id=${id}`, { accept: 'application/json', timeoutMs: 12000 }),
+    lemmyComments(host, id, 50).catch(() => []),
+  ]);
+  const pv = JSON.parse(postRes).post_view;
+  return {
+    platform: 'lemmy', type: 'post',
+    title: pv?.post?.name || '(untitled)',
+    url: pv?.post?.ap_id || `${host}/post/${id}`,
+    subreddit: pv?.community?.name || null,
+    author: pv?.creator?.name || null,
+    score: pv?.counts?.score ?? null, num_comments: pv?.counts?.comments ?? null,
+    created: safeDate(pv?.post?.published),
+    selftext: (pv?.post?.body || '').replace(/\s+/g, ' ').trim().slice(0, 1500),
+    snippet: '', relevance: 0,
+    comments: comments.slice(0, 50),
+  };
+}
+
+// ── Polymarket (real-money prediction odds via the public gamma API) ────────────
+async function fetchPolymarket(query, limit) {
+  const d = JSON.parse(await get(
+    `https://gamma-api.polymarket.com/public-search?q=${encodeURIComponent(query)}&limit_per_type=12&events_status=active`,
+    { accept: 'application/json' }));
+  const prep = prepQuery(query);
+  const items = [];
+  for (const e of d.events || []) {
+    if (e.closed === true || e.active === false) continue;
+    const rel = relevanceTo(prep, e.title || '');
+    if (rel <= 0) continue; // odds are only signal when the market is on-topic
+    const markets = (e.markets || []).filter((m) => m.active !== false && m.closed !== true);
+    if (!markets.length) continue;
+    markets.sort((a, b) => (Number(b.volume) || 0) - (Number(a.volume) || 0));
+    const m = markets[0];
+    let odds = '';
+    try {
+      const names = JSON.parse(m.outcomes || '[]');
+      const prices = JSON.parse(m.outcomePrices || '[]');
+      odds = names.slice(0, 3).map((n, i) => {
+        const p = Number(prices[i]) * 100;
+        return `${n} ${p > 0 && p < 1 ? p.toFixed(1) : Math.round(p)}%`;
+      }).join(' / ');
+      if (markets.length > 1 && m.groupItemTitle) odds = `${m.groupItemTitle}: ${odds} (+${markets.length - 1} more markets)`;
+    } catch { /* odds stay '' — title + volume still inform */ }
+    const vol = Number(e.volume) || 0;
+    const volTxt = vol >= 1e6 ? `$${(vol / 1e6).toFixed(1)}M` : `$${Math.round(vol / 1e3)}k`;
+    items.push({
+      platform: 'polymarket', type: 'market',
+      title: e.title || '', url: `https://polymarket.com/event/${e.slug}`,
+      author: null, score: null, num_comments: null, created: null,
+      snippet: `${odds}${odds ? ' — ' : ''}${volTxt} volume${e.endDate ? ` — ends ${String(e.endDate).slice(0, 10)}` : ''}`,
+      relevance: rel, _vol: vol,
+    });
+  }
+  items.sort((a, b) => (b.relevance - a.relevance) || (b._vol - a._vol));
+  return items.slice(0, Math.min(limit, 6)).map(({ _vol, ...rest }) => rest);
+}
+
+// ── StackExchange (stackoverflow) ────────────────────────────────────────────────
+// Unauthenticated quota is 300 req/day PER IP, shared across everything on that
+// IP — so at most 2 calls per run (1 search + 1 vectorized answers fetch).
+const SE_WINDOW_SECS = { day: 86400, week: 604800 };
+
+async function fetchStackExchange(query, limit, time, withComments) {
+  let url =
+    `https://api.stackexchange.com/2.3/search/advanced?q=${encodeURIComponent(query)}` +
+    `&site=stackoverflow&sort=relevance&order=desc&pagesize=${Math.min(limit, 15)}`;
+  // SO answers age well — only the explicitly "fresh" windows filter by date.
+  const secs = SE_WINDOW_SECS[time];
+  if (secs) url += `&fromdate=${Math.floor(Date.now() / 1000) - secs}`;
+  const d = JSON.parse(await get(url, { accept: 'application/json' }));
+  const prep = prepQuery(query);
+  const items = (d.items || []).map((q) => ({
+    platform: 'stackexchange', type: 'question',
+    title: decodeEntities(q.title || ''),
+    url: q.link, qid: q.question_id,
+    author: q.owner?.display_name || null,
+    score: q.score ?? null,
+    num_comments: q.answer_count ?? null, // rendered as "N answers"
+    created: q.creation_date ? new Date(q.creation_date * 1000).toISOString() : null,
+    snippet: q.is_answered ? 'has accepted/upvoted answer' : '',
+    relevance: relevanceTo(prep, q.title || ''),
+  }));
+  items.sort((a, b) => (b.relevance - a.relevance) || ((b.score ?? 0) - (a.score ?? 0)));
+  const top = items.slice(0, limit);
+  if (withComments && top.length) {
+    // Vectorized ids = answers for the top questions in ONE quota unit.
+    const ids = top.slice(0, 3).map((q) => q.qid).join(';');
+    try {
+      const ans = JSON.parse(await get(
+        `https://api.stackexchange.com/2.3/questions/${ids}/answers?order=desc&sort=votes&site=stackoverflow&filter=withbody&pagesize=9`,
+        { accept: 'application/json' }));
+      for (const a of ans.items || []) {
+        const q = top.find((t) => t.qid === a.question_id);
+        if (!q) continue;
+        (q.comments ||= []).push({
+          author: a.owner?.display_name || null, score: a.score ?? null, depth: 0,
+          body: stripTags(a.body || '').slice(0, 300),
+        });
+      }
+      for (const q of top) if (q.comments) q.comments = q.comments.slice(0, 3);
+    } catch { /* answers are a bonus, the questions stand alone */ }
+  }
+  return top.map(({ qid, ...rest }) => rest);
+}
+
+// ── YouTube (results-page ytInitialData — no yt-dlp, no API key) ────────────────
+// The search results page embeds its data as `var ytInitialData = {...}`;
+// videoRenderer entries carry title/views/channel/age. SOCS=CAI skips the EU
+// consent interstitial. sp= are YouTube's own upload-date filter tokens.
+const YT_SP = { day: 'EgQIAhAB', week: 'EgQIAxAB', month: 'EgQIBBAB', year: 'EgQIBRAB' };
+
+async function fetchYouTube(query, limit, time) {
+  let url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&hl=en&gl=US`;
+  if (YT_SP[time]) url += `&sp=${YT_SP[time]}`;
+  const html = await get(url, { accept: 'text/html', cookie: 'SOCS=CAI' });
+  const m = html.match(/var ytInitialData = ({[\s\S]*?});<\/script>/);
+  if (!m) return [];
+  const data = JSON.parse(m[1]);
+  const vids = [];
+  (function walk(o) {
+    if (vids.length >= 60 || !o || typeof o !== 'object') return;
+    if (o.videoRenderer) vids.push(o.videoRenderer);
+    for (const v of Object.values(o)) if (v && typeof v === 'object') walk(v);
+  })(data);
+  const prep = prepQuery(query);
+  // Keep YouTube's own ranking; views land in `score` (labelled per-platform).
+  return vids.slice(0, Math.min(limit, 12)).map((v) => {
+    const title = (v.title?.runs || [])[0]?.text || '';
+    const viewsTxt = v.viewCountText?.simpleText || '';
+    const views = /no views/i.test(viewsTxt)
+      ? 0 : Number(((viewsTxt.match(/[\d,]+/) || [''])[0]).replace(/,/g, '')) || null;
+    return {
+      platform: 'youtube', type: 'video', title,
+      url: `https://www.youtube.com/watch?v=${v.videoId}`,
+      author: (v.ownerText?.runs || [])[0]?.text || null,
+      score: views, num_comments: null,
+      created: relativeDate(v.publishedTimeText?.simpleText),
+      snippet: '', relevance: relevanceTo(prep, title),
+    };
+  });
+}
+
+// ── GitHub (repo search) ─────────────────────────────────────────────────────────
+// Unauthenticated search quota is 10 req/min per IP — exactly ONE call per run.
+async function fetchGitHub(query, limit, time) {
+  let q = query;
+  const windowMs = WINDOW_MS[time];
+  if (windowMs) q += ` pushed:>${new Date(Date.now() - windowMs).toISOString().slice(0, 10)}`;
+  const d = JSON.parse(await get(
+    `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&per_page=${Math.min(limit, 10)}`,
+    { accept: 'application/vnd.github+json' }));
+  const prep = prepQuery(query);
+  return (d.items || []).map((r) => ({
+    platform: 'github', type: 'repo',
+    title: r.full_name + (r.description ? ` — ${String(r.description).slice(0, 140)}` : ''),
+    url: r.html_url,
+    author: r.owner?.login || null,
+    score: r.stargazers_count ?? null, // rendered as stars
+    num_comments: null,
+    created: safeDate(r.pushed_at), snippet: r.language || '',
+    relevance: relevanceTo(prep, `${r.full_name.replace(/[/_-]/g, ' ')} ${r.description || ''}`),
   }));
 }
 
-const SOURCES = { reddit: fetchReddit, hackernews: fetchHackerNews };
+const SOURCES = {
+  reddit: fetchReddit,
+  hackernews: fetchHackerNews,
+  lemmy: fetchLemmy,
+  polymarket: fetchPolymarket,
+  stackexchange: fetchStackExchange,
+  youtube: fetchYouTube,
+  github: fetchGitHub,
+};
 
 async function main() {
   const query = (process.env.SOCIAL_QUERY || '').trim();
@@ -771,33 +1079,56 @@ async function main() {
     .filter((s) => /^[A-Za-z0-9_]{2,21}$/.test(s))
     .slice(0, 4);
 
-  // ── URL/thread mode: fetch ONE Reddit post + its full (nested) comment tree ──
+  // ── URL/thread mode: ONE post/story + its comment tree, routed by URL shape.
+  // Supports Reddit (incl. /s/ share links + redd.it), HN item links, and
+  // Lemmy /post/<id> links on any instance.
   if (url) {
     const out = { query: url, counts: {}, errors: {}, results: [] };
-    const ref = await resolveThreadRef(url);
-    if (!ref) {
-      out.errors.reddit = 'unrecognized Reddit thread URL (post links, /s/ share links and redd.it links are supported)';
-      out.counts.reddit = 0;
-    } else {
+    const hnId = (url.match(/news\.ycombinator\.com\/item\?id=(\d+)/) || [])[1];
+    const lemmyM = url.match(/^(https?:\/\/[^/]+)\/post\/(\d+)/);
+    const isRedditish = /reddit\.com|redd\.it/i.test(url) || !!extractPostRef(url);
+    if (hnId) {
       try {
-        const [post, [total, comments]] = await Promise.all([
-          fetchRedditPost(ref.sub, ref.id),
-          shredditComments(ref.sub, ref.id),
-        ]);
-        const slugTitle = ref.slug ? ref.slug.replace(/[_-]+/g, ' ').trim() : '';
-        out.results.push({
-          platform: 'reddit', type: 'post',
-          title: post.title || slugTitle || '(untitled)',
-          url, author: null, subreddit: ref.sub,
-          score: post.score ?? null, num_comments: total, created: null,
-          selftext: post.selftext || '', snippet: '', relevance: 0,
-          comments: comments.slice(0, 50), // first page, top-sorted; huge threads clamp
-        });
-        out.counts.reddit = 1;
+        out.results.push(await hnThread(hnId));
+        out.counts.hackernews = 1;
       } catch (e) {
-        out.errors.reddit = `${e.name}: ${e.message}`;
-        out.counts.reddit = 0;
+        out.errors.hackernews = `${e.name}: ${e.message}`; out.counts.hackernews = 0;
       }
+    } else if (isRedditish) {
+      const ref = await resolveThreadRef(url);
+      if (!ref) {
+        out.errors.reddit = 'unrecognized Reddit thread URL (post links, /s/ share links and redd.it links are supported)';
+        out.counts.reddit = 0;
+      } else {
+        try {
+          const [post, [total, comments]] = await Promise.all([
+            fetchRedditPost(ref.sub, ref.id),
+            shredditComments(ref.sub, ref.id),
+          ]);
+          const slugTitle = ref.slug ? ref.slug.replace(/[_-]+/g, ' ').trim() : '';
+          out.results.push({
+            platform: 'reddit', type: 'post',
+            title: post.title || slugTitle || '(untitled)',
+            url, author: null, subreddit: ref.sub,
+            score: post.score ?? null, num_comments: total, created: null,
+            selftext: post.selftext || '', snippet: '', relevance: 0,
+            comments: comments.slice(0, 50), // first page, top-sorted; huge threads clamp
+          });
+          out.counts.reddit = 1;
+        } catch (e) {
+          out.errors.reddit = `${e.name}: ${e.message}`;
+          out.counts.reddit = 0;
+        }
+      }
+    } else if (lemmyM) {
+      try {
+        out.results.push(await lemmyThread(lemmyM[1], lemmyM[2]));
+        out.counts.lemmy = 1;
+      } catch (e) {
+        out.errors.lemmy = `${e.name}: ${e.message}`; out.counts.lemmy = 0;
+      }
+    } else {
+      out.errors.url = 'unrecognized thread URL — supported: Reddit post/share links, news.ycombinator.com/item?id=…, Lemmy <host>/post/<id>';
     }
     console.log('__SOCIAL_JSON__');
     console.log(JSON.stringify(out));

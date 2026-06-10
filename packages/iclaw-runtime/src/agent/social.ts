@@ -18,7 +18,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { SavingsNote } from './tools.js';
 
-export const SOCIAL_SOURCES = ['reddit', 'hackernews'] as const;
+export const SOCIAL_SOURCES = ['reddit', 'hackernews', 'lemmy', 'polymarket', 'stackexchange', 'youtube', 'github'] as const;
+/** Sources searched when the model doesn't pick — the general-purpose pair.
+ * The rest are opt-in: each shines on a specific query class (see tool description). */
+const DEFAULT_SOURCES = ['reddit', 'hackernews'];
 const SOCIAL_RESULT_MAX_CHARS = Number(process.env.ICLAW_SOCIAL_MAX) || 14_000;
 
 export const SOCIAL_SEARCH_TOOL = {
@@ -26,14 +29,17 @@ export const SOCIAL_SEARCH_TOOL = {
   function: {
     name: 'social_search',
     description:
-      'Reddit & HackerNews — free, no API keys, runs in the sandbox. Reddit results carry REAL ' +
-      'upvote + comment counts and are ranked by relevance × engagement × freshness. Modes: ' +
-      '(1) DISCOVERY — pass `query` keywords (a plain topic works best: the tool expands the query, ' +
-      'discovers the most active subreddits and drills into them); with_comments:true also pulls ' +
-      'top comments for the best posts. ' +
-      '(2) TARGETED — add `subreddits` to focus on specific communities (in-sub search + their top posts). ' +
-      '(3) THREAD — pass a Reddit post `url` to fetch THAT post (score, body) plus its FULL, nested ' +
-      'comment tree (scored, one call). Prefer this over web_fetch for any specific Reddit link.',
+      'Community search across 7 keyless sources — real engagement numbers (upvotes/views/odds/stars), ' +
+      'ranked by relevance × engagement × freshness. Modes: ' +
+      '(1) DISCOVERY — pass `query` keywords (a plain topic works best; for Reddit the tool expands the ' +
+      'query, discovers the most active subreddits and drills into them); with_comments:true also pulls ' +
+      'top comments/answers for the best posts. Default sources: reddit + hackernews. Add per query class: ' +
+      'lemmy (fediverse tech/Linux/privacy communities), polymarket (real-money odds on elections/events — ' +
+      'great "will X happen" signal), stackexchange (programming Q&A), youtube (video titles + view counts), ' +
+      'github (repos by topic, stars). ' +
+      '(2) TARGETED — add `subreddits` to focus on specific Reddit communities. ' +
+      '(3) THREAD — pass a post `url` (Reddit post/share/redd.it link, news.ycombinator.com/item, or Lemmy ' +
+      '<host>/post/<id>) to fetch THAT post plus its full comment tree. Prefer this over web_fetch for such links.',
     parameters: {
       type: 'object',
       properties: {
@@ -129,19 +135,27 @@ function formatPayload(d: SocialPayload): string {
   if (d.meta?.queries?.length) lines.push(`queries tried: ${d.meta.queries.join(' | ')}`);
   if (d.meta?.subreddits?.length) lines.push(`subreddits explored: ${d.meta.subreddits.map((s) => `r/${s}`).join(', ')}`);
 
+  // Per-platform display semantics: what `score`/`num_comments` mean and how
+  // the community tag is prefixed.
+  const SCORE_LABEL: Record<string, string> = { youtube: 'views', github: 'stars' };
+  const COMMENTS_LABEL: Record<string, string> = { stackexchange: 'answers' };
+  const TAG_PREFIX: Record<string, string> = { reddit: 'r/', lemmy: 'c/' };
+
   for (const platform of Object.keys(d.counts)) {
     const rows = d.results.filter((r) => r.platform === platform);
     if (!rows.length) continue;
     lines.push(`\n### ${platform}`);
     rows.forEach((r, i) => {
-      const tag = r.subreddit ? `[r/${r.subreddit}] ` : '';
+      const tag = r.subreddit ? `[${TAG_PREFIX[platform] ?? ''}${r.subreddit}] ` : '';
       lines.push(`${i + 1}. ${tag}${r.title || '(untitled)'}\n   ${r.url}`);
       const meta: string[] = [];
       if (r.author) meta.push(`by ${r.author}`);
-      if (r.score != null) meta.push(`${r.score} points`);
-      if (r.num_comments != null) meta.push(`${r.num_comments} comments`);
+      if (r.score != null) meta.push(`${r.score} ${SCORE_LABEL[platform] ?? 'points'}`);
+      if (r.num_comments != null) meta.push(`${r.num_comments} ${COMMENTS_LABEL[platform] ?? 'comments'}`);
       if (r.created) meta.push(r.created.slice(0, 10));
       if (meta.length) lines.push(`   ${meta.join(' · ')}`);
+      if (r.hn_url && r.hn_url !== r.url) lines.push(`   discussion: ${r.hn_url}`);
+      if (r.snippet) lines.push(`   ${r.snippet}`);
       if (r.selftext) lines.push(`   ${r.selftext}`);
       for (const c of r.comments || []) {
         const indent = '   ' + '  '.repeat(Math.min(c.depth ?? 0, 6));
@@ -167,7 +181,7 @@ export async function socialSearch(
     return 'social_search needs network, which is currently OFF for this chat. Ask the user to enable network, then retry.';
   }
 
-  const requested = Array.isArray(args.sources) ? args.sources.map(String) : [...SOCIAL_SOURCES];
+  const requested = Array.isArray(args.sources) ? args.sources.map(String) : [...DEFAULT_SOURCES];
   const sources = requested.filter((s) => (SOCIAL_SOURCES as readonly string[]).includes(s));
   if (!url && !sources.length) return `social_search: unknown source(s). Supported: ${SOCIAL_SOURCES.join(', ')}.`;
   const limit = Math.max(1, Math.min(50, Number(args.limit) || 25));
