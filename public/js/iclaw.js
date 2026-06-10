@@ -8238,7 +8238,7 @@
     const pill = document.getElementById('send-hint-pill');
     if (!pill) return; // server decided not to surface it
 
-    const STORAGE_KEY = 'iclaw-send-hint-last-shown';
+    const STORAGE_KEY = 'send-hint-last-shown';
     const AUTO_HIDE_MS = 12_000;
 
     function todayKey() {
@@ -8252,19 +8252,10 @@
       );
     }
 
-    let lastShown = null;
-    try {
-      lastShown = localStorage.getItem(STORAGE_KEY);
-    } catch {
-      // Private mode / storage disabled — treat as "never shown".
-    }
+    const lastShown = window.iclawUI.get(STORAGE_KEY);
     if (lastShown === todayKey()) return; // already shown today
 
-    try {
-      localStorage.setItem(STORAGE_KEY, todayKey());
-    } catch {
-      // ignore — we'll just nag again next page-load in that session
-    }
+    window.iclawUI.set(STORAGE_KEY, todayKey());
 
     let hideTimer = null;
     function hidePill() {
@@ -8349,7 +8340,7 @@
   // a timestamp in localStorage and the banner stays hidden until that point.
   // The × in the corner sets a far-future snooze (effectively never).
   // -------------------------------------------------------------------------
-  const RESET_REMIND_KEY = 'iclaw:resetPolicyRemindAfter';
+  const RESET_REMIND_KEY = 'reset-policy-remind-after';
   const SNOOZE_DAYS = 3;
   const NEVER_REMIND_MS = 100 * 365 * 24 * 60 * 60 * 1000;
   const RESET_POLICY_MANUAL_PATCH = JSON.stringify(
@@ -8381,15 +8372,12 @@
   const resetConfirmOk = document.getElementById('reset-policy-confirm-ok');
 
   function snoozeResetBanner(ms) {
-    try {
-      const until = Date.now() + ms;
-      localStorage.setItem(RESET_REMIND_KEY, String(until));
-    } catch {}
+    window.iclawUI.set(RESET_REMIND_KEY, String(Date.now() + ms));
   }
 
   function isResetBannerSnoozed() {
     try {
-      const raw = localStorage.getItem(RESET_REMIND_KEY);
+      const raw = window.iclawUI.get(RESET_REMIND_KEY);
       if (!raw) return false;
       const until = Number(raw);
       if (!Number.isFinite(until)) return false;
@@ -8579,7 +8567,7 @@
   // -------------------------------------------------------------------------
   const NPM_REGISTRY_LATEST =
     'https://registry.npmjs.org/@iclawapp%2Ficlaw/latest';
-  const UPDATE_CHECK_STORAGE_KEY = 'iclaw-update-registry-check';
+  const UPDATE_CHECK_STORAGE_KEY = 'update-registry-check';
   const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
 
   const updateBanner = document.getElementById('sidebar-update-banner');
@@ -8598,7 +8586,7 @@
 
   function readRegistryCheckCache() {
     try {
-      const raw = localStorage.getItem(UPDATE_CHECK_STORAGE_KEY);
+      const raw = window.iclawUI.get(UPDATE_CHECK_STORAGE_KEY);
       if (!raw) return null;
       const data = JSON.parse(raw);
       if (typeof data.latest !== 'string' || typeof data.checkedAt !== 'number') {
@@ -8612,7 +8600,7 @@
 
   function writeRegistryCheckCache(latest) {
     try {
-      localStorage.setItem(
+      window.iclawUI.set(
         UPDATE_CHECK_STORAGE_KEY,
         JSON.stringify({ latest, checkedAt: Date.now() }),
       );
