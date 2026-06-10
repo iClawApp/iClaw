@@ -138,9 +138,13 @@ async function createWindow() {
     return;
   }
 
+  const winState = require('./window-state');
+  const saved = winState.load(); // remembered size/position from last run
+
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 820,
+    width: saved.width,
+    height: saved.height,
+    ...(typeof saved.x === 'number' ? { x: saved.x, y: saved.y } : {}),
     minWidth: 880,
     minHeight: 600,
     title: 'iClaw',
@@ -151,6 +155,8 @@ async function createWindow() {
       nodeIntegration: false,
     },
   });
+  if (saved.maximized) mainWindow.maximize();
+  winState.track(mainWindow); // persist size/position on resize/move/close
 
   // target=_blank / external links open in the user's real browser, not in-app.
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
