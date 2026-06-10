@@ -1,8 +1,9 @@
 // ── social_search (sandboxed keyless social-media search) ─────────────────────
 //
 // A unified "give keywords → get posts" tool over FREE keyless sources (no API
-// keys): Reddit (RSS discovery + shreddit comment scrape) and HackerNews
-// (Algolia). Designed to grow to more sources (Lemmy, GitHub, Polymarket…).
+// keys): Reddit (scored shreddit search + RSS breadth + subreddit drill-down +
+// comment scrape — real upvote/comment counts, see social-fetch.mjs) and
+// HackerNews (Algolia). Designed to grow to more sources (Lemmy, GitHub…).
 //
 // Like analyze_link, the actual fetch runs INSIDE the sandbox container via the
 // injected `runInSandbox` callback, so all egress honours the same container
@@ -25,17 +26,24 @@ export const SOCIAL_SEARCH_TOOL = {
   function: {
     name: 'social_search',
     description:
-      'Reddit & HackerNews — free, no API keys, runs in the sandbox. Two modes: ' +
-      '(1) DISCOVERY — pass `query` keywords to find posts; with_comments:true also pulls ' +
-      'top comments for the top Reddit posts. ' +
-      '(2) THREAD — pass a Reddit post `url` to fetch THAT post plus its FULL, nested comment ' +
-      'tree (scored, one call). Prefer this over web_fetch for any specific Reddit link. ' +
-      'Note: Reddit post upvote counts need a paid key (comment counts/scores do not).',
+      'Reddit & HackerNews — free, no API keys, runs in the sandbox. Reddit results carry REAL ' +
+      'upvote + comment counts and are ranked by relevance × engagement × freshness. Modes: ' +
+      '(1) DISCOVERY — pass `query` keywords (a plain topic works best: the tool expands the query, ' +
+      'discovers the most active subreddits and drills into them); with_comments:true also pulls ' +
+      'top comments for the best posts. ' +
+      '(2) TARGETED — add `subreddits` to focus on specific communities (in-sub search + their top posts). ' +
+      '(3) THREAD — pass a Reddit post `url` to fetch THAT post (score, body) plus its FULL, nested ' +
+      'comment tree (scored, one call). Prefer this over web_fetch for any specific Reddit link.',
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Discovery keywords / search terms. Provide this OR `url`.' },
         url: { type: 'string', description: 'A specific Reddit post URL (…/r/<sub>/comments/<id>/…) to fetch with its full comment tree. Use instead of `query` for a known link.' },
+        subreddits: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional Reddit communities to target (e.g. ["LocalLLaMA"], max 4). Use when the user names a sub or the topic clearly lives in known communities.',
+        },
         sources: {
           type: 'array',
           items: { type: 'string', enum: SOCIAL_SOURCES as unknown as string[] },
@@ -75,6 +83,7 @@ interface SocialPayload {
   counts: Record<string, number>;
   errors: Record<string, string>;
   results: SocialItem[];
+  meta?: { queries?: string[]; subreddits?: string[] };
   error?: string;
 }
 
@@ -93,7 +102,7 @@ function getFetcherB64(): string {
 }
 
 function buildSocialCommand(p: {
-  query: string; url: string; sources: string; limit: number; time: string; withComments: boolean;
+  query: string; url: string; sources: string; limit: number; time: string; withComments: boolean; subreddits: string;
 }): string {
   // Write the fetcher to $HOME — writable in BOTH sandboxes regardless of the
   // container uid. Secure runs as `node` (owns /workspace), but Work runs as the
@@ -107,6 +116,7 @@ function buildSocialCommand(p: {
     `SOCIAL_QUERY=${shQuote(p.query)} SOCIAL_URL=${shQuote(p.url)} SOCIAL_SOURCES=${shQuote(p.sources)} ` +
       `SOCIAL_LIMIT=${shQuote(String(p.limit))} SOCIAL_TIME=${shQuote(p.time)} ` +
       `SOCIAL_WITH_COMMENTS=${shQuote(p.withComments ? '1' : '0')} ` +
+      `SOCIAL_SUBREDDITS=${shQuote(p.subreddits)} ` +
       `node ${script}`,
   ].join('\n');
 }
@@ -116,6 +126,8 @@ function formatPayload(d: SocialPayload): string {
   const counts = Object.entries(d.counts).map(([k, v]) => `${k}: ${v}`).join(', ') || 'none';
   const errs = Object.entries(d.errors || {});
   const lines: string[] = [`Social search "${d.query}" — ${counts}` + (errs.length ? ` (errors: ${errs.map(([k, v]) => `${k}=${v}`).join('; ')})` : '')];
+  if (d.meta?.queries?.length) lines.push(`queries tried: ${d.meta.queries.join(' | ')}`);
+  if (d.meta?.subreddits?.length) lines.push(`subreddits explored: ${d.meta.subreddits.map((s) => `r/${s}`).join(', ')}`);
 
   for (const platform of Object.keys(d.counts)) {
     const rows = d.results.filter((r) => r.platform === platform);
@@ -128,6 +140,7 @@ function formatPayload(d: SocialPayload): string {
       if (r.author) meta.push(`by ${r.author}`);
       if (r.score != null) meta.push(`${r.score} points`);
       if (r.num_comments != null) meta.push(`${r.num_comments} comments`);
+      if (r.created) meta.push(r.created.slice(0, 10));
       if (meta.length) lines.push(`   ${meta.join(' · ')}`);
       if (r.selftext) lines.push(`   ${r.selftext}`);
       for (const c of r.comments || []) {
@@ -160,10 +173,17 @@ export async function socialSearch(
   const limit = Math.max(1, Math.min(50, Number(args.limit) || 25));
   const time = ['day', 'week', 'month', 'year', 'all'].includes(String(args.time)) ? String(args.time) : 'month';
   const withComments = args.with_comments === true;
+  // Targeted subreddits: light shape filter here; the fetcher re-validates
+  // against Reddit's naming rules and caps the count.
+  const subreddits = (Array.isArray(args.subreddits) ? args.subreddits : [])
+    .map((s) => String(s).trim().replace(/^\/?r\//i, ''))
+    .filter((s) => /^[A-Za-z0-9_]{2,21}$/.test(s))
+    .slice(0, 4)
+    .join(',');
 
   let raw: string;
   try {
-    raw = await deps.runInSandbox(buildSocialCommand({ query, url, sources: sources.join(','), limit, time, withComments }));
+    raw = await deps.runInSandbox(buildSocialCommand({ query, url, sources: sources.join(','), limit, time, withComments, subreddits }));
   } catch (err) {
     return `social_search failed to run in the sandbox: ${err instanceof Error ? err.message : String(err)}`;
   }
