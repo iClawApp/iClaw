@@ -10,3 +10,6 @@ data/
 .claude
 public/js/vendor/opaque/
 public/js/vendor/noble/
+# Electron desktop build output
+release/
+vendor/

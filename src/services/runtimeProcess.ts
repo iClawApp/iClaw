@@ -1,9 +1,14 @@
 /**
  * Manages the iclaw-runtime sidecar process lifecycle.
  *
- * Spawns packages/iclaw-runtime/src/index.ts via tsx when Work Mode is
- * needed. Restarts automatically on crash (up to MAX_RESTARTS times).
- * Shuts down cleanly with the main iClaw process.
+ * Runs the iclaw-runtime entry when Work Mode is needed, preferring the COMPILED
+ * build (packages/iclaw-runtime/dist/index.js) launched with this process's own
+ * Node (`process.execPath`) — so it needs no system node/npx/tsx on PATH, which
+ * is exactly what a packaged desktop app can't assume. (The desktop shell runs
+ * this server under a stock Node binary, so `process.execPath` is that Node.)
+ * Only when no build exists (source checkout, `npm run dev`) does it fall back to
+ * `npx tsx` on the TypeScript source. Restarts automatically on crash (up to
+ * MAX_RESTARTS times). Shuts down cleanly with the main iClaw process.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
@@ -11,7 +16,8 @@ import fs from 'node:fs';
 import { kvGet } from '../db/kv';
 
 const RUNTIME_DIR = path.resolve(__dirname, '../../packages/iclaw-runtime');
-const RUNTIME_ENTRY = path.join(RUNTIME_DIR, 'src/index.ts');
+const RUNTIME_ENTRY_TS = path.join(RUNTIME_DIR, 'src/index.ts');
+const RUNTIME_ENTRY_DIST = path.join(RUNTIME_DIR, 'dist/index.js');
 const MAX_RESTARTS = 5;
 const RESTART_WINDOW_MS = 60_000;
 
@@ -21,7 +27,7 @@ let windowStart = Date.now();
 let stopping = false;
 
 function runtimeInstalled(): boolean {
-  return fs.existsSync(RUNTIME_ENTRY);
+  return fs.existsSync(RUNTIME_ENTRY_DIST) || fs.existsSync(RUNTIME_ENTRY_TS);
 }
 
 function spawnRuntime(): void {
@@ -34,11 +40,21 @@ function spawnRuntime(): void {
     ...(openRouterKey ? { ICLAW_OPENROUTER_API_KEY: openRouterKey } : {}),
   };
 
-  child = spawn('npx', ['tsx', RUNTIME_ENTRY], {
-    cwd: RUNTIME_DIR,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: runtimeEnv,
-  });
+  // Prefer the compiled build run by our own Node binary (no system node/npx/tsx
+  // needed — critical inside a packaged .app). Fall back to tsx-on-source only
+  // when there's no dist (dev / source checkout).
+  const useDist = fs.existsSync(RUNTIME_ENTRY_DIST);
+  child = useDist
+    ? spawn(process.execPath, [RUNTIME_ENTRY_DIST], {
+        cwd: RUNTIME_DIR,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: runtimeEnv,
+      })
+    : spawn('npx', ['tsx', RUNTIME_ENTRY_TS], {
+        cwd: RUNTIME_DIR,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: runtimeEnv,
+      });
 
   child.stdout?.on('data', (chunk: Buffer) => {
     process.stdout.write(`[iclaw-runtime] ${chunk}`);

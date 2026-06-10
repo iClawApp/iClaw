@@ -1,0 +1,48 @@
+# electron-builder config — iClaw desktop (macOS-first).
+#
+# Design notes (see electron/main.js for the why):
+#  - asar: false        — the server runs under a STOCK Node child process, which
+#                         cannot read from an asar archive. All server files must
+#                         be plain files on disk.
+#  - npmRebuild: false  — do NOT let the builder rebuild native modules against
+#                         Electron's V8 ABI (better-sqlite3 won't compile there).
+#                         We ship its normal Node prebuild and run it on the
+#                         bundled stock Node, so no rebuild is needed.
+#  - the whole server payload (dist/runtime/public/views/scripts/node_modules) is
+#    copied verbatim to Resources/server/, plus a stock Node at Resources/node.
+#    main.js resolves APP_ROOT=Resources/server and NODE_BIN=Resources/node/bin/node.
+appId: app.iclaw.desktop
+productName: iClaw
+copyright: © iClaw
+directories:
+  output: release
+asar: false
+npmRebuild: false
+# The Electron app itself is tiny: just the shell (main + logger) + manifest.
+files:
+  - electron/**/*
+  - package.json
+# The server payload + a stock Node, shipped as plain files alongside the app.
+extraResources:
+  - from: dist
+    to: server/dist
+  - from: public
+    to: server/public
+  - from: views
+    to: server/views
+  - from: scripts
+    to: server/scripts
+  - from: node_modules
+    to: server/node_modules
+  - from: packages/iclaw-runtime/dist
+    to: server/packages/iclaw-runtime/dist
+  - from: packages/iclaw-runtime/package.json
+    to: server/packages/iclaw-runtime/package.json
+  - from: packages/iclaw-runtime/container
+    to: server/packages/iclaw-runtime/container
+  - from: vendor/node
+    to: node
+mac:
+  category: public.app-category.productivity
+  target:
+    - dir
