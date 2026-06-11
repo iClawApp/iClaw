@@ -1089,6 +1089,10 @@ async function runWorkModeTurn(opts: {
               toolTrace.length > 0 ? toolTrace : null,
             );
             wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });
+            // Mark the chat unread when it finishes and no one is actively
+            // viewing it — the gateway path does this (line ~541); the Work/Secure
+            // path didn't, so these chats never went blue in the sidebar.
+            syncSidebarUnread(chatId);
 
             // Procedural memory: review Work/Secure turns too. These are agentic
             // and tool-capable by nature, so every completed turn counts as
