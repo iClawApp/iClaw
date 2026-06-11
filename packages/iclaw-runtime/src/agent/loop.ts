@@ -41,6 +41,13 @@ export interface AgentOptions {
   /** Sink for the role run's Notion deliverable (DB url + row count) as it grows. */
   onNotionDeliverable?: ((d: NotionDeliverable) => void) | undefined;
   /**
+   * Role run: expose ONLY the role's declared tools (today: the Notion tools when
+   * a token is present) — no file/web/image/shell tools. Keeps the leash honest
+   * ("nothing leaves the box except the tools you connected") and trims prompt
+   * tokens. Generalize to a per-role tool list when web-using roles land.
+   */
+  roleRun?: boolean | undefined;
+  /**
    * Image data URLs (`data:<mime>;base64,…`) for THIS turn's user message —
    * files the user dropped into the chat. Sent once as vision blocks so the
    * model literally sees them; NOT stored in history (one-shot, expensive).
@@ -378,17 +385,21 @@ export async function* runAgentTurn(
     : TOOL_DEFINITIONS;
   // analyze_link (yt-dlp in the session container) is offered only when a
   // sandbox backend is wired (Docker up). Without it, the model uses web_fetch.
-  const tools = [
-    ...fileTools, READ_SUMMARY_TOOL, WEB_FETCH_TOOL, WEB_SEARCH_TOOL,
-    // show_image lets the agent surface a real image file inline. Not in
-    // Incognito — that turn is ephemeral, so there's no message to attach to.
-    ...(opts.incognito ? [] : [SHOW_IMAGE_TOOL]),
-    // analyze_link + social_search both run in the session container, so both
-    // are offered only when a sandbox backend is wired.
-    ...(opts.linkSandbox ? [ANALYZE_LINK_TOOL, SOCIAL_SEARCH_TOOL] : []),
-    // Notion tools (Role runs) run host-side, gated on a verified token.
-    ...(opts.notionToken ? NOTION_TOOLS : []),
-  ];
+  // A Role run gets EXACTLY its declared tools (today: Notion) — nothing else,
+  // so the leash matches the manifest. Otherwise the full per-mode tool set.
+  const tools = opts.roleRun
+    ? [...(opts.notionToken ? NOTION_TOOLS : [])]
+    : [
+        ...fileTools, READ_SUMMARY_TOOL, WEB_FETCH_TOOL, WEB_SEARCH_TOOL,
+        // show_image lets the agent surface a real image file inline. Not in
+        // Incognito — that turn is ephemeral, so there's no message to attach to.
+        ...(opts.incognito ? [] : [SHOW_IMAGE_TOOL]),
+        // analyze_link + social_search both run in the session container, so both
+        // are offered only when a sandbox backend is wired.
+        ...(opts.linkSandbox ? [ANALYZE_LINK_TOOL, SOCIAL_SEARCH_TOOL] : []),
+        // Notion tools (Role runs) run host-side, gated on a verified token.
+        ...(opts.notionToken ? NOTION_TOOLS : []),
+      ];
 
   // When the user dropped image(s), send the turn's user message as a
   // multimodal content array (text + image blocks) so a vision model sees them.

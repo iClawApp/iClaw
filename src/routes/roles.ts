@@ -173,6 +173,7 @@ rolesRouter.post('/:id/run', async (req, res) => {
     const sessionId = await createWorkSession({
       systemPrompt,
       ...(notionToken ? { notionToken } : {}),
+      roleRun: true, // exactly the role's declared tools — no file/web/shell.
       // No folders: the role never touches the user's computer — it works only in
       // the tools you connected. Delete tears the run down.
     });

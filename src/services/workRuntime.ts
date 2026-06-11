@@ -74,6 +74,8 @@ export interface CreateSessionOptions {
    * this session (the role's container, if any, stays offline). Never logged.
    */
   notionToken?: string | undefined;
+  /** Role run: restrict the turn to the role's declared tools (Notion only today). */
+  roleRun?: boolean | undefined;
   /** Stable identity (e.g. "chat:156") so a chat reconnects to its workspace. */
   key?: string | undefined;
   /** Compacted prior history to seed context (used after a restart). */
@@ -89,6 +91,7 @@ export async function createWorkSession(opts: CreateSessionOptions = {}): Promis
   if (opts.model) body.model = opts.model;
   if (opts.systemPrompt) body.systemPrompt = opts.systemPrompt;
   if (opts.notionToken) body.notionToken = opts.notionToken;
+  if (opts.roleRun) body.roleRun = true;
   if (opts.key) body.key = opts.key;
   if (opts.history?.length) body.history = opts.history;
   const res = await request('POST', '/sessions', body);

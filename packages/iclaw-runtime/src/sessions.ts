@@ -55,6 +55,8 @@ export interface SessionOptions {
    * for this session's turns (the role's container, if any, stays offline).
    */
   notionToken?: string | undefined;
+  /** Role run: restrict the turn to the role's declared tools (see loop.ts). */
+  roleRun?: boolean | undefined;
   /** Stable identity (e.g. "chat:156") for reconnecting to a workspace. */
   key?: string | undefined;
   /**
@@ -769,6 +771,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     incognito,
     systemPrompt: session.opts.systemPrompt,
     notionToken: session.opts.notionToken,
+    roleRun: session.opts.roleRun,
     // Capture the deliverable as it grows: notion_create_database seeds it (0
     // rows), each notion_add_row to the same DB bumps the count. The host reads
     // it from getSessionInfo to show a finished thing for review.
