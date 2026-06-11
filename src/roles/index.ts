@@ -12,15 +12,19 @@ import { contentStrategist } from './content-strategist';
 import { copywriter } from './copywriter';
 import { socialMediaManager } from './social-media-manager';
 import { emailMarketer } from './email-marketer';
+import { meetingNotetaker } from './meeting-notetaker';
 
 export type { RoleManifest, RoleTool, ToolScope, ConnectMethod } from './types';
 
 /** Every role we ship, in build/disclosure order. */
 export const ALL_ROLES: readonly RoleManifest[] = [
+  // Wave 1 — marketing/content (surface for everyone).
   contentStrategist,
   copywriter,
   socialMediaManager,
   emailMarketer,
+  // Wave 2+ — unlock as the user gets established (see visibleRoles).
+  meetingNotetaker,
 ];
 
 const byId = new Map(ALL_ROLES.map((r) => [r.id, r]));
