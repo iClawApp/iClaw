@@ -551,8 +551,21 @@
   // so upgrading doesn't silently revoke access on existing folders. Newly
   // added folders default to read-only (see addFolder / browse below).
   function getWorkFolders() {
+    const key = workFoldersKey();
+    // Source of truth is the server store (window.iclawUI) so folders survive the
+    // desktop app's ephemeral port — localStorage is keyed by origin/port and gets
+    // wiped on every Electron launch.
+    let stored = window.iclawUI ? window.iclawUI.get(key) : null;
+    if (stored == null) {
+      // One-time migration: lift any legacy per-origin localStorage value into the
+      // port-stable server store, then use it (so upgrading never drops folders).
+      try {
+        const legacy = localStorage.getItem(key);
+        if (legacy != null) { stored = legacy; if (window.iclawUI) window.iclawUI.set(key, legacy); }
+      } catch { /* ignore */ }
+    }
     let raw;
-    try { raw = JSON.parse(localStorage.getItem(workFoldersKey()) || '[]'); }
+    try { raw = JSON.parse(stored || '[]'); }
     catch { return []; }
     if (!Array.isArray(raw)) return [];
     return raw
@@ -565,7 +578,11 @@
   }
 
   function saveWorkFolders(folders) {
-    try { localStorage.setItem(workFoldersKey(), JSON.stringify(folders)); } catch {}
+    const val = JSON.stringify(folders);
+    // Persist to the server store (port-stable) instead of localStorage so the
+    // desktop app's changing port can't wipe the user's chosen folders.
+    if (window.iclawUI) window.iclawUI.set(workFoldersKey(), val);
+    else { try { localStorage.setItem(workFoldersKey(), val); } catch { /* ignore */ } }
   }
 
   function escAttr(s) {
