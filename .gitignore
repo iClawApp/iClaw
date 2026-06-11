@@ -4,9 +4,13 @@ dist/
 data/
 .env
 .env.local
+.env.release
 .DS_Store
 *.log
 *.tgz
 .claude
 public/js/vendor/opaque/
 public/js/vendor/noble/
+# Electron desktop build output
+release/
+vendor/

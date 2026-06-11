@@ -29,3 +29,13 @@ export function kvSet(key: string, value: string): void {
 export function kvDelete(key: string): void {
   delStmt.run(key);
 }
+
+const prefixStmt = db.prepare('SELECT key, value FROM iclaw_kv WHERE key LIKE ?');
+
+/** All key/value pairs whose key starts with `prefix` (e.g. "ui."). */
+export function kvGetByPrefix(prefix: string): Record<string, string> {
+  const rows = prefixStmt.all(`${prefix}%`) as { key: string; value: string }[];
+  const out: Record<string, string> = {};
+  for (const r of rows) out[r.key] = r.value;
+  return out;
+}

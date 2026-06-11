@@ -31,6 +31,29 @@
     window.__ICLAW_PROJECTS__ = <%- JSON.stringify(typeof projectsMini !== 'undefined' ? projectsMini : []) %>;
     window.__ICLAW_SCHEDULED_CHAT_COUNTS__ = <%- JSON.stringify(typeof scheduledChatCounts !== 'undefined' ? scheduledChatCounts : {}) %>;
     window.__ICLAW_DEV__ = <%- JSON.stringify(typeof devMode !== 'undefined' ? !!devMode : false) %>;
+    window.__ICLAW_UI__ = <%- JSON.stringify(typeof uiState !== 'undefined' ? uiState : {}) %>;
+    // Server-persisted UI state — a port-stable replacement for localStorage
+    // (the desktop app's origin port changes each launch, wiping localStorage).
+    // Reads are synchronous from the snapshot injected above; writes POST to
+    // /api/ui-state. Use for small UI prefs that should survive across launches.
+    window.iclawUI = (function () {
+      var s = window.__ICLAW_UI__ || {};
+      return {
+        get: function (k) { return Object.prototype.hasOwnProperty.call(s, k) ? s[k] : null; },
+        set: function (k, v) {
+          var val = (v === null || v === undefined) ? null : String(v);
+          if (val === null) { delete s[k]; } else { s[k] = val; }
+          try {
+            fetch('/api/ui-state', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ key: k, value: val }),
+            }).catch(function () {});
+          } catch (e) { /* ignore */ }
+        },
+        remove: function (k) { this.set(k, null); },
+      };
+    })();
   </script>
 </head>
 <body>

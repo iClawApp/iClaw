@@ -31,6 +31,9 @@ import {
 } from './services/remoteAccessOpaqueAuth';
 import { remoteAccessApiRouter } from './routes/remoteAccessApi';
 import { settingsRouter } from './routes/settings';
+import { shareRouter } from './routes/share';
+import { uiStateRouter } from './routes/uiState';
+import { kvGetByPrefix } from './db/kv';
 
 import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
 import { resolveUploadsRoot } from './paths';
@@ -120,6 +123,16 @@ export function createApp(): express.Express {
   fs.mkdirSync(uploadsRoot, { recursive: true });
   app.use('/uploads', express.static(uploadsRoot));
 
+  // Server-persisted UI state (window.iclawUI) — injected into every rendered
+  // page so reads are synchronous and survive the desktop app's changing port
+  // (unlike localStorage, which is keyed by origin). Cheap indexed KV lookup.
+  app.use((_req, res, next) => {
+    const ui: Record<string, string> = {};
+    for (const [k, v] of Object.entries(kvGetByPrefix('ui.'))) ui[k.slice(3)] = v;
+    res.locals.uiState = ui;
+    next();
+  });
+
   app.use('/', indexRouter);
   app.use('/chats', chatsRouter);
   app.use('/projects', projectsRouter);
@@ -131,6 +144,8 @@ export function createApp(): express.Express {
   app.use('/api/update', updateRouter);
   app.use('/api/remote-access', remoteAccessApiRouter);
   app.use('/media', mediaRouter);
+  app.use('/', shareRouter); // browser → local proxy → iClaw-cloud (CORS workaround)
+  app.use('/', uiStateRouter); // POST /api/ui-state — persist window.iclawUI flags
 
   app.use(
     (

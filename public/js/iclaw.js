@@ -1721,26 +1721,80 @@
   function initDraftProjectPick() {
     if (!startedOnDraft || !projectPickEl || !composerWrap || !draftBody) return;
 
+    const hintNone = projectPickEl.querySelector('#project-pick-hint-none');
+    const pickGrid = projectPickEl.querySelector('.project-pick-grid');
+
+    const escAttr = (v) =>
+      typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+        ? CSS.escape(v)
+        : v.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+    // The hint pill holds the project that the Space shortcut commits — "No
+    // project" by default, or whatever the user substitutes in by picking a tile
+    // while in "change the default" mode. Substituting does NOT open a chat, and
+    // the choice persists (server-backed window.iclawUI) so it sticks across new
+    // chats and app launches.
+    const SAVED_DEFAULT_KEY = 'new-chat-default-project';
+    function setHintDefault(card, persist) {
+      if (!hintNone) return;
+      const id = card.getAttribute('data-project-id') || '';
+      hintNone.dataset.projectId = id;
+      hintNone.textContent = card.getAttribute('data-project-name') || 'No project';
+      hintNone.classList.remove('is-emptied');
+      hintNone.setAttribute('aria-pressed', 'false');
+      pickGrid?.classList.remove('is-choosing');
+      if (persist !== false && window.iclawUI) window.iclawUI.set(SAVED_DEFAULT_KEY, id);
+    }
+
     projectPickEl.addEventListener('click', (e) => {
       const card = e.target.closest('.project-pick-card');
       if (!card || draftProjectLocked) return;
+      // While the tiles are jiggling (the user clicked the pill to change the
+      // default), a tile click SUBSTITUTES that project into the pill / Space
+      // shortcut instead of opening a chat. Otherwise it commits, as before.
+      if (pickGrid && pickGrid.classList.contains('is-choosing')) {
+        setHintDefault(card);
+        return;
+      }
       void commitDraftFromCard(card);
     });
 
-    // Space = "No project" — a quick skip past project selection. Guarded to the
-    // active picking stage so it never fires afterwards, and ignored while a text
-    // field is focused. commitDraftFromCard's re-entry guard makes this safe even
-    // if a card button also has focus.
+    // Space commits with the hint pill's current default project (No project, or
+    // whatever the user substituted in). Guarded to the active picking stage and
+    // ignored while a text field is focused.
     document.addEventListener('keydown', (e) => {
       if (e.key !== ' ' && e.code !== 'Space') return;
       if (draftProjectLocked || !draftBody.classList.contains('is-picking')) return;
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      const none = projectPickEl.querySelector('.project-pick-card--none');
-      if (!none) return;
       e.preventDefault();
-      void commitDraftFromCard(none);
+      const defId = (hintNone?.dataset.projectId || '').trim();
+      const card = defId
+        ? projectPickEl.querySelector('.project-pick-card[data-project-id="' + escAttr(defId) + '"]')
+        : projectPickEl.querySelector('.project-pick-card--none');
+      if (card) void commitDraftFromCard(card);
     });
+
+    // Click the pill → "change the default" mode: it empties with a light sheen
+    // and the project tiles jiggle iOS-home-screen style, inviting a pick. Click
+    // a tile to substitute it (above); re-click the pill to cancel.
+    if (hintNone && pickGrid) {
+      hintNone.addEventListener('click', () => {
+        const choosing = pickGrid.classList.toggle('is-choosing');
+        hintNone.classList.toggle('is-emptied', choosing);
+        hintNone.setAttribute('aria-pressed', choosing ? 'true' : 'false');
+      });
+    }
+
+    // Restore the last chosen default project (the Space target) so it sticks
+    // across new chats / launches. Falls back to "No project" if it's gone.
+    const savedDefault = (window.iclawUI && window.iclawUI.get(SAVED_DEFAULT_KEY)) || '';
+    if (savedDefault) {
+      const savedCard = projectPickEl.querySelector(
+        '.project-pick-card[data-project-id="' + escAttr(savedDefault) + '"]',
+      );
+      if (savedCard) setHintDefault(savedCard, false);
+    }
 
     const initSel = (projectPickEl.dataset.initialProjectId || '').trim();
     if (initSel !== '') {
@@ -4395,15 +4449,10 @@
   // above. Pure client gate: once the user right-clicks a chat, the flag
   // is set and the pill never shows again on this device.
   // -------------------------------------------------------------------------
-  const SIDEBAR_HINT_DISCOVERED_KEY = 'iclaw-sidebar-hint-discovered';
-  const SIDEBAR_HINT_LAST_SHOWN_KEY = 'iclaw-sidebar-hint-last-shown';
+  const SIDEBAR_HINT_DISCOVERED_KEY = 'sidebar-hint-discovered';
+  const SIDEBAR_HINT_LAST_SHOWN_KEY = 'sidebar-hint-last-shown';
   function markSidebarHintDiscovered() {
-    try {
-      localStorage.setItem(SIDEBAR_HINT_DISCOVERED_KEY, '1');
-    } catch {
-      // Private mode — best effort; the pill will disappear next time
-      // we successfully store the per-day stamp anyway.
-    }
+    window.iclawUI.set(SIDEBAR_HINT_DISCOVERED_KEY, '1');
     const pill = document.getElementById('sidebar-hint-pill');
     if (pill && pill.parentNode) pill.parentNode.removeChild(pill);
   }
@@ -4414,12 +4463,8 @@
 
     let discovered = null;
     let lastShown = null;
-    try {
-      discovered = localStorage.getItem(SIDEBAR_HINT_DISCOVERED_KEY);
-      lastShown = localStorage.getItem(SIDEBAR_HINT_LAST_SHOWN_KEY);
-    } catch {
-      // ignore
-    }
+    discovered = window.iclawUI.get(SIDEBAR_HINT_DISCOVERED_KEY);
+    lastShown = window.iclawUI.get(SIDEBAR_HINT_LAST_SHOWN_KEY);
     if (discovered === '1') {
       pill.remove();
       return;
@@ -4437,11 +4482,7 @@
       return;
     }
 
-    try {
-      localStorage.setItem(SIDEBAR_HINT_LAST_SHOWN_KEY, todayKey);
-    } catch {
-      // ignore
-    }
+    window.iclawUI.set(SIDEBAR_HINT_LAST_SHOWN_KEY, todayKey);
 
     pill.hidden = false;
     const hideTimer = setTimeout(() => {
@@ -8212,7 +8253,7 @@
     const pill = document.getElementById('send-hint-pill');
     if (!pill) return; // server decided not to surface it
 
-    const STORAGE_KEY = 'iclaw-send-hint-last-shown';
+    const STORAGE_KEY = 'send-hint-last-shown';
     const AUTO_HIDE_MS = 12_000;
 
     function todayKey() {
@@ -8226,19 +8267,10 @@
       );
     }
 
-    let lastShown = null;
-    try {
-      lastShown = localStorage.getItem(STORAGE_KEY);
-    } catch {
-      // Private mode / storage disabled — treat as "never shown".
-    }
+    const lastShown = window.iclawUI.get(STORAGE_KEY);
     if (lastShown === todayKey()) return; // already shown today
 
-    try {
-      localStorage.setItem(STORAGE_KEY, todayKey());
-    } catch {
-      // ignore — we'll just nag again next page-load in that session
-    }
+    window.iclawUI.set(STORAGE_KEY, todayKey());
 
     let hideTimer = null;
     function hidePill() {
@@ -8323,7 +8355,7 @@
   // a timestamp in localStorage and the banner stays hidden until that point.
   // The × in the corner sets a far-future snooze (effectively never).
   // -------------------------------------------------------------------------
-  const RESET_REMIND_KEY = 'iclaw:resetPolicyRemindAfter';
+  const RESET_REMIND_KEY = 'reset-policy-remind-after';
   const SNOOZE_DAYS = 3;
   const NEVER_REMIND_MS = 100 * 365 * 24 * 60 * 60 * 1000;
   const RESET_POLICY_MANUAL_PATCH = JSON.stringify(
@@ -8355,15 +8387,12 @@
   const resetConfirmOk = document.getElementById('reset-policy-confirm-ok');
 
   function snoozeResetBanner(ms) {
-    try {
-      const until = Date.now() + ms;
-      localStorage.setItem(RESET_REMIND_KEY, String(until));
-    } catch {}
+    window.iclawUI.set(RESET_REMIND_KEY, String(Date.now() + ms));
   }
 
   function isResetBannerSnoozed() {
     try {
-      const raw = localStorage.getItem(RESET_REMIND_KEY);
+      const raw = window.iclawUI.get(RESET_REMIND_KEY);
       if (!raw) return false;
       const until = Number(raw);
       if (!Number.isFinite(until)) return false;
@@ -8553,7 +8582,7 @@
   // -------------------------------------------------------------------------
   const NPM_REGISTRY_LATEST =
     'https://registry.npmjs.org/@iclawapp%2Ficlaw/latest';
-  const UPDATE_CHECK_STORAGE_KEY = 'iclaw-update-registry-check';
+  const UPDATE_CHECK_STORAGE_KEY = 'update-registry-check';
   const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
 
   const updateBanner = document.getElementById('sidebar-update-banner');
@@ -8572,7 +8601,7 @@
 
   function readRegistryCheckCache() {
     try {
-      const raw = localStorage.getItem(UPDATE_CHECK_STORAGE_KEY);
+      const raw = window.iclawUI.get(UPDATE_CHECK_STORAGE_KEY);
       if (!raw) return null;
       const data = JSON.parse(raw);
       if (typeof data.latest !== 'string' || typeof data.checkedAt !== 'number') {
@@ -8586,7 +8615,7 @@
 
   function writeRegistryCheckCache(latest) {
     try {
-      localStorage.setItem(
+      window.iclawUI.set(
         UPDATE_CHECK_STORAGE_KEY,
         JSON.stringify({ latest, checkedAt: Date.now() }),
       );

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for the notarized iClaw .app.
+
+  iClaw spawns a SEPARATE stock Node binary (Resources/node/bin/node) that runs
+  the server + runtime, loads native addons (better-sqlite3) and JITs JavaScript
+  (V8). Under the hardened runtime that combination needs:
+    - allow-jit / allow-unsigned-executable-memory  → V8 JIT in the child
+    - allow-dyld-environment-variables              → we pass env to the child
+    - disable-library-validation                    → main app may load/spawn
+      binaries signed with our (non-Apple) Developer ID: the bundled node, the
+      .node addon, ripgrep, etc.
+  No App Sandbox (iClaw needs free filesystem + docker subprocess access).
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

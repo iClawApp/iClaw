@@ -541,7 +541,10 @@
         ttlDays,
         maxViews: burn ? 1 : null,
       };
-      const res = await fetch(cloudBaseUrl + '/api/shares', {
+      // POST to OUR server, not iClaw-cloud directly: the cloud's CORS preflight
+      // is broken (OPTIONS 500s), so a cross-origin browser fetch fails with
+      // "Failed to fetch". The local route forwards the ciphertext server-side.
+      const res = await fetch('/api/shares', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),

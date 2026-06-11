@@ -1,0 +1,100 @@
+# electron-builder config — iClaw desktop (macOS-first).
+#
+# Design notes (see electron/main.js for the why):
+#  - asar: false        — the server runs under a STOCK Node child process, which
+#                         cannot read from an asar archive. All server files must
+#                         be plain files on disk.
+#  - npmRebuild: false  — do NOT let the builder rebuild native modules against
+#                         Electron's V8 ABI (better-sqlite3 won't compile there).
+#                         We ship its normal Node prebuild and run it on the
+#                         bundled stock Node, so no rebuild is needed.
+#  - the whole server payload (dist/runtime/public/views/scripts/node_modules) is
+#    copied verbatim to Resources/server/, plus a stock Node at Resources/node.
+#    main.js resolves APP_ROOT=Resources/server and NODE_BIN=Resources/node/bin/node.
+appId: app.iclaw.desktop
+productName: iClaw
+copyright: © iClaw
+# Version-LESS artifact names so the website can link to a stable URL
+# (github.com/iClawApp/iClaw/releases/latest/download/iClaw-arm64.dmg). The
+# version still lives inside latest-mac.yml, which is what auto-update reads.
+artifactName: ${productName}-${arch}.${ext}
+directories:
+  output: release
+asar: false
+npmRebuild: false
+# The Electron app itself is tiny: just the shell (main + logger + updater) +
+# manifest. The main process needs NO node_modules — electron is provided by the
+# runtime, and electron-updater is loaded from the server payload (see
+# electron/updater.js) — so we exclude the auto-included prod deps to avoid
+# duplicating the whole node_modules tree (it already ships under Resources/server).
+files:
+  - electron/**/*
+  - package.json
+  - "!node_modules/**/*"
+# The server payload + a stock Node, shipped as plain files alongside the app.
+extraResources:
+  - from: dist
+    to: server/dist
+  - from: public
+    to: server/public
+  - from: views
+    to: server/views
+  - from: scripts
+    to: server/scripts
+  - from: node_modules
+    to: server/node_modules
+    # Ship only what the server needs at RUNTIME. The raw tree includes build/
+    # test-only devDependencies — electron alone is ~200 MB — which the server
+    # never loads (electron is provided to the main process by the runtime; the
+    # server runs compiled dist, not tsx). Excluding them trims ~400 MB.
+    filter:
+      - "**/*"
+      # .bin holds CLI shims (symlinks) — unused at runtime, and pruning their
+      # targets below leaves them DANGLING, which breaks codesign. Drop them.
+      - "!.bin/**"
+      - "!electron/**"
+      - "!electron-builder/**"
+      - "!app-builder-lib/**"
+      - "!app-builder-bin/**"
+      - "!dmg-builder/**"
+      - "!@electron/**"
+      - "!@develar/**"
+      - "!typescript/**"
+      - "!tsx/**"
+      - "!vitest/**"
+      - "!@vitest/**"
+      - "!@types/**"
+      - "!supertest/**"
+  - from: packages/iclaw-runtime/dist
+    to: server/packages/iclaw-runtime/dist
+  - from: packages/iclaw-runtime/package.json
+    to: server/packages/iclaw-runtime/package.json
+  - from: packages/iclaw-runtime/container
+    to: server/packages/iclaw-runtime/container
+  - from: vendor/node
+    to: node
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.icns
+  # Hardened runtime + entitlements are required for notarization. The bundled
+  # stock Node JITs and loads non-Apple-signed binaries, so the entitlements
+  # grant allow-jit / disable-library-validation (see build/entitlements.mac.plist).
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Notarization is OFF by default so local/CI builds never stall on an upload.
+  # To produce a distributable, set notarize: true (or --config.mac.notarize=true)
+  # with APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID in the env, and a
+  # "Developer ID Application" cert in the keychain (the $99 program — NOT the
+  # "Apple Development" cert).
+  notarize: false
+  # dmg = the download; zip = the artifact electron-updater consumes on macOS.
+  target:
+    - dmg
+    - zip
+# Update feed: electron-updater pulls newer signed builds from GitHub Releases.
+publish:
+  provider: github
+  owner: iClawApp
+  repo: iClaw
