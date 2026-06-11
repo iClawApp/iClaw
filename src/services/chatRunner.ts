@@ -139,9 +139,12 @@ function rewriteMediaUrl(url: string): string {
   return url;
 }
 
-/** Sidebar unread: set when a reply lands and no tab is subscribed to this chat. */
+/** Sidebar unread: a reply lands → read if a tab is ACTIVELY viewing this chat
+ *  (window focused), otherwise unread. "Subscribed but window in the background"
+ *  counts as not viewing, so a chat that finishes while you've stepped away goes
+ *  blue. */
 function syncSidebarUnread(chatId: number): void {
-  if (wsHub.hasSubscriber(chatId)) {
+  if (wsHub.hasActiveSubscriber(chatId)) {
     if (chats.markRead(chatId)) wsHub.broadcastAll({ type: 'chat-read', chatId });
   } else if (chats.markUnread(chatId)) {
     wsHub.broadcastAll({ type: 'chat-unread', chatId });

@@ -28,6 +28,13 @@ export type ClientMsg =
   /** Stop receiving events for this chat. */
   | { type: 'unsubscribe'; chatId: number }
   /**
+   * Report whether this tab is actively viewing (window focused + visible). The
+   * server uses it for read/unread: a reply that lands while inactive marks the
+   * chat unread; going active marks the viewed chat read. Stays subscribed
+   * either way, so the live stream is never interrupted.
+   */
+  | { type: 'viewing'; active: boolean }
+  /**
    * Send a user message. If chatId is omitted the server creates a new chat
    * first and replies with `chat-created`, then the streaming events.
    *

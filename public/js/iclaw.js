@@ -4771,6 +4771,7 @@
         loadPendingFactSuggestions();
         loadPendingSkillSuggestions();
       }
+      sendViewingState(); // report focus state so read/unread is accurate
       /* If the socket dropped while we had pending task-create records (or
        * was never up when the server emitted 'ready'), reconcile against the
        * current task list as soon as we're back online. Closes the WS-race
@@ -4793,6 +4794,17 @@
       handleServerMsg(msg);
     });
   }
+
+  // Report whether the user is actively viewing (window focused + visible) so the
+  // server can tell read from unread: a reply that lands while you've stepped away
+  // marks the chat unread (blue), and returning to the window marks the viewed
+  // chat read. The tab stays subscribed throughout — the live stream never breaks.
+  function sendViewingState() {
+    wsSend({ type: 'viewing', active: document.visibilityState === 'visible' && document.hasFocus() });
+  }
+  document.addEventListener('visibilitychange', sendViewingState);
+  window.addEventListener('focus', sendViewingState);
+  window.addEventListener('blur', sendViewingState);
 
   // -------------------------------------------------------------------------
   // handle server → client events

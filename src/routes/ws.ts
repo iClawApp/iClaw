@@ -67,6 +67,19 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
       if (typeof msg.chatId === 'number') wsHub.unsubscribe(socket, msg.chatId);
       return;
 
+    case 'viewing': {
+      if (typeof msg.active !== 'boolean') return;
+      wsHub.setActive(socket, msg.active);
+      // Going active = the user is now looking → clear unread on the chat(s)
+      // this tab is viewing.
+      if (msg.active) {
+        for (const cid of wsHub.subscribedChats(socket)) {
+          if (chats.markRead(cid)) wsHub.broadcastAll({ type: 'chat-read', chatId: cid });
+        }
+      }
+      return;
+    }
+
     case 'ping':
       send(socket, { type: 'pong' });
       return;

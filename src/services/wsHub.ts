@@ -13,6 +13,12 @@ import type { ServerMsg } from '../types/protocol';
 interface Subscription {
   socket: WebSocket;
   chats: Set<number>;
+  /**
+   * Whether this tab is actively viewing — window focused AND visible. Flipped
+   * false on blur/hide so a turn that finishes while the user has stepped away
+   * marks the chat UNREAD (blue dot) instead of read. Defaults true.
+   */
+  active: boolean;
 }
 
 class WsHub {
@@ -21,13 +27,42 @@ class WsHub {
   readonly serverStarted = Date.now();
 
   register(socket: WebSocket): void {
-    this.subs.set(socket, { socket, chats: new Set() });
+    this.subs.set(socket, { socket, chats: new Set(), active: true });
     socket.on('close', () => this.subs.delete(socket));
     socket.on('error', () => this.subs.delete(socket));
   }
 
+  // A tab views exactly one chat at a time, so subscribing REPLACES the prior
+  // chat. The client never sends `unsubscribe`, so without this the set would
+  // accumulate and hasActiveSubscriber would treat stale chats as still-viewed.
   subscribe(socket: WebSocket, chatId: number): void {
-    this.subs.get(socket)?.chats.add(chatId);
+    const sub = this.subs.get(socket);
+    if (!sub) return;
+    sub.chats.clear();
+    sub.chats.add(chatId);
+  }
+
+  /** Mark whether a socket is actively viewing (window focused + visible). */
+  setActive(socket: WebSocket, active: boolean): void {
+    const sub = this.subs.get(socket);
+    if (sub) sub.active = active;
+  }
+
+  /** Chats a socket is subscribed to (0 or 1 in practice). */
+  subscribedChats(socket: WebSocket): number[] {
+    return [...(this.subs.get(socket)?.chats ?? [])];
+  }
+
+  /**
+   * True when a tab is subscribed to this chat AND actively viewing it. This —
+   * not hasSubscriber — drives read/unread: a chat that finishes while nobody is
+   * actively looking becomes unread.
+   */
+  hasActiveSubscriber(chatId: number): boolean {
+    for (const sub of this.subs.values()) {
+      if (sub.active && sub.chats.has(chatId)) return true;
+    }
+    return false;
   }
 
   unsubscribe(socket: WebSocket, chatId: number): void {
