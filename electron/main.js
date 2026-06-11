@@ -164,6 +164,22 @@ async function createWindow() {
     return { action: 'deny' };
   });
 
+  // Cmd/Ctrl+N → new chat. Desktop only: in the browser this is the native
+  // "new window" shortcut, which we don't (and can't) override — this handler
+  // lives in the Electron main process, so it never affects browser usage.
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const mod = process.platform === 'darwin' ? input.meta : input.control;
+    if (mod && !input.alt && !input.shift && (input.key === 'n' || input.key === 'N')) {
+      event.preventDefault();
+      mainWindow.webContents
+        .executeJavaScript(
+          "(function(){var b=document.querySelector('.new-chat-btn');if(b){b.click();}else{location.assign('/');}})()",
+        )
+        .catch(() => {});
+    }
+  });
+
   mainWindow.webContents.once('did-finish-load', () => {
     logger.log('[iclaw-desktop] window loaded', url);
     mainWindow.show();
