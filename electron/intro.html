@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  /* Dimmer sits BEHIND the particles and darkens the desktop progressively, so
+     the desktop is visible as the dots appear, then the screen sinks to near-dark
+     and the glowing word takes over. Driven frame-by-frame from the script. */
+  #dim { position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0;
+         background: radial-gradient(78% 68% at 50% 48%, rgba(6,7,13,.70) 0%, rgba(3,3,8,.95) 100%); }
+  #c { position: fixed; inset: 0; z-index: 1; display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<div id="dim"></div>
+<canvas id="c"></canvas>
+<script>
+(function () {
+  var canvas = document.getElementById('c');
+  var ctx = canvas.getContext('2d');
+  var W, H, DPR, particles = [];
+  var T0 = performance.now();
+  var palette = ['#ffffff', '#e6ecff', '#c7d2fe', '#a5b4fc', '#bfdbfe', '#ddd6fe'];
+
+  function size() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  function easeInOut(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+
+  function build() {
+    size();
+    // Rasterize the wordmark, then sample its pixels as landing points.
+    var off = document.createElement('canvas');
+    off.width = W; off.height = H;
+    var o = off.getContext('2d');
+    o.fillStyle = '#fff';
+    o.textAlign = 'center'; o.textBaseline = 'middle';
+    var fs = Math.min(W * 0.21, H * 0.4);
+    o.font = '700 ' + fs + 'px -apple-system, system-ui, "Segoe UI", sans-serif';
+    o.fillText('iClaw', W / 2, H / 2);
+    var d = o.getImageData(0, 0, W, H).data;
+    var targets = [], step = Math.max(4, Math.round(W / 360));
+    for (var y = 0; y < H; y += step)
+      for (var x = 0; x < W; x += step)
+        if (d[(y * W + x) * 4 + 3] > 128) targets.push([x, y]);
+    // Cap for performance — thin the set evenly.
+    var cap = 2400;
+    if (targets.length > cap) {
+      var nn = [], s = targets.length / cap;
+      for (var i = 0; i < targets.length; i += s) nn.push(targets[i | 0]);
+      targets = nn;
+    }
+    particles = [];
+    var R = Math.max(W, H);
+    for (var j = 0; j < targets.length; j++) {
+      var ang = Math.random() * 6.283, rad = R * (0.32 + Math.random() * 0.55);
+      particles.push({
+        sx: W / 2 + Math.cos(ang) * rad,           // start on a ring well outside the word
+        sy: H / 2 + Math.sin(ang) * rad,
+        tx: targets[j][0], ty: targets[j][1],       // land on a pixel of "iClaw"
+        born: Math.random() * 1500,                 // staggered fade-in
+        tdelay: 1300 + Math.random() * 1300,        // hold as scattered dots, then travel
+        dur: 2600 + Math.random() * 1500,           // slow drift (all landed by ~6.7s)
+        amp: (Math.random() * 2 - 1) * (40 + Math.random() * 95), // signed wobble = the "squiggle"
+        freq: 1.1 + Math.random() * 2.3,            // how many curls on the way in
+        phase: Math.random() * 6.283,
+        size: Math.random() * 1.4 + 0.9,
+        c: palette[(Math.random() * palette.length) | 0],
+      });
+    }
+  }
+  build();
+  window.addEventListener('resize', build);
+
+  var dimEl = document.getElementById('dim');
+  function frame(now) {
+    var T = now - T0;
+    ctx.clearRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'lighter'; // additive → the dense word glows
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      var fade = (T - p.born) / 520;
+      if (fade <= 0) continue;
+      if (fade > 1) fade = 1;
+      var x, y;
+      var local = T - p.tdelay;
+      if (local <= 0) { x = p.sx; y = p.sy; }
+      else {
+        var t = local / p.dur; if (t > 1) t = 1;
+        var e = easeInOut(t);
+        var bx = p.sx + (p.tx - p.sx) * e, by = p.sy + (p.ty - p.sy) * e;
+        var dx = p.tx - p.sx, dy = p.ty - p.sy, len = Math.hypot(dx, dy) || 1;
+        var nx = -dy / len, ny = dx / len;                 // perpendicular to the path
+        var wob = p.amp * Math.sin(t * Math.PI * p.freq + p.phase) * (1 - t); // decays to 0 at the target
+        x = bx + nx * wob; y = by + ny * wob;
+        if (t >= 1) { x += (Math.random() - 0.5) * 0.7; y += (Math.random() - 0.5) * 0.7; } // settle shimmer
+      }
+      ctx.globalAlpha = fade * 0.92;
+      ctx.fillStyle = p.c;
+      ctx.beginPath(); ctx.arc(x, y, p.size, 0, 6.283); ctx.fill();
+    }
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    // Darken the desktop progressively as the word forms, then hold it dark.
+    var dim = T / 6800; if (dim > 1) dim = 1;
+    dimEl.style.opacity = (easeInOut(dim) * 0.92).toFixed(3);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Skip on key/click — the Electron host also enforces a max duration.
+  function done() { if (window.iclawIntro && window.iclawIntro.done) window.iclawIntro.done(); }
+  window.addEventListener('keydown', function (e) { if (e.key === 'Escape' || e.key === ' ' || e.key === 'Enter') done(); });
+  window.addEventListener('click', done);
+})();
+</script>
+</body>
+</html>

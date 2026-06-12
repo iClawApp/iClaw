@@ -29,12 +29,13 @@
  * tweaks done by the server + runtime still apply.
  */
 
-const { app, BrowserWindow, shell, dialog } = require('electron');
+const { app, BrowserWindow, shell, dialog, screen } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
+const fs = require('node:fs');
 const logger = require('./logger');
 
 logger.init(); // tee shell + server output to ~/.iclaw/logs/desktop.log
@@ -63,6 +64,39 @@ const DB_PATH =
 let serverChild = null;
 let mainWindow = null;
 let quitting = false;
+
+// First-launch welcome intro. Shown once (gated by a flag file next to the DB),
+// then never again. It also doubles as a splash that masks the server boot.
+const INTRO_FLAG = path.join(path.dirname(DB_PATH), '..', 'intro-seen');
+function introSeen() {
+  if (process.env.ICLAW_FORCE_INTRO === '1') return false; // dev: always show
+  try { return fs.existsSync(INTRO_FLAG); } catch { return false; }
+}
+function markIntroSeen() {
+  try {
+    fs.mkdirSync(path.dirname(INTRO_FLAG), { recursive: true });
+    fs.writeFileSync(INTRO_FLAG, new Date().toISOString());
+  } catch (err) {
+    logger.logError('[iclaw-intro] could not write flag:', err.message);
+  }
+}
+
+/** A transparent, frameless, screen-sized window that plays electron/intro.html
+ *  over the desktop (the particle wordmark assembles into "iClaw"). */
+function createIntroWindow() {
+  const b = screen.getPrimaryDisplay().bounds;
+  const win = new BrowserWindow({
+    x: b.x, y: b.y, width: b.width, height: b.height,
+    frame: false, transparent: true, hasShadow: false, backgroundColor: '#00000000',
+    resizable: false, movable: false, minimizable: false, maximizable: false,
+    fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, show: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.loadFile(path.join(__dirname, 'intro.html'));
+  win.once('ready-to-show', () => { win.show(); win.focus(); });
+  return win;
+}
 
 /** Grab an OS-assigned free TCP port on the loopback interface. */
 function getFreePort() {
@@ -126,6 +160,42 @@ function startServer(port) {
 }
 
 async function createWindow() {
+  // First launch: play the transparent particle intro over the desktop WHILE the
+  // server boots, then reveal the main window. Later launches go straight in.
+  const showIntro = !introSeen();
+  let introWin = null;
+  let introStart = 0;
+  let mainReady = false;
+  let skipRequested = false;
+  let introFinished = false;
+
+  function finishIntro() {
+    if (introFinished) return;
+    if (!mainReady) { skipRequested = true; return; } // skipped mid-boot — finish once ready
+    introFinished = true;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show(); // reveal main first
+    if (introWin && !introWin.isDestroyed()) {
+      const w = introWin; let op = 1;
+      const fade = setInterval(() => {
+        if (w.isDestroyed()) { clearInterval(fade); return; }
+        op -= 0.14;
+        if (op <= 0) { clearInterval(fade); w.close(); }
+        else { try { w.setOpacity(op); } catch (_) { /* window closing */ } }
+      }, 22);
+    }
+    markIntroSeen();
+  }
+
+  if (showIntro) {
+    introWin = createIntroWindow();
+    introStart = Date.now();
+    introWin.webContents.on('before-input-event', (_e, input) => {
+      if (input.type === 'keyDown' && (input.key === 'Escape' || input.key === ' ' || input.key === 'Enter')) {
+        finishIntro();
+      }
+    });
+  }
+
   const port = await getFreePort();
   startServer(port);
   const url = `http://127.0.0.1:${port}`;
@@ -182,9 +252,15 @@ async function createWindow() {
 
   mainWindow.webContents.once('did-finish-load', () => {
     logger.log('[iclaw-desktop] window loaded', url);
-    mainWindow.show();
     // Check GitHub Releases for a newer signed build (packaged builds only).
     require('./updater').initAutoUpdates(logger);
+    mainReady = true;
+    if (!showIntro) { mainWindow.show(); return; }
+    if (skipRequested) { finishIntro(); return; }
+    // Hold the intro long enough that the word fully assembles (~6.7s) AND lingers
+    // a beat on the finished "iClaw" before revealing the app.
+    const MIN_INTRO_MS = 9500;
+    setTimeout(finishIntro, Math.max(0, MIN_INTRO_MS - (Date.now() - introStart)));
   });
 
   await mainWindow.loadURL(url);
