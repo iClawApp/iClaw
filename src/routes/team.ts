@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { chats, projects, tasks } from '../services/store';
+import { chatStatus } from '../services/chatStatus';
 import { listCharacters, getCharacter, isKnownCharacter } from '../services/characters';
 
 /**
@@ -23,6 +24,7 @@ teamRouter.get('/', (req, res) => {
   res.render('team', {
     // Sidebar locals.
     chats: chats.list(),
+    workingIds: chatStatus.workingIds(),
     allProjects,
     hasAnyTasks: tasks.hasAny(),
     taskStatusSignals: tasks.statusSignals(),
