@@ -228,6 +228,30 @@ export const WEB_FETCH_TOOL = {
 } as const;
 
 /**
+ * create_task — hand a multi-step job to the project's task board instead of
+ * doing it inline. The runtime does NOT execute this tool itself; it emits a
+ * 'create_task' AgentEvent and the host fulfils it (creates an iClaw task).
+ * Offered only when the session opts in (canCreateTasks) — i.e. a specialist
+ * chat where the model should decide chat-vs-task on its own.
+ */
+export const CREATE_TASK_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'create_task',
+    description:
+      "Spin a request into a tracked task on the project board instead of answering inline. Use ONLY for multi-step work worth tracking and reviewing (e.g. 'plan a month of posts', 'audit the whole site'); answer quick questions and small edits directly in chat. The task runs as you, this specialist.",
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short task title, e.g. "Plan a month of launch posts".' },
+        goal: { type: 'string', description: 'The full brief — what done looks like, with the specifics from this conversation.' },
+      },
+      required: ['goal'],
+    },
+  },
+} as const;
+
+/**
  * read_summary — read a file and return a SHORT summary via a cheap model,
  * instead of dumping the whole file into the expensive model's context (and
  * history). Host-loop only (Work / Incognito); kept out of Secure, since the

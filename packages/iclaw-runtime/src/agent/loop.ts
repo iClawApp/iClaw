@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, CREATE_TASK_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
 import { SOCIAL_SEARCH_TOOL } from './social.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 import { resolveTurnModel } from './model-capabilities.js';
@@ -41,6 +41,12 @@ export interface AgentOptions {
    */
   characterTools?: string[] | undefined;
   /**
+   * Specialist chat: offer the create_task tool so the model can decide to spin
+   * a multi-step request into a tracked task (host-fulfilled) instead of doing
+   * it inline. Added on top of (never narrowed by) the character allowlist.
+   */
+  canCreateTasks?: boolean | undefined;
+  /**
    * Image data URLs (`data:<mime>;base64,…`) for THIS turn's user message —
    * files the user dropped into the chat. Sent once as vision blocks so the
    * model literally sees them; NOT stored in history (one-shot, expensive).
@@ -59,6 +65,7 @@ export type AgentEvent =
   | { type: 'note'; note: SavingsNote }
   | { type: 'image'; path: string; mime: string; fileName: string; bytes: number }
   | { type: 'approval_request'; changeId: string; path: string; content: string }
+  | { type: 'create_task'; title: string; goal: string }
   | { type: 'done'; tokens?: number | undefined; cached?: number | undefined }
   | { type: 'error'; message: string };
 
@@ -387,10 +394,13 @@ export async function* runAgentTurn(
   ];
   // A character narrows the tool set to those tailored to its job. Intersect
   // (never widen): the mode gating above still decides what's on the table.
-  const tools =
+  const allowed =
     opts.characterTools && opts.characterTools.length
       ? baseTools.filter((t) => opts.characterTools!.includes(t.function.name))
       : baseTools;
+  // create_task sits ON TOP of the allowlist — a specialist chat can always
+  // escalate a multi-step request to a tracked task, when the session opts in.
+  const tools = opts.canCreateTasks ? [...allowed, CREATE_TASK_TOOL] : allowed;
 
   // When the user dropped image(s), send the turn's user message as a
   // multimodal content array (text + image blocks) so a vision model sees them.
@@ -580,7 +590,20 @@ export async function* runAgentTurn(
 
       // Guardrail: refuse to re-run an identical call that's already looping.
       const blocked = guard.check(tc.name, tc.arguments);
-      const result = blocked ?? (await executeTool(tc.name as ToolName, parsedArgs, toolCtx));
+      let result: string;
+      if (blocked != null) {
+        result = blocked;
+      } else if (tc.name === 'create_task') {
+        // Host-fulfilled: the runtime does not run this — it hands the job to the
+        // host, which creates the iClaw task. Tell the model optimistically.
+        const a = parsedArgs as { title?: string; goal?: string };
+        const title = typeof a.title === 'string' ? a.title : '';
+        const goal = typeof a.goal === 'string' ? a.goal : '';
+        yield { type: 'create_task', title, goal };
+        result = `Created a task on the board: "${title || goal.slice(0, 60)}". It will run and come back for your review.`;
+      } else {
+        result = await executeTool(tc.name as ToolName, parsedArgs, toolCtx);
+      }
       roundResults.push(result);
 
       yield { type: 'tool_result', name: tc.name, result };

@@ -894,6 +894,8 @@ async function runWorkModeTurn(opts: {
   secure?: boolean | undefined;
   /** Persona mode: no tools, no Docker — a plain conversation. */
   chatOnly?: boolean | undefined;
+  /** Specialist chat: let the model spin a multi-step request into a task. */
+  canCreateTasks?: boolean | undefined;
   networkEnabled?: boolean | undefined;
   ttlDays?: number | undefined;
   /** Current user message id — history before it seeds the session context. */
@@ -970,6 +972,7 @@ async function runWorkModeTurn(opts: {
         secure: opts.secure,
         chatOnly: opts.chatOnly,
         characterTools,
+        canCreateTasks: opts.canCreateTasks,
         systemPrompt: buildWorkSystemPrompt(chatId),
         // Stable key → the chat reconnects to its persisted Secure workspace
         // (and its running TTL) after a runtime restart.
@@ -1067,6 +1070,23 @@ async function runWorkModeTurn(opts: {
             entry.outcome = outcome;
           }
           onEvent({ type: 'tool-end', name: event.name });
+        } else if (event.type === 'create_task') {
+          // The specialist decided this warrants a tracked task. Create it under
+          // this project, sourced from this chat and assigned to the specialist.
+          // Dynamic import avoids a static chatRunner <-> taskRunner cycle.
+          const chatRow = chats.get(chatId);
+          const ct = event;
+          void import('./taskRunner')
+            .then(({ createTask }) =>
+              createTask({
+                sourceChatId: chatId,
+                title: ct.title || '',
+                goal: ct.goal,
+                characterId: chatRow?.character_id ?? null,
+                generatePlan: false,
+              }),
+            )
+            .catch(() => {});
         } else if (event.type === 'note') {
           // A tool gave the model less than the full content — surface the saving
           // as a friendly, plain-language chat note (no jargon: no "tokens",

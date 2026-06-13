@@ -72,6 +72,8 @@ export interface CreateSessionOptions {
   chatOnly?: boolean | undefined;
   /** Character tool allowlist (by name) — narrows the turn's tools to the character's job. */
   characterTools?: string[] | undefined;
+  /** Specialist chat: offer the create_task tool so the model can spin up a task. */
+  canCreateTasks?: boolean | undefined;
   systemPrompt?: string | undefined;
   /** Stable identity (e.g. "chat:156") so a chat reconnects to its workspace. */
   key?: string | undefined;
@@ -85,6 +87,7 @@ export async function createWorkSession(opts: CreateSessionOptions = {}): Promis
   if (opts.incognito) body.incognito = true;
   if (opts.chatOnly) body.chatOnly = true;
   if (opts.characterTools?.length) body.characterTools = opts.characterTools;
+  if (opts.canCreateTasks) body.canCreateTasks = true;
   if (opts.folderAccess?.length) body.folderAccess = opts.folderAccess;
   if (opts.copyFolders?.length) body.copyFolders = opts.copyFolders;
   if (opts.model) body.model = opts.model;
@@ -151,6 +154,7 @@ export type WorkEvent =
   | { type: 'tool_result'; name: string; result?: string }
   | { type: 'note'; note: RuntimeSavingsNote }
   | { type: 'image'; path: string; mime: string; fileName: string; bytes: number }
+  | { type: 'create_task'; title: string; goal: string }
   | { type: 'done'; tokens?: number; cached?: number }
   | { type: 'error'; message: string };
 

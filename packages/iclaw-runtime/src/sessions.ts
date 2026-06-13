@@ -53,6 +53,8 @@ export interface SessionOptions {
   chatOnly?: boolean | undefined;
   /** Character tool allowlist (by name) — narrows the turn's tools. */
   characterTools?: string[] | undefined;
+  /** Specialist chat: offer the create_task tool (model decides chat vs task). */
+  canCreateTasks?: boolean | undefined;
   /** Stable identity (e.g. "chat:156") for reconnecting to a workspace. */
   key?: string | undefined;
   /**
@@ -755,6 +757,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     incognito,
     chatOnly: session.opts.chatOnly,
     characterTools: session.opts.characterTools,
+    canCreateTasks: session.opts.canCreateTasks,
     systemPrompt: session.opts.systemPrompt,
     signal: abort.signal,
     images,
