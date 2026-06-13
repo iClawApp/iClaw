@@ -51,17 +51,24 @@
       </div>
       <% } %>
 
-      <% if (selectedSpecialist && selectedProject) { %>
-        <%# State 3 — the big brief composer for one specialist. %>
-        <section class="brief">
-          <div class="brief-head">
-            <%- include('partials/characterFace', { character: selectedSpecialist, faceClass: 'brief-face' }) %>
-            <div class="brief-who">
-              <p class="brief-name">Brief <%= selectedSpecialist.name %></p>
-              <p class="brief-role"><%= selectedSpecialist.role %><% if (Array.isArray(selectedSpecialist.capabilities) && selectedSpecialist.capabilities.length) { %> · <%= selectedSpecialist.capabilities.join(' · ') %><% } %></p>
+      <% if (selectedSpecialist && selectedProject) {
+           var _mine = _tasks.filter(function (t) { return t.character_id === selectedSpecialist.id; });
+           _mine.sort(function (a, b) { return (b.id || 0) - (a.id || 0); });
+      %>
+        <%# State 3 — the specialist's own immersive workspace. %>
+        <section class="agent">
+          <div class="agent-hero">
+            <%- include('partials/characterFace', { character: selectedSpecialist, faceClass: 'agent-hero-face' }) %>
+            <div class="agent-hero-id">
+              <p class="agent-hero-name"><%= selectedSpecialist.name %></p>
+              <p class="agent-hero-role"><%= selectedSpecialist.role %></p>
+              <% if (Array.isArray(selectedSpecialist.capabilities) && selectedSpecialist.capabilities.length) { %>
+              <div class="agent-hero-caps">
+                <% selectedSpecialist.capabilities.forEach(function (cap) { %><span class="chat-launcher-cap"><%= cap %></span><% }); %>
+              </div>
+              <% } %>
             </div>
           </div>
-          <p class="brief-reassure muted"><%= selectedSpecialist.name %> works it on their own and comes back for your review.</p>
 
           <form class="brief-form" method="post" action="/projects/<%= selectedProject.id %>/team/<%= selectedSpecialist.id %>/tasks">
             <textarea
@@ -73,7 +80,7 @@
               autofocus
             ></textarea>
             <div class="brief-bar">
-              <span class="brief-hint muted">Be specific — like briefing a real specialist.</span>
+              <span class="brief-hint muted"><%= selectedSpecialist.name %> works it on their own, then comes back for your review.</span>
               <button type="submit" class="btn btn--primary brief-go">Delegate &rarr;</button>
             </div>
           </form>
@@ -82,6 +89,18 @@
           <div class="brief-examples">
             <% selectedSpecialist.examples.forEach(function (ex) { %>
             <button type="button" class="brief-example" data-brief-example><%= ex %></button>
+            <% }); %>
+          </div>
+          <% } %>
+
+          <% if (_mine.length) { %>
+          <div class="agent-tasks">
+            <p class="agent-tasks-title"><%= selectedSpecialist.name %>&rsquo;s tasks</p>
+            <% _mine.forEach(function (t) { %>
+            <a class="agent-task" href="/tasks/<%= t.id %>">
+              <span class="team-status team-status--<%= _statusClass(t.status) %>"><%= _statusLabel(t.status) %></span>
+              <span class="agent-task-title"><%= t.title %></span>
+            </a>
             <% }); %>
           </div>
           <% } %>

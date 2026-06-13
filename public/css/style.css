@@ -9375,3 +9375,28 @@ body.incognito-mode .composer-mode-btn__label {
 .team-page-body.space-enter-left { animation: space-in-left 0.22s ease; }
 @keyframes space-in-right { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes space-in-left { from { transform: translateX(-28px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* --- A specialist's immersive workspace (themed by their colour) ---------- */
+.agent { max-width: 40rem; margin: var(--space-6) auto 0; }
+.agent-hero { display: flex; align-items: center; gap: var(--space-5); margin-bottom: var(--space-7); }
+.agent-hero-face { width: 64px; height: 64px; flex: 0 0 auto; }
+.agent-hero-id { min-width: 0; }
+.agent-hero-name { margin: 0; font-size: 1.35rem; font-weight: 680; letter-spacing: -0.01em; }
+.agent-hero-role { margin: 0 0 var(--space-3); font-size: var(--text-base); color: var(--muted); }
+.agent-hero-caps { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.agent-tasks { margin-top: var(--space-8); }
+.agent-tasks-title { margin: 0 0 var(--space-4); font-size: var(--text-sm); font-weight: 600; color: var(--muted); }
+.agent-task {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-decoration: none;
+  color: var(--text);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  margin-bottom: var(--space-3);
+}
+.agent-task:hover { background: var(--hover); }
+.agent-task-title { flex: 1; min-width: 0; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
