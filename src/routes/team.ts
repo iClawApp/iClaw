@@ -15,7 +15,10 @@ teamRouter.get('/', (req, res) => {
   const allProjects = projects.list();
 
   const pidRaw = typeof req.query.projectId === 'string' ? Number(req.query.projectId) : NaN;
-  const selectedProject = Number.isFinite(pidRaw) ? projects.get(pidRaw) ?? null : null;
+  // Land straight in a project's team (the first, if none given) — no "pick a
+  // project" step each time; you swipe between projects from there.
+  let selectedProject = Number.isFinite(pidRaw) ? projects.get(pidRaw) ?? null : null;
+  if (!selectedProject && allProjects.length) selectedProject = allProjects[0]!;
 
   const sidRaw = typeof req.query.specialist === 'string' ? req.query.specialist : '';
   const selectedSpecialist =

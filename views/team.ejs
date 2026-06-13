@@ -119,22 +119,12 @@
           </div>
         </section>
       <% } else { %>
-        <%# State 1 — choose which project's team. %>
+        <%# No projects yet — nothing to staff. (With projects, the route lands
+            you straight in the first one; there is no "pick a project" step.) %>
         <section class="team-pick">
-          <h2 class="team-pick-title">Whose team?</h2>
-          <p class="team-pick-sub muted">Each project has its own team of specialists. Pick one.</p>
-          <% if (!projects.length) { %>
-          <p class="muted">No projects yet — create a project first, then come back to staff its team.</p>
-          <% } else { %>
-          <div class="team-pick-grid">
-            <% projects.forEach(function (p) { %>
-            <a class="team-pick-card" href="/team?projectId=<%= p.id %>" data-logo-color="<%= typeof p.logo_color === 'number' ? p.logo_color : 0 %>">
-              <%- include('partials/projectLogo', { emojiIndex: (typeof p.logo_emoji === 'number' ? p.logo_emoji : 0), colorIndex: (typeof p.logo_color === 'number' ? p.logo_color : 0) }) %>
-              <span class="team-pick-name"><%= p.name %></span>
-            </a>
-            <% }); %>
-          </div>
-          <% } %>
+          <h2 class="team-pick-title">No projects yet</h2>
+          <p class="team-pick-sub muted">Create a project first, then come back to staff its team of specialists.</p>
+          <a class="btn btn--primary" href="/projects">Go to projects &rarr;</a>
         </section>
       <% } %>
     </div>
