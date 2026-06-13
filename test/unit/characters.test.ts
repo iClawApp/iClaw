@@ -25,16 +25,17 @@ describe('characters', () => {
     expect(isKnownCharacter('researcher')).toBe(true);
   });
 
-  it('builds a persona block naming the character and role', () => {
+  it('builds a persona block (gateway bracket framing) for the character', () => {
     const block = buildCharacterPromptBlock('researcher');
-    expect(block).toContain('act as Remi, the Researcher');
+    expect(block).toContain('[Character —');
+    expect(block).toContain('You are Remi');
     expect(block).toContain("the user's message follows");
   });
 
   it('builds a runtime system prompt for a real character, null for generalist', () => {
     expect(buildCharacterSystemPrompt('generalist')).toBeNull();
     const sys = buildCharacterSystemPrompt('researcher');
-    expect(sys).toContain('You are Remi, the Researcher');
+    expect(sys).toContain('You are Remi');
     // System prompt is plain (no gateway bracket framing).
     expect(sys).not.toContain('[Character');
     // The specialist's method playbook is injected.
@@ -47,7 +48,7 @@ describe('characters', () => {
     expect(applyCharacterPrompt(msg, 'generalist')).toBe(msg);
     const withPersona = applyCharacterPrompt(msg, 'writer');
     expect(withPersona.endsWith('\n\n' + msg)).toBe(true);
-    expect(withPersona).toContain('act as Wren, the Writer');
+    expect(withPersona).toContain('You are Penn');
   });
 
   it('every character has the required preset fields', () => {
@@ -81,7 +82,7 @@ describe('characters', () => {
     expect(remi).not.toContain('write_file');
     expect(remi).not.toContain('edit_file');
     expect(remi).not.toContain('run_command');
-    // Cody gets the full dev kit including the shell.
+    // The engineer gets the full dev kit including the shell.
     const cody = characterToolAllowlist('engineer')!;
     expect(cody).toContain('edit_file');
     expect(cody).toContain('run_command');
@@ -97,7 +98,7 @@ describe('characters', () => {
     for (const id of ['support', 'email', 'assistant', 'seo', 'bookkeeper']) {
       expect(isKnownCharacter(id)).toBe(true);
     }
-    // The personal assistant carries the calendar panel, like Mia.
+    // The personal assistant carries the calendar panel, like the social manager.
     expect(getCharacter('assistant').panel).toBe('calendar');
     // Support carries the saved-replies panel.
     expect(getCharacter('support').panel).toBe('replies');
