@@ -17,7 +17,7 @@
       </h1>
     </header>
 
-    <div class="team-page-body iclaw-thin-scroll">
+    <div class="team-page-body iclaw-thin-scroll"<% if (selectedSpecialist) { %> data-logo-color="<%= selectedSpecialist.color %>"<% } else if (selectedProject) { %> data-logo-color="<%= typeof selectedProject.logo_color === 'number' ? selectedProject.logo_color : 0 %>"<% } %>>
       <%
         function _statusLabel(s) {
           return ({ planning: 'Planning', ready: 'To do', running: 'Doing', needs_review: 'Needs review', needs_human: 'Needs you', needs_clarification: 'Needs you', done: 'Done', failed: 'Failed' })[s] || s;
