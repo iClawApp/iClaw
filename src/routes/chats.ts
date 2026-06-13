@@ -328,6 +328,10 @@ chatsRouter.get('/:id', async (req, res, next) => {
       hasAnyTasks: tasks.hasAny(),
       taskStatusSignals: tasks.statusSignals(),
       activeChat: chat,
+      // The project's shared "Brain" (semantic + procedural memory) — surfaced so
+      // the user can SEE what every teammate in this project already knows.
+      brainFacts: chat.project_id != null ? projectFacts.listByProject(chat.project_id, 8) : [],
+      brainSkills: chat.project_id != null ? projectSkills.listByProject(chat.project_id) : [],
       chatMessages,
       agents,
       agentsError,

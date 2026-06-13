@@ -65,6 +65,10 @@
         href="/projects"
         class="sidebar-projects-btn<%= typeof activeProjectsList !== 'undefined' && activeProjectsList ? ' active' : '' %>"
       >Projects</a>
+      <a
+        href="/team"
+        class="sidebar-projects-btn<%= typeof activeTeam !== 'undefined' && activeTeam ? ' active' : '' %>"
+      >Team</a>
       <% } %>
       <% if (typeof hasAnyTasks !== 'undefined' && hasAnyTasks) {
         const _taskSignals = typeof taskStatusSignals !== 'undefined' ? taskStatusSignals : {};

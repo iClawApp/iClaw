@@ -16,8 +16,13 @@ import { wsHub } from '../services/wsHub';
 import { openclaw } from '../services/openclaw';
 import { probeGateway } from '../services/gatewayProbe';
 import { mountProjectTasksRoutes } from './tasks';
+import { listCharacters, isKnownCharacter } from '../services/characters';
+import { createTask } from '../services/taskRunner';
 
 export const projectsRouter: Router = Router();
+
+/** Fallback agent for new chats (mirrors routes/chats.ts). */
+const DEFAULT_AGENT = 'openclaw/default';
 mountProjectTasksRoutes(projectsRouter);
 
 function wantsJson(req: import('express').Request): boolean {
@@ -95,9 +100,52 @@ projectsRouter.get('/:id', (req, res) => {
     projectWebLinks: linkGroups.web,
     projectFileLinks: linkGroups.files,
     allProjects: projects.list(),
+    characters: listCharacters(),
+    // The project's tasks — the Team tab shows each specialist's current work.
+    projectTasks: tasks.list({ projectId: id }),
     activeChat: null,
     activeProject: project,
   });
+});
+
+/**
+ * POST /projects/:id/team/:characterId/tasks — delegate a task to a specialist
+ * from the project's Team tab. Creates a hidden context container chat (never
+ * shown to the user) + a task assigned to the specialist, then lands on the
+ * task's work view. The task runs (on the work view) as the specialist — its
+ * execution inherits the persona + tool allowlist (see taskRunner).
+ */
+projectsRouter.post('/:id/team/:characterId/tasks', async (req, res) => {
+  const id = Number(req.params.id);
+  const project = projects.get(id);
+  if (!project) {
+    res.redirect('/');
+    return;
+  }
+  if (!isKnownCharacter(req.params.characterId)) {
+    res.status(404).send('unknown specialist');
+    return;
+  }
+  const goal = String(req.body?.goal ?? '').trim();
+  if (!goal) {
+    res.redirect(`/projects/${id}`);
+    return;
+  }
+  // Hidden context container — kind 'task_execution' is never listed in the
+  // sidebar, so delegating never spawns a visible chat.
+  const src = chats.create(DEFAULT_AGENT, id, { chatKind: 'task_execution', title: 'Delegation' });
+  try {
+    const task = await createTask({
+      sourceChatId: src.id,
+      title: '',
+      goal,
+      characterId: req.params.characterId,
+      generatePlan: false,
+    });
+    res.redirect(303, `/tasks/${task.id}`);
+  } catch (err) {
+    res.status(500).send(err instanceof Error ? err.message : String(err));
+  }
 });
 
 projectsRouter.post('/:id/rename', (req, res) => {
@@ -249,6 +297,28 @@ projectsRouter.post('/:id/facts/:factId/delete', (req, res) => {
   wsHub.broadcastAll({ type: 'project-fact-deleted', projectId, factId });
   if (wantsJson(req)) res.json({ id: factId, deleted: true });
   else res.redirect(`/projects/${projectId}`);
+});
+
+// Manually add a fact to the project Brain — the "remember this" quick-add from a
+// chat. Distinct from the LLM-proposed fact-suggestion inbox: this is a direct,
+// user-authored fact, persisted immediately.
+projectsRouter.post('/:id/facts', (req, res) => {
+  const projectId = Number(req.params.id);
+  if (!projects.get(projectId)) {
+    res.status(404).json({ error: 'project not found' });
+    return;
+  }
+  const content = String(req.body?.content ?? '').trim();
+  if (!content) {
+    res.status(400).json({ error: 'content required' });
+    return;
+  }
+  const rawChat = Number(req.body?.sourceChatId);
+  const sourceChatId = Number.isFinite(rawChat) && rawChat > 0 ? rawChat : null;
+  const fact = projectFacts.append({ projectId, content, sourceChatId });
+  const enriched = enrichFactWithSourceChatTitle(fact);
+  wsHub.broadcastAll({ type: 'project-fact-added', projectId, fact: enriched });
+  res.status(201).json(enriched);
 });
 
 /* ---------------- skills (procedural memory; edit/delete here) ---------------- */

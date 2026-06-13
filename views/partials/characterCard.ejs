@@ -1,0 +1,15 @@
+<%# One teammate card for the launcher strip. Click is wired by
+    initCharacterLauncher (iclaw.js). `ch` is the CharacterDef. %>
+<button type="button" class="chat-launcher-card" data-character="<%= ch.id %>" data-logo-color="<%= ch.color %>">
+  <%- include('characterFace', { character: ch, faceClass: 'chat-launcher-face' }) %>
+  <span class="chat-launcher-card-name"><%= ch.name %></span>
+  <span class="chat-launcher-card-role"><%= ch.role %></span>
+  <span class="chat-launcher-card-tagline"><%= ch.tagline %></span>
+  <% if (Array.isArray(ch.capabilities) && ch.capabilities.length) { %>
+  <span class="chat-launcher-caps">
+    <% ch.capabilities.forEach(function (cap) { %>
+    <span class="chat-launcher-cap"><%= cap %></span>
+    <% }); %>
+  </span>
+  <% } %>
+</button>

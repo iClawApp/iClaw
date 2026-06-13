@@ -1,0 +1,204 @@
+<%# Per-character UI panel: a content calendar for the social-media persona (Mia)
+    and the personal assistant (Vera). A real, local planner — plan posts per day
+    with a platform + a status (idea → draft → scheduled → posted), saved in the
+    browser keyed by the chat. Status is manual (no auto-posting — that needs a
+    real integration); "scheduled" just means you marked it. Platform + status
+    are the table-stakes validated by last30days research (2026-06-12). Deeper
+    sync (Buffer / Notion / Google Calendar) is a future connector. Self-contained. %>
+<section class="char-panel" id="content-calendar" data-chat-id="<%= activeChat.id %>" aria-label="Content calendar">
+  <div class="char-panel-head">
+    <span class="char-panel-title">Content calendar</span>
+    <span class="char-panel-sub">Plan your posts — click a day to add one</span>
+    <button type="button" class="char-panel-toggle" data-cal-toggle aria-expanded="true">Hide</button>
+  </div>
+  <div class="char-panel-body" data-cal-body>
+    <div class="cal-bar">
+      <button type="button" class="cal-arrow" data-cal-prev aria-label="Previous month">&lsaquo;</button>
+      <span class="cal-title" data-cal-title>—</span>
+      <button type="button" class="cal-arrow" data-cal-next aria-label="Next month">&rsaquo;</button>
+    </div>
+    <div class="cal-weekdays" aria-hidden="true">
+      <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+    </div>
+    <div class="cal-grid" data-cal-grid></div>
+    <div class="cal-editor" data-cal-editor hidden>
+      <p class="cal-editor-title" data-cal-editor-title>—</p>
+      <ul class="cal-list" data-cal-list></ul>
+      <form class="cal-add" data-cal-add>
+        <input type="text" class="cal-input" data-cal-input placeholder="e.g. Launch teaser" aria-label="Post idea" />
+        <select class="cal-select" data-cal-platform aria-label="Platform">
+          <option value="">Platform…</option>
+          <option>Instagram</option>
+          <option>TikTok</option>
+          <option>LinkedIn</option>
+          <option>X</option>
+          <option>Facebook</option>
+          <option>YouTube</option>
+          <option>Newsletter</option>
+          <option>Blog</option>
+        </select>
+        <button type="submit" class="btn btn--primary btn--sm">Add</button>
+      </form>
+    </div>
+  </div>
+  <script>
+  (function () {
+    var root = document.getElementById('content-calendar');
+    if (!root || root.dataset.calInit) return;
+    root.dataset.calInit = '1';
+    var KEY = 'iclaw:content-calendar:' + (root.getAttribute('data-chat-id') || '0');
+    var STATUSES = ['idea', 'draft', 'scheduled', 'posted'];
+
+    function normItem(it) {
+      if (typeof it === 'string') return { text: it, platform: '', status: 'idea' };
+      return { text: (it && it.text) || '', platform: (it && it.platform) || '', status: (it && it.status) || 'idea' };
+    }
+    var data = {};
+    try {
+      var raw = JSON.parse(localStorage.getItem(KEY) || '{}') || {};
+      Object.keys(raw).forEach(function (k) { data[k] = (raw[k] || []).map(normItem); });
+    } catch (e) { data = {}; }
+    function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} }
+
+    var titleEl = root.querySelector('[data-cal-title]');
+    var gridEl = root.querySelector('[data-cal-grid]');
+    var bodyEl = root.querySelector('[data-cal-body]');
+    var editorEl = root.querySelector('[data-cal-editor]');
+    var editorTitle = root.querySelector('[data-cal-editor-title]');
+    var listEl = root.querySelector('[data-cal-list]');
+    var inputEl = root.querySelector('[data-cal-input]');
+    var platformEl = root.querySelector('[data-cal-platform]');
+    var toggleBtn = root.querySelector('[data-cal-toggle]');
+
+    var today = new Date();
+    var view = new Date(today.getFullYear(), today.getMonth(), 1);
+    var selected = null;
+    var MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    function key(y, m, d) { return y + '-' + pad(m + 1) + '-' + pad(d); }
+    function fmtLong(k) { var p = k.split('-'); return Number(p[2]) + ' ' + MONTHS[Number(p[1]) - 1] + ' ' + p[0]; }
+
+    function renderGrid() {
+      var y = view.getFullYear(), m = view.getMonth();
+      titleEl.textContent = MONTHS[m] + ' ' + y;
+      gridEl.innerHTML = '';
+      var lead = (new Date(y, m, 1).getDay() + 6) % 7;
+      var days = new Date(y, m + 1, 0).getDate();
+      var todayKey = key(today.getFullYear(), today.getMonth(), today.getDate());
+      for (var i = 0; i < lead; i++) {
+        var blank = document.createElement('span');
+        blank.className = 'cal-cell is-empty';
+        gridEl.appendChild(blank);
+      }
+      for (var d = 1; d <= days; d++) {
+        var k = key(y, m, d);
+        var cell = document.createElement('button');
+        cell.type = 'button';
+        cell.className = 'cal-cell';
+        cell.setAttribute('data-cal-day', k);
+        if (k === todayKey) cell.classList.add('is-today');
+        if (selected === k) cell.classList.add('is-selected');
+        var num = document.createElement('span');
+        num.className = 'cal-num';
+        num.textContent = d;
+        cell.appendChild(num);
+        var n = (data[k] && data[k].length) || 0;
+        if (n) {
+          var dot = document.createElement('span');
+          dot.className = 'cal-count';
+          dot.textContent = n;
+          cell.appendChild(dot);
+        }
+        gridEl.appendChild(cell);
+      }
+    }
+
+    function renderEditor() {
+      if (!selected) { editorEl.hidden = true; return; }
+      editorEl.hidden = false;
+      editorTitle.textContent = 'Plan for ' + fmtLong(selected);
+      listEl.innerHTML = '';
+      (data[selected] || []).forEach(function (item, idx) {
+        var li = document.createElement('li');
+        li.className = 'cal-item';
+
+        var st = document.createElement('button');
+        st.type = 'button';
+        st.className = 'cal-status cal-status--' + item.status;
+        st.textContent = item.status;
+        st.title = 'Click to change status';
+        st.setAttribute('data-act', 'status');
+        st.setAttribute('data-idx', idx);
+        li.appendChild(st);
+
+        var txt = document.createElement('span');
+        txt.className = 'cal-item-text';
+        txt.textContent = item.text;
+        li.appendChild(txt);
+
+        if (item.platform) {
+          var pl = document.createElement('span');
+          pl.className = 'cal-plat';
+          pl.textContent = item.platform;
+          li.appendChild(pl);
+        }
+
+        var rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'cal-item-remove';
+        rm.setAttribute('aria-label', 'Remove');
+        rm.setAttribute('data-act', 'remove');
+        rm.setAttribute('data-idx', idx);
+        rm.textContent = '×';
+        li.appendChild(rm);
+
+        listEl.appendChild(li);
+      });
+    }
+
+    listEl.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-act]');
+      if (!btn || !selected) return;
+      var idx = Number(btn.getAttribute('data-idx'));
+      var items = data[selected] || [];
+      if (!items[idx]) return;
+      if (btn.getAttribute('data-act') === 'remove') {
+        items.splice(idx, 1);
+        if (!items.length) delete data[selected];
+      } else {
+        var cur = STATUSES.indexOf(items[idx].status);
+        items[idx].status = STATUSES[(cur + 1) % STATUSES.length];
+      }
+      save(); renderGrid(); renderEditor();
+    });
+
+    gridEl.addEventListener('click', function (e) {
+      var cell = e.target.closest('[data-cal-day]');
+      if (!cell) return;
+      selected = cell.getAttribute('data-cal-day');
+      renderGrid(); renderEditor();
+      if (inputEl) inputEl.focus();
+    });
+    root.querySelector('[data-cal-add]').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var v = (inputEl.value || '').trim();
+      if (!v || !selected) return;
+      (data[selected] = data[selected] || []).push({ text: v, platform: platformEl ? platformEl.value : '', status: 'idea' });
+      inputEl.value = '';
+      if (platformEl) platformEl.value = '';
+      save(); renderGrid(); renderEditor();
+    });
+    root.querySelector('[data-cal-prev]').addEventListener('click', function () { view.setMonth(view.getMonth() - 1); renderGrid(); });
+    root.querySelector('[data-cal-next]').addEventListener('click', function () { view.setMonth(view.getMonth() + 1); renderGrid(); });
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', function () {
+        var hidden = bodyEl.hasAttribute('hidden');
+        if (hidden) { bodyEl.removeAttribute('hidden'); toggleBtn.textContent = 'Hide'; toggleBtn.setAttribute('aria-expanded', 'true'); }
+        else { bodyEl.setAttribute('hidden', ''); toggleBtn.textContent = 'Show'; toggleBtn.setAttribute('aria-expanded', 'false'); }
+      });
+    }
+
+    renderGrid();
+  })();
+  </script>
+</section>

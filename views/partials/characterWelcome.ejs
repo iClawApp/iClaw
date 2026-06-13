@@ -1,0 +1,27 @@
+<%# Character greeting + example-task chips on an empty character chat. Mirrors
+    welcomeCard: carries `empty-state` so clearEmptyState() drops it on the first
+    message; chips reuse `.welcome-chip[data-prompt]` wired by initWelcomeChips,
+    so clicking one fills the composer. `character` is passed by the includer. %>
+<div class="welcome-card character-welcome empty-state" id="welcome-card">
+  <%- include('characterFace', { character: character, faceClass: 'character-welcome-face' }) %>
+  <div class="welcome-bubble">
+    <p class="welcome-greeting">
+      <%= character.name %><% if (character.role) { %><span class="character-welcome-role"><%= character.role %></span><% } %>
+    </p>
+    <p class="welcome-lead"><%= character.greeting %></p>
+    <% if (Array.isArray(character.capabilities) && character.capabilities.length) { %>
+    <p class="character-welcome-caps">
+      <% character.capabilities.forEach(function (cap) { %>
+      <span class="chat-launcher-cap"><%= cap %></span>
+      <% }); %>
+    </p>
+    <% } %>
+    <% if (Array.isArray(character.examples) && character.examples.length) { %>
+    <div class="welcome-chips" role="group" aria-label="Example tasks">
+      <% character.examples.forEach(function (ex) { %>
+      <button type="button" class="welcome-chip" data-prompt="<%= ex %>"><%= ex %></button>
+      <% }); %>
+    </div>
+    <% } %>
+  </div>
+</div>

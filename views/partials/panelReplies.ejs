@@ -1,0 +1,131 @@
+<%# Per-character UI panel: saved replies for the support persona (Cleo). Reusable
+    answer templates — Copy to clipboard (paste into your helpdesk) or Adapt (drop
+    into the composer so Cleo tailors it to the customer). Saved in the browser
+    keyed by chat; seeded with a few starters. Validated by last30days (2026-06-12:
+    saved replies = speed + consistency for support teams). Self-contained. %>
+<section class="char-panel" id="saved-replies" data-chat-id="<%= activeChat.id %>" aria-label="Saved replies">
+  <div class="char-panel-head">
+    <span class="char-panel-title">Saved replies</span>
+    <span class="char-panel-sub">Reusable answers — Copy, or Adapt to tailor</span>
+    <button type="button" class="char-panel-toggle" data-sr-toggle aria-expanded="true">Hide</button>
+  </div>
+  <div class="char-panel-body" data-sr-body>
+    <ul class="sr-list" data-sr-list></ul>
+    <form class="sr-add" data-sr-add>
+      <input type="text" class="cal-input" data-sr-title placeholder="Title (e.g. Refund request)" aria-label="Reply title" />
+      <textarea class="sr-textarea" data-sr-text rows="2" placeholder="The reply text…" aria-label="Reply text"></textarea>
+      <button type="submit" class="btn btn--primary btn--sm">Save reply</button>
+    </form>
+  </div>
+  <script>
+  (function () {
+    var root = document.getElementById('saved-replies');
+    if (!root || root.dataset.srInit) return;
+    root.dataset.srInit = '1';
+    var KEY = 'iclaw:saved-replies:' + (root.getAttribute('data-chat-id') || '0');
+    var SEED = [
+      { title: 'Refund request', body: "Hi! Thanks for reaching out, and sorry for the hassle. I've looked into your order and [what you found]. Here's what I can do: [next step]. Want me to go ahead?" },
+      { title: "Where's my order", body: "Hi! Thanks for your patience. Your order [#] shipped on [date] and the latest tracking shows [status]: [link]. Let me know if anything looks off." },
+      { title: 'Thanks for the feedback', body: "Hi! Really appreciate you taking the time to share this — it genuinely helps us improve. I've passed it to the team, and [what happens next]." }
+    ];
+    var data;
+    try {
+      var raw = localStorage.getItem(KEY);
+      data = raw ? (JSON.parse(raw) || []) : SEED.slice();
+    } catch (e) { data = SEED.slice(); }
+    function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} }
+
+    var listEl = root.querySelector('[data-sr-list]');
+    var titleEl = root.querySelector('[data-sr-title]');
+    var textEl = root.querySelector('[data-sr-text]');
+    var bodyEl = root.querySelector('[data-sr-body]');
+    var toggleBtn = root.querySelector('[data-sr-toggle]');
+
+    function copy(text, btn) {
+      function flash() { var t = btn.textContent; btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = t; }, 1200); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(flash, function () { fallback(text); flash(); });
+      } else { fallback(text); flash(); }
+    }
+    function fallback(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+    function adapt(text) {
+      var ta = document.getElementById('composer-input');
+      if (!ta) return;
+      ta.value = 'Adapt this saved reply to the customer’s message above — keep our voice:\n\n' + text;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.focus();
+    }
+
+    function render() {
+      listEl.innerHTML = '';
+      if (!data.length) {
+        var empty = document.createElement('li');
+        empty.className = 'sr-empty';
+        empty.textContent = 'No saved replies yet — add one below.';
+        listEl.appendChild(empty);
+        return;
+      }
+      data.forEach(function (r, idx) {
+        var li = document.createElement('li');
+        li.className = 'sr-item';
+
+        var head = document.createElement('div');
+        head.className = 'sr-item-head';
+        var ttl = document.createElement('span');
+        ttl.className = 'sr-item-title';
+        ttl.textContent = r.title || 'Untitled';
+        head.appendChild(ttl);
+
+        var actions = document.createElement('span');
+        actions.className = 'sr-actions';
+        var copyBtn = document.createElement('button');
+        copyBtn.type = 'button'; copyBtn.className = 'sr-act'; copyBtn.textContent = 'Copy';
+        copyBtn.addEventListener('click', function () { copy(r.body || '', copyBtn); });
+        var adaptBtn = document.createElement('button');
+        adaptBtn.type = 'button'; adaptBtn.className = 'sr-act'; adaptBtn.textContent = 'Adapt';
+        adaptBtn.title = 'Drop into the composer for Cleo to tailor';
+        adaptBtn.addEventListener('click', function () { adapt(r.body || ''); });
+        var rm = document.createElement('button');
+        rm.type = 'button'; rm.className = 'sr-act sr-act--rm'; rm.textContent = '×'; rm.setAttribute('aria-label', 'Delete');
+        rm.addEventListener('click', function () { data.splice(idx, 1); save(); render(); });
+        actions.appendChild(copyBtn); actions.appendChild(adaptBtn); actions.appendChild(rm);
+        head.appendChild(actions);
+        li.appendChild(head);
+
+        var body = document.createElement('p');
+        body.className = 'sr-item-body';
+        body.textContent = r.body || '';
+        li.appendChild(body);
+
+        listEl.appendChild(li);
+      });
+    }
+
+    root.querySelector('[data-sr-add]').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var t = (titleEl.value || '').trim();
+      var b = (textEl.value || '').trim();
+      if (!b) return;
+      data.push({ title: t || 'Untitled', body: b });
+      titleEl.value = ''; textEl.value = '';
+      save(); render();
+    });
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', function () {
+        var hidden = bodyEl.hasAttribute('hidden');
+        if (hidden) { bodyEl.removeAttribute('hidden'); toggleBtn.textContent = 'Hide'; toggleBtn.setAttribute('aria-expanded', 'true'); }
+        else { bodyEl.setAttribute('hidden', ''); toggleBtn.textContent = 'Show'; toggleBtn.setAttribute('aria-expanded', 'false'); }
+      });
+    }
+
+    save();
+    render();
+  })();
+  </script>
+</section>

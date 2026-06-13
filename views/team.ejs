@@ -1,0 +1,139 @@
+<%- include('partials/head', { title: 'Team — iClaw' }) %>
+
+<div class="app">
+  <%- include('partials/sidebar') %>
+
+  <main class="col col-main team-page" data-team-page>
+    <header class="chat-header">
+      <%- include('partials/mobile-nav-toggle') %>
+      <h1 class="team-page-title">
+        <% if (selectedSpecialist && selectedProject) { %>
+          <a class="team-back" href="/team?projectId=<%= selectedProject.id %>">&lsaquo; <%= selectedProject.name %></a>
+        <% } else if (selectedProject) { %>
+          <a class="team-back" href="/team">&lsaquo; Team</a>
+        <% } else { %>
+          Team
+        <% } %>
+      </h1>
+    </header>
+
+    <div class="team-page-body iclaw-thin-scroll">
+      <%
+        function _statusLabel(s) {
+          return ({ planning: 'Planning', ready: 'To do', running: 'Doing', needs_review: 'Needs review', needs_human: 'Needs you', needs_clarification: 'Needs you', done: 'Done', failed: 'Failed' })[s] || s;
+        }
+        function _statusClass(s) {
+          if (s === 'running' || s === 'planning') return 'doing';
+          if (s === 'needs_review') return 'review';
+          if (s === 'needs_human' || s === 'needs_clarification') return 'needs-you';
+          if (s === 'done') return 'done';
+          if (s === 'failed') return 'failed';
+          return 'todo';
+        }
+        var _tasks = (typeof projectTasks !== 'undefined' && Array.isArray(projectTasks)) ? projectTasks : [];
+      %>
+
+      <% if (selectedSpecialist && selectedProject) { %>
+        <%# State 3 — the big brief composer for one specialist. %>
+        <section class="brief">
+          <div class="brief-head">
+            <%- include('partials/characterFace', { character: selectedSpecialist, faceClass: 'brief-face' }) %>
+            <div class="brief-who">
+              <p class="brief-name">Brief <%= selectedSpecialist.name %></p>
+              <p class="brief-role"><%= selectedSpecialist.role %><% if (Array.isArray(selectedSpecialist.capabilities) && selectedSpecialist.capabilities.length) { %> · <%= selectedSpecialist.capabilities.join(' · ') %><% } %></p>
+            </div>
+          </div>
+          <p class="brief-reassure muted"><%= selectedSpecialist.name %> works it on their own and comes back for your review.</p>
+
+          <form class="brief-form" method="post" action="/projects/<%= selectedProject.id %>/team/<%= selectedSpecialist.id %>/tasks">
+            <textarea
+              class="brief-field"
+              name="goal"
+              id="brief-field"
+              placeholder="What should <%= selectedSpecialist.name %> handle?"
+              required
+              autofocus
+            ></textarea>
+            <div class="brief-bar">
+              <span class="brief-hint muted">Be specific — like briefing a real specialist.</span>
+              <button type="submit" class="btn btn--primary brief-go">Delegate &rarr;</button>
+            </div>
+          </form>
+
+          <% if (Array.isArray(selectedSpecialist.examples) && selectedSpecialist.examples.length) { %>
+          <div class="brief-examples">
+            <% selectedSpecialist.examples.forEach(function (ex) { %>
+            <button type="button" class="brief-example" data-brief-example><%= ex %></button>
+            <% }); %>
+          </div>
+          <% } %>
+        </section>
+      <% } else if (selectedProject) { %>
+        <%# State 2 — the roster of specialists for the chosen project. %>
+        <section class="team-roles">
+          <h2 class="team-roles-title">Your team for <%= selectedProject.name %></h2>
+          <p class="team-roles-sub muted">Pick a specialist to give them a task. They work it in their own view — you review and approve.</p>
+          <div class="team-grid">
+            <% (typeof specialists !== 'undefined' ? specialists : []).forEach(function (ch) {
+                 var mine = _tasks.filter(function (t) { return t.character_id === ch.id; });
+                 mine.sort(function (a, b) { return (b.id || 0) - (a.id || 0); });
+                 var current = mine.length ? mine[0] : null;
+            %>
+            <a class="team-member" href="/team?projectId=<%= selectedProject.id %>&specialist=<%= ch.id %>" data-logo-color="<%= ch.color %>">
+              <div class="team-member-head">
+                <%- include('partials/characterFace', { character: ch, faceClass: 'team-member-face' }) %>
+                <span class="team-member-id">
+                  <span class="team-member-name"><%= ch.name %></span>
+                  <span class="team-member-role"><%= ch.role %></span>
+                </span>
+              </div>
+              <p class="team-member-tagline muted"><%= ch.tagline %></p>
+              <% if (current) { %>
+              <span class="team-member-task">
+                <span class="team-status team-status--<%= _statusClass(current.status) %>"><%= _statusLabel(current.status) %></span>
+                <span class="team-task-title"><%= current.title %></span>
+              </span>
+              <% } else { %>
+              <span class="team-member-cta">Give a task &rarr;</span>
+              <% } %>
+            </a>
+            <% }); %>
+          </div>
+        </section>
+      <% } else { %>
+        <%# State 1 — choose which project's team. %>
+        <section class="team-pick">
+          <h2 class="team-pick-title">Whose team?</h2>
+          <p class="team-pick-sub muted">Each project has its own team of specialists. Pick one.</p>
+          <% if (!projects.length) { %>
+          <p class="muted">No projects yet — create a project first, then come back to staff its team.</p>
+          <% } else { %>
+          <div class="team-pick-grid">
+            <% projects.forEach(function (p) { %>
+            <a class="team-pick-card" href="/team?projectId=<%= p.id %>" data-logo-color="<%= typeof p.logo_color === 'number' ? p.logo_color : 0 %>">
+              <%- include('partials/projectLogo', { emojiIndex: (typeof p.logo_emoji === 'number' ? p.logo_emoji : 0), colorIndex: (typeof p.logo_color === 'number' ? p.logo_color : 0) }) %>
+              <span class="team-pick-name"><%= p.name %></span>
+            </a>
+            <% }); %>
+          </div>
+          <% } %>
+        </section>
+      <% } %>
+    </div>
+  </main>
+</div>
+
+<%- include('partials/foot') %>
+<script src="/js/iclaw.js?v=1"></script>
+<script>
+  (function () {
+    var field = document.getElementById('brief-field');
+    if (!field) return;
+    document.querySelectorAll('[data-brief-example]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        field.value = b.textContent.trim();
+        field.focus();
+      });
+    });
+  })();
+</script>

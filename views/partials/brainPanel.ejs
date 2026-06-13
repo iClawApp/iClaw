@@ -1,0 +1,84 @@
+<%# Project "Brain": the shared memory every teammate in this project reads from
+    (semantic = facts, procedural = skills). Makes the memory VISIBLE and lets you
+    teach it on the spot ("Remember this"). Validated by last30days (2026-06-12):
+    Sintra's "Brain AI", Hermes' persistent memory, and the "feed your docs/brand
+    knowledge" demand. Included only when the chat is under a project.
+    `brainFacts`/`brainSkills`/`projectId`/`chatId` passed in. %>
+<% var _facts = (typeof brainFacts !== 'undefined' && Array.isArray(brainFacts)) ? brainFacts : []; %>
+<% var _skills = (typeof brainSkills !== 'undefined' && Array.isArray(brainSkills)) ? brainSkills : []; %>
+<% var _open = _facts.length > 0 || _skills.length > 0; %>
+<section class="char-panel brain-panel" id="brain-panel"
+         data-project-id="<%= typeof projectId !== 'undefined' && projectId != null ? projectId : '' %>"
+         data-chat-id="<%= typeof chatId !== 'undefined' && chatId != null ? chatId : '' %>"
+         aria-label="Project memory">
+  <div class="char-panel-head">
+    <span class="char-panel-title">Project memory</span>
+    <span class="char-panel-sub">What every teammate here already knows</span>
+    <button type="button" class="char-panel-toggle" data-brain-toggle aria-expanded="<%= _open ? 'true' : 'false' %>"><%= _open ? 'Hide' : 'Show' %></button>
+  </div>
+  <div class="char-panel-body" data-brain-body <%= _open ? '' : 'hidden' %>>
+    <p class="brain-label" data-brain-facts-label <%= _facts.length ? '' : 'hidden' %>>Facts (<span data-brain-count><%= _facts.length %></span>)</p>
+    <ul class="brain-list" data-brain-facts>
+      <% _facts.forEach(function (f) { %><li class="brain-item"><%= f.content %></li><% }); %>
+    </ul>
+    <% if (_skills.length) { %>
+    <p class="brain-label">Skills (<%= _skills.length %>)</p>
+    <ul class="brain-list">
+      <% _skills.forEach(function (s) { %><li class="brain-item"><strong><%= s.name %></strong><% if (s.description) { %> — <%= s.description %><% } %></li><% }); %>
+    </ul>
+    <% } %>
+    <form class="brain-add" data-brain-add>
+      <input type="text" class="cal-input" data-brain-input placeholder="Remember something about this project…" aria-label="New fact" />
+      <button type="submit" class="btn btn--primary btn--sm">Remember</button>
+    </form>
+  </div>
+  <script>
+  (function () {
+    var root = document.getElementById('brain-panel');
+    if (!root || root.dataset.brainInit) return;
+    root.dataset.brainInit = '1';
+    var body = root.querySelector('[data-brain-body]');
+    var btn = root.querySelector('[data-brain-toggle]');
+    var form = root.querySelector('[data-brain-add]');
+    var input = root.querySelector('[data-brain-input]');
+    var list = root.querySelector('[data-brain-facts]');
+    var label = root.querySelector('[data-brain-facts-label]');
+    var countEl = root.querySelector('[data-brain-count]');
+    var pid = root.getAttribute('data-project-id');
+    var cid = root.getAttribute('data-chat-id');
+
+    if (btn && body) {
+      btn.addEventListener('click', function () {
+        var hidden = body.hasAttribute('hidden');
+        if (hidden) { body.removeAttribute('hidden'); btn.textContent = 'Hide'; btn.setAttribute('aria-expanded', 'true'); }
+        else { body.setAttribute('hidden', ''); btn.textContent = 'Show'; btn.setAttribute('aria-expanded', 'false'); }
+      });
+    }
+    if (form && input && pid) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var v = (input.value || '').trim();
+        if (!v) return;
+        var go = form.querySelector('button');
+        if (go) go.disabled = true;
+        fetch('/projects/' + pid + '/facts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ content: v, sourceChatId: cid ? Number(cid) : null }),
+        }).then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (fact) {
+            if (go) go.disabled = false;
+            if (!fact) return;
+            input.value = '';
+            var li = document.createElement('li');
+            li.className = 'brain-item';
+            li.textContent = fact.content || v;
+            if (list) list.appendChild(li);
+            if (label) label.hidden = false;
+            if (countEl) countEl.textContent = String((parseInt(countEl.textContent, 10) || 0) + 1);
+          }, function () { if (go) go.disabled = false; });
+      });
+    }
+  })();
+  </script>
+</section>

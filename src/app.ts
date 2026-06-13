@@ -11,6 +11,7 @@ import { gatewayRouter } from './routes/gateway';
 import { dockerRouter } from './routes/docker';
 import { updateRouter } from './routes/update';
 import { tasksRouter } from './routes/tasks';
+import { teamRouter } from './routes/team';
 import { projects, scheduledMessages } from './services/store';
 import {
   remoteAccessAuthMiddleware,
@@ -137,6 +138,7 @@ export function createApp(): express.Express {
   app.use('/chats', chatsRouter);
   app.use('/projects', projectsRouter);
   app.use('/tasks', tasksRouter);
+  app.use('/team', teamRouter);
   app.use('/', settingsRouter);
   app.use('/api/agents', agentsRouter);
   app.use('/api/gateway', gatewayRouter);

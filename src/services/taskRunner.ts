@@ -890,6 +890,8 @@ export async function createTask(opts: {
   title: string;
   goal: string;
   agent?: string | null;
+  /** Specialist to delegate to (Team tab) — drives the execution persona + tools. */
+  characterId?: string | null;
   generatePlan?: boolean;
   attachedFiles?: MessageAttachment[];
   secretRefIds?: number[];
@@ -917,6 +919,7 @@ export async function createTask(opts: {
     agent,
     contextSnapshotId: snap.id,
     status: initialStatus,
+    characterId: opts.characterId ?? chat.character_id ?? null,
   });
 
   /* If the caller didn't supply a title, generate one in the background and
@@ -971,6 +974,9 @@ function getOrCreateExecutionChat(task: Task): number {
     chatKind: 'task_execution',
     title: `Task #${task.id}`,
   });
+  // Run as the delegated specialist: the execution turn reads character_id for its
+  // persona + tool allowlist (see services/chatRunner.ts). null = plain agent.
+  if (task.character_id) chats.setCharacter(execChat.id, task.character_id);
   tasks.patch(task.id, { executionChatId: execChat.id });
   return execChat.id;
 }

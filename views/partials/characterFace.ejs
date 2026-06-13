@@ -1,0 +1,8 @@
+<%# Character face: the illustrated avatar when present, else the emoji logo
+    badge. Params: character, faceClass (sizing class supplied by the caller). %>
+<% var _fc = (typeof faceClass !== 'undefined' && faceClass) ? faceClass : ''; %>
+<% if (character.avatar) { %>
+<img class="character-avatar <%= _fc %>" src="<%= character.avatar %>" alt="" aria-hidden="true" />
+<% } else { %>
+<span class="project-logo <%= _fc %>" data-logo-color="<%= character.color %>" aria-hidden="true"><%- character.emoji %></span>
+<% } %>

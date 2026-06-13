@@ -8716,3 +8716,509 @@ body.incognito-mode .composer-mode-btn__label {
   box-shadow: var(--shadow-sm);
 }
 .welcome-chip:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* --- Team roster (character cards on the project page) ------------------- */
+.team-roster {
+  display: flex;
+  gap: var(--space-4);
+  overflow-x: auto;
+  margin: 0;
+  padding: var(--space-2) 0 var(--space-7);
+}
+.team-card-form { flex: 0 0 auto; margin: 0; }
+.team-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  min-width: 232px;
+  padding: var(--space-5) var(--space-6);
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+}
+.team-card:hover {
+  border-color: color-mix(in srgb, var(--logo-tone, var(--accent)) 60%, var(--border));
+  background: var(--hover);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+.team-card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.team-card-face { flex: 0 0 auto; width: 34px; height: 34px; }
+.team-card-text { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.team-card-name { font-weight: 600; font-size: var(--text-base); }
+.team-card-role {
+  margin-left: var(--space-3);
+  font-weight: 400;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.team-card-tagline {
+  max-width: 250px;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Character presence in a chat ---------------------------------------- */
+/* Empty-state greeting card. Reuses .welcome-card layout; only the face needs
+   sizing since it's a .project-logo badge rather than the .welcome-avatar box. */
+.character-welcome-face {
+  width: 40px;
+  height: 40px;
+  font-size: 1.25rem;
+}
+.character-welcome-role {
+  margin-left: var(--space-3);
+  font-weight: 400;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* Active-character badge in the chat header, sitting beside the title. */
+.chat-character {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+}
+.chat-character-face {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  font-size: 0.9rem;
+}
+.chat-character-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+/* --- Character launcher (the empty new-chat hero) ------------------------ */
+/* When the launcher is showing, the thread fills the scroll pane so the hero
+   sits vertically centered — the new chat IS the picker, Sintra-style. */
+.messages-thread.is-launcher {
+  min-height: 100%;
+  /* `safe` centers when it fits but falls back to top-aligned (scrollable) when
+     the roster is taller than the pane — no clipped header on small screens. */
+  justify-content: safe center;
+}
+.chat-launcher {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-10);
+  width: 100%;
+  /* Overrides .empty-state (nowrap + narrow + 80px top margin) — this is a
+     full-width, wrapping hero, and clearEmptyState() removes it on first send. */
+  max-width: none;
+  margin: 0;
+  padding: var(--space-9) 0;
+  white-space: normal;
+  animation: onb-fade 0.2s ease;
+}
+.chat-launcher-hero {
+  max-width: 30rem;
+  text-align: center;
+}
+/* Roster split into labelled sections (reduces choice overload). */
+.chat-launcher-section { width: 100%; }
+.chat-launcher-section-label {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--muted);
+}
+.chat-launcher-eyebrow {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.chat-launcher-title {
+  margin: 0 0 var(--space-4);
+  font-size: 1.35rem;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.chat-launcher-sub {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--muted);
+}
+/* Horizontal strip — swipe/scroll through the teammates (Sintra-style). Grows
+   cleanly as the roster does; the hero above stays centered. */
+.chat-launcher-grid {
+  display: flex;
+  gap: var(--space-5);
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: var(--space-4);
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 30%, transparent) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+.chat-launcher-grid::-webkit-scrollbar { height: 8px; }
+.chat-launcher-grid::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 26%, transparent);
+  border-radius: 99px;
+}
+.chat-launcher-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  flex: 0 0 224px;
+  scroll-snap-align: start;
+  padding: var(--space-6);
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+}
+.chat-launcher-card:hover {
+  border-color: color-mix(in srgb, var(--logo-tone, var(--accent)) 60%, var(--border));
+  background: var(--hover);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+.chat-launcher-card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.chat-launcher-face {
+  width: 44px;
+  height: 44px;
+  margin-bottom: var(--space-2);
+  font-size: 1.35rem;
+}
+.chat-launcher-card-name { font-weight: 650; font-size: var(--text-base); }
+.chat-launcher-card-role {
+  font-weight: 550;
+  font-size: var(--text-sm);
+  color: var(--accent);
+}
+.chat-launcher-card-tagline {
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* Illustrated avatar — sized by the caller's face class (chat-launcher-face,
+   character-welcome-face, chat-character-face, team-card-face); the SVG carries
+   its own rounded background, so no border-radius needed here. */
+.character-avatar {
+  display: block;
+  object-fit: contain;
+  user-select: none;
+}
+
+/* Capability chips — "what I can use", derived from the character's tools. */
+.chat-launcher-caps,
+.character-welcome-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.chat-launcher-caps { margin-top: var(--space-3); }
+.character-welcome-caps { margin: 0 0 var(--space-6); }
+.chat-launcher-cap {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--muted);
+  background: var(--hover);
+  border-radius: var(--radius-pill);
+  padding: 1px var(--space-3);
+  white-space: nowrap;
+}
+
+/* --- Character panel: a persona's own UI surface (Mia's content calendar) -- */
+.char-panel {
+  width: 100%;
+  max-width: var(--thread-max-width);
+  margin: var(--space-6) auto 0;
+  box-sizing: border-box;
+  padding: 0 var(--space-7);
+}
+.char-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.char-panel-title { font-weight: 650; font-size: var(--text-base); color: var(--text); }
+.char-panel-sub { font-size: var(--text-sm); color: var(--muted); }
+.char-panel-toggle {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  padding: 2px var(--space-5);
+  cursor: pointer;
+}
+.char-panel-toggle:hover { background: var(--hover); }
+.char-panel-body {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--space-6);
+}
+
+.cal-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+.cal-title { font-weight: 600; font-size: var(--text-base); min-width: 9rem; text-align: center; }
+.cal-arrow {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+.cal-arrow:hover { background: var(--hover); }
+.cal-weekdays,
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--space-2);
+}
+.cal-weekdays { margin-bottom: var(--space-2); }
+.cal-weekdays span { text-align: center; font-size: var(--text-xs); color: var(--muted); }
+.cal-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+.cal-cell.is-empty { border: none; background: transparent; cursor: default; }
+.cal-cell:not(.is-empty):hover { background: var(--hover); }
+.cal-cell.is-today { border-color: var(--accent); }
+.cal-cell.is-selected { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.cal-num { line-height: 1; }
+.cal-count {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: var(--surface);
+  border-radius: 99px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.cal-editor {
+  margin-top: var(--space-6);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-5);
+}
+.cal-editor-title { font-weight: 600; font-size: var(--text-sm); margin: 0 0 var(--space-4); }
+.cal-list { list-style: none; margin: 0 0 var(--space-4); padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.cal-item { display: flex; align-items: center; gap: var(--space-3); font-size: var(--text-sm); }
+.cal-item-text { flex: 1; min-width: 0; }
+/* Status pill — click cycles idea → draft → scheduled → posted. Status is
+   manual (no auto-posting); "scheduled" just means you marked it. */
+.cal-status {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 1px var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: capitalize;
+  cursor: pointer;
+  color: var(--surface);
+}
+.cal-status--idea { background: var(--muted); }
+.cal-status--draft { background: var(--warn); }
+.cal-status--scheduled { background: var(--info); }
+.cal-status--posted { background: var(--ok); }
+.cal-plat {
+  flex: 0 0 auto;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  background: var(--hover);
+  border-radius: var(--radius-pill);
+  padding: 1px var(--space-3);
+  white-space: nowrap;
+}
+.cal-select {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+}
+.cal-select:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.cal-item-remove {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.cal-item-remove:hover { color: var(--text); }
+.cal-add { display: flex; gap: var(--space-3); }
+.cal-input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+}
+.cal-input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Saved replies panel (Cleo's power-up). */
+.sr-list { list-style: none; margin: 0 0 var(--space-5); padding: 0; display: flex; flex-direction: column; gap: var(--space-4); }
+.sr-empty { font-size: var(--text-sm); color: var(--muted); }
+.sr-item { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4) var(--space-5); }
+.sr-item-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-2); }
+.sr-item-title { flex: 1; min-width: 0; font-weight: 600; font-size: var(--text-sm); }
+.sr-actions { display: flex; gap: var(--space-2); flex: 0 0 auto; }
+.sr-act {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  padding: 1px var(--space-3);
+  cursor: pointer;
+}
+.sr-act:hover { background: var(--hover); color: var(--text); }
+.sr-act--rm { font-size: 1rem; line-height: 1; padding: 0 var(--space-3); }
+.sr-item-body { margin: 0; font-size: var(--text-sm); line-height: 1.5; color: var(--muted); white-space: pre-wrap; }
+.sr-add { display: flex; flex-direction: column; gap: var(--space-3); }
+.sr-textarea {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  resize: vertical;
+}
+.sr-textarea:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.sr-add .btn { align-self: flex-start; }
+
+/* Project "Brain" panel — read-only shared memory (facts + skills). */
+.brain-label {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.brain-list {
+  list-style: disc;
+  margin: 0 0 var(--space-5);
+  padding-left: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.brain-item { font-size: var(--text-sm); line-height: 1.5; color: var(--text); }
+.brain-add { display: flex; gap: var(--space-3); margin-top: var(--space-2); }
+.brain-add .cal-input { flex: 1; }
+
+/* --- Team tab: project specialists you delegate tasks to ----------------- */
+.team-tab-intro { margin: 0 0 var(--space-7); font-size: var(--text-sm); }
+.team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-5);
+}
+.team-member {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.team-member-head { display: flex; align-items: center; gap: var(--space-4); }
+.team-member-face { flex: 0 0 auto; width: 40px; height: 40px; }
+.team-member-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.team-member-name { font-weight: 650; font-size: var(--text-base); }
+.team-member-role { font-size: var(--text-sm); color: var(--muted); }
+.team-member-idle { margin: 0; font-size: var(--text-sm); }
+.team-member-task {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-decoration: none;
+  color: var(--text);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.team-member-task:hover { background: var(--hover); }
+.team-task-title { flex: 1; min-width: 0; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-status {
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  padding: 1px var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--surface);
+  white-space: nowrap;
+}
+.team-status--todo { background: var(--muted); }
+.team-status--doing { background: var(--info); }
+.team-status--review { background: var(--warn); }
+.team-status--needs-you { background: var(--warn); }
+.team-status--done { background: var(--ok); }
+.team-status--failed { background: var(--danger); }
+.team-member-more { font-size: var(--text-xs); color: var(--muted); text-decoration: none; }
+.team-member-more:hover { color: var(--text); }
+.team-assign { display: flex; gap: var(--space-3); margin-top: auto; }
+.team-assign-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+}
+.team-assign-input:focus-visible { outline: none; box-shadow: var(--focus-ring); }

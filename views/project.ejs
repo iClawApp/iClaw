@@ -99,10 +99,21 @@
             type="button"
             class="project-tab is-active"
             role="tab"
-            id="project-tab-chats"
-            aria-controls="project-panel-chats"
+            id="project-tab-team"
+            aria-controls="project-panel-team"
             aria-selected="true"
             tabindex="0"
+            data-project-tab="team"
+            data-tab-base="Team"
+          >Team</button>
+          <button
+            type="button"
+            class="project-tab"
+            role="tab"
+            id="project-tab-chats"
+            aria-controls="project-panel-chats"
+            aria-selected="false"
+            tabindex="-1"
             data-project-tab="chats"
             data-tab-base="Chats"
             data-tab-count="<%= projectChats.length %>"
@@ -177,10 +188,69 @@
         </nav>
 
         <div
-          id="project-panel-chats"
+          id="project-panel-team"
           class="project-panel project-panel--active"
           role="tabpanel"
+          aria-labelledby="project-tab-team"
+        >
+          <div class="project-sheet project-sheet--flush">
+            <%
+              var _specialists = (typeof characters !== 'undefined' ? characters : []).filter(function (c) { return c.id !== 'generalist'; });
+              var _ptasks = (typeof projectTasks !== 'undefined' && Array.isArray(projectTasks)) ? projectTasks : [];
+              function _statusLabel(s) {
+                return ({ planning: 'Planning', ready: 'To do', running: 'Doing', needs_review: 'Needs review', needs_human: 'Needs you', needs_clarification: 'Needs you', done: 'Done', failed: 'Failed' })[s] || s;
+              }
+              function _statusClass(s) {
+                if (s === 'running' || s === 'planning') return 'doing';
+                if (s === 'needs_review') return 'review';
+                if (s === 'needs_human' || s === 'needs_clarification') return 'needs-you';
+                if (s === 'done') return 'done';
+                if (s === 'failed') return 'failed';
+                return 'todo';
+              }
+            %>
+            <p class="team-tab-intro muted">Give each specialist a task. They work it in their own view — you review and approve.</p>
+            <div class="team-grid">
+              <% _specialists.forEach(function (ch) {
+                   var mine = _ptasks.filter(function (t) { return t.character_id === ch.id; });
+                   mine.sort(function (a, b) { return (b.id || 0) - (a.id || 0); });
+                   var current = mine.length ? mine[0] : null;
+              %>
+              <div class="team-member" data-logo-color="<%= ch.color %>">
+                <div class="team-member-head">
+                  <%- include('partials/characterFace', { character: ch, faceClass: 'team-member-face' }) %>
+                  <span class="team-member-id">
+                    <span class="team-member-name"><%= ch.name %></span>
+                    <span class="team-member-role"><%= ch.role %></span>
+                  </span>
+                </div>
+                <% if (current) { %>
+                <a class="team-member-task" href="/tasks/<%= current.id %>">
+                  <span class="team-status team-status--<%= _statusClass(current.status) %>"><%= _statusLabel(current.status) %></span>
+                  <span class="team-task-title"><%= current.title %></span>
+                </a>
+                <% if (mine.length > 1) { %>
+                <a class="team-member-more" href="/tasks?projectId=<%= project.id %>"><%= mine.length %> tasks &rsaquo;</a>
+                <% } %>
+                <% } else { %>
+                <p class="team-member-idle muted">Idle — give a task to start.</p>
+                <% } %>
+                <form class="team-assign" method="post" action="/projects/<%= project.id %>/team/<%= ch.id %>/tasks">
+                  <input type="text" name="goal" class="team-assign-input" placeholder="Give <%= ch.name %> a task…" aria-label="Task for <%= ch.name %>" required />
+                  <button type="submit" class="btn btn--primary btn--sm">Give task</button>
+                </form>
+              </div>
+              <% }); %>
+            </div>
+          </div>
+        </div>
+
+        <div
+          id="project-panel-chats"
+          class="project-panel"
+          role="tabpanel"
           aria-labelledby="project-tab-chats"
+          hidden
         >
           <div class="project-sheet project-sheet--flush">
             <% if (projectChats.length === 0) { %>

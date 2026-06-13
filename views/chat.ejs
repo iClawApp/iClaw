@@ -38,6 +38,17 @@
       </div>
     </header>
 
+    <%# Project "Brain" — shared memory (facts + skills) the whole project reads
+        from. Renders only when the chat is under a project with memory to show. %>
+    <% if (typeof activeChat !== 'undefined' && activeChat && activeChat.project_id != null) { %>
+      <%- include('partials/brainPanel', {
+            brainFacts: typeof brainFacts !== 'undefined' ? brainFacts : [],
+            brainSkills: typeof brainSkills !== 'undefined' ? brainSkills : [],
+            projectId: activeChat.project_id,
+            chatId: activeChat.id,
+          }) %>
+    <% } %>
+
     <aside
       class="iclaw-inline-banner iclaw-inline-banner--warn card"
       id="reset-policy-banner"

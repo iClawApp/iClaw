@@ -9217,6 +9217,7 @@
     if (!root) return;
     const tabs = root.querySelectorAll('[data-project-tab]');
     const panels = {
+      team: document.getElementById('project-panel-team'),
       chats: document.getElementById('project-panel-chats'),
       memory: document.getElementById('project-panel-memory'),
       skills: document.getElementById('project-panel-skills'),
