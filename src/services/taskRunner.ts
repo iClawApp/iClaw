@@ -23,6 +23,7 @@ import {
   STORED_SECRET_PLACEHOLDER_RE,
 } from './inlineSecrets';
 import { normalizeAgentId, isGatewayBridgeFailure, gatewayBridgeFailureUserMessage } from './chatRunner';
+import { applyCharacterPrompt } from './characters';
 import { deriveTitle, suggestChatTitleWithTimeout } from './chatTitle';
 import type {
   MessageAttachment,
@@ -506,7 +507,13 @@ async function runExecutionTurn(opts: {
   const sessionKey = await ensureExecutionSession(opts.executionChatId);
   const execChat = chats.get(opts.executionChatId)!;
   const stored = opts.gatewayMessage;
-  const expanded = expandStoredSecretPlaceholdersForGateway(stored, execChat);
+  // Run as the delegated specialist: prepend the character persona + playbook to
+  // the gateway message each turn (the gateway has no system slot). The stored
+  // log row stays clean; only what's sent to the gateway carries the persona.
+  const expanded = applyCharacterPrompt(
+    expandStoredSecretPlaceholdersForGateway(stored, execChat),
+    execChat.character_id,
+  );
 
   if (opts.persistUser !== false) {
     const userMsg = messages.append(opts.executionChatId, 'user', stored, null);
