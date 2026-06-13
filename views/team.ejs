@@ -33,6 +33,24 @@
         var _tasks = (typeof projectTasks !== 'undefined' && Array.isArray(projectTasks)) ? projectTasks : [];
       %>
 
+      <% if (selectedProject && !selectedSpecialist) {
+           var _allP = (typeof projects !== 'undefined' && Array.isArray(projects)) ? projects : [];
+           var _ci = _allP.findIndex(function (p) { return p.id === selectedProject.id; });
+           var _prevP = _ci > 0 ? _allP[_ci - 1] : null;
+           var _nextP = (_ci >= 0 && _ci < _allP.length - 1) ? _allP[_ci + 1] : null;
+      %>
+      <%# Project "spaces": swipe / ⌘←→ / arrows to switch between projects. %>
+      <div class="team-spaces"
+           data-prev-url="<%= _prevP ? ('/team?projectId=' + _prevP.id) : '' %>"
+           data-next-url="<%= _nextP ? ('/team?projectId=' + _nextP.id) : '' %>">
+        <button type="button" class="team-spaces-arrow" data-space-prev aria-label="Previous project"<%= _prevP ? '' : ' disabled' %>>&lsaquo;</button>
+        <div class="team-spaces-dots" aria-label="Projects">
+          <% _allP.forEach(function (p) { %><a class="team-spaces-dot<%= p.id === selectedProject.id ? ' on' : '' %>" href="/team?projectId=<%= p.id %>" aria-label="<%= p.name %>" title="<%= p.name %>"></a><% }); %>
+        </div>
+        <button type="button" class="team-spaces-arrow" data-space-next aria-label="Next project"<%= _nextP ? '' : ' disabled' %>>&rsaquo;</button>
+      </div>
+      <% } %>
+
       <% if (selectedSpecialist && selectedProject) { %>
         <%# State 3 — the big brief composer for one specialist. %>
         <section class="brief">
@@ -128,12 +146,63 @@
 <script>
   (function () {
     var field = document.getElementById('brief-field');
-    if (!field) return;
-    document.querySelectorAll('[data-brief-example]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        field.value = b.textContent.trim();
-        field.focus();
+    if (field) {
+      document.querySelectorAll('[data-brief-example]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          field.value = b.textContent.trim();
+          field.focus();
+        });
       });
+    }
+
+    var body = document.querySelector('.team-page-body');
+    if (!body) return;
+    var bar = document.querySelector('.team-spaces');
+    var prevUrl = bar ? bar.getAttribute('data-prev-url') : '';
+    var nextUrl = bar ? bar.getAttribute('data-next-url') : '';
+
+    try {
+      var d = sessionStorage.getItem('iclaw-space-dir');
+      if (d) { body.classList.add(d === 'next' ? 'space-enter-right' : 'space-enter-left'); sessionStorage.removeItem('iclaw-space-dir'); }
+    } catch (e) {}
+
+    function nav(url, dir) {
+      if (!url) return;
+      try { sessionStorage.setItem('iclaw-space-dir', dir); } catch (e) {}
+      body.classList.add(dir === 'next' ? 'space-leave-left' : 'space-leave-right');
+      setTimeout(function () { window.location.assign(url); }, 160);
+    }
+    function goPrev() { nav(prevUrl, 'prev'); }
+    function goNext() { nav(nextUrl, 'next'); }
+
+    var pb = bar && bar.querySelector('[data-space-prev]');
+    if (pb && prevUrl) pb.addEventListener('click', goPrev);
+    var nb = bar && bar.querySelector('[data-space-next]');
+    if (nb && nextUrl) nb.addEventListener('click', goNext);
+
+    document.addEventListener('keydown', function (e) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); goNext(); }
+    });
+
+    var wacc = 0, wt = null;
+    body.addEventListener('wheel', function (e) {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      wacc += e.deltaX; clearTimeout(wt); wt = setTimeout(function () { wacc = 0; }, 180);
+      if (wacc > 140) { wacc = 0; goNext(); }
+      else if (wacc < -140) { wacc = 0; goPrev(); }
+    }, { passive: true });
+
+    var sx = null, active = false;
+    body.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('a,button,textarea,input,select')) return;
+      sx = e.clientX; active = true;
+    });
+    window.addEventListener('pointerup', function (e) {
+      if (!active) return; active = false;
+      var dx = e.clientX - sx;
+      if (dx < -90) goNext(); else if (dx > 90) goPrev();
     });
   })();
 </script>

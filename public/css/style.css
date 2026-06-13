@@ -9331,3 +9331,47 @@ body.incognito-mode .composer-mode-btn__label {
   cursor: pointer;
 }
 .brief-example:hover { background: var(--hover); }
+
+/* --- Project "spaces": swipe / ⌘←→ between projects ---------------------- */
+.team-spaces {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-8);
+}
+.team-spaces-arrow {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+.team-spaces-arrow:disabled { opacity: 0.4; cursor: default; }
+.team-spaces-arrow:not(:disabled):hover { background: var(--hover); }
+.team-spaces-dots { display: flex; align-items: center; gap: var(--space-3); }
+.team-spaces-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: width 0.15s ease, background 0.15s ease;
+}
+.team-spaces-dot:hover { background: color-mix(in srgb, var(--text) 35%, var(--border)); }
+.team-spaces-dot.on {
+  width: 22px;
+  border-radius: 99px;
+  background: var(--logo-tone, var(--text));
+}
+
+/* Slide feel across the (server-rendered) project switch. */
+.team-page-body.space-leave-left { transform: translateX(-24px); opacity: 0; transition: transform 0.16s ease, opacity 0.16s ease; }
+.team-page-body.space-leave-right { transform: translateX(24px); opacity: 0; transition: transform 0.16s ease, opacity 0.16s ease; }
+.team-page-body.space-enter-right { animation: space-in-right 0.22s ease; }
+.team-page-body.space-enter-left { animation: space-in-left 0.22s ease; }
+@keyframes space-in-right { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes space-in-left { from { transform: translateX(-28px); opacity: 0; } to { transform: none; opacity: 1; } }
