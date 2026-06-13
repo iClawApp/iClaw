@@ -5,7 +5,7 @@
     real integration); "scheduled" just means you marked it. Platform + status
     are the table-stakes validated by last30days research (2026-06-12). Deeper
     sync (Buffer / Notion / Google Calendar) is a future connector. Self-contained. %>
-<section class="char-panel" id="content-calendar" data-chat-id="<%= activeChat.id %>" aria-label="Content calendar">
+<section class="char-panel" id="content-calendar" data-chat-id="<%= (typeof panelKey !== 'undefined' && panelKey) ? panelKey : (typeof activeChat !== 'undefined' && activeChat ? activeChat.id : '0') %>" aria-label="Content calendar">
   <div class="char-panel-head">
     <span class="char-panel-title">Content calendar</span>
     <span class="char-panel-sub">Plan your posts — click a day to add one</span>

@@ -3,7 +3,7 @@
     into the composer so Cleo tailors it to the customer). Saved in the browser
     keyed by chat; seeded with a few starters. Validated by last30days (2026-06-12:
     saved replies = speed + consistency for support teams). Self-contained. %>
-<section class="char-panel" id="saved-replies" data-chat-id="<%= activeChat.id %>" aria-label="Saved replies">
+<section class="char-panel" id="saved-replies" data-chat-id="<%= (typeof panelKey !== 'undefined' && panelKey) ? panelKey : (typeof activeChat !== 'undefined' && activeChat ? activeChat.id : '0') %>" aria-label="Saved replies">
   <div class="char-panel-head">
     <span class="char-panel-title">Saved replies</span>
     <span class="char-panel-sub">Reusable answers — Copy, or Adapt to tailor</span>
