@@ -37,6 +37,9 @@ describe('characters', () => {
     expect(sys).toContain('You are Remi, the Researcher');
     // System prompt is plain (no gateway bracket framing).
     expect(sys).not.toContain('[Character');
+    // The specialist's method playbook is injected.
+    expect(sys).toContain('How you work:');
+    expect(sys).toContain('Triangulate at least two independent sources');
   });
 
   it('prepends the persona only for non-generalist characters', () => {
@@ -62,6 +65,8 @@ describe('characters', () => {
         expect(c.role.length).toBeGreaterThan(0);
         expect(c.persona.length).toBeGreaterThan(0);
         expect(c.avatar).toMatch(/^\/img\/characters\/.+\.svg$/);
+        // Every specialist carries a concrete method playbook (vertical depth).
+        expect((c.playbook ?? '').length).toBeGreaterThan(0);
       }
     }
   });

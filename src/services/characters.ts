@@ -36,6 +36,12 @@ export interface CharacterDef {
   greeting: string;
   /** Persona prepended to the gateway turn. Empty string = no injection. */
   persona: string;
+  /**
+   * How this specialist works — a short, concrete method/playbook injected after
+   * the persona so the agent behaves like a real vertical expert, not a generic
+   * assistant. Empty for the generalist.
+   */
+  playbook?: string;
   /** Trust mode this character is best run in (see services/chatModes.ts). */
   defaultMode: ChatMode;
   /** Example tasks surfaced as buttons on an empty character chat. */
@@ -128,6 +134,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Find the best options for this and show me the sources',
       'Pull this doc down to the 5 things that matter',
     ],
+    playbook:
+      "Start from the question, not the tool. Triangulate at least two independent sources before stating a fact; attribute every claim to its source; separate fact from your own inference; flag thin or conflicting evidence; close with a 3-bullet 'what this means'.",
     // Read-only research: search & read the web and your files, never writes.
     tools: ['web_search', 'web_fetch', 'read_summary', 'analyze_link', 'social_search', 'list_files', 'read_file', 'search_files'],
   },
@@ -150,6 +158,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Rewrite this simpler, drop the jargon',
       'Turn these rough notes into a short post',
     ],
+    playbook:
+      "Mirror the user's voice from any sample you're given (sentence length, formality, vocabulary). One idea per paragraph, point first. Cut hedging, throat-clearing and AI tells like 'delve' or 'in today's world'. Hand over one tight draft, not three weak options.",
     // Reads context, drafts and edits files, checks the web — no shell.
     tools: ['list_files', 'read_file', 'search_files', 'write_file', 'edit_file', 'web_fetch', 'read_summary'],
   },
@@ -172,6 +182,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Turn these numbers into a short report',
       'What stands out in this data?',
     ],
+    playbook:
+      "Work hypothesis → check → conclusion. State your assumptions and the exact rows or date range up front. Quantify everything (numbers, %, deltas), never vibes. Call out data-quality caveats. End with the single most decision-relevant finding.",
     // Crunches data: reads files, runs analysis scripts, writes a report, plots.
     tools: ['list_files', 'read_file', 'search_files', 'run_command', 'write_file', 'web_fetch', 'read_summary', 'show_image'],
   },
@@ -194,6 +206,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Find and fix the bug in this file',
       'Write a small script for this',
     ],
+    playbook:
+      "Reproduce or fully read the code before changing it. Smallest diff that works; match the conventions already there. Never invent APIs — check first. Explain the trade-off in one line and note what you deliberately did not touch.",
     // Full dev kit: read, write, edit, run, and look things up on the web.
     tools: ['list_files', 'read_file', 'search_files', 'write_file', 'edit_file', 'run_command', 'web_fetch', 'web_search', 'read_summary'],
   },
@@ -216,6 +230,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Write 5 caption ideas for Instagram',
       'Turn this blog post into a LinkedIn post',
     ],
+    playbook:
+      "Plan the week as pillars → hooks → CTA. For each post give: platform, hook (the first line), the value, and the call to action. Write native to each platform and on-brand. Real angles only — no invented metrics or fake urgency.",
     // Research the web & socials, read context, write the posts, make visuals.
     tools: ['web_search', 'web_fetch', 'read_summary', 'social_search', 'list_files', 'read_file', 'search_files', 'write_file', 'edit_file', 'show_image'],
     // Her own UI: a content calendar to plan the week.
@@ -240,6 +256,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Answer this question using our FAQ',
       'Write a polite response to this refund request',
     ],
+    playbook:
+      "Acknowledge → answer → clear next step. Mirror the customer's wording and read their emotion; stay calm, never defensive. Ground every promise in the FAQ or policy you were given; if it isn't covered, say so and flag for a human. Never invent refunds or policies.",
     // Reads your help docs / past replies and the web, drafts the answer.
     tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'write_file'],
     // Her own UI: reusable saved replies to copy or adapt.
@@ -264,6 +282,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Draft a polite reply declining this',
       'Pull the action items out of this',
     ],
+    playbook:
+      "Summarise a thread down to: the ask, the decision needed, the deadline. Draft a skimmable reply — short, one clear ask, matching the sender's level of formality. You draft; the user sends. Never invent commitments or dates.",
     // Reads pasted threads / files and the web, drafts replies.
     tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'write_file'],
   },
@@ -286,6 +306,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Draft an agenda for this meeting',
       'Break this project into next steps',
     ],
+    playbook:
+      "Turn a vague ask into clear next steps with an owner and a sequence. Surface what's blocking progress. Draft the messages or notes needed. Confirm the plan before assuming — you prepare and organise, you don't take outside actions yourself.",
     // Reads context, drafts and organises, looks things up.
     tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'write_file'],
     // Shares Mia's planner UI — an assistant lives by the calendar.
@@ -310,6 +332,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Write a content brief for this topic',
       'Audit this page for on-page SEO',
     ],
+    playbook:
+      "Intent before keywords: classify the query (informational / commercial / navigational), then map keyword → intent → page. A brief is an H1, a section outline, target terms, and the angle competitors miss. No keyword stuffing, no ranking promises.",
     // Heavy web/social research, reads the site files, writes briefs.
     tools: ['web_search', 'web_fetch', 'read_summary', 'social_search', 'list_files', 'read_file', 'search_files', 'write_file'],
   },
@@ -332,6 +356,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Total my spend by category',
       'What do these numbers say?',
     ],
+    playbook:
+      "Categorise consistently and reconcile to a total. Flag duplicates, outliers and anything uncategorised. Report income, spend by category, the net, and the one number to watch. State your assumptions; this is bookkeeping, not tax or legal advice.",
     // Reads sheets, runs the maths, writes a summary, plots it.
     tools: ['list_files', 'read_file', 'search_files', 'run_command', 'write_file', 'show_image'],
   },
@@ -387,7 +413,8 @@ export function buildCharacterPromptBlock(id: string | null | undefined): string
   const c = getCharacter(id);
   if (!c.persona) return null;
   const who = c.role ? `${c.name}, the ${c.role}` : c.name;
-  return `[Character — act as ${who}. ${c.persona}\nStay in this role; the user's message follows.]`;
+  const method = c.playbook ? `\nHow you work: ${c.playbook}` : '';
+  return `[Character — act as ${who}. ${c.persona}${method}\nStay in this role; the user's message follows.]`;
 }
 
 /** Prepend the persona to an already-built gateway message. No-op for generalist. */
@@ -409,5 +436,6 @@ export function buildCharacterSystemPrompt(id: string | null | undefined): strin
   const c = getCharacter(id);
   if (!c.persona) return null;
   const who = c.role ? `${c.name}, the ${c.role}` : c.name;
-  return `You are ${who}. ${c.persona}`;
+  const method = c.playbook ? `\n\nHow you work:\n${c.playbook}` : '';
+  return `You are ${who}. ${c.persona}${method}`;
 }
