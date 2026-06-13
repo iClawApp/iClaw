@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-label="Ada the analyst">
+  <rect width="80" height="80" rx="18" fill="#FCE7D2"/>
+  <path d="M18 80 C18 65 28 58 40 58 C52 58 62 65 62 80 Z" fill="#ED9A21"/>
+  <rect x="35" y="46" width="10" height="10" fill="#E8B98F"/>
+  <circle cx="40" cy="35" r="14" fill="#E8B98F"/>
+  <circle cx="40" cy="18" r="6" fill="#5A3A1E"/>
+  <path d="M26 35 C26 22 54 22 54 35 C54 28 48 24 40 24 C32 24 26 28 26 35 Z" fill="#5A3A1E"/>
+  <circle cx="35" cy="35" r="1.7" fill="#33302E"/>
+  <circle cx="45" cy="35" r="1.7" fill="#33302E"/>
+  <path d="M35.5 40.5 Q40 44 44.5 40.5" stroke="#33302E" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <g fill="#C87A14">
+    <rect x="49" y="55" width="3.4" height="8" rx="1"/>
+    <rect x="54.6" y="51" width="3.4" height="12" rx="1"/>
+    <rect x="60.2" y="47" width="3.4" height="16" rx="1"/>
+  </g>
+</svg>

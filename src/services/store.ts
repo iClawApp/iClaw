@@ -140,6 +140,12 @@ export const chats = {
       "UPDATE chats SET mode = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(mode, id);
   },
+  /** Persist the chat's active character/persona (see services/characters.ts). null = generalist. */
+  setCharacter(id: number, characterId: string | null): void {
+    db.prepare(
+      "UPDATE chats SET character_id = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(characterId, id);
+  },
   touch(id: number): void {
     db.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").run(id);
   },
@@ -1330,12 +1336,13 @@ export const tasks = {
     agent: string | null;
     contextSnapshotId: number;
     status?: TaskStatus;
+    characterId?: string | null;
   }): Task {
     const info = db
       .prepare(
         `INSERT INTO tasks (
-          project_id, source_chat_id, title, goal, status, agent, context_snapshot_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          project_id, source_chat_id, title, goal, status, agent, context_snapshot_id, character_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         opts.projectId,
@@ -1345,6 +1352,7 @@ export const tasks = {
         opts.status ?? 'ready',
         opts.agent,
         opts.contextSnapshotId,
+        opts.characterId ?? null,
       );
     return this.get(Number(info.lastInsertRowid))!;
   },

@@ -319,6 +319,10 @@ ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
 // so it survives page navigation and syncs across devices — previously only the
 // last sent message's mode + per-browser localStorage tracked this.
 ensureColumn('chats', 'mode', 'TEXT');
+// Active character/persona for the chat (see services/characters.ts). null = generalist.
+ensureColumn('chats', 'character_id', 'TEXT');
+// Specialist a task is delegated to (Team tab). Drives the execution persona + tools.
+ensureColumn('tasks', 'character_id', 'TEXT');
 ensureColumn('remote_access_tunnels', 'access_token', 'TEXT');
 ensureColumn('remote_access_tunnels', 'opaque_registration_record', 'TEXT');
 // Tunnel ownership secret. Proves to the relay that a re-registering client is

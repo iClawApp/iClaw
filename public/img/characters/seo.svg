@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-label="Sage the SEO specialist">
+  <rect width="80" height="80" rx="18" fill="#DDF3E6"/>
+  <path d="M18 80 C18 65 28 58 40 58 C52 58 62 65 62 80 Z" fill="#2DB36E"/>
+  <rect x="35" y="46" width="10" height="10" fill="#E8B98F"/>
+  <circle cx="40" cy="35" r="14" fill="#E8B98F"/>
+  <path d="M26 34 C26 21 54 21 54 34 C54 27 48 24 40 24 C32 24 26 27 26 34 Z" fill="#33302E"/>
+  <circle cx="35" cy="35" r="1.7" fill="#33302E"/>
+  <circle cx="45" cy="35" r="1.7" fill="#33302E"/>
+  <path d="M35.5 40.5 Q40 44 44.5 40.5" stroke="#33302E" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <g stroke="#1C7D4B" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M48 62 L54 56 L58 60 L66 50"/>
+    <path d="M61 50 L66 50 L66 55"/>
+  </g>
+</svg>

@@ -62,6 +62,15 @@ export interface ChatModeDef {
  */
 export const CHAT_MODES: readonly ChatModeDef[] = [
   {
+    id: 'persona',
+    label: 'Persona',
+    description: 'Plain chat with a character - no tools, no Docker, just the persona',
+    enabled: true,
+    runtimeBacked: true,
+    ephemeral: false,
+    requiresDocker: false,
+  },
+  {
     id: 'work',
     label: 'Work',
     description: 'AI edits files in folders you choose - you approve every change',

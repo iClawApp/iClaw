@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-label="Vera the personal assistant">
+  <rect width="80" height="80" rx="18" fill="#F0E4FB"/>
+  <path d="M18 80 C18 65 28 58 40 58 C52 58 62 65 62 80 Z" fill="#A05BE0"/>
+  <rect x="35" y="46" width="10" height="10" fill="#E8B98F"/>
+  <circle cx="40" cy="35" r="14" fill="#E8B98F"/>
+  <circle cx="40" cy="18" r="6" fill="#4A3B33"/>
+  <path d="M26 35 C26 22 54 22 54 35 C54 28 48 24 40 24 C32 24 26 28 26 35 Z" fill="#4A3B33"/>
+  <circle cx="35" cy="35" r="1.7" fill="#33302E"/>
+  <circle cx="45" cy="35" r="1.7" fill="#33302E"/>
+  <path d="M35.5 40.5 Q40 44 44.5 40.5" stroke="#33302E" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <g>
+    <rect x="48" y="48" width="16" height="18" rx="2" fill="#7438B0"/>
+    <rect x="53" y="46" width="6" height="4" rx="1" fill="#5A2A8A"/>
+    <path d="M51 54 l2 2 l3 -4" stroke="#F0E4FB" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="58" y1="54.5" x2="61" y2="54.5" stroke="#F0E4FB" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M51 60 l2 2 l3 -4" stroke="#F0E4FB" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="58" y1="60.5" x2="61" y2="60.5" stroke="#F0E4FB" stroke-width="1.6" stroke-linecap="round"/>
+  </g>
+</svg>

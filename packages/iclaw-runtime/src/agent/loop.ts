@@ -32,6 +32,14 @@ export interface AgentOptions {
    */
   incognito?: boolean | undefined;
   systemPrompt?: string | undefined;
+  /** Persona mode: no tools, no Docker — a plain conversation with the model. */
+  chatOnly?: boolean | undefined;
+  /**
+   * Character tool allowlist (by tool name). When set, the turn's tools are
+   * intersected with it — a character can only NARROW what the mode already
+   * allows, never widen it. Omit for no character restriction.
+   */
+  characterTools?: string[] | undefined;
   /**
    * Image data URLs (`data:<mime>;base64,…`) for THIS turn's user message —
    * files the user dropped into the chat. Sent once as vision blocks so the
@@ -368,7 +376,7 @@ export async function* runAgentTurn(
     : TOOL_DEFINITIONS;
   // analyze_link (yt-dlp in the session container) is offered only when a
   // sandbox backend is wired (Docker up). Without it, the model uses web_fetch.
-  const tools = [
+  const baseTools = opts.chatOnly ? [] : [
     ...fileTools, READ_SUMMARY_TOOL, WEB_FETCH_TOOL, WEB_SEARCH_TOOL,
     // show_image lets the agent surface a real image file inline. Not in
     // Incognito — that turn is ephemeral, so there's no message to attach to.
@@ -377,6 +385,12 @@ export async function* runAgentTurn(
     // are offered only when a sandbox backend is wired.
     ...(opts.linkSandbox ? [ANALYZE_LINK_TOOL, SOCIAL_SEARCH_TOOL] : []),
   ];
+  // A character narrows the tool set to those tailored to its job. Intersect
+  // (never widen): the mode gating above still decides what's on the table.
+  const tools =
+    opts.characterTools && opts.characterTools.length
+      ? baseTools.filter((t) => opts.characterTools!.includes(t.function.name))
+      : baseTools;
 
   // When the user dropped image(s), send the turn's user message as a
   // multimodal content array (text + image blocks) so a vision model sees them.
@@ -451,10 +465,16 @@ export async function* runAgentTurn(
         {
           model: effectiveModel,
           messages: withPromptCaching(messages),
-          tools: tools as unknown as OpenAI.Chat.ChatCompletionTool[],
-          // Normally 'auto'; after the dead-round breaker trips we send 'none' so
-          // the model MUST produce a final answer instead of calling more tools.
-          tool_choice: forceConclude ? 'none' : 'auto',
+          // Persona mode runs with no tools — omit the params entirely (an empty
+          // `tools: []` with tool_choice is rejected by some providers).
+          ...(tools.length
+            ? {
+                tools: tools as unknown as OpenAI.Chat.ChatCompletionTool[],
+                // Normally 'auto'; after the dead-round breaker trips we send 'none'
+                // so the model MUST produce a final answer instead of calling tools.
+                tool_choice: forceConclude ? 'none' : 'auto',
+              }
+            : {}),
           stream: true,
           stream_options: { include_usage: true }, // final chunk carries token usage
         },

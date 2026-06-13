@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-label="Fin the bookkeeper">
+  <rect width="80" height="80" rx="18" fill="#FCF0D2"/>
+  <path d="M18 80 C18 65 28 58 40 58 C52 58 62 65 62 80 Z" fill="#F2B61A"/>
+  <rect x="35" y="46" width="10" height="10" fill="#E8B98F"/>
+  <circle cx="40" cy="35" r="14" fill="#E8B98F"/>
+  <path d="M26 34 C26 21 54 21 54 34 C54 27 48 24 40 24 C32 24 26 27 26 34 Z" fill="#4A3B33"/>
+  <circle cx="35" cy="35" r="1.7" fill="#33302E"/>
+  <circle cx="45" cy="35" r="1.7" fill="#33302E"/>
+  <path d="M35.5 40.5 Q40 44 44.5 40.5" stroke="#33302E" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <g>
+    <circle cx="57" cy="56" r="8" fill="#B5850C"/>
+    <text x="57" y="60.5" font-size="11" text-anchor="middle" fill="#FCF0D2" font-family="Helvetica, Arial, sans-serif" font-weight="bold">$</text>
+  </g>
+</svg>

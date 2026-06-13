@@ -68,6 +68,10 @@ export interface CreateSessionOptions {
   secure?: boolean | undefined;
   /** Incognito: read-only, read-anywhere, web_fetch enabled. Mutually exclusive with secure. */
   incognito?: boolean | undefined;
+  /** Persona mode: no tools, no Docker — a plain conversation with the model. */
+  chatOnly?: boolean | undefined;
+  /** Character tool allowlist (by name) — narrows the turn's tools to the character's job. */
+  characterTools?: string[] | undefined;
   systemPrompt?: string | undefined;
   /** Stable identity (e.g. "chat:156") so a chat reconnects to its workspace. */
   key?: string | undefined;
@@ -79,6 +83,8 @@ export interface CreateSessionOptions {
 export async function createWorkSession(opts: CreateSessionOptions = {}): Promise<string> {
   const body: Record<string, unknown> = { allowedFolders: opts.allowedFolders, secure: opts.secure };
   if (opts.incognito) body.incognito = true;
+  if (opts.chatOnly) body.chatOnly = true;
+  if (opts.characterTools?.length) body.characterTools = opts.characterTools;
   if (opts.folderAccess?.length) body.folderAccess = opts.folderAccess;
   if (opts.copyFolders?.length) body.copyFolders = opts.copyFolders;
   if (opts.model) body.model = opts.model;

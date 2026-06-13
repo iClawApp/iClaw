@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-label="Mia the social media manager">
+  <rect width="80" height="80" rx="18" fill="#FBE3F1"/>
+  <path d="M18 80 C18 65 28 58 40 58 C52 58 62 65 62 80 Z" fill="#D6489A"/>
+  <rect x="35" y="46" width="10" height="10" fill="#E8B98F"/>
+  <circle cx="40" cy="35" r="14" fill="#E8B98F"/>
+  <path d="M25 35 C24 20 56 20 55 35 C53 28 50 26 50 26 L30 26 C30 26 27 28 25 35 Z" fill="#3A2F36"/>
+  <path d="M25 33 C25 47 27 51 28 53 L31 51 C29 47 29 40 29 35 Z" fill="#3A2F36"/>
+  <path d="M55 33 C55 47 53 51 52 53 L49 51 C51 47 51 40 51 35 Z" fill="#3A2F36"/>
+  <circle cx="35" cy="35" r="1.7" fill="#33302E"/>
+  <circle cx="45" cy="35" r="1.7" fill="#33302E"/>
+  <path d="M35.5 40.5 Q40 44 44.5 40.5" stroke="#33302E" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <g>
+    <rect x="46" y="49" width="20" height="14" rx="4" fill="#A8327A"/>
+    <path d="M50 62 L50 67 L55 62 Z" fill="#A8327A"/>
+    <path d="M56 53.4 C54.9 51.7 52.4 52.4 52.4 54.3 C52.4 55.8 54.2 57 56 58.3 C57.8 57 59.6 55.8 59.6 54.3 C59.6 52.4 57.1 51.7 56 53.4 Z" fill="#FBE3F1"/>
+  </g>
+</svg>

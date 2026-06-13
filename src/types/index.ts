@@ -122,7 +122,7 @@ export type ChatKind = 'normal' | 'draft' | 'task_execution';
  * type everywhere. Storage columns are plain TEXT, so adding a mode later
  * needs no DB migration.
  */
-export type ChatMode = 'execute' | 'work' | 'secure' | 'incognito';
+export type ChatMode = 'execute' | 'work' | 'secure' | 'incognito' | 'persona';
 
 export type TaskStatus =
   | 'planning'
@@ -181,6 +181,8 @@ export interface Task {
   goal: string;
   status: TaskStatus;
   agent: string | null;
+  /** Specialist this task is delegated to (see services/characters.ts). null = none. */
+  character_id?: string | null;
   context_snapshot_id: number;
   execution_chat_id: number | null;
   result_summary: string | null;
@@ -239,6 +241,8 @@ export interface Chat {
   /** Sticky composer send-mode for this chat (e.g. 'work' | 'secure' | 'execute').
    *  null = never set → client uses the UI default. Survives navigation/devices. */
   mode: string | null;
+  /** Active character/persona id (see services/characters.ts). null = generalist. */
+  character_id?: string | null;
   title_manual: number;
   unread: number;
   created_at: string;

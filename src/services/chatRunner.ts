@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import { chats, messages, projects, projectSecrets, projectFacts } from './store';
 import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
+import { applyCharacterPrompt, buildCharacterSystemPrompt, characterToolAllowlist } from './characters';
 import { buildSkillsPromptBlock, scheduleProjectSkillReview } from './projectSkills';
 import { projectSkills } from './store';
 import { chatStatus } from './chatStatus';
@@ -302,10 +303,11 @@ async function runTurnLocked(opts: {
     gatewayBody = formatReplyGatewayBlock(refExpanded, reply.quote) + gatewayBody;
   }
 
-  const gatewayMessageBase =
+  const gatewayWithProject =
     chat.project_id != null && projects.get(chat.project_id)
       ? buildGatewayUserMessage(gatewayBody, chat.project_id)
       : gatewayBody;
+  const gatewayMessageBase = applyCharacterPrompt(gatewayWithProject, chat.character_id);
   // The turn is dispatched AFTER the user row is persisted (Ask needs
   // userMsg.id to seed prior-thread context). See the Ask/Execute branch below.
 
@@ -458,9 +460,9 @@ async function runTurnLocked(opts: {
   // Work / Secure Mode — routes to iclaw-runtime, returns early. Forward dropped
   // files so the runtime agent can read them (Work) / stage them (Secure) and
   // see images — otherwise the model has no idea a file was attached.
-  if (mode === 'work' || mode === 'secure') {
+  if (mode === 'work' || mode === 'secure' || mode === 'persona') {
     const runtimeAttachments = runtimeAttachmentsFromPersisted(chatId, persistedAttachments);
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', chatOnly: mode === 'persona', networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }
@@ -761,6 +763,9 @@ function buildWorkSystemPrompt(chatId: number): string {
   const chat = chats.get(chatId);
   const lines: string[] = [];
 
+  const characterPrompt = buildCharacterSystemPrompt(chat?.character_id);
+  if (characterPrompt) lines.push(characterPrompt);
+
   if (chat?.project_id) {
     const project = projects.get(chat.project_id);
     if (project?.name) lines.push(`Project: ${project.name}`);
@@ -887,6 +892,8 @@ async function runWorkModeTurn(opts: {
   onEvent: (event: TurnEvent) => void;
   workFolders?: WorkFolder[] | undefined;
   secure?: boolean | undefined;
+  /** Persona mode: no tools, no Docker — a plain conversation. */
+  chatOnly?: boolean | undefined;
   networkEnabled?: boolean | undefined;
   ttlDays?: number | undefined;
   /** Current user message id — history before it seeds the session context. */
@@ -935,11 +942,13 @@ async function runWorkModeTurn(opts: {
       // enforcement. Secure Mode ignores it (the sandbox workspace is the only
       // mount); when no folders are chosen we fall back to HOME with write
       // access, preserving prior behavior.
-      const hasFolders = !opts.secure && !!opts.workFolders?.length;
+      const hasFolders = !opts.secure && !opts.chatOnly && !!opts.workFolders?.length;
       const folderAccess = hasFolders ? opts.workFolders : undefined;
       const allowedFolders = hasFolders
         ? opts.workFolders!.map((f) => f.path)
-        : [process.env.HOME ?? ''].filter(Boolean);
+        : opts.chatOnly
+          ? [] // Persona mode talks to the model only — no file access.
+          : [process.env.HOME ?? ''].filter(Boolean);
       // Safe Mode: the folders the user picked are COPIED into the isolated
       // sandbox (originals untouched), not bind-mounted live like Work Mode.
       const copyFolders =
@@ -951,11 +960,16 @@ async function runWorkModeTurn(opts: {
       const history = opts.beforeMsgId
         ? await buildCompactedHistory(chatId, opts.beforeMsgId)
         : undefined;
+      // The active character narrows the tool set to those fit for its job
+      // (Remi reads only, Cody gets the full dev kit). null = no restriction.
+      const characterTools = characterToolAllowlist(chats.get(chatId)?.character_id) ?? undefined;
       sessionId = await createWorkSession({
         allowedFolders,
         folderAccess,
         copyFolders,
         secure: opts.secure,
+        chatOnly: opts.chatOnly,
+        characterTools,
         systemPrompt: buildWorkSystemPrompt(chatId),
         // Stable key → the chat reconnects to its persisted Secure workspace
         // (and its running TTL) after a runtime restart.
@@ -1085,7 +1099,7 @@ async function runWorkModeTurn(opts: {
             const assistantMsg = messages.append(
               chatId, 'assistant', accumulated, null, null,
               turnAttachments.length > 0 ? turnAttachments : null,
-              opts.secure ? 'secure' : 'work', event.tokens ?? null, event.cached ?? null,
+              opts.chatOnly ? 'persona' : opts.secure ? 'secure' : 'work', event.tokens ?? null, event.cached ?? null,
               toolTrace.length > 0 ? toolTrace : null,
             );
             wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });
