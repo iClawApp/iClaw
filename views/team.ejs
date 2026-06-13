@@ -121,31 +121,33 @@
         <%# State 2 — the roster of specialists for the chosen project. %>
         <section class="team-roles">
           <h2 class="team-roles-title">Your team for <%= selectedProject.name %></h2>
-          <p class="team-roles-sub muted">Pick a specialist to give them a task. They work it in their own view — you review and approve.</p>
+          <p class="team-roles-sub muted">Open a specialist to chat — they answer inline, or spin a multi-step request into a task for you to review.</p>
           <div class="team-grid">
             <% (typeof specialists !== 'undefined' ? specialists : []).forEach(function (ch) {
                  var mine = _tasks.filter(function (t) { return t.character_id === ch.id; });
                  mine.sort(function (a, b) { return (b.id || 0) - (a.id || 0); });
                  var current = mine.length ? mine[0] : null;
             %>
-            <a class="team-member" href="/team?projectId=<%= selectedProject.id %>&specialist=<%= ch.id %>" data-logo-color="<%= ch.color %>">
-              <div class="team-member-head">
-                <%- include('partials/characterFace', { character: ch, faceClass: 'team-member-face' }) %>
-                <span class="team-member-id">
-                  <span class="team-member-name"><%= ch.name %></span>
-                  <span class="team-member-role"><%= ch.role %></span>
+            <form class="team-member-form" method="post" action="/projects/<%= selectedProject.id %>/team/<%= ch.id %>/chat">
+              <button type="submit" class="team-member" data-logo-color="<%= ch.color %>">
+                <span class="team-member-head">
+                  <%- include('partials/characterFace', { character: ch, faceClass: 'team-member-face' }) %>
+                  <span class="team-member-id">
+                    <span class="team-member-name"><%= ch.name %></span>
+                    <span class="team-member-role"><%= ch.role %></span>
+                  </span>
                 </span>
-              </div>
-              <p class="team-member-tagline muted"><%= ch.tagline %></p>
-              <% if (current) { %>
-              <span class="team-member-task">
-                <span class="team-status team-status--<%= _statusClass(current.status) %>"><%= _statusLabel(current.status) %></span>
-                <span class="team-task-title"><%= current.title %></span>
-              </span>
-              <% } else { %>
-              <span class="team-member-cta">Give a task &rarr;</span>
-              <% } %>
-            </a>
+                <span class="team-member-tagline muted"><%= ch.tagline %></span>
+                <% if (current) { %>
+                <span class="team-member-task">
+                  <span class="team-status team-status--<%= _statusClass(current.status) %>"><%= _statusLabel(current.status) %></span>
+                  <span class="team-task-title"><%= current.title %></span>
+                </span>
+                <% } else { %>
+                <span class="team-member-cta">Open chat &rarr;</span>
+                <% } %>
+              </button>
+            </form>
             <% }); %>
           </div>
         </section>

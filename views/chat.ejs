@@ -1,9 +1,14 @@
 <%- include('partials/head', { title: activeChat.title + ' — iClaw' }) %>
 
+<% var _isSpec = (typeof character !== 'undefined' && character && character.id !== 'generalist'); %>
 <div class="app">
-  <%- include('partials/sidebar') %>
+  <% if (_isSpec) { %>
+    <%- include('partials/specialistSidebar', { character: character, specialistProject: (typeof specialistProject !== 'undefined' ? specialistProject : null), specialistChats: (typeof specialistChats !== 'undefined' ? specialistChats : []), activeChat: activeChat }) %>
+  <% } else { %>
+    <%- include('partials/sidebar') %>
+  <% } %>
 
-  <main class="col col-main">
+  <main class="col col-main<%= _isSpec ? ' specialist-main' : '' %>"<% if (_isSpec) { %> data-logo-color="<%= character.color %>"<% } %>>
     <header class="chat-header">
       <%- include('partials/mobile-nav-toggle') %>
       <form class="rename-form" id="chat-rename-form" onsubmit="return false">
@@ -37,6 +42,34 @@
       <%- include('partials/header-chat-tools') %>
       </div>
     </header>
+
+    <%# Specialist power-up: the agent's panel (calendar / saved replies), tucked
+        away and opened on demand from the sidebar power-up button. %>
+    <% if (_isSpec && character.panel) { %>
+    <div class="specialist-panel-overlay" id="specialist-panel" hidden>
+      <div class="specialist-panel-sheet">
+        <button type="button" class="specialist-panel-close" data-close-panel aria-label="Close">&times;</button>
+        <% if (character.panel === 'calendar') { %>
+        <%- include('partials/panelCalendar', { panelKey: 'chat-' + activeChat.id }) %>
+        <% } else if (character.panel === 'replies') { %>
+        <%- include('partials/panelReplies', { panelKey: 'chat-' + activeChat.id }) %>
+        <% } %>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var ov = document.getElementById('specialist-panel');
+        if (!ov) return;
+        document.querySelectorAll('[data-open-panel]').forEach(function (b) {
+          b.addEventListener('click', function () { ov.hidden = false; });
+        });
+        ov.querySelectorAll('[data-close-panel]').forEach(function (b) {
+          b.addEventListener('click', function () { ov.hidden = true; });
+        });
+        ov.addEventListener('click', function (e) { if (e.target === ov) ov.hidden = true; });
+      })();
+    </script>
+    <% } %>
 
     <%# Project "Brain" — shared memory (facts + skills) the whole project reads
         from. Renders only when the chat is under a project with memory to show. %>

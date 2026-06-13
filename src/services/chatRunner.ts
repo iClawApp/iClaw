@@ -462,7 +462,10 @@ async function runTurnLocked(opts: {
   // see images — otherwise the model has no idea a file was attached.
   if (mode === 'work' || mode === 'secure' || mode === 'persona') {
     const runtimeAttachments = runtimeAttachmentsFromPersisted(chatId, persistedAttachments);
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', chatOnly: mode === 'persona', networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
+    // An interactive specialist chat lets the model spin work into a task itself.
+    // Task-execution chats are excluded (a running task must not create more).
+    const canCreateTasks = !!chat.character_id && chat.chat_kind !== 'task_execution';
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', chatOnly: mode === 'persona', canCreateTasks, networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }

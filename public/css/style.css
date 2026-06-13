@@ -9273,6 +9273,9 @@ body.incognito-mode .composer-mode-btn__label {
 }
 .team-member-tagline { margin: 0; font-size: var(--text-sm); }
 .team-member-cta { font-size: var(--text-sm); color: var(--accent); font-weight: 550; }
+/* Roster cards are buttons (open the specialist's chat) — reset button chrome. */
+.team-member-form { margin: 0; display: flex; }
+.team-roles .team-member { width: 100%; cursor: pointer; font: inherit; text-align: left; }
 
 /* The big brief composer — our visual language: one calm centred field. */
 .brief { max-width: 40rem; margin: var(--space-9) auto 0; }
@@ -9418,3 +9421,108 @@ body.incognito-mode .composer-mode-btn__label {
 .task-specialist-name { font-weight: 600; font-size: var(--text-sm); }
 .task-specialist-role { font-size: var(--text-xs); color: var(--muted); }
 .task-specialist-tag { margin-left: var(--space-3); font-size: var(--text-xs); color: var(--muted); }
+
+/* --- Specialist themed chat (Sintra-style sidebar + power-up overlay) ----- */
+.specialist-sidebar[data-logo-color] {
+  background: color-mix(in srgb, var(--logo-tone) 82%, #1b1430);
+  color: #fff;
+  border-right: none;
+}
+.specialist-hero {
+  position: relative;
+  padding: 16px 16px 14px;
+  background: color-mix(in srgb, var(--logo-tone) 70%, #140e26);
+  display: flex;
+  flex-direction: column;
+}
+.specialist-hero-back {
+  align-self: flex-start;
+  font-size: var(--text-sm);
+  color: rgba(255, 255, 255, 0.8);
+  text-decoration: none;
+  margin-bottom: 10px;
+}
+.specialist-hero-back:hover { color: #fff; }
+.specialist-hero-avatar { width: 96px; height: 96px; margin-bottom: 10px; }
+.specialist-hero-face { width: 96px; height: 96px; border-radius: 16px; }
+.specialist-hero-name { font-size: 1.25rem; font-weight: 650; line-height: 1.1; }
+.specialist-hero-role { font-size: var(--text-sm); color: rgba(255, 255, 255, 0.7); }
+.specialist-sb-body { padding: 14px 12px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+.specialist-newchat-form { margin: 0; }
+.specialist-newchat {
+  width: 100%;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 9px 14px;
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+.specialist-newchat:hover { background: rgba(255, 255, 255, 0.26); }
+.specialist-powerup {
+  text-align: left;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  color: #fff;
+}
+.specialist-powerup:hover { background: rgba(255, 255, 255, 0.16); }
+.specialist-powerup-label { font-size: var(--text-sm); font-weight: 500; }
+.specialist-powerup-sub { font-size: var(--text-xs); color: rgba(255, 255, 255, 0.65); }
+.specialist-recents-label { margin: 6px 0; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.55); }
+.specialist-recents-empty { margin: 0; font-size: var(--text-sm); color: rgba(255, 255, 255, 0.6); }
+.specialist-recent {
+  display: block;
+  text-decoration: none;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.specialist-recent:hover { background: rgba(255, 255, 255, 0.18); }
+.specialist-recent.on { background: rgba(255, 255, 255, 0.24); }
+
+.specialist-main { position: relative; }
+.specialist-main[data-logo-color] { background: color-mix(in srgb, var(--logo-tone) 5%, var(--surface)); }
+
+.specialist-panel-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex;
+  justify-content: flex-end;
+}
+.specialist-panel-sheet {
+  position: relative;
+  width: 380px;
+  max-width: 88%;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+}
+.specialist-panel-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.specialist-panel-close:hover { color: var(--text); }

@@ -148,6 +148,43 @@ projectsRouter.post('/:id/team/:characterId/tasks', async (req, res) => {
   }
 });
 
+/**
+ * POST /projects/:id/team/:characterId/chat — open the specialist's themed chat.
+ * Reuses their most recent interactive chat in this project, or opens a new one
+ * (?fresh=1 forces new). The chat runs in Work mode (iClaw runtime) so the
+ * specialist's persona + playbook + tool allowlist + create_task all apply.
+ */
+projectsRouter.post('/:id/team/:characterId/chat', (req, res) => {
+  const id = Number(req.params.id);
+  const project = projects.get(id);
+  if (!project) {
+    res.redirect('/');
+    return;
+  }
+  const cid = req.params.characterId;
+  if (!isKnownCharacter(cid)) {
+    res.status(404).send('unknown specialist');
+    return;
+  }
+  const fresh = req.body?.fresh === '1' || req.body?.fresh === true;
+  const existing = fresh
+    ? undefined
+    : chats
+        .listByProject(id)
+        .filter((c) => c.character_id === cid && c.chat_kind !== 'task_execution')
+        .sort((a, b) => b.id - a.id)[0];
+  let chatId: number;
+  if (existing) {
+    chatId = existing.id;
+  } else {
+    const chat = chats.create(DEFAULT_AGENT, id, { chatKind: 'draft' });
+    chats.setCharacter(chat.id, cid);
+    chats.setChatMode(chat.id, 'work');
+    chatId = chat.id;
+  }
+  res.redirect(`/chats/${chatId}`);
+});
+
 projectsRouter.post('/:id/rename', (req, res) => {
   const id = Number(req.params.id);
   if (!projects.get(id)) {

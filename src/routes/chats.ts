@@ -39,6 +39,7 @@ import {
 import type { ChatMode } from '../types';
 import { shouldShowSendHint } from '../services/sendHint';
 import { openRouterEnabled } from '../services/openRouter';
+import { getCharacter } from '../services/characters';
 
 export const chatsRouter: Router = Router();
 
@@ -328,6 +329,17 @@ chatsRouter.get('/:id', async (req, res, next) => {
       hasAnyTasks: tasks.hasAny(),
       taskStatusSignals: tasks.statusSignals(),
       activeChat: chat,
+      // Specialist theming: when the chat belongs to a character, the view swaps
+      // to that specialist's themed shell (avatar, colour, power-up, recents).
+      character: getCharacter(chat.character_id),
+      specialistChats:
+        chat.project_id != null && chat.character_id
+          ? chats
+              .listByProject(chat.project_id)
+              .filter((c) => c.character_id === chat.character_id && c.chat_kind !== 'task_execution')
+              .sort((a, b) => b.id - a.id)
+          : [],
+      specialistProject: chat.project_id != null ? projects.get(chat.project_id) : null,
       // The project's shared "Brain" (semantic + procedural memory) — surfaced so
       // the user can SEE what every teammate in this project already knows.
       brainFacts: chat.project_id != null ? projectFacts.listByProject(chat.project_id, 8) : [],

@@ -1,0 +1,38 @@
+<%# Themed per-specialist sidebar (Sintra-style): replaces the app sidebar when a
+    chat belongs to a specialist. Reuses .col-left for sizing, themed by the
+    specialist's colour. Big avatar, name/role, New chat, a power-up that opens
+    the agent's panel, and this specialist's recent chats in the project. %>
+<% var _pid = (typeof specialistProject !== 'undefined' && specialistProject) ? specialistProject.id : null; %>
+<% var _recents = (typeof specialistChats !== 'undefined' && Array.isArray(specialistChats)) ? specialistChats : []; %>
+<aside class="col col-left specialist-sidebar" id="app-sidebar" data-logo-color="<%= character.color %>">
+  <div class="specialist-hero">
+    <a class="specialist-hero-back" href="<%= _pid ? ('/team?projectId=' + _pid) : '/team' %>" aria-label="Back to team">&lsaquo; Team</a>
+    <span class="specialist-hero-avatar"><%- include('characterFace', { character: character, faceClass: 'specialist-hero-face' }) %></span>
+    <span class="specialist-hero-name"><%= character.name %></span>
+    <span class="specialist-hero-role"><%= character.role %></span>
+  </div>
+  <div class="specialist-sb-body">
+    <% if (_pid) { %>
+    <form method="post" action="/projects/<%= _pid %>/team/<%= character.id %>/chat" class="specialist-newchat-form">
+      <input type="hidden" name="fresh" value="1" />
+      <button type="submit" class="specialist-newchat">+ New chat</button>
+    </form>
+    <% } %>
+    <% if (character.panel) { %>
+    <button type="button" class="specialist-powerup" data-open-panel>
+      <span class="specialist-powerup-label"><%= character.panel === 'calendar' ? 'Content calendar' : 'Saved replies' %></span>
+      <span class="specialist-powerup-sub"><%= character.panel === 'calendar' ? 'Open the planner' : 'Open your templates' %></span>
+    </button>
+    <% } %>
+    <div class="specialist-recents">
+      <p class="specialist-recents-label">Recents</p>
+      <% if (!_recents.length) { %>
+      <p class="specialist-recents-empty">No chats yet.</p>
+      <% } else { %>
+      <% _recents.forEach(function (c) { %>
+      <a class="specialist-recent<%= c.id === activeChat.id ? ' on' : '' %>" href="/chats/<%= c.id %>"><%= c.title %></a>
+      <% }); %>
+      <% } %>
+    </div>
+  </div>
+</aside>
