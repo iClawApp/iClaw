@@ -22,7 +22,9 @@
     var root = document.getElementById('saved-replies');
     if (!root || root.dataset.srInit) return;
     root.dataset.srInit = '1';
-    var KEY = 'iclaw:saved-replies:' + (root.getAttribute('data-chat-id') || '0');
+    // Server-persisted (window.iclawUI → iclaw_kv): the desktop app's port changes
+    // every launch, so localStorage would reset the saved replies each time.
+    var KEY = 'saved-replies:' + (root.getAttribute('data-chat-id') || '0');
     var SEED = [
       { title: 'Refund request', body: "Hi! Thanks for reaching out, and sorry for the hassle. I've looked into your order and [what you found]. Here's what I can do: [next step]. Want me to go ahead?" },
       { title: "Where's my order", body: "Hi! Thanks for your patience. Your order [#] shipped on [date] and the latest tracking shows [status]: [link]. Let me know if anything looks off." },
@@ -30,10 +32,10 @@
     ];
     var data;
     try {
-      var raw = localStorage.getItem(KEY);
+      var raw = window.iclawUI ? window.iclawUI.get(KEY) : null;
       data = raw ? (JSON.parse(raw) || []) : SEED.slice();
     } catch (e) { data = SEED.slice(); }
-    function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} }
+    function save() { try { if (window.iclawUI) window.iclawUI.set(KEY, JSON.stringify(data)); } catch (e) {} }
 
     var listEl = root.querySelector('[data-sr-list]');
     var titleEl = root.querySelector('[data-sr-title]');

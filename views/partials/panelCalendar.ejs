@@ -46,7 +46,9 @@
     var root = document.getElementById('content-calendar');
     if (!root || root.dataset.calInit) return;
     root.dataset.calInit = '1';
-    var KEY = 'iclaw:content-calendar:' + (root.getAttribute('data-chat-id') || '0');
+    // Server-persisted (window.iclawUI → iclaw_kv): the desktop app's port changes
+    // every launch, so localStorage would reset the calendar each time.
+    var KEY = 'content-calendar:' + (root.getAttribute('data-chat-id') || '0');
     var STATUSES = ['idea', 'draft', 'scheduled', 'posted'];
 
     function normItem(it) {
@@ -55,10 +57,11 @@
     }
     var data = {};
     try {
-      var raw = JSON.parse(localStorage.getItem(KEY) || '{}') || {};
+      var rawStr = window.iclawUI ? window.iclawUI.get(KEY) : null;
+      var raw = rawStr ? (JSON.parse(rawStr) || {}) : {};
       Object.keys(raw).forEach(function (k) { data[k] = (raw[k] || []).map(normItem); });
     } catch (e) { data = {}; }
-    function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} }
+    function save() { try { if (window.iclawUI) window.iclawUI.set(KEY, JSON.stringify(data)); } catch (e) {} }
 
     var titleEl = root.querySelector('[data-cal-title]');
     var gridEl = root.querySelector('[data-cal-grid]');
