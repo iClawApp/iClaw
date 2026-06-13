@@ -124,6 +124,17 @@
         </div>
       </header>
 
+      <% if (typeof character !== 'undefined' && character && character.id !== 'generalist') { %>
+        <div class="task-specialist" data-logo-color="<%= character.color %>">
+          <%- include('partials/characterFace', { character: character, faceClass: 'task-specialist-face' }) %>
+          <span class="task-specialist-id">
+            <span class="task-specialist-name"><%= character.name %></span>
+            <span class="task-specialist-role"><%= character.role %></span>
+          </span>
+          <span class="task-specialist-tag">on it</span>
+        </div>
+      <% } %>
+
       <% if (!showHumanInputBlock) { %>
         <p class="task-hint task-hint--below-title"><%= next.body %></p>
         <% if (task.current_step_title && task.status === 'running') { %>

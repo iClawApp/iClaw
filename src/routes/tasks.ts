@@ -27,6 +27,7 @@ import {
   runTask,
 } from '../services/taskRunner';
 import { wsHub } from '../services/wsHub';
+import { getCharacter } from '../services/characters';
 import type { TaskContextSnapshotPayload, TaskStepActor } from '../types';
 
 export const tasksRouter: Router = Router();
@@ -191,6 +192,7 @@ tasksRouter.get('/:id', async (req, res) => {
   res.render('task', {
     ...locals,
     task: enriched,
+    character: getCharacter(task.character_id),
     humanAsk,
     snapshotPreview: preview,
     executionLog: execMessages,

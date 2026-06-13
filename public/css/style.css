@@ -9400,3 +9400,21 @@ body.incognito-mode .composer-mode-btn__label {
 }
 .agent-task:hover { background: var(--hover); }
 .agent-task-title { flex: 1; min-width: 0; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Specialist owning a task — shown on the task work view, tinted their colour. */
+.task-specialist {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: fit-content;
+  margin: var(--space-4) 0 var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  background: color-mix(in srgb, var(--logo-tone, var(--accent)) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--logo-tone, var(--accent)) 30%, var(--border));
+  border-radius: var(--radius-pill);
+}
+.task-specialist-face { width: 30px; height: 30px; flex: 0 0 auto; }
+.task-specialist-id { display: flex; flex-direction: column; line-height: 1.15; }
+.task-specialist-name { font-weight: 600; font-size: var(--text-sm); }
+.task-specialist-role { font-size: var(--text-xs); color: var(--muted); }
+.task-specialist-tag { margin-left: var(--space-3); font-size: var(--text-xs); color: var(--muted); }
