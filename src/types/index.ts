@@ -122,7 +122,7 @@ export type ChatKind = 'normal' | 'draft' | 'task_execution';
  * type everywhere. Storage columns are plain TEXT, so adding a mode later
  * needs no DB migration.
  */
-export type ChatMode = 'execute' | 'work' | 'secure' | 'incognito' | 'persona';
+export type ChatMode = 'execute' | 'work' | 'secure' | 'incognito';
 
 export type TaskStatus =
   | 'planning'

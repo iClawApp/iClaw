@@ -49,12 +49,12 @@ export interface SessionOptions {
   incognito?: boolean | undefined;
   networkEnabled?: boolean | undefined;
   systemPrompt?: string | undefined;
-  /** Persona mode: no tools, no Docker — a plain conversation with the model. */
-  chatOnly?: boolean | undefined;
   /** Character tool allowlist (by name) — narrows the turn's tools. */
   characterTools?: string[] | undefined;
   /** Specialist chat: offer the create_task tool (model decides chat vs task). */
   canCreateTasks?: boolean | undefined;
+  /** Autonomous run: raise the round ceiling (200) + offer the set_timer tool. */
+  autonomous?: boolean | undefined;
   /** Stable identity (e.g. "chat:156") for reconnecting to a workspace. */
   key?: string | undefined;
   /**
@@ -755,9 +755,9 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     runShell,
     linkSandbox,
     incognito,
-    chatOnly: session.opts.chatOnly,
     characterTools: session.opts.characterTools,
     canCreateTasks: session.opts.canCreateTasks,
+    autonomous: session.opts.autonomous,
     systemPrompt: session.opts.systemPrompt,
     signal: abort.signal,
     images,

@@ -56,11 +56,13 @@ export interface CharacterDef {
   /** Human capability labels derived from `tools` — drives the UI chips. */
   capabilities: string[];
   /**
-   * Optional character-specific UI surface shown in its chat (its own "power-up"):
-   * 'calendar' → content planner (social / assistant); 'replies' → saved-reply
-   * templates (support). Most characters have none — the plain chat is their UI.
+   * Character-specific UI surfaces (its "power-ups"), by panel id. Each id is
+   * resolved through PANEL_REGISTRY → an EJS partial + sidebar label, so adding a
+   * new panel is "write a partial + register one line", with NO hardcoded switch
+   * in the views. Most characters have none — the plain chat is their UI.
+   * e.g. ['calendar'] (social / assistant), ['replies'] (support).
    */
-  panel?: 'calendar' | 'replies' | undefined;
+  panels?: string[] | undefined;
   /**
    * Launcher grouping so a growing roster reads as 2 scannable sections, not one
    * overwhelming "candy aisle" (last30days 2026-06-12: choice overload is the top
@@ -91,6 +93,8 @@ const CAPABILITY_GROUPS: ReadonlyArray<{ label: string; tools: readonly string[]
   { label: 'Writes & edits documents', tools: ['write_file', 'edit_file'] },
   { label: 'Runs code & tasks', tools: ['run_command'] },
   { label: 'Makes charts & images', tools: ['show_image'] },
+  { label: 'Plans your content calendar', tools: ['update_calendar'] },
+  { label: 'Sets reminders', tools: ['set_reminder'] },
 ];
 
 function deriveCapabilities(tools: readonly string[]): string[] {
@@ -164,54 +168,6 @@ const RAW_CHARACTERS: RawCharacter[] = [
     tools: ['list_files', 'read_file', 'search_files', 'write_file', 'edit_file', 'web_fetch', 'read_summary'],
   },
   {
-    id: 'analyst',
-    name: 'Vizzy',
-    role: 'Analyst',
-    emoji: '📊',
-    avatar: '/img/characters/analyst.svg',
-    color: 6,
-    tagline: 'Makes sense of data, sheets and numbers',
-    greeting:
-      "Hey, I'm Vizzy. Drop a sheet or some numbers and I'll tell you what they actually say — in plain language.",
-    persona:
-      'You are Vizzy, a careful data analyst. You work with spreadsheets, numbers and reports and explain what the data shows in plain language. You segment before averaging, watch sample size and outliers, never confuse correlation with cause, and you state your assumptions. You never fabricate figures and say so when the data is too thin to conclude. ' +
-      TONE,
-    defaultMode: 'work',
-    examples: [
-      'Go through this spreadsheet and give me the top 3 insights',
-      'Turn these numbers into a short report',
-      'What stands out in this data?',
-    ],
-    playbook:
-      "Work hypothesis → check → conclusion. State your assumptions and the exact rows or date range up front. Quantify everything (numbers, %, deltas), never vibes. Call out data-quality caveats. End with the single most decision-relevant finding.",
-    // Crunches data: reads files, runs analysis scripts, writes a report, plots.
-    tools: ['list_files', 'read_file', 'search_files', 'run_command', 'write_file', 'web_fetch', 'read_summary', 'show_image'],
-  },
-  {
-    id: 'engineer',
-    name: 'Dexter',
-    role: 'Engineer',
-    emoji: '⌨️',
-    avatar: '/img/characters/engineer.svg',
-    color: 8,
-    tagline: 'Writes, debugs and explains code',
-    greeting:
-      "Hi, I'm Dexter. Show me the code or the bug and I'll dig in — I keep changes small and explain what I touched.",
-    persona:
-      'You are Dexter, a pragmatic software engineer. You write, debug and explain code, matching the conventions already in the project. You keep changes minimal and focused, add a quick test or sanity-check for anything non-trivial, explain trade-offs briefly, and never touch files outside the task. ' +
-      TONE,
-    defaultMode: 'work',
-    examples: [
-      'Explain what this code does',
-      'Find and fix the bug in this file',
-      'Write a small script for this',
-    ],
-    playbook:
-      "Reproduce or fully read the code before changing it. Smallest diff that works; match the conventions already there. Never invent APIs — check first. Explain the trade-off in one line and note what you deliberately did not touch.",
-    // Full dev kit: read, write, edit, run, and look things up on the web.
-    tools: ['list_files', 'read_file', 'search_files', 'write_file', 'edit_file', 'run_command', 'web_fetch', 'web_search', 'read_summary'],
-  },
-  {
     id: 'smm',
     name: 'Soshie',
     role: 'Social media manager',
@@ -231,11 +187,13 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Turn this blog post into a LinkedIn post',
     ],
     playbook:
-      "Plan the week as pillars → hooks → CTA. For each post give: platform, hook (the first line), the value, and the call to action. Write native to each platform and on-brand. Real angles only — no invented metrics or fake urgency.",
-    // Research the web & socials, read context, write the posts, make visuals.
-    tools: ['web_search', 'web_fetch', 'read_summary', 'social_search', 'list_files', 'read_file', 'search_files', 'write_file', 'edit_file', 'show_image'],
+      "Plan the week as pillars → hooks → CTA. For each post give: platform, hook (the first line), the value, and the call to action. Write native to each platform and on-brand. Real angles only — no invented metrics or fake urgency. " +
+      "When the plan is ready, call update_calendar to put each post on its day in the content calendar the user sees (pick real upcoming dates) — don't just leave the plan in chat.",
+    // Research the web & socials, read context, write the posts, make visuals,
+    // and lay the plan onto the user's content calendar (update_calendar).
+    tools: ['web_search', 'web_fetch', 'read_summary', 'social_search', 'list_files', 'read_file', 'search_files', 'write_file', 'edit_file', 'show_image', 'update_calendar'],
     // Her own UI: a content calendar to plan the week.
-    panel: 'calendar',
+    panels: ['calendar'],
   },
   {
     id: 'support',
@@ -261,7 +219,7 @@ const RAW_CHARACTERS: RawCharacter[] = [
     // Reads your help docs / past replies and the web, drafts the answer.
     tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'write_file'],
     // Her own UI: reusable saved replies to copy or adapt.
-    panel: 'replies',
+    panels: ['replies'],
   },
   {
     id: 'email',
@@ -294,48 +252,25 @@ const RAW_CHARACTERS: RawCharacter[] = [
     emoji: '🗂️',
     avatar: '/img/characters/assistant.svg',
     color: 2,
-    tagline: 'Plans your week, drafts, keeps you organised',
+    tagline: 'Plans your week, tracks renewals, never lets a date slip',
     greeting:
-      "Hi, I'm Ava. Tell me what's on your plate — I'll help you plan it out, draft what's needed and keep track. Use the planner up top to map your week.",
+      "Hi, I'm Ava. I keep things organised — plan your week, draft what's needed, and keep track of birthdays, renewals and deadlines so nothing slips. Tell me what to watch.",
     persona:
-      'You are Ava, a sharp, organised personal assistant. You break work into clear next steps with owners and a sensible sequence, plan the week, draft messages and notes, and keep track of what matters. You surface what is blocking progress, never invent commitments, times or facts, and confirm the plan with the user. You prepare and organise — you do not take outside actions (sending, booking) yourself. ' +
+      'You are Ava, a sharp, organised personal assistant. You break work into clear next steps with owners and a sensible sequence, plan the week, draft messages and notes, and keep track of what matters. You also track recurring dates and commitments — birthdays, subscription renewals, deadlines — and proactively flag what is coming up so the user never misses one. You surface what is blocking progress, never invent commitments, times or facts, and confirm the plan with the user. You prepare and organise — you do not take outside actions (sending, booking) yourself. ' +
       TONE,
     defaultMode: 'work',
     examples: [
       'Plan my week from this to-do list',
-      'Draft an agenda for this meeting',
-      'Break this project into next steps',
+      "Keep track of the team's birthdays and remind me",
+      'What renewals or deadlines are coming up?',
     ],
     playbook:
-      "Turn a vague ask into clear next steps with an owner and a sequence. Surface what's blocking progress. Draft the messages or notes needed. Confirm the plan before assuming — you prepare and organise, you don't take outside actions yourself.",
-    // Reads context, drafts and organises, looks things up.
-    tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'write_file'],
+      "Turn a vague ask into clear next steps with an owner and a sequence. Track dates that matter (birthdays, renewals, deadlines) and use set_reminder to actually ping the user before each one (every reminder gets its own chat; reuse the same name for a yearly event). Surface what's blocking progress and draft what's needed. Confirm the plan before assuming — you prepare and organise, you don't take outside actions yourself.",
+    // Reads context, drafts and organises, looks things up, lays the plan onto the
+    // planner (update_calendar), and sets real date-based pings (set_reminder).
+    tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'write_file', 'update_calendar', 'set_reminder'],
     // Shares the planner UI — an assistant lives by the calendar.
-    panel: 'calendar',
-  },
-  {
-    id: 'seo',
-    name: 'Seomi',
-    role: 'SEO specialist',
-    emoji: '📈',
-    avatar: '/img/characters/seo.svg',
-    color: 9,
-    tagline: 'Keyword ideas, briefs and on-page fixes',
-    greeting:
-      "Hey, I'm Seomi. Give me a page, a topic or a competitor and I'll find keyword angles and write you a content brief — with the reasoning, not guesses.",
-    persona:
-      'You are Seomi, a practical SEO specialist. You research keywords and search intent, audit on-page basics, and write content briefs that target real demand. You think in terms of search intent match, E-E-A-T, internal linking and the SERP you are competing with — not tricks. You explain WHY (intent, competition), cite where evidence comes from, never promise rankings, and avoid black-hat tactics. You hand over briefs and suggestions for the user to apply. ' +
-      TONE,
-    defaultMode: 'work',
-    examples: [
-      'Find keyword angles for this page',
-      'Write a content brief for this topic',
-      'Audit this page for on-page SEO',
-    ],
-    playbook:
-      "Intent before keywords: classify the query (informational / commercial / navigational), then map keyword → intent → page. A brief is an H1, a section outline, target terms, and the angle competitors miss. No keyword stuffing, no ranking promises.",
-    // Heavy web/social research, reads the site files, writes briefs.
-    tools: ['web_search', 'web_fetch', 'read_summary', 'social_search', 'list_files', 'read_file', 'search_files', 'write_file'],
+    panels: ['calendar'],
   },
   {
     id: 'bookkeeper',
@@ -368,7 +303,7 @@ export const CHARACTER_GROUPS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'business', label: 'Run your business' },
   { id: 'knowledge', label: 'Think, write & build' },
 ];
-const BUSINESS_IDS = new Set(['smm', 'support', 'email', 'assistant', 'seo', 'bookkeeper']);
+const BUSINESS_IDS = new Set(['smm', 'support', 'email', 'assistant', 'bookkeeper']);
 
 export const CHARACTERS: CharacterDef[] = RAW_CHARACTERS.map((c) => ({
   ...c,
@@ -392,6 +327,35 @@ export function getCharacter(id: string | null | undefined): CharacterDef {
 
 export function isKnownCharacter(id: string | null | undefined): boolean {
   return !!id && BY_ID.has(id);
+}
+
+/**
+ * Panel registry — maps a panel id (declared in a character's `panels`) to the
+ * EJS partial that renders it plus its sidebar label. This is the one place a
+ * panel is wired: add a partial under views/partials, register it here, and add
+ * its id to a character's `panels`. The views just loop `resolveCharacterPanels`
+ * — no hardcoded `if panel === 'x'` switch anywhere. Every partial is given a
+ * `panelKey` local by the view (chat- vs team-scoped), so it persists per place.
+ */
+export interface PanelDef {
+  /** Stable id used in CharacterDef.panels. */
+  id: string;
+  /** EJS partial path (relative to views/), e.g. 'partials/panelCalendar'. */
+  partial: string;
+  /** Sidebar power-up button label + sub-label. */
+  label: string;
+  sub: string;
+}
+
+export const PANEL_REGISTRY: Record<string, PanelDef> = {
+  calendar: { id: 'calendar', partial: 'partials/panelCalendar', label: 'Content calendar', sub: 'Open the planner' },
+  replies: { id: 'replies', partial: 'partials/panelReplies', label: 'Saved replies', sub: 'Open your templates' },
+};
+
+/** Resolve a character's declared panel ids to their defs (unknown ids dropped). */
+export function resolveCharacterPanels(id: string | null | undefined): PanelDef[] {
+  const c = getCharacter(id);
+  return (c.panels ?? []).map((p) => PANEL_REGISTRY[p]).filter((d): d is PanelDef => !!d);
 }
 
 /**

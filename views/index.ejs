@@ -1,20 +1,37 @@
 <%- include('partials/head', { title: 'iClaw' }) %>
 
-<div class="app">
-  <%- include('partials/sidebar') %>
-
+<div class="app app--solo">
   <main class="col col-main">
-    <header class="chat-header draft-header">
+    <header class="chat-header draft-header chat-header--with-switcher">
+      <div class="chat-header-left">
       <%- include('partials/mobile-nav-toggle') %>
+      <%# Opens the slide-out menu of every agent's chats (partials/projectDrawer). %>
+      <button type="button" class="pdrawer-launch-btn" id="project-drawer-toggle"
+              aria-controls="project-drawer" aria-expanded="false" aria-label="All project chats" title="All project chats">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <line x1="4" y1="7" x2="20" y2="7" />
+          <line x1="4" y1="12" x2="20" y2="12" />
+          <line x1="4" y1="17" x2="20" y2="17" />
+        </svg>
+      </button>
       <form class="rename-form" id="chat-rename-form" onsubmit="return false">
         <input
           type="text"
           id="chat-title-input"
-          value="New chat"
+          value="iClaw"
           aria-label="Chat title"
           disabled
         />
       </form>
+      </div>
+
+      <%# Centered project switcher — re-renders the slide-out menu in place. %>
+      <div class="chat-header-center">
+        <%- include('partials/projectSwitcher', {
+              switcherProjects: typeof drawerProjects !== 'undefined' ? drawerProjects : (typeof allProjects !== 'undefined' ? allProjects : []),
+              switcherActiveId: typeof drawerProjectId !== 'undefined' ? drawerProjectId : null,
+            }) %>
+      </div>
 
       <div class="chat-header-tools">
       <form class="agent-form header-field" onsubmit="return false">
@@ -40,9 +57,9 @@
     <% const _firstChat = typeof isFirstChat !== 'undefined' && isFirstChat; %>
     <% const _noProjects = !Array.isArray(allProjects) || allProjects.length === 0; %>
     <div
-      class="draft-body is-picking"
+      class="draft-body is-picking is-launcher"
       id="draft-body"
-      <%- (_firstChat || _noProjects) ? 'data-auto-none="1"' : '' %>
+      data-auto-none="1"
     >
       <div class="draft-pick-stage" id="draft-pick-stage">
         <%# No model connected (skipped onboarding, no OpenClaw) is no longer a
@@ -90,13 +107,7 @@
       </div>
 
       <section class="messages" id="messages" data-chat-id="" data-draft="1">
-        <div class="messages-thread">
-          <% if (_firstChat) { %>
-          <%- include('partials/welcomeCard') %>
-          <% } else { %>
-          <p class="muted empty-state" id="draft-empty-hint" hidden>Write your first message.</p>
-          <% } %>
-        </div>
+        <div class="messages-thread is-launcher"></div>
       </section>
 
       <section class="queue" id="queue" aria-live="polite"></section>
@@ -104,6 +115,10 @@
       <div id="draft-composer-wrap" class="draft-composer-wrap" hidden>
         <%- include('partials/composer', { gatewayOk: gatewayStatus === 'ok' }) %>
       </div>
+
+      <%# Teammate strip — sits below the centred composer on the launcher; CSS
+          hides it once a chat starts. %>
+      <%- include('partials/chatRoster', { characters: typeof characters !== 'undefined' ? characters : [] }) %>
     </div>
 
     <% if (cloudShareBaseUrl) { %>
@@ -117,6 +132,16 @@
       <script src="/js/share.js" defer></script>
     <% } %>
   </main>
+
+  <%# Slide-out menu: every agent's chats in this project + a project switcher. %>
+  <%- include('partials/projectDrawer', {
+        drawerProjectId: typeof drawerProjectId !== 'undefined' ? drawerProjectId : null,
+        drawerProjects: typeof drawerProjects !== 'undefined' ? drawerProjects : (typeof allProjects !== 'undefined' ? allProjects : []),
+        drawerCharacters: typeof drawerCharacters !== 'undefined' ? drawerCharacters : [],
+        drawerChats: typeof drawerChats !== 'undefined' ? drawerChats : [],
+        drawerActiveChatId: typeof drawerActiveChatId !== 'undefined' ? drawerActiveChatId : 0,
+        drawerWorkingIds: typeof drawerWorkingIds !== 'undefined' ? drawerWorkingIds : [],
+      }) %>
 </div>
 
 <%- include('partials/foot') %>

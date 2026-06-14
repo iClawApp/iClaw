@@ -68,12 +68,12 @@ export interface CreateSessionOptions {
   secure?: boolean | undefined;
   /** Incognito: read-only, read-anywhere, web_fetch enabled. Mutually exclusive with secure. */
   incognito?: boolean | undefined;
-  /** Persona mode: no tools, no Docker — a plain conversation with the model. */
-  chatOnly?: boolean | undefined;
   /** Character tool allowlist (by name) — narrows the turn's tools to the character's job. */
   characterTools?: string[] | undefined;
   /** Specialist chat: offer the create_task tool so the model can spin up a task. */
   canCreateTasks?: boolean | undefined;
+  /** Autonomous run: raise the round ceiling (200) + offer the set_timer tool. */
+  autonomous?: boolean | undefined;
   systemPrompt?: string | undefined;
   /** Stable identity (e.g. "chat:156") so a chat reconnects to its workspace. */
   key?: string | undefined;
@@ -85,9 +85,9 @@ export interface CreateSessionOptions {
 export async function createWorkSession(opts: CreateSessionOptions = {}): Promise<string> {
   const body: Record<string, unknown> = { allowedFolders: opts.allowedFolders, secure: opts.secure };
   if (opts.incognito) body.incognito = true;
-  if (opts.chatOnly) body.chatOnly = true;
   if (opts.characterTools?.length) body.characterTools = opts.characterTools;
   if (opts.canCreateTasks) body.canCreateTasks = true;
+  if (opts.autonomous) body.autonomous = true;
   if (opts.folderAccess?.length) body.folderAccess = opts.folderAccess;
   if (opts.copyFolders?.length) body.copyFolders = opts.copyFolders;
   if (opts.model) body.model = opts.model;
@@ -155,6 +155,10 @@ export type WorkEvent =
   | { type: 'note'; note: RuntimeSavingsNote }
   | { type: 'image'; path: string; mime: string; fileName: string; bytes: number }
   | { type: 'create_task'; title: string; goal: string }
+  | { type: 'plan'; steps: { step: string; status: 'pending' | 'in_progress' | 'done' }[] }
+  | { type: 'set_timer'; minutes: number; note: string }
+  | { type: 'calendar'; entries: { date: string; text: string; platform: string; status: 'idea' | 'draft' }[] }
+  | { type: 'reminder'; event: string; date: string; leadDays: number[]; recurring: 'none' | 'yearly' }
   | { type: 'done'; tokens?: number; cached?: number }
   | { type: 'error'; message: string };
 

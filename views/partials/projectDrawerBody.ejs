@@ -1,0 +1,123 @@
+<%# Body of the project chats drawer — re-rendered standalone by
+    GET /api/project-roster when the project switcher changes. Locals:
+      drawerProjectId   number | null  — selected project (null = no project)
+      drawerProjects    Project[]      — all projects (switcher)
+      drawerCharacters  CharacterDef[] — full roster (generalist first)
+      drawerChats       Chat[]         — this project's (or orphan) normal chats
+      drawerActiveChatId number        — the currently open chat (highlight)
+      drawerWorkingIds  number[]       — chats with a turn in flight (status dot)
+%>
+<%
+  var _pid = (typeof drawerProjectId !== 'undefined' && drawerProjectId != null) ? Number(drawerProjectId) : null;
+  var _projects = (typeof drawerProjects !== 'undefined' && Array.isArray(drawerProjects)) ? drawerProjects : [];
+  var _roster = (typeof drawerCharacters !== 'undefined' && Array.isArray(drawerCharacters)) ? drawerCharacters : [];
+  var _chats = (typeof drawerChats !== 'undefined' && Array.isArray(drawerChats)) ? drawerChats : [];
+  var _activeId = Number(typeof drawerActiveChatId !== 'undefined' ? drawerActiveChatId : 0);
+  var _working = (typeof drawerWorkingIds !== 'undefined' && Array.isArray(drawerWorkingIds)) ? drawerWorkingIds : [];
+  var _selProject = _pid != null ? _projects.find(function (p) { return p.id === _pid; }) : null;
+
+  // Group chats by their agent. A no-character chat (character_id null) is the
+  // generalist (Assistant) — fold both null and the literal 'generalist' there.
+  var _byChar = {};
+  _chats.forEach(function (c) {
+    var key = c.character_id || 'generalist';
+    (_byChar[key] = _byChar[key] || []).push(c);
+  });
+  // New-chat target for the default (generalist) agent: the project launcher,
+  // preselected to this project — where the composer sends to the default agent.
+  var _defaultNewHref = _pid != null ? ('/?project=' + _pid) : '/';
+%>
+
+<%# The project switcher now lives in the header (partials/projectSwitcher); this
+    menu body just lists the selected project's agents + their chats. %>
+<div class="pdrawer-scroll iclaw-thin-scroll">
+  <%# ---- New chat (default agent) + a search that expands to full width ---- %>
+  <div class="pdrawer-top">
+    <a class="pdrawer-newchat" href="<%= _defaultNewHref %>">
+      <span class="pdrawer-newchat-plus" aria-hidden="true">+</span>
+      <span>New chat<%= _selProject ? (' · ' + _selProject.name) : '' %></span>
+    </a>
+    <button type="button" class="pdrawer-search-toggle" data-search-toggle aria-label="Search chats" title="Search chats">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+      </svg>
+    </button>
+    <div class="pdrawer-search">
+      <svg class="pdrawer-search-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+      </svg>
+      <input type="search" class="pdrawer-search-input" placeholder="Search chats…" autocomplete="off" spellcheck="false" aria-label="Search chats" />
+      <button type="button" class="pdrawer-search-close" data-search-close aria-label="Close search">&times;</button>
+    </div>
+  </div>
+
+  <%# ---- Conversations grouped by agent (only agents that have chats) ---- %>
+  <% var _anyChats = false; %>
+  <% _roster.forEach(function (ch) {
+       var _group = _byChar[ch.id] || [];
+       if (!_group.length) return;
+       _anyChats = true;
+       _group.sort(function (a, b) { return b.id - a.id; });
+       var _isGeneralist = ch.id === 'generalist';
+  %>
+  <section class="pdrawer-group" data-character="<%= ch.id %>">
+    <%# The generalist (Assistant) has no header row — the top "+ New chat" already
+        starts a default chat, so its conversations just list directly. %>
+    <% if (!_isGeneralist) { %>
+    <div class="pdrawer-group-head" data-logo-color="<%= ch.color %>">
+      <span class="pdrawer-group-face"><%- include('characterFace', { character: ch, faceClass: 'pdrawer-face' }) %></span>
+      <span class="pdrawer-group-name"><%= ch.name %><% if (ch.role) { %> <span class="pdrawer-group-role"><%= ch.role %></span><% } %></span>
+      <%# "+ New chat" with this specialist (fresh). %>
+      <% if (_pid != null) { %>
+        <form method="post" action="/projects/<%= _pid %>/team/<%= ch.id %>/chat" class="pdrawer-group-new-form">
+          <input type="hidden" name="fresh" value="1" />
+          <button type="submit" class="pdrawer-group-new" title="New chat" aria-label="New chat with <%= ch.name %>">+</button>
+        </form>
+      <% } else { %>
+        <a class="pdrawer-group-new" href="/start/<%= ch.id %>?fresh=1" title="New chat" aria-label="New chat with <%= ch.name %>">+</a>
+      <% } %>
+    </div>
+    <% } %>
+    <div class="pdrawer-chats">
+      <% _group.forEach(function (c) {
+           var _dotWorking = _working.indexOf(c.id) >= 0;
+           var _dotUnread = !_dotWorking && c.unread;
+      %>
+      <a class="pdrawer-chat<%= c.id === _activeId ? ' on' : '' %>" href="/chats/<%= c.id %>" data-chat-id="<%= c.id %>">
+        <span class="status-dot<%= _dotWorking ? ' working' : (_dotUnread ? ' unread' : '') %>" aria-hidden="true"></span>
+        <span class="pdrawer-chat-title"><%= c.title %></span>
+      </a>
+      <% }); %>
+    </div>
+  </section>
+  <% }); %>
+
+  <% if (!_anyChats) { %>
+  <p class="pdrawer-empty muted">No chats in <%= _selProject ? _selProject.name : 'this space' %> yet. Pick an agent below to start.</p>
+  <% } %>
+
+  <%# ---- Start a chat with any specialist (choose agent → new chat) ---- %>
+  <% var _specialists = _roster.filter(function (c) { return c.id !== 'generalist'; }); %>
+  <% if (_specialists.length) { %>
+  <section class="pdrawer-start">
+    <p class="pdrawer-start-label">Start a chat with</p>
+    <div class="pdrawer-start-grid">
+      <% _specialists.forEach(function (ch) { %>
+        <% if (_pid != null) { %>
+        <form method="post" action="/projects/<%= _pid %>/team/<%= ch.id %>/chat" class="pdrawer-start-form">
+          <button type="submit" class="pdrawer-start-agent" data-logo-color="<%= ch.color %>" title="Chat with <%= ch.name %> — <%= ch.role %>">
+            <%- include('characterFace', { character: ch, faceClass: 'pdrawer-start-face' }) %>
+            <span class="pdrawer-start-name"><%= ch.name %></span>
+          </button>
+        </form>
+        <% } else { %>
+        <a class="pdrawer-start-agent" href="/start/<%= ch.id %>" data-logo-color="<%= ch.color %>" title="Chat with <%= ch.name %> — <%= ch.role %>">
+          <%- include('characterFace', { character: ch, faceClass: 'pdrawer-start-face' }) %>
+          <span class="pdrawer-start-name"><%= ch.name %></span>
+        </a>
+        <% } %>
+      <% }); %>
+    </div>
+  </section>
+  <% } %>
+</div>

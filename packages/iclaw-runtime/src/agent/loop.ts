@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, CREATE_TASK_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, CREATE_TASK_TOOL, UPDATE_PLAN_TOOL, SET_TIMER_TOOL, UPDATE_CALENDAR_TOOL, SET_REMINDER_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
 import { SOCIAL_SEARCH_TOOL } from './social.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 import { resolveTurnModel } from './model-capabilities.js';
@@ -32,8 +32,6 @@ export interface AgentOptions {
    */
   incognito?: boolean | undefined;
   systemPrompt?: string | undefined;
-  /** Persona mode: no tools, no Docker — a plain conversation with the model. */
-  chatOnly?: boolean | undefined;
   /**
    * Character tool allowlist (by tool name). When set, the turn's tools are
    * intersected with it — a character can only NARROW what the mode already
@@ -47,6 +45,20 @@ export interface AgentOptions {
    */
   canCreateTasks?: boolean | undefined;
   /**
+   * Autonomous run: raise the tool-round ceiling (to ICLAW_AUTONOMOUS_MAX_ROUNDS,
+   * default 200) so the agent can iterate on a long task, and offer the set_timer
+   * tool so it can pause and resume itself. The existing dead-round breaker +
+   * tool-repeat guard still protect against a runaway loop, so the high ceiling
+   * only ever helps a genuinely productive long run.
+   */
+  autonomous?: boolean | undefined;
+  /**
+   * Hard override for the tool-round ceiling this turn. When set it wins over the
+   * autonomous/default values — for future per-task tuning. Omit to use the
+   * autonomous (200) / normal (40) default.
+   */
+  maxRounds?: number | undefined;
+  /**
    * Image data URLs (`data:<mime>;base64,…`) for THIS turn's user message —
    * files the user dropped into the chat. Sent once as vision blocks so the
    * model literally sees them; NOT stored in history (one-shot, expensive).
@@ -58,6 +70,34 @@ export interface AgentOptions {
   signal?: AbortSignal | undefined;
 }
 
+/** A single step in the agent's live task plan (update_plan tool). */
+export type PlanStepStatus = 'pending' | 'in_progress' | 'done';
+export interface PlanStep {
+  step: string;
+  status: PlanStepStatus;
+}
+
+/**
+ * Validate + clamp the model's update_plan payload into clean PlanStep[]. Drops
+ * malformed/blank entries, coerces an unknown status to 'pending', clips long
+ * step text, and caps the list — a plan is a handful of steps, not a novel.
+ */
+export function normalizePlanSteps(raw: unknown): PlanStep[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PlanStep[] = [];
+  for (const it of raw) {
+    if (!it || typeof it !== 'object') continue;
+    const r = it as { step?: unknown; status?: unknown };
+    const step = typeof r.step === 'string' ? r.step.trim() : '';
+    if (!step) continue;
+    const s = typeof r.status === 'string' ? r.status.trim().toLowerCase() : 'pending';
+    const status: PlanStepStatus = s === 'done' || s === 'in_progress' ? s : 'pending';
+    out.push({ step: step.length > 200 ? step.slice(0, 199) + '…' : step, status });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
 export type AgentEvent =
   | { type: 'text'; content: string }
   | { type: 'tool_start'; name: string; input: unknown }
@@ -66,6 +106,10 @@ export type AgentEvent =
   | { type: 'image'; path: string; mime: string; fileName: string; bytes: number }
   | { type: 'approval_request'; changeId: string; path: string; content: string }
   | { type: 'create_task'; title: string; goal: string }
+  | { type: 'plan'; steps: PlanStep[] }
+  | { type: 'set_timer'; minutes: number; note: string }
+  | { type: 'calendar'; entries: CalendarEntry[] }
+  | { type: 'reminder'; event: string; date: string; leadDays: number[]; recurring: 'none' | 'yearly' }
   | { type: 'done'; tokens?: number | undefined; cached?: number | undefined }
   | { type: 'error'; message: string };
 
@@ -73,6 +117,84 @@ export type Message = OpenAI.Chat.ChatCompletionMessageParam;
 
 /** Max tool-call rounds per turn before we stop (env-tunable for long tasks). */
 const MAX_ROUNDS = Math.max(1, Number(process.env.ICLAW_MAX_ROUNDS) || 40);
+/** Higher ceiling for autonomous runs — the agent iterates on a long task until
+ *  done (the dead-round breaker + repeat guard still cut off a stuck loop). */
+const AUTONOMOUS_MAX_ROUNDS = Math.max(1, Number(process.env.ICLAW_AUTONOMOUS_MAX_ROUNDS) || 200);
+
+/** A planned post the agent adds to the content calendar (update_calendar tool). */
+export interface CalendarEntry {
+  /** Day as YYYY-MM-DD. */
+  date: string;
+  text: string;
+  platform: string;
+  status: 'idea' | 'draft';
+}
+
+/**
+ * Validate + clamp the model's update_calendar payload. Drops entries without a
+ * valid YYYY-MM-DD date or non-empty text, clips long text, defaults status to
+ * 'draft' (the agent can only plan/draft — never "posted", since there's no real
+ * posting integration), and caps the batch.
+ */
+export function normalizeCalendarEntries(raw: unknown): CalendarEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CalendarEntry[] = [];
+  for (const it of raw) {
+    if (!it || typeof it !== 'object') continue;
+    const r = it as { date?: unknown; text?: unknown; platform?: unknown; status?: unknown };
+    const date = typeof r.date === 'string' ? r.date.trim() : '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const text = typeof r.text === 'string' ? r.text.trim() : '';
+    if (!text) continue;
+    const platform = typeof r.platform === 'string' ? r.platform.trim().slice(0, 40) : '';
+    const s = typeof r.status === 'string' ? r.status.trim().toLowerCase() : 'draft';
+    const status: CalendarEntry['status'] = s === 'idea' ? 'idea' : 'draft';
+    out.push({ date, text: text.length > 300 ? text.slice(0, 299) + '…' : text, platform, status });
+    if (out.length >= 60) break;
+  }
+  return out;
+}
+
+/** A date-based reminder the agent sets (set_reminder tool). */
+export interface ReminderRequest {
+  event: string;
+  /** YYYY-MM-DD (this occurrence). */
+  date: string;
+  /** Days-before to ping, far → near, e.g. [14, 7, 3]. */
+  leadDays: number[];
+  recurring: 'none' | 'yearly';
+}
+
+/**
+ * Validate the model's set_reminder payload. Requires a non-empty event + a
+ * YYYY-MM-DD date; lead_days are clamped (0–365), deduped, sorted far→near, and
+ * default to [1]; recurring is 'yearly' or 'none'. Returns null if invalid.
+ */
+export function normalizeReminder(raw: unknown): ReminderRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as { event?: unknown; date?: unknown; lead_days?: unknown; recurring?: unknown };
+  const eventRaw = typeof r.event === 'string' ? r.event.trim() : '';
+  const date = typeof r.date === 'string' ? r.date.trim() : '';
+  if (!eventRaw || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  let leadDays = Array.isArray(r.lead_days)
+    ? r.lead_days.map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n) && n >= 0 && n <= 365)
+    : [];
+  leadDays = Array.from(new Set(leadDays)).sort((a, b) => b - a);
+  if (leadDays.length === 0) leadDays = [1];
+  if (leadDays.length > 10) leadDays = leadDays.slice(0, 10);
+  const recurring = r.recurring === 'yearly' ? 'yearly' : 'none';
+  const event = eventRaw.length > 120 ? eventRaw.slice(0, 119) + '…' : eventRaw;
+  return { event, date, leadDays, recurring };
+}
+
+/** Clamp a set_timer "minutes" arg to a sane range (1 min … 24 h); null if invalid. */
+export function clampTimerMinutes(raw: unknown): number | null {
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return null;
+  const m = Math.round(n);
+  if (m < 1) return null;
+  return Math.min(m, 1440);
+}
 
 /** Turn a provider/SDK error into a concise, user-facing message. */
 export function describeApiError(err: unknown): string {
@@ -383,7 +505,7 @@ export async function* runAgentTurn(
     : TOOL_DEFINITIONS;
   // analyze_link (yt-dlp in the session container) is offered only when a
   // sandbox backend is wired (Docker up). Without it, the model uses web_fetch.
-  const baseTools = opts.chatOnly ? [] : [
+  const baseTools = [
     ...fileTools, READ_SUMMARY_TOOL, WEB_FETCH_TOOL, WEB_SEARCH_TOOL,
     // show_image lets the agent surface a real image file inline. Not in
     // Incognito — that turn is ephemeral, so there's no message to attach to.
@@ -398,9 +520,33 @@ export async function* runAgentTurn(
     opts.characterTools && opts.characterTools.length
       ? baseTools.filter((t) => opts.characterTools!.includes(t.function.name))
       : baseTools;
-  // create_task sits ON TOP of the allowlist — a specialist chat can always
-  // escalate a multi-step request to a tracked task, when the session opts in.
-  const tools = opts.canCreateTasks ? [...allowed, CREATE_TASK_TOOL] : allowed;
+  // Tools that sit ON TOP of the character allowlist — a character narrows the
+  // mode's tools, but these stay available regardless:
+  //  • create_task — a specialist chat can escalate a multi-step request to a
+  //    tracked task (only when the session opts in).
+  //  • update_plan — a universal, visible task checklist the user can watch; it
+  //    keeps long multi-step / autonomous runs coherent and makes "what does
+  //    done look like" explicit. Offered in every tool-capable turn.
+  const onTop = [
+    ...(opts.canCreateTasks ? [CREATE_TASK_TOOL] : []),
+    // update_plan renders + persists in Work-mode chats; Incognito is ephemeral
+    // (nothing to render to), so skip it there.
+    ...(opts.incognito ? [] : [UPDATE_PLAN_TOOL]),
+    // set_timer needs a persistent chat to resume into — autonomous Work turns
+    // only (not incognito).
+    ...(opts.autonomous && !opts.incognito ? [SET_TIMER_TOOL] : []),
+    // update_calendar — only the calendar-panel specialists (Soshie/Ava) carry
+    // it in their allowlist; gate on that, Work turns only.
+    ...(opts.characterTools?.includes('update_calendar') && !opts.incognito
+      ? [UPDATE_CALENDAR_TOOL]
+      : []),
+    // set_reminder — the personal assistant (Ava) carries it in her allowlist;
+    // gate on that, Work turns only.
+    ...(opts.characterTools?.includes('set_reminder') && !opts.incognito
+      ? [SET_REMINDER_TOOL]
+      : []),
+  ];
+  const tools = onTop.length ? [...allowed, ...onTop] : allowed;
 
   // When the user dropped image(s), send the turn's user message as a
   // multimodal content array (text + image blocks) so a vision model sees them.
@@ -456,8 +602,13 @@ export async function* runAgentTurn(
   let deadStreak = 0;
   let forceConclude = false;
 
+  // Tool-round ceiling for this turn: an explicit override wins, else autonomous
+  // runs get the high ceiling (200) and normal runs the default (40). The guards
+  // above (dead-round breaker, repeat guard) still stop a stuck loop early.
+  const maxRounds = Math.max(1, opts.maxRounds ?? (opts.autonomous ? AUTONOMOUS_MAX_ROUNDS : MAX_ROUNDS));
+
   // Max tool-call rounds to prevent infinite loops (env-tunable: ICLAW_MAX_ROUNDS).
-  for (let round = 0; round < MAX_ROUNDS; round++) {
+  for (let round = 0; round < maxRounds; round++) {
     // User pressed Stop between rounds → end cleanly (partial text already sent).
     if (opts.signal?.aborted) {
       yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
@@ -601,6 +752,57 @@ export async function* runAgentTurn(
         const goal = typeof a.goal === 'string' ? a.goal : '';
         yield { type: 'create_task', title, goal };
         result = `Created a task on the board: "${title || goal.slice(0, 60)}". It will run and come back for your review.`;
+      } else if (tc.name === 'update_plan') {
+        // Host-rendered: the runtime doesn't "do" anything — it surfaces the
+        // agent's working checklist so the user can watch progress (and so a long
+        // autonomous run stays coherent). Validate, emit a plan event, and ack.
+        const steps = normalizePlanSteps((parsedArgs as { steps?: unknown }).steps);
+        if (steps.length === 0) {
+          result = 'update_plan needs a non-empty "steps" array; each item is {step, status} where status is pending|in_progress|done.';
+        } else {
+          yield { type: 'plan', steps };
+          const done = steps.filter((s) => s.status === 'done').length;
+          result = `Plan updated — ${done}/${steps.length} steps done. Keep going; call update_plan again as steps complete.`;
+        }
+      } else if (tc.name === 'set_timer') {
+        // Host-fulfilled: the runtime emits the request; the host schedules a
+        // message that resumes THIS chat after the delay. The agent should wrap
+        // up this turn now, so force a conclusion next round (tools off) — the
+        // scheduled resume picks the work back up.
+        const a = parsedArgs as { minutes?: unknown; note?: unknown };
+        const minutes = clampTimerMinutes(a.minutes);
+        const note = typeof a.note === 'string' ? a.note.trim().slice(0, 500) : '';
+        if (minutes == null) {
+          result = 'set_timer needs "minutes" as a number between 1 and 1440.';
+        } else {
+          yield { type: 'set_timer', minutes, note };
+          forceConclude = true;
+          result = `Timer set — this chat will resume in ${minutes} minute${minutes === 1 ? '' : 's'} with your note. ` +
+            `Briefly tell the user what you're waiting for, then stop; you'll continue automatically when it resumes.`;
+        }
+      } else if (tc.name === 'update_calendar') {
+        // Host-fulfilled: the runtime emits the entries; the host merges them into
+        // the chat's content calendar (server KV) and broadcasts the update.
+        const entries = normalizeCalendarEntries((parsedArgs as { entries?: unknown }).entries);
+        if (entries.length === 0) {
+          result = 'update_calendar needs an "entries" array; each item is {date:"YYYY-MM-DD", text, platform?, status?}.';
+        } else {
+          yield { type: 'calendar', entries };
+          result = `Added ${entries.length} post${entries.length === 1 ? '' : 's'} to the content calendar.`;
+        }
+      } else if (tc.name === 'set_reminder') {
+        // Host-fulfilled: the runtime emits the request; the host gives the event
+        // its own chat and schedules a ping at each lead time.
+        const rem = normalizeReminder(parsedArgs);
+        if (!rem) {
+          result = 'set_reminder needs "event" (text) and "date" (YYYY-MM-DD); optional lead_days (e.g. [14,7,3]) and recurring ("yearly").';
+        } else {
+          yield { type: 'reminder', event: rem.event, date: rem.date, leadDays: rem.leadDays, recurring: rem.recurring };
+          const leads = rem.leadDays
+            .map((d) => (d === 0 ? 'on the day' : d === 1 ? '1 day before' : `${d} days before`))
+            .join(', ');
+          result = `Reminder set for "${rem.event}" on ${rem.date} — I'll ping you ${leads}${rem.recurring === 'yearly' ? ', every year' : ''}, in its own chat.`;
+        }
       } else {
         result = await executeTool(tc.name as ToolName, parsedArgs, toolCtx);
       }
@@ -647,5 +849,5 @@ export async function* runAgentTurn(
     // Continue loop — model will see tool results and respond
   }
 
-  yield { type: 'error', message: `Reached the step limit (${MAX_ROUNDS} tool rounds). Send "continue" to keep going, or raise ICLAW_MAX_ROUNDS.` };
+  yield { type: 'error', message: `Reached the step limit (${maxRounds} tool rounds). Send "continue" to keep going, or raise ICLAW_MAX_ROUNDS.` };
 }

@@ -1,0 +1,14 @@
+<%# Horizontal, scrollable strip of teammates (Sintra "AI Employees" style),
+    rendered below the composer on the launcher home. Each card is a plain link to
+    /start/:id (the server opens that teammate's chat). Hidden once a chat starts
+    (CSS: .draft-body:not(.is-launcher) .chat-roster). `characters` is the roster. %>
+<% var _team = (characters || []).filter(function (c) { return c.id !== 'generalist'; }); %>
+<% if (_team.length) { %>
+<section class="chat-roster" aria-label="Your team">
+  <div class="chat-roster-grid" role="group" aria-label="Your team">
+    <% _team.forEach(function (ch) { %>
+    <%- include('characterCard', { ch: ch }) %>
+    <% }); %>
+  </div>
+</section>
+<% } %>

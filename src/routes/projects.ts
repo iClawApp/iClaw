@@ -73,6 +73,10 @@ projectsRouter.post('/', (req, res) => {
   wsHub.broadcastAll({ type: 'project-created', project });
   if (wantsJson(req)) {
     res.json(project);
+  } else if (req.body?.redirect === 'launcher') {
+    // Created from the header switcher's "+" — drop straight into the new
+    // project's launcher so the user can start a chat in it right away.
+    res.redirect(`/?project=${project.id}`);
   } else {
     res.redirect(`/projects/${project.id}`);
   }

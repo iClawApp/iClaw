@@ -252,6 +252,145 @@ export const CREATE_TASK_TOOL = {
 } as const;
 
 /**
+ * update_plan — the agent's live, user-visible task checklist. The runtime does
+ * NOT execute it; it emits a 'plan' AgentEvent the host renders in the chat so
+ * the user can watch progress in real time. It's the concrete vehicle for a
+ * clear "definition of done" and keeps long multi-step / autonomous runs
+ * coherent. Added on top of the character allowlist (like create_task), so every
+ * tool-capable turn can use it.
+ */
+export const UPDATE_PLAN_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'update_plan',
+    description:
+      'Maintain a short, visible plan for a multi-step task so the user can watch your progress. ' +
+      "Call it ONCE early to lay out the steps (aim for 3–7), then again each time a step's status changes. " +
+      'Always resend the WHOLE ordered list (it replaces the previous plan). Keep exactly one step "in_progress". ' +
+      "Skip it for one-shot answers or trivial edits — it's for real multi-step work.",
+    parameters: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          description: 'The full ordered list of steps. Resend all of them on every call.',
+          items: {
+            type: 'object',
+            properties: {
+              step: { type: 'string', description: 'Short imperative description of the step.' },
+              status: {
+                type: 'string',
+                enum: ['pending', 'in_progress', 'done'],
+                description: 'pending = not started; in_progress = working on it now (exactly one); done = finished.',
+              },
+            },
+            required: ['step', 'status'],
+          },
+        },
+      },
+      required: ['steps'],
+    },
+  },
+} as const;
+
+/**
+ * set_timer — self-scheduling for autonomous runs. The runtime does NOT execute
+ * it; it emits a 'set_timer' AgentEvent and the host schedules a message that
+ * resumes THIS chat after the delay (via scheduler.ts / scheduled_messages). Lets
+ * a long task pause and pick itself back up — "kick off a process, wait 5 min,
+ * re-check, continue". Offered only in autonomous turns (opts.autonomous).
+ */
+export const SET_TIMER_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'set_timer',
+    description:
+      'Pause and resume yourself later. Use ONLY when the right next step is to WAIT — you started a long ' +
+      'process, you want to re-check a file/metrics after some time, or you are rate-limited. The chat resumes ' +
+      'automatically after the delay with your note, and you continue from there. Do NOT use it to stall on work ' +
+      'you can do right now.',
+    parameters: {
+      type: 'object',
+      properties: {
+        minutes: { type: 'number', description: 'How long to wait before resuming, in minutes (1–1440).' },
+        note: { type: 'string', description: 'A short instruction to your future self — what to do/check when you resume.' },
+      },
+      required: ['minutes'],
+    },
+  },
+} as const;
+
+/**
+ * update_calendar — for the social-media / assistant specialist: drop planned
+ * posts onto the content-calendar UI the user sees. The runtime does NOT execute
+ * it; it emits a 'calendar' AgentEvent and the host merges the entries into the
+ * chat's calendar (server KV) + broadcasts the update. Offered only when the
+ * character's tool allowlist includes 'update_calendar' (Soshie / Ava).
+ */
+export const UPDATE_CALENDAR_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'update_calendar',
+    description:
+      'Add planned posts to the content calendar the user can see (the planner panel). ' +
+      'Use it after you have planned posts, so they land on real days — not just in chat. ' +
+      'Pick real upcoming dates. You can add ideas and drafts; you cannot mark something "posted" ' +
+      '(there is no real posting integration yet — be honest about that).',
+    parameters: {
+      type: 'object',
+      properties: {
+        entries: {
+          type: 'array',
+          description: 'The posts to add to the calendar.',
+          items: {
+            type: 'object',
+            properties: {
+              date: { type: 'string', description: 'Day for the post, as YYYY-MM-DD.' },
+              text: { type: 'string', description: 'The post / caption text, or a short idea.' },
+              platform: { type: 'string', description: 'Optional platform, e.g. Instagram, LinkedIn, X, TikTok.' },
+              status: { type: 'string', enum: ['idea', 'draft'], description: 'idea = just a slot; draft = written. Defaults to draft.' },
+            },
+            required: ['date', 'text'],
+          },
+        },
+      },
+      required: ['entries'],
+    },
+  },
+} as const;
+
+/**
+ * set_reminder — for the personal-assistant specialist: a real, date-based
+ * reminder for an event (birthday, renewal, deadline). The runtime does NOT
+ * execute it; it emits a 'reminder' AgentEvent and the host gives the event its
+ * own dedicated chat (reused by name — e.g. the same birthday next year) and
+ * schedules a ping at each lead time before the date. Unlike set_timer (minutes,
+ * for autonomy resume), this is days/weeks/months out. Offered only when the
+ * character's allowlist includes 'set_reminder' (Ava).
+ */
+export const SET_REMINDER_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'set_reminder',
+    description:
+      'Set a reminder for a specific real-world event (a birthday, a renewal, a deadline). The reminder gets its OWN ' +
+      'dedicated chat — reusing the same name reuses the same chat (e.g. the same birthday next year) — and you will be ' +
+      'pinged there at each lead time before the date. Use this for "remind me about X on a date"; use set_timer ' +
+      'instead for "continue this task in N minutes".',
+    parameters: {
+      type: 'object',
+      properties: {
+        event: { type: 'string', description: 'Short name of what to remember, e.g. "Mom\'s birthday". The same name reuses the same reminder chat.' },
+        date: { type: 'string', description: 'The event date as YYYY-MM-DD (this occurrence).' },
+        lead_days: { type: 'array', items: { type: 'number' }, description: 'How many days before the date to ping — e.g. [14, 7, 3] or [1]. Defaults to [1].' },
+        recurring: { type: 'string', enum: ['none', 'yearly'], description: 'yearly for birthdays/anniversaries (re-arms next year in the same chat). Defaults to none.' },
+      },
+      required: ['event', 'date'],
+    },
+  },
+} as const;
+
+/**
  * read_summary — read a file and return a SHORT summary via a cheap model,
  * instead of dumping the whole file into the expensive model's context (and
  * history). Host-loop only (Work / Incognito); kept out of Secure, since the

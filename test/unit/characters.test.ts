@@ -8,6 +8,8 @@ import {
   characterToolAllowlist,
   getCharacter,
   isKnownCharacter,
+  resolveCharacterPanels,
+  PANEL_REGISTRY,
 } from '../../src/services/characters';
 
 describe('characters', () => {
@@ -82,10 +84,6 @@ describe('characters', () => {
     expect(remi).not.toContain('write_file');
     expect(remi).not.toContain('edit_file');
     expect(remi).not.toContain('run_command');
-    // The engineer gets the full dev kit including the shell.
-    const cody = characterToolAllowlist('engineer')!;
-    expect(cody).toContain('edit_file');
-    expect(cody).toContain('run_command');
     // Support drafts replies — reads + writes, but never runs code.
     const cleo = characterToolAllowlist('support')!;
     expect(cleo).toContain('write_file');
@@ -94,14 +92,29 @@ describe('characters', () => {
     expect(characterToolAllowlist('bookkeeper')).toContain('run_command');
   });
 
-  it('covers the essential SMB roles (support, email, assistant, seo, bookkeeper)', () => {
-    for (const id of ['support', 'email', 'assistant', 'seo', 'bookkeeper']) {
+  it('covers the essential SMB roles (support, email, assistant, bookkeeper)', () => {
+    for (const id of ['support', 'email', 'assistant', 'bookkeeper']) {
       expect(isKnownCharacter(id)).toBe(true);
     }
     // The personal assistant carries the calendar panel, like the social manager.
-    expect(getCharacter('assistant').panel).toBe('calendar');
+    expect(getCharacter('assistant').panels).toContain('calendar');
     // Support carries the saved-replies panel.
-    expect(getCharacter('support').panel).toBe('replies');
+    expect(getCharacter('support').panels).toContain('replies');
+  });
+
+  it('resolves panels through the registry (modular — no hardcoded switch)', () => {
+    // Every panel id a character declares must resolve to a registered partial.
+    for (const c of CHARACTERS) {
+      for (const pid of c.panels ?? []) {
+        expect(PANEL_REGISTRY[pid], `panel "${pid}" on ${c.id} is unregistered`).toBeTruthy();
+      }
+    }
+    const soshie = resolveCharacterPanels('smm');
+    expect(soshie.map((p) => p.id)).toContain('calendar');
+    expect(soshie[0]!.partial).toBe('partials/panelCalendar');
+    expect(soshie[0]!.label.length).toBeGreaterThan(0);
+    // No panels → empty (generalist), and unknown ids are dropped.
+    expect(resolveCharacterPanels('generalist')).toEqual([]);
   });
 
   it('derives UI capability labels from the tool set', () => {
@@ -109,9 +122,12 @@ describe('characters', () => {
     expect(remi.capabilities).toContain('Looks things up online');
     expect(remi.capabilities).toContain('Reads your files');
     expect(remi.capabilities).not.toContain('Runs code & tasks');
-    const ada = getCharacter('analyst');
-    expect(ada.capabilities).toContain('Runs code & tasks');
-    expect(ada.capabilities).toContain('Makes charts & images');
+    const milli = getCharacter('bookkeeper');
+    expect(milli.capabilities).toContain('Runs code & tasks');
+    // Soshie makes visuals and plans the content calendar.
+    const soshie = getCharacter('smm');
+    expect(soshie.capabilities).toContain('Makes charts & images');
+    expect(soshie.capabilities).toContain('Plans your content calendar');
     // Generalist has no tools, so no capability chips.
     expect(getCharacter('generalist').capabilities).toEqual([]);
   });

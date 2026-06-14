@@ -6,22 +6,36 @@
 <% var _recents = (typeof specialistChats !== 'undefined' && Array.isArray(specialistChats)) ? specialistChats : []; %>
 <aside class="col col-left specialist-sidebar" id="app-sidebar" data-logo-color="<%= character.color %>">
   <div class="specialist-hero">
-    <a class="specialist-hero-back" href="<%= _pid ? ('/team?projectId=' + _pid) : '/team' %>" aria-label="Back to team">&lsaquo; Team</a>
+    <a class="specialist-hero-back" href="<%= _pid ? ('/team?projectId=' + _pid) : '/' %>" aria-label="<%= _pid ? 'Back to team' : 'Back to home' %>">&lsaquo; <%= _pid ? 'Team' : 'iClaw' %></a>
     <span class="specialist-hero-avatar"><%- include('characterFace', { character: character, faceClass: 'specialist-hero-face' }) %></span>
     <span class="specialist-hero-name"><%= character.name %></span>
     <span class="specialist-hero-role"><%= character.role %></span>
   </div>
   <div class="specialist-sb-body">
+    <%# Opens the slide-out menu of every agent's chats in this project, with a
+        project switcher on top (see partials/projectDrawer). %>
+    <button type="button" class="specialist-allchats" id="project-drawer-toggle"
+            aria-controls="project-drawer" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <line x1="4" y1="7" x2="20" y2="7" />
+        <line x1="4" y1="12" x2="20" y2="12" />
+        <line x1="4" y1="17" x2="20" y2="17" />
+      </svg>
+      <span>All project chats</span>
+    </button>
     <% if (_pid) { %>
     <form method="post" action="/projects/<%= _pid %>/team/<%= character.id %>/chat" class="specialist-newchat-form">
       <input type="hidden" name="fresh" value="1" />
       <button type="submit" class="specialist-newchat">+ New chat</button>
     </form>
+    <% } else { %>
+    <a class="specialist-newchat" href="/start/<%= character.id %>?fresh=1">+ New chat</a>
     <% } %>
-    <% if (character.panel) { %>
+    <% var _panels = resolveCharacterPanels(character.id); %>
+    <% if (_panels.length) { %>
     <button type="button" class="specialist-powerup" data-open-panel>
-      <span class="specialist-powerup-label"><%= character.panel === 'calendar' ? 'Content calendar' : 'Saved replies' %></span>
-      <span class="specialist-powerup-sub"><%= character.panel === 'calendar' ? 'Open the planner' : 'Open your templates' %></span>
+      <span class="specialist-powerup-label"><%= _panels[0].label %></span>
+      <span class="specialist-powerup-sub"><%= _panels[0].sub %></span>
     </button>
     <% } %>
     <div class="specialist-recents">

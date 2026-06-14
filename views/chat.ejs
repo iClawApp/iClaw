@@ -1,15 +1,30 @@
 <%- include('partials/head', { title: activeChat.title + ' — iClaw' }) %>
 
 <% var _isSpec = (typeof character !== 'undefined' && character && character.id !== 'generalist'); %>
+<% var _hasMenu = (typeof character !== 'undefined' && character); %>
 <div class="app">
-  <% if (_isSpec) { %>
+  <% if (_hasMenu) { %>
+    <%# Every chat — including the default (generalist) — gets the themed left menu
+        (recents / back / New chat). The specialist colour wash + panels below stay
+        gated on _isSpec, so the generalist stays neutral. %>
     <%- include('partials/specialistSidebar', { character: character, specialistProject: (typeof specialistProject !== 'undefined' ? specialistProject : null), specialistChats: (typeof specialistChats !== 'undefined' ? specialistChats : []), activeChat: activeChat }) %>
   <% } else { %>
     <%- include('partials/sidebar') %>
   <% } %>
 
+  <%# Slide-out menu: every agent's chats in this project + a project switcher. %>
+  <%- include('partials/projectDrawer', {
+        drawerProjectId: typeof drawerProjectId !== 'undefined' ? drawerProjectId : null,
+        drawerProjects: typeof drawerProjects !== 'undefined' ? drawerProjects : (typeof allProjects !== 'undefined' ? allProjects : []),
+        drawerCharacters: typeof drawerCharacters !== 'undefined' ? drawerCharacters : [],
+        drawerChats: typeof drawerChats !== 'undefined' ? drawerChats : [],
+        drawerActiveChatId: typeof drawerActiveChatId !== 'undefined' ? drawerActiveChatId : (activeChat ? activeChat.id : 0),
+        drawerWorkingIds: typeof drawerWorkingIds !== 'undefined' ? drawerWorkingIds : [],
+      }) %>
+
   <main class="col col-main<%= _isSpec ? ' specialist-main' : '' %>"<% if (_isSpec) { %> data-logo-color="<%= character.color %>"<% } %>>
-    <header class="chat-header">
+    <header class="chat-header chat-header--with-switcher">
+      <div class="chat-header-left">
       <%- include('partials/mobile-nav-toggle') %>
       <form class="rename-form" id="chat-rename-form" onsubmit="return false">
         <input
@@ -23,6 +38,15 @@
         <span class="chat-token-total" id="chat-token-total" data-total="<%= _tokTotal %>"
           title="Total tokens spent in this chat (dev mode)" <%= _tokTotal > 0 ? '' : 'hidden' %>><%= _tokTotal.toLocaleString() %> tok total</span>
       <% } %>
+      </div>
+
+      <%# Centered project switcher — re-renders the slide-out menu in place. %>
+      <div class="chat-header-center">
+        <%- include('partials/projectSwitcher', {
+              switcherProjects: typeof drawerProjects !== 'undefined' ? drawerProjects : (typeof allProjects !== 'undefined' ? allProjects : []),
+              switcherActiveId: typeof drawerProjectId !== 'undefined' ? drawerProjectId : null,
+            }) %>
+      </div>
 
       <div class="chat-header-tools">
       <form class="agent-form header-field" method="post" action="/chats/<%= activeChat.id %>/agent">
@@ -45,15 +69,14 @@
 
     <%# Specialist power-up: the agent's panel (calendar / saved replies), tucked
         away and opened on demand from the sidebar power-up button. %>
-    <% if (_isSpec && character.panel) { %>
+    <% var _panels = _isSpec ? resolveCharacterPanels(character.id) : []; %>
+    <% if (_panels.length) { %>
     <div class="specialist-panel-overlay" id="specialist-panel" hidden>
       <div class="specialist-panel-sheet">
         <button type="button" class="specialist-panel-close" data-close-panel aria-label="Close">&times;</button>
-        <% if (character.panel === 'calendar') { %>
-        <%- include('partials/panelCalendar', { panelKey: 'chat-' + activeChat.id }) %>
-        <% } else if (character.panel === 'replies') { %>
-        <%- include('partials/panelReplies', { panelKey: 'chat-' + activeChat.id }) %>
-        <% } %>
+        <% _panels.forEach(function (p) { %>
+        <%- include(p.partial, { panelKey: 'chat-' + activeChat.id }) %>
+        <% }); %>
       </div>
     </div>
     <script>

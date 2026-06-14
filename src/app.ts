@@ -35,6 +35,7 @@ import { settingsRouter } from './routes/settings';
 import { shareRouter } from './routes/share';
 import { uiStateRouter } from './routes/uiState';
 import { kvGetByPrefix } from './db/kv';
+import { resolveCharacterPanels } from './services/characters';
 
 import { PROJECT_LOGO_EMOJIS } from './constants/projectLogos';
 import { resolveUploadsRoot } from './paths';
@@ -111,11 +112,10 @@ export function createApp(): express.Express {
   app.post('/__ra/device/register', remoteAccessDeviceRegisterHandler);
   app.get('/__ra/e2e/bootstrap', remoteAccessE2eBootstrapHandler);
 
-  app.use(
-    express.static(
-      resolveProjectDir(['public', 'css', 'style.css'], '../public'),
-    ),
-  );
+  const publicDir = resolveProjectDir(['public', 'css', 'style.css'], '../public');
+  app.use(express.static(publicDir));
+  // For cache-busting the stylesheet (Chromium caches /css/style.css hard).
+  const cssPath = path.join(publicDir, 'css', 'style.css');
 
   // User-uploaded attachments live under `data/uploads/<chatId>/<file>` and are
   // served straight back to the browser for inline rendering in past messages.
@@ -131,6 +131,13 @@ export function createApp(): express.Express {
     const ui: Record<string, string> = {};
     for (const [k, v] of Object.entries(kvGetByPrefix('ui.'))) ui[k.slice(3)] = v;
     res.locals.uiState = ui;
+    // Panel registry resolver — lets any view render a character's UI panels via
+    // resolveCharacterPanels(id) without per-route plumbing or a hardcoded switch.
+    res.locals.resolveCharacterPanels = resolveCharacterPanels;
+    // Stylesheet cache-bust: the CSS file's mtime → a CSS edit shows on reload
+    // (Chromium otherwise caches /css/style.css across launches). Cheap on localhost.
+    try { res.locals.assetV = String(Math.floor(fs.statSync(cssPath).mtimeMs)); }
+    catch { res.locals.assetV = ''; }
     next();
   });
 

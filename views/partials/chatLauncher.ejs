@@ -1,39 +1,17 @@
-<%# Sintra-style character launcher: the empty new-chat hero. Centered greeting
-    over the roster, split into labelled, swipeable sections so a growing team
-    reads as 2 scannable groups, not one overwhelming "candy aisle" (last30days
-    2026-06-12: choice overload is the top reason people bounce). Clicking a card
-    is wired by initCharacterLauncher (iclaw.js); plain chat = just type below.
-    Carries `empty-state` so clearEmptyState() drops it on first send. %>
-<% var _all = (characters || []).filter(function (c) { return c.id !== 'generalist'; }); %>
-<% var _groups = [{ id: 'business', label: 'Run your business' }, { id: 'knowledge', label: 'Think, write & build' }]; %>
-<% var _seen = {}; %>
+<%# Launcher hero: centered eyebrow + title + sub (and a small generalist face).
+    The teammate roster lives in `chatRoster`, rendered BELOW the composer so the
+    layout reads title → input → teammates (Sintra-style). Carries `empty-state`
+    so clearEmptyState() drops it on first send. `characters` is the full roster. %>
+<% var _gen = (characters || []).filter(function (c) { return c.id === 'generalist'; })[0]; %>
 <div class="chat-launcher empty-state" id="welcome-card">
   <div class="chat-launcher-hero">
+    <% if (_gen) { %>
+    <span class="chat-launcher-gen" data-logo-color="<%= _gen.color %>">
+      <%- include('characterFace', { character: _gen, faceClass: 'chat-launcher-gen-face' }) %>
+    </span>
+    <% } %>
     <p class="chat-launcher-eyebrow">iClaw</p>
-    <h2 class="chat-launcher-title">Who would you like help from?</h2>
-    <p class="chat-launcher-sub">Each teammate is good at different things. Pick one to start &mdash; or just type below to chat.</p>
+    <h2 class="chat-launcher-title">What can we help with?</h2>
+    <p class="chat-launcher-sub">Type below to chat with your assistant &mdash; or pick a teammate.</p>
   </div>
-  <% _groups.forEach(function (g) {
-       var picks = _all.filter(function (c) { return c.group === g.id; });
-       picks.forEach(function (c) { _seen[c.id] = true; });
-       if (!picks.length) return; %>
-  <section class="chat-launcher-section">
-    <p class="chat-launcher-section-label"><%= g.label %></p>
-    <div class="chat-launcher-grid" role="group" aria-label="<%= g.label %>">
-      <% picks.forEach(function (ch) { %>
-      <%- include('characterCard', { ch: ch }) %>
-      <% }); %>
-    </div>
-  </section>
-  <% }); %>
-  <% var _rest = _all.filter(function (c) { return !_seen[c.id]; }); %>
-  <% if (_rest.length) { %>
-  <section class="chat-launcher-section">
-    <div class="chat-launcher-grid" role="group" aria-label="More teammates">
-      <% _rest.forEach(function (ch) { %>
-      <%- include('characterCard', { ch: ch }) %>
-      <% }); %>
-    </div>
-  </section>
-  <% } %>
 </div>

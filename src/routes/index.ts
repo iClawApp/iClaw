@@ -10,10 +10,48 @@ import { defaultComposerMode, listComposerModes } from '../services/chatModes';
 import { openRouterEnabled, transcribeAudio, isOpenRouterFailure } from '../services/openRouter';
 import { isOnboardingDone, setOnboardingDone } from '../services/config';
 import { startOnboardingPrep, getOnboardingEnv } from '../services/onboardingEnv';
+import { listCharacters, isKnownCharacter } from '../services/characters';
 
 const execFileAsync = promisify(execFile);
 
 export const indexRouter: Router = Router();
+
+/**
+ * Persona launcher entry: open (or reuse) a no-project chat with a character.
+ * The home is a roster of personas; clicking one lands you straight in that
+ * teammate's Work-mode chat (persona + tools apply). `?fresh=1` forces a new one.
+ * Reuses the most recent no-project interactive chat for that character so a
+ * teammate's history stays in one place (its recents). Never touches old data.
+ */
+indexRouter.get('/start/:characterId', (req, res) => {
+  const cid = req.params.characterId;
+  if (!isKnownCharacter(cid)) {
+    res.redirect('/');
+    return;
+  }
+  // The generalist is the default (no persona) — it lives as character_id = null,
+  // same as a chat started from the centre composer, so recents stay unified.
+  const targetChar = cid === 'generalist' ? null : cid;
+  const fresh = req.query.fresh === '1';
+  const existing = fresh
+    ? undefined
+    : chats
+        .listOrphans()
+        .filter((c) => (c.character_id ?? null) === targetChar && c.chat_kind !== 'task_execution')
+        .sort((a, b) => b.id - a.id)[0];
+  let chatId: number;
+  if (existing) {
+    chatId = existing.id;
+  } else {
+    const chat = chats.create('openclaw/default', null, { chatKind: 'draft' });
+    if (targetChar) {
+      chats.setCharacter(chat.id, targetChar);
+      chats.setChatMode(chat.id, 'work');
+    }
+    chatId = chat.id;
+  }
+  res.redirect(`/chats/${chatId}`);
+});
 
 /**
  * First-run welcome screen. Shown until the user picks a power source (or skips)
@@ -72,6 +110,41 @@ indexRouter.post('/api/pick-folder', async (_req, res) => {
 /** Draft composer — secret name check before the chat row exists. */
 indexRouter.get('/api/secrets/check-label', (req, res) => {
   res.json({ available: projectSecrets.isLabelAvailable(String(req.query.label ?? '')) });
+});
+
+/**
+ * Body fragment for the slide-out "all project chats" menu (see
+ * partials/projectDrawer). Re-rendered in place when the user switches project
+ * from the drawer — no full navigation. `projectId` empty = the no-project space
+ * (orphan chats). Returns the rendered HTML fragment.
+ */
+indexRouter.get('/api/project-roster', (req, res) => {
+  const raw = typeof req.query.projectId === 'string' ? req.query.projectId.trim() : '';
+  let projectId: number | null = null;
+  if (raw !== '') {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0 && projects.get(n)) projectId = n;
+  }
+  const drawerChats = projectId != null ? chats.listByProject(projectId) : chats.listOrphans();
+  res.render(
+    'partials/projectDrawerBody',
+    {
+      drawerProjectId: projectId,
+      drawerProjects: projects.list(),
+      drawerCharacters: listCharacters(),
+      drawerChats,
+      // No chat is "active" once you've switched to another project's roster.
+      drawerActiveChatId: 0,
+      drawerWorkingIds: chatStatus.workingIds(),
+    },
+    (err, html) => {
+      if (err) {
+        res.status(500).type('text/plain').send('roster render failed');
+        return;
+      }
+      res.type('html').send(html);
+    },
+  );
 });
 
 /** Map an upload mime to the container hint OpenRouter expects for input_audio. */
@@ -151,6 +224,9 @@ indexRouter.get('/', async (req, res) => {
 
   res.render('index', {
     chats: list,
+    // Persona launcher roster (generalist is the centred default, excluded by the
+    // launcher partial). The home is personas now, not a chat list.
+    characters: listCharacters(),
     // First-ever empty state → show the conversational welcome (and skip the
     // project picker) instead of dropping a non-technical user into a blank chat.
     isFirstChat: list.length === 0,
@@ -160,6 +236,16 @@ indexRouter.get('/', async (req, res) => {
     preselectedProject,
     activeChat: null,
     activeProject: preselectedProject,
+    // Slide-out "all project chats" menu on the launcher too (the desktop app's
+    // home). Scoped to the preselected project, or the no-project space.
+    drawerProjectId: preselectedProject ? preselectedProject.id : null,
+    drawerProjects: allProjects,
+    drawerCharacters: listCharacters(),
+    drawerChats: preselectedProject
+      ? chats.listByProject(preselectedProject.id)
+      : chats.listOrphans(),
+    drawerActiveChatId: 0,
+    drawerWorkingIds: chatStatus.workingIds(),
     gatewayUp,
     gatewayStatus,
     agents,

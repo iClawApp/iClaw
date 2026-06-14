@@ -39,7 +39,7 @@ import {
 import type { ChatMode } from '../types';
 import { shouldShowSendHint } from '../services/sendHint';
 import { openRouterEnabled } from '../services/openRouter';
-import { getCharacter } from '../services/characters';
+import { getCharacter, listCharacters } from '../services/characters';
 
 export const chatsRouter: Router = Router();
 
@@ -338,8 +338,26 @@ chatsRouter.get('/:id', async (req, res, next) => {
               .listByProject(chat.project_id)
               .filter((c) => c.character_id === chat.character_id && c.chat_kind !== 'task_execution')
               .sort((a, b) => b.id - a.id)
-          : [],
+          : chat.project_id == null
+            ? // No-project chats (generalist = null, or a specialist opened from the
+              // launcher) — recents for the same teammate, drawn from orphan chats.
+              chats
+                .listOrphans()
+                .filter((c) => (c.character_id ?? null) === (chat.character_id ?? null))
+                .sort((a, b) => b.id - a.id)
+            : [],
       specialistProject: chat.project_id != null ? projects.get(chat.project_id) : null,
+      // Slide-out "all project chats" menu: every agent's chats in this chat's
+      // project (or the no-project space), grouped by agent in the view, plus a
+      // project switcher. listByProject/listOrphans already exclude drafts and
+      // task_execution rows (CHAT_KIND_NORMAL).
+      drawerProjectId: chat.project_id ?? null,
+      drawerProjects: projects.list(),
+      drawerCharacters: listCharacters(),
+      drawerChats:
+        chat.project_id != null ? chats.listByProject(chat.project_id) : chats.listOrphans(),
+      drawerActiveChatId: id,
+      drawerWorkingIds: chatStatus.workingIds(),
       // The project's shared "Brain" (semantic + procedural memory) — surfaced so
       // the user can SEE what every teammate in this project already knows.
       brainFacts: chat.project_id != null ? projectFacts.listByProject(chat.project_id, 8) : [],

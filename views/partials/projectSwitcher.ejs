@@ -1,0 +1,43 @@
+<%# Project switcher for the chat/launcher header (centered). Clicking a chip
+    re-renders the slide-out menu body in place (see partials/projectDrawer JS)
+    and marks the chip active — it does NOT navigate or auto-open the menu.
+    Locals: switcherProjects (Project[]), switcherActiveId (number | null). %>
+<%
+  var _sp = (typeof switcherProjects !== 'undefined' && Array.isArray(switcherProjects)) ? switcherProjects : [];
+  var _aid = (typeof switcherActiveId !== 'undefined' && switcherActiveId != null) ? Number(switcherActiveId) : null;
+%>
+<div class="header-project-switcher iclaw-thin-scroll" role="group" aria-label="Switch project">
+  <button type="button"
+          class="hps-chip<%= _aid == null ? ' on' : '' %>"
+          data-drawer-project=""
+          aria-pressed="<%= _aid == null ? 'true' : 'false' %>"
+          title="No project">
+    <span class="project-logo project-logo--none" data-logo-color="0" aria-hidden="true">💬</span>
+    <span class="hps-name">No project</span>
+  </button>
+  <% _sp.forEach(function (p) { %>
+  <button type="button"
+          class="hps-chip<%= p.id === _aid ? ' on' : '' %>"
+          data-drawer-project="<%= p.id %>"
+          aria-pressed="<%= p.id === _aid ? 'true' : 'false' %>"
+          title="<%= p.name %>">
+    <%- include('projectLogo', { emojiIndex: typeof p.logo_emoji === 'number' ? p.logo_emoji : 0, colorIndex: typeof p.logo_color === 'number' ? p.logo_color : 0 }) %>
+    <span class="hps-name"><%= p.name %></span>
+  </button>
+  <% }); %>
+
+  <%# Create a project — a compact "+" when some exist, a labelled CTA when none.
+      The "+" reveals an inline name field that POSTs to /projects and lands on
+      the new project's launcher (redirect=launcher). %>
+  <div class="hps-create">
+    <% if (_sp.length) { %>
+      <button type="button" class="hps-create-btn" data-hps-create aria-label="New project" title="New project">+</button>
+    <% } else { %>
+      <button type="button" class="hps-create-btn hps-create-btn--cta" data-hps-create>+ Create project</button>
+    <% } %>
+    <form class="hps-create-form" method="post" action="/projects" hidden>
+      <input type="hidden" name="redirect" value="launcher" />
+      <input type="text" name="name" class="hps-create-input" placeholder="Project name…" autocomplete="off" spellcheck="false" required aria-label="New project name" />
+    </form>
+  </div>
+</div>

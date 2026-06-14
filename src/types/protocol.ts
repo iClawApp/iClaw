@@ -180,6 +180,20 @@ export type ServerMsg =
     }
   | { type: 'turn-ended'; chatId: number; title: string; aborted?: boolean }
   | { type: 'turn-error'; chatId: number; requestId?: string | undefined; error: string }
+  /* Live, user-visible task plan from the agent (update_plan tool). Resent in
+     full each time; the client renders/persists the latest for this chat. */
+  | {
+      type: 'chat-plan';
+      chatId: number;
+      steps: { step: string; status: 'pending' | 'in_progress' | 'done' }[];
+    }
+  /* The content calendar after the agent added posts (update_calendar tool):
+     the full merged calendar (date → posts), so the client re-renders the panel. */
+  | {
+      type: 'chat-calendar';
+      chatId: number;
+      calendar: Record<string, { text: string; platform: string; status: string }[]>;
+    }
 
   /* ---- projects ---- */
   | { type: 'project-created'; project: Project }

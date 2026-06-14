@@ -1,0 +1,156 @@
+<%# Slide-out overlay listing every agent's chats in the current project, with a
+    project switcher on top. Sits over the themed specialist sidebar (additive —
+    the sidebar stays). The toggle button lives in specialistSidebar.ejs
+    (#project-drawer-toggle); this renders the panel + backdrop + behaviour.
+    Body is partials/projectDrawerBody — re-fetched in place on project switch. %>
+<aside class="project-drawer" id="project-drawer" hidden aria-hidden="true" aria-label="All project chats">
+  <div class="project-drawer-head">
+    <span class="project-drawer-title">All project chats</span>
+    <button type="button" class="project-drawer-close" data-pdrawer-close aria-label="Close">&times;</button>
+  </div>
+  <div class="project-drawer-body" id="project-drawer-body">
+    <%- include('projectDrawerBody', {
+          drawerProjectId: typeof drawerProjectId !== 'undefined' ? drawerProjectId : null,
+          drawerProjects: typeof drawerProjects !== 'undefined' ? drawerProjects : [],
+          drawerCharacters: typeof drawerCharacters !== 'undefined' ? drawerCharacters : [],
+          drawerChats: typeof drawerChats !== 'undefined' ? drawerChats : [],
+          drawerActiveChatId: typeof drawerActiveChatId !== 'undefined' ? drawerActiveChatId : 0,
+          drawerWorkingIds: typeof drawerWorkingIds !== 'undefined' ? drawerWorkingIds : [],
+        }) %>
+  </div>
+</aside>
+<div class="project-drawer-backdrop" id="project-drawer-backdrop" hidden aria-hidden="true"></div>
+
+<script>
+  (function () {
+    var panel = document.getElementById('project-drawer');
+    var backdrop = document.getElementById('project-drawer-backdrop');
+    var bodyEl = document.getElementById('project-drawer-body');
+    var toggle = document.getElementById('project-drawer-toggle');
+    if (!panel || !backdrop || !bodyEl) return;
+
+    function setOpen(open) {
+      panel.classList.toggle('is-open', open);
+      panel.hidden = !open;
+      panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+      backdrop.hidden = !open;
+      backdrop.classList.toggle('is-open', open);
+      if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      document.body.classList.toggle('is-pdrawer-open', open);
+    }
+    function open() { setOpen(true); }
+    function close() { setOpen(false); }
+
+    // Live filter over the listed chats (by title). The search lives inside the
+    // (re-rendered) menu body, so read it fresh and bind via delegation on the
+    // static body container — survives project-switch re-renders.
+    function applyChatFilter() {
+      var input = bodyEl.querySelector('.pdrawer-search-input');
+      var q = ((input && input.value) || '').trim().toLowerCase();
+      bodyEl.querySelectorAll('.pdrawer-group').forEach(function (g) {
+        var any = false;
+        g.querySelectorAll('.pdrawer-chat').forEach(function (a) {
+          var el = a.querySelector('.pdrawer-chat-title') || a;
+          var show = !q || el.textContent.toLowerCase().indexOf(q) >= 0;
+          a.style.display = show ? '' : 'none';
+          if (show) any = true;
+        });
+        g.style.display = any ? '' : 'none';
+      });
+      // Hide the "start with an agent" strip while searching so results read cleanly.
+      var start = bodyEl.querySelector('.pdrawer-start');
+      if (start) start.style.display = q ? 'none' : '';
+    }
+    bodyEl.addEventListener('input', function (e) {
+      if (e.target instanceof Element && e.target.classList.contains('pdrawer-search-input')) applyChatFilter();
+    });
+    // The compact search (right of "+ New chat") expands to full width on click.
+    function setSearching(top, on) {
+      if (!top) return;
+      top.classList.toggle('is-searching', on);
+      var input = top.querySelector('.pdrawer-search-input');
+      if (on) { if (input) input.focus(); }
+      else if (input) { input.value = ''; applyChatFilter(); }
+    }
+    bodyEl.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!(t instanceof Element)) return;
+      var openBtn = t.closest('[data-search-toggle]');
+      if (openBtn) { setSearching(openBtn.closest('.pdrawer-top'), true); return; }
+      var closeBtn2 = t.closest('[data-search-close]');
+      if (closeBtn2) { setSearching(closeBtn2.closest('.pdrawer-top'), false); return; }
+    });
+
+    // The toggle's job is to OPEN the menu (closing is ×/backdrop/Esc/navigation).
+    // Idempotent-open keeps it robust against stray double clicks.
+    if (toggle) toggle.addEventListener('click', open);
+    backdrop.addEventListener('click', close);
+    var closeBtn = panel.querySelector('[data-pdrawer-close]');
+    if (closeBtn) closeBtn.addEventListener('click', close);
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' || panel.hidden) return;
+      var searching = bodyEl.querySelector('.pdrawer-top.is-searching');
+      if (searching) { setSearching(searching, false); return; }
+      close();
+    });
+
+    // The project switcher lives in the header now. Clicking a project chip
+    // re-renders the menu body in place and marks that chip active — it does NOT
+    // open the menu or navigate. Document-level so it works wherever the switcher
+    // is rendered (chat + launcher headers).
+    document.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!(t instanceof Element)) return;
+      var chip = t.closest('[data-drawer-project]');
+      if (!chip) return;
+      e.preventDefault();
+      if (chip.classList.contains('on')) return; // already selected
+      var pid = chip.getAttribute('data-drawer-project') || '';
+      // Reflect the selection across every switcher on the page.
+      document.querySelectorAll('[data-drawer-project]').forEach(function (c) {
+        var on = (c.getAttribute('data-drawer-project') || '') === pid;
+        c.classList.toggle('on', on);
+        c.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      panel.classList.add('is-loading');
+      fetch('/api/project-roster?projectId=' + encodeURIComponent(pid), {
+        headers: { 'X-Requested-With': 'fetch' },
+      })
+        .then(function (r) { return r.ok ? r.text() : Promise.reject(new Error('roster ' + r.status)); })
+        .then(function (html) { bodyEl.innerHTML = html; applyChatFilter(); })
+        .catch(function () {})
+        .then(function () { panel.classList.remove('is-loading'); });
+    });
+
+    // A real navigation inside the menu (open a chat / start an agent) closes it.
+    panel.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!(t instanceof Element)) return;
+      if (t.closest('a[href]') || t.closest('button[type="submit"]')) close();
+    });
+
+    // "+" / "Create project" in the header switcher reveals an inline name field
+    // (submitting POSTs to /projects). Document-level so it works on any header.
+    document.addEventListener('click', function (e) {
+      var btn = e.target instanceof Element ? e.target.closest('[data-hps-create]') : null;
+      if (!btn) return;
+      var wrap = btn.closest('.hps-create');
+      var form = wrap && wrap.querySelector('.hps-create-form');
+      if (!form) return;
+      form.hidden = !form.hidden;
+      wrap.classList.toggle('is-open', !form.hidden);
+      if (!form.hidden) {
+        var inp = form.querySelector('.hps-create-input');
+        if (inp) inp.focus();
+      }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      document.querySelectorAll('.hps-create.is-open').forEach(function (w) {
+        var f = w.querySelector('.hps-create-form');
+        if (f) f.hidden = true;
+        w.classList.remove('is-open');
+      });
+    });
+  })();
+</script>

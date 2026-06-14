@@ -455,6 +455,10 @@ code {
   grid-template-columns: 260px 1fr;
   height: 100vh;
 }
+/* Persona-launcher home: no left sidebar — the roster IS the navigation. */
+.app--solo { grid-template-columns: 1fr; }
+.chat-launcher-gen { display: inline-flex; margin: 0 auto 6px; }
+.chat-launcher-gen-face { width: 60px; height: 60px; border-radius: var(--radius-lg); }
 
 /* ---------- Sidebar ---------- */
 
@@ -1108,6 +1112,95 @@ code {
 .messages[data-defer-paint] {
   visibility: hidden;
 }
+
+/* ── Agent plan (update_plan tool) ──────────────────────────────────────────
+   A live checklist the agent maintains for a multi-step task. Sticky at the top
+   of the scroll pane, centred to the thread width, so the user can watch steps
+   tick over as work happens — the visible "definition of done". */
+.agent-plan {
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--thread-max-width) - 32px);
+  margin: 12px auto 4px;
+  padding: 9px 12px 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--text) 10%, transparent);
+}
+.agent-plan-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.agent-plan-title {
+  font-weight: 650;
+  font-size: var(--text-sm);
+  letter-spacing: 0.01em;
+}
+.agent-plan.is-complete .agent-plan-title::after {
+  content: ' · done';
+  color: var(--approve);
+  font-weight: 500;
+}
+.agent-plan-count {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.agent-plan-toggle {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+.agent-plan-toggle:hover { color: var(--text); }
+.agent-plan.is-collapsed .agent-plan-list { display: none; }
+.agent-plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.agent-plan-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: var(--text);
+}
+.agent-plan-mark {
+  flex: none;
+  width: 1.1em;
+  text-align: center;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.agent-plan-step.is-done { color: var(--muted); }
+.agent-plan-step.is-done .agent-plan-text {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.agent-plan-step.is-done .agent-plan-mark { color: var(--approve); }
+.agent-plan-step.is-in_progress { font-weight: 550; }
+.agent-plan-step.is-in_progress .agent-plan-mark {
+  color: var(--accent);
+  animation: agentPlanPulse 1.4s ease-in-out infinite;
+}
+@keyframes agentPlanPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 .msg {
   position: relative;
@@ -3724,6 +3817,65 @@ code {
 .draft-composer-wrap {
   flex-shrink: 0;
 }
+
+/* ── Launcher home (Sintra-style): centre title + composer, teammate strip below.
+   Active only while `.is-launcher` is on draft-body (clearEmptyState drops it on
+   first send → composer docks bottom, strip hides). ── */
+.draft-body.is-launcher {
+  /* Composer sits at the vertical centre; the teammate strip flows below it and
+     overflow cards are reached by scrolling down (not squeezed into the centre). */
+  justify-content: flex-start;
+  gap: var(--space-6);
+  overflow-y: auto;
+}
+.draft-body.is-launcher .messages {
+  flex: 0 0 auto;
+  overflow: visible;
+  /* Empty thread doubles as a top spacer sized so the composer's centre lands on
+     the viewport centre (≈50vh) minus the header + gap + half the composer. */
+  min-height: calc(50vh - 150px);
+}
+.draft-body.is-launcher .chat-roster { padding-bottom: var(--space-7, 40px); }
+
+/* New-chat screen (launcher, no messages yet): the chat title and the share /
+   delete actions are meaningless before a chat exists — hide them until the
+   first message creates the row (then `.is-launcher` drops and they reappear). */
+.col-main:has(.draft-body.is-launcher) .draft-header .rename-form,
+.col-main:has(.draft-body.is-launcher) .draft-header .share-form,
+.col-main:has(.draft-body.is-launcher) .draft-header .share-btn,
+.col-main:has(.draft-body.is-launcher) .draft-header .delete-form {
+  display: none !important;
+}
+.draft-body.is-launcher .messages-thread.is-launcher {
+  min-height: 0;
+  padding-bottom: var(--space-4);
+}
+.draft-body.is-launcher .draft-composer-wrap {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.chat-roster {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0 24px;
+  box-sizing: border-box;
+}
+/* Cards fill the width and WRAP to the next row (no horizontal scroll), centred
+   so left/right gutters match. Cards keep their fixed 224px width. */
+.chat-roster-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+  gap: var(--space-5);
+  width: 100%;
+}
+/* Once a chat starts, the launcher class is dropped → hide the teammate strip. */
+.draft-body:not(.is-launcher) .chat-roster { display: none; }
+/* No drop-file overlay on the launcher composer (drag-drop still works in chats). */
+.draft-body.is-launcher .composer-drop-overlay { display: none; }
 
 .project-pick {
   width: 100%;
@@ -9505,6 +9657,13 @@ body.incognito-mode .composer-mode-btn__label {
   display: flex;
   justify-content: flex-end;
 }
+/* The `display:flex` above would otherwise defeat the `hidden` attribute (equal
+   specificity, author beats UA) — so the panel never closed and even showed on
+   load. This attribute rule wins (higher specificity) and restores hide/close. */
+.specialist-panel-overlay[hidden] { display: none; }
+/* Inside the overlay the X is the dismiss control — the panel's own Hide/Show
+   toggle is redundant and left a confusing empty sheet, so drop it here. */
+.specialist-panel-sheet .char-panel-toggle { display: none; }
 .specialist-panel-sheet {
   position: relative;
   width: 380px;
@@ -9526,3 +9685,373 @@ body.incognito-mode .composer-mode-btn__label {
   cursor: pointer;
 }
 .specialist-panel-close:hover { color: var(--text); }
+
+/* ============================================================================
+   Project chats drawer — slide-out menu of every agent's chats in the current
+   project, with a project switcher on top. Toggle lives in the specialist
+   sidebar (.specialist-allchats); the panel overlays from the left.
+   ========================================================================== */
+
+/* Toggle button (sits in the dark themed specialist sidebar). */
+.specialist-allchats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--radius-md);
+  padding: 9px 12px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.specialist-allchats:hover { background: rgba(255, 255, 255, 0.2); }
+.specialist-allchats svg { width: 18px; height: 18px; flex: none; }
+
+/* Always-visible header toggle (the launcher / draft header has no sidebar). */
+.pdrawer-launch-btn {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 65%, var(--header-surface, var(--surface)));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.pdrawer-launch-btn svg { width: 20px; height: 20px; }
+.pdrawer-launch-btn:hover { background: color-mix(in srgb, var(--text) 8%, var(--surface)); }
+
+/* Header laid out as left (title) · center (project switcher) · right (tools),
+   so the switcher stays centered regardless of title/tool widths. */
+.chat-header--with-switcher .chat-header-left {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-header--with-switcher .chat-header-center {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+.chat-header--with-switcher .chat-header-tools { flex: 1 1 0; justify-content: flex-end; }
+
+/* Centered project switcher chips (header). Clicking one re-renders the menu. */
+.header-project-switcher {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.hps-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px 0 6px;
+  background: color-mix(in srgb, var(--text) 4%, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.hps-chip:hover { background: color-mix(in srgb, var(--text) 8%, var(--surface)); color: var(--text); }
+.hps-chip.on {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text) 32%, var(--border));
+  background: color-mix(in srgb, var(--text) 10%, var(--surface));
+}
+.hps-chip .project-logo { width: 22px; height: 22px; font-size: 12px; flex: none; }
+.hps-name { font-size: var(--text-sm); max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+
+/* Create-project control in the switcher: compact "+" (or a labelled CTA when no
+   projects exist) that reveals an inline name field. */
+.hps-create { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
+.hps-create-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 9px;
+  background: color-mix(in srgb, var(--text) 4%, var(--surface));
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.hps-create-btn--cta { border-style: solid; color: var(--text); }
+.hps-create-btn:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text) 32%, var(--border));
+  background: color-mix(in srgb, var(--text) 8%, var(--surface));
+}
+.hps-create-form { margin: 0; }
+.hps-create-form[hidden] { display: none; }
+.hps-create-input {
+  width: 150px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--text) 28%, var(--border));
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+.hps-create-input:focus { outline: none; border-color: color-mix(in srgb, var(--text) 45%, var(--border)); }
+
+/* Backdrop + sliding panel. */
+.project-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: var(--z-modal);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.project-drawer-backdrop.is-open { opacity: 1; }
+
+.project-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 340px;
+  max-width: 88vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  box-shadow: var(--shadow-xl);
+  z-index: calc(var(--z-modal) + 1);
+  transform: translateX(-100%);
+  transition: transform 0.2s ease;
+}
+.project-drawer.is-open { transform: translateX(0); }
+.project-drawer.is-loading { opacity: 0.6; pointer-events: none; }
+
+.project-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.project-drawer-title { font-size: var(--text-base); font-weight: 600; color: var(--text); }
+.project-drawer-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.project-drawer-close:hover { color: var(--text); }
+
+/* New chat + an expandable search, on one row (search collapses to an icon at
+   the right and opens to full width on click). */
+.pdrawer-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.pdrawer-search-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+}
+.pdrawer-search-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
+.pdrawer-search-toggle svg { width: 18px; height: 18px; }
+.pdrawer-search { display: none; position: relative; align-items: center; flex: 1; min-width: 0; }
+.pdrawer-top.is-searching .pdrawer-newchat,
+.pdrawer-top.is-searching .pdrawer-search-toggle { display: none; }
+.pdrawer-top.is-searching .pdrawer-search { display: flex; }
+.pdrawer-search-icon {
+  position: absolute;
+  left: 11px;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.pdrawer-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 30px 0 33px;
+  border: 1px solid color-mix(in srgb, var(--text) 28%, var(--border));
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+.pdrawer-search-input:focus { outline: none; border-color: color-mix(in srgb, var(--text) 45%, var(--border)); }
+.pdrawer-search-close {
+  position: absolute;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.pdrawer-search-close:hover { color: var(--text); }
+
+.project-drawer-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.pdrawer-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 16px; }
+
+.pdrawer-newchat {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 8px 14px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.pdrawer-newchat:hover { background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
+.pdrawer-newchat-plus { font-size: 1.1rem; line-height: 1; }
+
+.pdrawer-group { margin-bottom: 14px; }
+.pdrawer-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.pdrawer-group-face { display: inline-flex; flex: none; }
+.pdrawer-face { width: 22px; height: 22px; border-radius: var(--radius-sm); font-size: 13px; }
+.pdrawer-group-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pdrawer-group-role { font-weight: 400; color: var(--muted); }
+.pdrawer-group-new-form { margin: 0; display: inline-flex; }
+.pdrawer-group-new {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.pdrawer-group-new:hover { color: var(--text); background: var(--bg); }
+
+.pdrawer-chats { display: flex; flex-direction: column; gap: 2px; }
+.pdrawer-chat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px 6px 6px;
+}
+.pdrawer-chat:hover { background: var(--bg); }
+.pdrawer-chat.on { background: color-mix(in srgb, var(--text) 8%, var(--surface)); }
+.pdrawer-chat .status-dot { flex: none; }
+.pdrawer-chat-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdrawer-empty { font-size: var(--text-sm); margin: 4px 0 14px; }
+
+.pdrawer-start { border-top: 1px solid var(--border); padding-top: 12px; }
+.pdrawer-start-label {
+  margin: 0 0 8px;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.pdrawer-start-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
+}
+.pdrawer-start-form { margin: 0; }
+.pdrawer-start-agent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  text-decoration: none;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  padding: 8px 4px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.pdrawer-start-agent:hover { background: var(--bg); border-color: var(--border); color: var(--text); }
+.pdrawer-start-face { width: 30px; height: 30px; border-radius: var(--radius-sm); font-size: 16px; }
+.pdrawer-start-name {
+  font-size: var(--text-xs);
+  max-width: 68px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

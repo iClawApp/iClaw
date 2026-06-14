@@ -95,15 +95,11 @@
 
           <%# The specialist's own power-up panel (calendar / saved replies),
               keyed per project+specialist so it persists with that agent. %>
-          <% if (selectedSpecialist.panel) {
-               var _pkey = 'team-' + selectedProject.id + '-' + selectedSpecialist.id;
-          %>
-            <% if (selectedSpecialist.panel === 'calendar') { %>
-            <%- include('partials/panelCalendar', { panelKey: _pkey }) %>
-            <% } else if (selectedSpecialist.panel === 'replies') { %>
-            <%- include('partials/panelReplies', { panelKey: _pkey }) %>
-            <% } %>
-          <% } %>
+          <% var _tpanels = resolveCharacterPanels(selectedSpecialist.id);
+             var _pkey = 'team-' + selectedProject.id + '-' + selectedSpecialist.id; %>
+          <% _tpanels.forEach(function (p) { %>
+            <%- include(p.partial, { panelKey: _pkey }) %>
+          <% }); %>
 
           <% if (_mine.length) { %>
           <div class="agent-tasks">

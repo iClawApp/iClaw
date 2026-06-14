@@ -131,11 +131,12 @@
     // Never persist incognito as a chat's default mode — it's a transient,
     // explicitly-entered surface, not a sticky preference.
     if ((!opts || opts.persist !== false) && next !== 'incognito') {
-      try { localStorage.setItem(MODE_STORAGE_KEY, next); } catch (_) {}
-      // Persist server-side too, so the mode sticks across page navigation and
-      // syncs across devices — not just this browser's localStorage. Drafts have
-      // no chat id yet (mode rides along with the first message); once the chat
-      // exists the server row (chats.mode) is the source of truth on reload.
+      // Port-stable UI store (window.iclawUI), not localStorage: the desktop app's
+      // origin port changes each launch and would wipe it. For an existing chat
+      // the server row (chats.mode) below is authoritative on reload + syncs
+      // across devices; this just keeps the fast-path fallback in sync. Drafts
+      // have no chat id yet (mode rides along with the first message).
+      if (window.iclawUI) window.iclawUI.set(MODE_STORAGE_KEY, next);
       if (activeChatId != null) {
         fetch('/chats/' + encodeURIComponent(activeChatId) + '/mode', {
           method: 'POST',
@@ -456,12 +457,12 @@
     // Initial mode precedence:
     //   1. server-persisted chat mode (data-chat-mode = chats.mode) — authoritative,
     //      survives navigation and syncs across devices.
-    //   2. per-chat localStorage (legacy / offline fallback, existing chats only).
+    //   2. per-chat UI store (window.iclawUI — port-stable fallback, existing chats only).
     //   3. the UI default (Work) — for new chats we ignore any stale GLOBAL
-    //      localStorage value so a fresh chat always starts on the default.
+    //      stored value so a fresh chat always starts on the default.
     let stored = null;
     if (rawChatId) {
-      try { stored = localStorage.getItem(MODE_STORAGE_KEY); } catch (_) {}
+      stored = window.iclawUI ? window.iclawUI.get(MODE_STORAGE_KEY) : null;
     }
     const chatMode = composerModesEl ? composerModesEl.dataset.chatMode : '';
     setComposerMode(chatMode || stored || composerModeDefault, { persist: false });
@@ -618,12 +619,14 @@
     return pid ? `iclaw:secure-network:project:${pid}` : 'iclaw:secure-network:no-project';
   }
 
+  // Port-stable UI store (window.iclawUI), not localStorage: the desktop app's
+  // origin port changes each launch, which would wipe a localStorage preference.
   function getNetworkEnabled() {
-    try { return localStorage.getItem(networkKey()) === 'on'; } catch { return false; }
+    return window.iclawUI ? window.iclawUI.get(networkKey()) === 'on' : false;
   }
 
   function setNetworkEnabledStorage(on) {
-    try { localStorage.setItem(networkKey(), on ? 'on' : 'off'); } catch {}
+    if (window.iclawUI) window.iclawUI.set(networkKey(), on ? 'on' : 'off');
   }
 
   function updateNetworkToggle() {
@@ -741,17 +744,17 @@
     return `iclaw:secure-ttl:chat:${secureChatId()}`;
   }
 
+  // Port-stable UI store (window.iclawUI), not localStorage — see note above; the
+  // desktop app's origin port changes each launch and would wipe localStorage.
   function getSecureTtl() {
     try {
-      const raw = localStorage.getItem(secureTtlKey());
+      const raw = window.iclawUI ? window.iclawUI.get(secureTtlKey()) : null;
       return raw ? JSON.parse(raw) : { ttlDays: 7, lastActivity: Date.now() };
     } catch { return { ttlDays: 7, lastActivity: Date.now() }; }
   }
 
   function saveSecureTtl(ttlDays) {
-    try {
-      localStorage.setItem(secureTtlKey(), JSON.stringify({ ttlDays, lastActivity: Date.now() }));
-    } catch {}
+    if (window.iclawUI) window.iclawUI.set(secureTtlKey(), JSON.stringify({ ttlDays, lastActivity: Date.now() }));
   }
 
   function formatBytes(bytes) {
@@ -1515,11 +1518,11 @@
     }
     history.replaceState(null, '', '/chats/' + id);
     promoteDraftHeaderTools(id, payload.projectId);
-    // Migrate mode from the draft fallback key to the per-chat key
-    try {
-      const draftMode = localStorage.getItem('iclaw:composer-mode');
-      if (draftMode) localStorage.setItem(`iclaw:composer-mode:${id}`, draftMode);
-    } catch (_) {}
+    // Migrate mode from the draft fallback key to the per-chat key (window.iclawUI).
+    if (window.iclawUI) {
+      const draftMode = window.iclawUI.get('iclaw:composer-mode');
+      if (draftMode) window.iclawUI.set(`iclaw:composer-mode:${id}`, draftMode);
+    }
     applyTitleForActive(payload.title || 'New chat');
     if (ws && ws.readyState === WebSocket.OPEN) {
       wsSend({ type: 'subscribe', chatId: id });
@@ -2405,6 +2408,9 @@
       const empty = messagesEl.querySelector('.empty-state');
       if (empty) empty.remove();
     }
+    // Leaving the launcher: drop the centred-launcher layout so the composer
+    // docks back to the bottom and the teammate strip hides (CSS keys off this).
+    if (draftBody) draftBody.classList.remove('is-launcher');
   }
   function replyStubRoleLabel(role) {
     if (role === 'user') return 'You';
@@ -4807,6 +4813,87 @@
   window.addEventListener('blur', sendViewingState);
 
   // -------------------------------------------------------------------------
+  // Agent plan (update_plan tool): a live, sticky checklist the user watches as
+  // the agent works a multi-step task. The agent resends the WHOLE list on each
+  // update; we render the latest and persist it (server-backed window.iclawUI,
+  // keyed by chat) so it survives a reload — the desktop app's port changes each
+  // launch, so localStorage would not.
+  // -------------------------------------------------------------------------
+  function persistChatPlan(steps) {
+    if (activeChatId == null || !window.iclawUI) return;
+    try {
+      window.iclawUI.set('plan:' + activeChatId, steps && steps.length ? JSON.stringify(steps) : '');
+    } catch (e) { /* ignore */ }
+  }
+  function renderChatPlan(steps) {
+    if (!messagesEl) return;
+    var panel = document.getElementById('agent-plan');
+    if (!steps || !steps.length) { if (panel) panel.remove(); return; }
+    if (!panel) {
+      panel = document.createElement('section');
+      panel.id = 'agent-plan';
+      panel.className = 'agent-plan';
+      panel.setAttribute('aria-label', 'Task plan');
+      var head = document.createElement('div');
+      head.className = 'agent-plan-head';
+      var title = document.createElement('span');
+      title.className = 'agent-plan-title';
+      title.textContent = 'Plan';
+      var count = document.createElement('span');
+      count.className = 'agent-plan-count';
+      var toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'agent-plan-toggle';
+      toggle.textContent = 'Hide';
+      toggle.addEventListener('click', function () {
+        var collapsed = panel.classList.toggle('is-collapsed');
+        toggle.textContent = collapsed ? 'Show' : 'Hide';
+      });
+      head.appendChild(title);
+      head.appendChild(count);
+      head.appendChild(toggle);
+      var list = document.createElement('ol');
+      list.className = 'agent-plan-list';
+      panel.appendChild(head);
+      panel.appendChild(list);
+      messagesEl.insertBefore(panel, messagesEl.firstChild);
+    }
+    var listEl = panel.querySelector('.agent-plan-list');
+    var countEl = panel.querySelector('.agent-plan-count');
+    var done = 0;
+    listEl.textContent = '';
+    steps.forEach(function (s) {
+      var st = (s && (s.status === 'done' || s.status === 'in_progress')) ? s.status : 'pending';
+      if (st === 'done') done++;
+      var li = document.createElement('li');
+      li.className = 'agent-plan-step is-' + st;
+      var mark = document.createElement('span');
+      mark.className = 'agent-plan-mark';
+      mark.setAttribute('aria-hidden', 'true');
+      // textContent only — step text comes from the model (never trust as HTML).
+      mark.textContent = st === 'done' ? '✓' : st === 'in_progress' ? '▸' : '○';
+      var txt = document.createElement('span');
+      txt.className = 'agent-plan-text';
+      txt.textContent = (s && s.step) ? String(s.step) : '';
+      li.appendChild(mark);
+      li.appendChild(txt);
+      listEl.appendChild(li);
+    });
+    countEl.textContent = done + '/' + steps.length;
+    panel.classList.toggle('is-complete', done === steps.length);
+  }
+  function restoreChatPlan() {
+    if (!messagesEl || activeChatId == null || !window.iclawUI) return;
+    try {
+      var raw = window.iclawUI.get('plan:' + activeChatId);
+      if (!raw) return;
+      var steps = JSON.parse(raw);
+      if (Array.isArray(steps) && steps.length) renderChatPlan(steps);
+    } catch (e) { /* ignore */ }
+  }
+  restoreChatPlan();
+
+  // -------------------------------------------------------------------------
   // handle server → client events
   // -------------------------------------------------------------------------
   function handleServerMsg(msg) {
@@ -4959,6 +5046,22 @@
         }
 
         appendMessage(msg.message);
+        return;
+
+      case 'chat-plan':
+        if (msg.chatId !== activeChatId) return;
+        renderChatPlan(msg.steps);
+        persistChatPlan(msg.steps);
+        return;
+
+      case 'chat-calendar':
+        // The agent (Soshie/Ava) updated the content calendar. The server already
+        // persisted it (ui.content-calendar:chat-<id>); tell the open panel to
+        // re-render from the broadcast data. The panel partial listens for this.
+        if (msg.chatId !== activeChatId) return;
+        window.dispatchEvent(new CustomEvent('iclaw:calendar-updated', {
+          detail: { key: 'content-calendar:chat-' + msg.chatId, data: msg.calendar },
+        }));
         return;
 
       case 'turn-started':

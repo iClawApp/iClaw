@@ -7,7 +7,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { chats, messages, projects, projectSecrets, projectFacts } from './store';
+import { chats, messages, projects, projectSecrets, projectFacts, scheduledMessages } from './store';
+import { kvGet, kvSet } from '../db/kv';
 import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
 import { applyCharacterPrompt, buildCharacterSystemPrompt, characterToolAllowlist } from './characters';
 import { buildSkillsPromptBlock, scheduleProjectSkillReview } from './projectSkills';
@@ -460,12 +461,15 @@ async function runTurnLocked(opts: {
   // Work / Secure Mode — routes to iclaw-runtime, returns early. Forward dropped
   // files so the runtime agent can read them (Work) / stage them (Secure) and
   // see images — otherwise the model has no idea a file was attached.
-  if (mode === 'work' || mode === 'secure' || mode === 'persona') {
+  if (mode === 'work' || mode === 'secure') {
     const runtimeAttachments = runtimeAttachmentsFromPersisted(chatId, persistedAttachments);
     // An interactive specialist chat lets the model spin work into a task itself.
     // Task-execution chats are excluded (a running task must not create more).
     const canCreateTasks = !!chat.character_id && chat.chat_kind !== 'task_execution';
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', chatOnly: mode === 'persona', canCreateTasks, networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
+    // Specialists are autonomous agents: high round ceiling + set_timer self-
+    // scheduling. Same gate as create_task (a named character, not task plumbing).
+    const autonomous = canCreateTasks;
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', canCreateTasks, autonomous, networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }
@@ -895,10 +899,10 @@ async function runWorkModeTurn(opts: {
   onEvent: (event: TurnEvent) => void;
   workFolders?: WorkFolder[] | undefined;
   secure?: boolean | undefined;
-  /** Persona mode: no tools, no Docker — a plain conversation. */
-  chatOnly?: boolean | undefined;
   /** Specialist chat: let the model spin a multi-step request into a task. */
   canCreateTasks?: boolean | undefined;
+  /** Autonomous run: high round ceiling + set_timer self-scheduling. */
+  autonomous?: boolean | undefined;
   networkEnabled?: boolean | undefined;
   ttlDays?: number | undefined;
   /** Current user message id — history before it seeds the session context. */
@@ -947,13 +951,11 @@ async function runWorkModeTurn(opts: {
       // enforcement. Secure Mode ignores it (the sandbox workspace is the only
       // mount); when no folders are chosen we fall back to HOME with write
       // access, preserving prior behavior.
-      const hasFolders = !opts.secure && !opts.chatOnly && !!opts.workFolders?.length;
+      const hasFolders = !opts.secure && !!opts.workFolders?.length;
       const folderAccess = hasFolders ? opts.workFolders : undefined;
       const allowedFolders = hasFolders
         ? opts.workFolders!.map((f) => f.path)
-        : opts.chatOnly
-          ? [] // Persona mode talks to the model only — no file access.
-          : [process.env.HOME ?? ''].filter(Boolean);
+        : [process.env.HOME ?? ''].filter(Boolean);
       // Safe Mode: the folders the user picked are COPIED into the isolated
       // sandbox (originals untouched), not bind-mounted live like Work Mode.
       const copyFolders =
@@ -973,9 +975,9 @@ async function runWorkModeTurn(opts: {
         folderAccess,
         copyFolders,
         secure: opts.secure,
-        chatOnly: opts.chatOnly,
         characterTools,
         canCreateTasks: opts.canCreateTasks,
+        autonomous: opts.autonomous,
         systemPrompt: buildWorkSystemPrompt(chatId),
         // Stable key → the chat reconnects to its persisted Secure workspace
         // (and its running TTL) after a runtime restart.
@@ -1090,6 +1092,121 @@ async function runWorkModeTurn(opts: {
               }),
             )
             .catch(() => {});
+        } else if (event.type === 'plan') {
+          // Live task plan from the agent (update_plan tool). Broadcast it so the
+          // chat shows the checklist updating in real time. The client persists
+          // the latest plan (window.iclawUI) so it survives a reload — we keep the
+          // server side stateless here, mirroring the calendar/replies panels.
+          wsHub.broadcastToChat(chatId, { type: 'chat-plan', chatId, steps: event.steps });
+        } else if (event.type === 'set_timer') {
+          // Autonomous self-scheduling: resume THIS chat after the delay. We
+          // schedule a normal scheduled_message — the scheduler fires it through
+          // sendMessage, so the resume looks exactly like a user nudge — and
+          // broadcast it so the UI shows the pending timer. Re-clamp defensively.
+          const minutes = Math.max(1, Math.min(1440, Math.round(event.minutes) || 0));
+          const note = (event.note || '').trim();
+          const content = note
+            ? `[Auto-resume] ${note}`
+            : '[Auto-resume] Continue the task — check whether to keep going or wrap up.';
+          try {
+            const row = scheduledMessages.create({
+              chatId,
+              content,
+              scheduledAt: new Date(Date.now() + minutes * 60_000),
+            });
+            wsHub.broadcastToChat(chatId, { type: 'scheduled-added', chatId, scheduled: row });
+          } catch { /* never break the turn over a timer */ }
+        } else if (event.type === 'calendar') {
+          // The agent (Soshie/Ava) added posts to the content calendar. The
+          // calendar lives in the same KV the panel reads (window.iclawUI →
+          // `ui.content-calendar:chat-<id>`), so merge server-side and broadcast
+          // the full result for the panel to re-render. Read current first so we
+          // don't clobber the user's own manual edits.
+          try {
+            const key = `ui.content-calendar:chat-${chatId}`;
+            let cal: Record<string, { text: string; platform: string; status: string }[]> = {};
+            const raw = kvGet(key);
+            if (raw) { try { cal = JSON.parse(raw) || {}; } catch { cal = {}; } }
+            for (const e of event.entries) {
+              if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date) || !e.text) continue;
+              (cal[e.date] = cal[e.date] || []).push({
+                text: e.text, platform: e.platform || '', status: e.status === 'idea' ? 'idea' : 'draft',
+              });
+            }
+            kvSet(key, JSON.stringify(cal));
+            wsHub.broadcastToChat(chatId, { type: 'chat-calendar', chatId, calendar: cal });
+          } catch { /* never break the turn over a calendar write */ }
+        } else if (event.type === 'reminder') {
+          // Date-based reminder: give the event its OWN dedicated chat (reused by
+          // name — so the same birthday next year lands in the same chat) and
+          // schedule a ping at each lead time. The pings fire via the scheduler
+          // into that chat, where the specialist (Ava) responds. Yearly events
+          // re-arm via a prompt the day after. Never break the turn on failure.
+          try {
+            const ev = event;
+            const srcChat = chats.get(chatId);
+            const projectId = srcChat?.project_id ?? null;
+            const slug =
+              ev.event.toLowerCase().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}-]+/gu, '')
+                .replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'event';
+            const kvKey = `reminder-chat:${projectId ?? 0}:${slug}`;
+            // Find-or-create the event's dedicated chat.
+            let eventChatId: number | null = null;
+            const existing = kvGet(kvKey);
+            if (existing) {
+              const id = Number(existing);
+              if (Number.isFinite(id) && chats.get(id)) eventChatId = id;
+            }
+            if (eventChatId == null) {
+              const created = chats.create(srcChat?.agent ?? 'openclaw/default', projectId, {
+                chatKind: 'normal',
+                title: `⏰ ${ev.event}`,
+              });
+              if (srcChat?.character_id) chats.setCharacter(created.id, srcChat.character_id);
+              chats.setChatMode(created.id, 'work');
+              eventChatId = created.id;
+              kvSet(kvKey, String(eventChatId));
+              const proj = projectId != null ? projects.get(projectId) : null;
+              wsHub.broadcastAll({
+                type: 'chat-created',
+                chatId: created.id,
+                title: created.title,
+                agent: created.agent,
+                projectId: created.project_id,
+                projectName: proj?.name ?? null,
+                updatedAt: created.updated_at,
+              });
+            }
+            // Schedule a ping per lead time (skip any already in the past).
+            const [yy, mm, dd] = ev.date.split('-').map(Number);
+            const phrase = (lead: number) => (lead === 0 ? 'today' : lead === 1 ? 'tomorrow' : `in ${lead} days`);
+            for (const lead of ev.leadDays) {
+              const at = new Date(yy!, mm! - 1, dd!, 9, 0, 0, 0);
+              at.setDate(at.getDate() - lead);
+              if (at.getTime() <= Date.now()) continue;
+              const row = scheduledMessages.create({
+                chatId: eventChatId,
+                content: `[Reminder] ${ev.event} — ${phrase(lead)} (${ev.date}).`,
+                scheduledAt: at,
+              });
+              wsHub.broadcastToChat(eventChatId, { type: 'scheduled-added', chatId: eventChatId, scheduled: row });
+            }
+            // Yearly recurrence: the day after, prompt the assistant to re-arm next
+            // year into the SAME chat (set_reminder reuses it by name).
+            if (ev.recurring === 'yearly') {
+              const reArm = new Date(yy!, mm! - 1, dd!, 9, 0, 0, 0);
+              reArm.setDate(reArm.getDate() + 1);
+              if (reArm.getTime() > Date.now()) {
+                const nextDate = `${yy! + 1}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+                const row = scheduledMessages.create({
+                  chatId: eventChatId,
+                  content: `[Auto] Yearly reminder — set it again for next year: call set_reminder with event="${ev.event}", date="${nextDate}", lead_days=[${ev.leadDays.join(',')}], recurring="yearly".`,
+                  scheduledAt: reArm,
+                });
+                wsHub.broadcastToChat(eventChatId, { type: 'scheduled-added', chatId: eventChatId, scheduled: row });
+              }
+            }
+          } catch { /* never break the turn over a reminder */ }
         } else if (event.type === 'note') {
           // A tool gave the model less than the full content — surface the saving
           // as a friendly, plain-language chat note (no jargon: no "tokens",
@@ -1122,7 +1239,7 @@ async function runWorkModeTurn(opts: {
             const assistantMsg = messages.append(
               chatId, 'assistant', accumulated, null, null,
               turnAttachments.length > 0 ? turnAttachments : null,
-              opts.chatOnly ? 'persona' : opts.secure ? 'secure' : 'work', event.tokens ?? null, event.cached ?? null,
+              opts.secure ? 'secure' : 'work', event.tokens ?? null, event.cached ?? null,
               toolTrace.length > 0 ? toolTrace : null,
             );
             wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });

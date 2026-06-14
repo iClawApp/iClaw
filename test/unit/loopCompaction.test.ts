@@ -3,6 +3,10 @@ import { describe, it, expect } from 'vitest';
 import {
   shrinkOldToolOutputs,
   toolResultVerdict,
+  normalizePlanSteps,
+  clampTimerMinutes,
+  normalizeCalendarEntries,
+  normalizeReminder,
   type Message,
 } from '../../packages/iclaw-runtime/src/agent/loop';
 
@@ -10,6 +14,122 @@ import {
 function toolMsg(content: string): Message {
   return { role: 'tool', content, tool_call_id: 'x' } as unknown as Message;
 }
+
+describe('normalizePlanSteps (update_plan tool)', () => {
+  it('keeps valid steps and preserves order + status', () => {
+    const out = normalizePlanSteps([
+      { step: 'Research competitors', status: 'done' },
+      { step: 'Draft the brief', status: 'in_progress' },
+      { step: 'Send for review', status: 'pending' },
+    ]);
+    expect(out).toEqual([
+      { step: 'Research competitors', status: 'done' },
+      { step: 'Draft the brief', status: 'in_progress' },
+      { step: 'Send for review', status: 'pending' },
+    ]);
+  });
+
+  it('coerces an unknown/missing status to pending and trims the step text', () => {
+    const out = normalizePlanSteps([
+      { step: '  Do a thing  ', status: 'wat' },
+      { step: 'No status here' },
+    ]);
+    expect(out).toEqual([
+      { step: 'Do a thing', status: 'pending' },
+      { step: 'No status here', status: 'pending' },
+    ]);
+  });
+
+  it('drops malformed / empty entries', () => {
+    const out = normalizePlanSteps([
+      null,
+      'a bare string',
+      { status: 'done' }, // no step
+      { step: '   ', status: 'done' }, // blank step
+      { step: 'Real step', status: 'done' },
+    ]);
+    expect(out).toEqual([{ step: 'Real step', status: 'done' }]);
+  });
+
+  it('returns [] for non-array input and clamps very long lists/text', () => {
+    expect(normalizePlanSteps('nope' as unknown)).toEqual([]);
+    expect(normalizePlanSteps(undefined)).toEqual([]);
+    const many = Array.from({ length: 30 }, (_, i) => ({ step: `s${i}`, status: 'pending' }));
+    expect(normalizePlanSteps(many)).toHaveLength(20);
+    const long = normalizePlanSteps([{ step: 'x'.repeat(500), status: 'done' }]);
+    expect(long[0]!.step.length).toBe(200);
+    expect(long[0]!.step.endsWith('…')).toBe(true);
+  });
+});
+
+describe('normalizeCalendarEntries (update_calendar tool)', () => {
+  it('keeps valid entries with date + text, defaults status to draft', () => {
+    const out = normalizeCalendarEntries([
+      { date: '2026-06-15', text: 'Launch teaser', platform: 'Instagram', status: 'idea' },
+      { date: '2026-06-16', text: 'Behind the scenes' },
+    ]);
+    expect(out).toEqual([
+      { date: '2026-06-15', text: 'Launch teaser', platform: 'Instagram', status: 'idea' },
+      { date: '2026-06-16', text: 'Behind the scenes', platform: '', status: 'draft' },
+    ]);
+  });
+  it('drops bad dates / empty text and coerces an unknown status to draft (never "posted")', () => {
+    const out = normalizeCalendarEntries([
+      { date: 'tuesday', text: 'nope' }, // bad date
+      { date: '2026-06-15', text: '' }, // empty text
+      { date: '2026-06-15', text: 'ok', status: 'posted' }, // can't post → draft
+      { date: '2026-06-15', text: 'ok2', status: 'scheduled' }, // → draft
+    ]);
+    expect(out).toEqual([
+      { date: '2026-06-15', text: 'ok', platform: '', status: 'draft' },
+      { date: '2026-06-15', text: 'ok2', platform: '', status: 'draft' },
+    ]);
+  });
+  it('returns [] for non-array and clamps the batch + long text', () => {
+    expect(normalizeCalendarEntries('x' as unknown)).toEqual([]);
+    const many = Array.from({ length: 80 }, () => ({ date: '2026-06-15', text: 'p' }));
+    expect(normalizeCalendarEntries(many)).toHaveLength(60);
+    const long = normalizeCalendarEntries([{ date: '2026-06-15', text: 'y'.repeat(500) }]);
+    expect(long[0]!.text.length).toBe(300);
+  });
+});
+
+describe('normalizeReminder (set_reminder tool)', () => {
+  it('dedupes + sorts lead_days far→near and keeps event/date/recurring', () => {
+    const r = normalizeReminder({ event: "Mom's birthday", date: '2026-06-20', lead_days: [3, 14, 7, 7], recurring: 'yearly' });
+    expect(r).toEqual({ event: "Mom's birthday", date: '2026-06-20', leadDays: [14, 7, 3], recurring: 'yearly' });
+  });
+  it('defaults lead_days to [1] and recurring to none', () => {
+    const r = normalizeReminder({ event: 'Friend party', date: '2026-07-01' });
+    expect(r).toEqual({ event: 'Friend party', date: '2026-07-01', leadDays: [1], recurring: 'none' });
+  });
+  it('rejects missing event or a bad date', () => {
+    expect(normalizeReminder({ event: '', date: '2026-06-20' })).toBeNull();
+    expect(normalizeReminder({ event: 'X', date: 'June 20' })).toBeNull();
+    expect(normalizeReminder({ date: '2026-06-20' })).toBeNull();
+    expect(normalizeReminder('nope' as unknown)).toBeNull();
+  });
+  it('clamps out-of-range lead_days and caps the count', () => {
+    const r = normalizeReminder({ event: 'X', date: '2026-06-20', lead_days: [400, -5, 2] });
+    expect(r!.leadDays).toEqual([2]); // 400 (>365) and -5 dropped
+  });
+});
+
+describe('clampTimerMinutes (set_timer tool)', () => {
+  it('rounds and accepts a valid minute count', () => {
+    expect(clampTimerMinutes(5)).toBe(5);
+    expect(clampTimerMinutes(5.4)).toBe(5);
+    expect(clampTimerMinutes('30')).toBe(30);
+  });
+  it('caps at 24h (1440) and rejects sub-minute / invalid input', () => {
+    expect(clampTimerMinutes(99999)).toBe(1440);
+    expect(clampTimerMinutes(0)).toBeNull();
+    expect(clampTimerMinutes(-3)).toBeNull();
+    expect(clampTimerMinutes('soon')).toBeNull();
+    expect(clampTimerMinutes(undefined)).toBeNull();
+    expect(clampTimerMinutes(NaN)).toBeNull();
+  });
+});
 
 describe('toolResultVerdict', () => {
   it('prefers an explicit exit marker buried at the end of the output', () => {

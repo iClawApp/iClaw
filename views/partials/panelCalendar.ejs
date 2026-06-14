@@ -201,6 +201,22 @@
       });
     }
 
+    // Live updates from the agent (update_calendar tool): the host broadcasts the
+    // merged calendar and iclaw.js dispatches this event. Reload our data from it
+    // (or the KV snapshot as a fallback) and re-render — works whether the panel
+    // is open or tucked away.
+    window.addEventListener('iclaw:calendar-updated', function (e) {
+      if (!e || !e.detail || e.detail.key !== KEY) return;
+      var incoming = e.detail.data;
+      if (!incoming) {
+        try { var s2 = window.iclawUI ? window.iclawUI.get(KEY) : null; incoming = s2 ? (JSON.parse(s2) || {}) : {}; }
+        catch (e2) { incoming = {}; }
+      }
+      data = {};
+      Object.keys(incoming).forEach(function (k) { data[k] = (incoming[k] || []).map(normItem); });
+      renderGrid(); renderEditor();
+    });
+
     renderGrid();
   })();
   </script>

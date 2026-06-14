@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/style.css<%= (typeof assetV !== 'undefined' && assetV) ? ('?v=' + assetV) : '' %>" />
   <link rel="stylesheet" href="/css/highlight-github.min.css" media="(prefers-color-scheme: light), (prefers-color-scheme: no-preference)" />
   <link rel="stylesheet" href="/css/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)" />
   <% if (typeof raE2eEnabled !== 'undefined' && raE2eEnabled) { %>
