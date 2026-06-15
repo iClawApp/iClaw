@@ -40,9 +40,11 @@ describe('characters', () => {
     expect(sys).toContain('You are Remi');
     // System prompt is plain (no gateway bracket framing).
     expect(sys).not.toContain('[Character');
-    // The specialist's method playbook is injected.
+    // The specialist's method playbook is injected, incl. the tool-selection
+    // guidance (which research tool fits which job) + the triangulation method.
     expect(sys).toContain('How you work:');
-    expect(sys).toContain('Triangulate at least two independent sources');
+    expect(sys).toContain('web_search');
+    expect(sys).toContain('triangulate at least two independent sources');
   });
 
   it('prepends the persona only for non-generalist characters', () => {
@@ -74,16 +76,12 @@ describe('characters', () => {
     }
   });
 
-  it('tailors a real tool allowlist per character (research is read-only)', () => {
+  it('tailors a tool allowlist per character (none for full-access roles)', () => {
     // Generalist imposes no restriction.
     expect(characterToolAllowlist('generalist')).toBeNull();
-    // Remi researches but never writes or runs code.
-    const remi = characterToolAllowlist('researcher')!;
-    expect(remi).toContain('web_search');
-    expect(remi).toContain('read_file');
-    expect(remi).not.toContain('write_file');
-    expect(remi).not.toContain('edit_file');
-    expect(remi).not.toContain('run_command');
+    // Remi runs with the full work-mode toolset (read + write + run) — its
+    // research focus is steered by the playbook, not enforced by withholding tools.
+    expect(characterToolAllowlist('researcher')).toBeNull();
     // Emmie drafts email replies — reads + writes, but never runs code.
     const emmie = characterToolAllowlist('email')!;
     expect(emmie).toContain('write_file');
@@ -115,15 +113,13 @@ describe('characters', () => {
   });
 
   it('derives UI capability labels from the tool set', () => {
-    const remi = getCharacter('researcher');
-    expect(remi.capabilities).toContain('Looks things up online');
-    expect(remi.capabilities).toContain('Reads your files');
-    expect(remi.capabilities).not.toContain('Runs code & tasks');
-    // Soshie makes visuals and plans the content calendar.
+    // Soshie has a tailored allowlist → chips are derived from it.
     const soshie = getCharacter('smm');
     expect(soshie.capabilities).toContain('Makes charts & images');
     expect(soshie.capabilities).toContain('Plans your content calendar');
-    // Generalist has no tools, so no capability chips.
+    // Full-access roles impose no allowlist, so they derive no chips (same as the
+    // generalist) — Remi's research identity is carried by its persona, not chips.
+    expect(getCharacter('researcher').capabilities).toEqual([]);
     expect(getCharacter('generalist').capabilities).toEqual([]);
   });
 });
