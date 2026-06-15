@@ -1,0 +1,82 @@
+<%# Per-character UI panel: "Connect CRM" for the sales scout (Leo). A scaffold
+    mirroring panelInbox — lists the CRMs a sales agent would push qualified leads
+    into. Real sync isn't wired yet, so "Connect" registers interest ("On the
+    list ✓") and the panel makes clear it's coming. The requested set is persisted
+    server-side (window.iclawUI) keyed by chat so it survives the desktop app's
+    changing origin port. %>
+<section class="char-panel inbox-panel" id="leads-connect" data-chat-id="<%= (typeof panelKey !== 'undefined' && panelKey) ? panelKey : (typeof activeChat !== 'undefined' && activeChat ? activeChat.id : '0') %>" aria-label="Connect CRM">
+  <div class="char-panel-head">
+    <span class="char-panel-title">Connect your CRM</span>
+    <span class="char-panel-sub">Push the leads Leo qualifies straight into your pipeline</span>
+  </div>
+  <div class="char-panel-body">
+    <ul class="inbox-providers" data-leads-list>
+      <li class="inbox-provider" data-provider="hubspot">
+        <span class="inbox-provider-icon inbox-provider-icon--gmail" aria-hidden="true">H</span>
+        <span class="inbox-provider-info">
+          <span class="inbox-provider-name">HubSpot</span>
+          <span class="inbox-provider-desc">Create contacts &amp; deals from leads</span>
+        </span>
+        <button type="button" class="inbox-connect-btn" data-connect>Connect</button>
+      </li>
+      <li class="inbox-provider" data-provider="pipedrive">
+        <span class="inbox-provider-icon inbox-provider-icon--outlook" aria-hidden="true">P</span>
+        <span class="inbox-provider-info">
+          <span class="inbox-provider-name">Pipedrive</span>
+          <span class="inbox-provider-desc">Drop leads into your pipeline stages</span>
+        </span>
+        <button type="button" class="inbox-connect-btn" data-connect>Connect</button>
+      </li>
+      <li class="inbox-provider" data-provider="notion">
+        <span class="inbox-provider-icon inbox-provider-icon--imap" aria-hidden="true">N</span>
+        <span class="inbox-provider-info">
+          <span class="inbox-provider-name">Notion / Sheets</span>
+          <span class="inbox-provider-desc">Append to a leads database or sheet</span>
+        </span>
+        <button type="button" class="inbox-connect-btn" data-connect>Connect</button>
+      </li>
+    </ul>
+    <p class="inbox-note">CRM sync is coming soon. For now, Leo saves qualified leads (with the signal, fit and a drafted opener) to a file you can review and import.</p>
+  </div>
+  <script>
+  (function () {
+    var root = document.getElementById('leads-connect');
+    if (!root || root.dataset.leadsInit) return;
+    root.dataset.leadsInit = '1';
+    var KEY = 'leads-requested:' + (root.getAttribute('data-chat-id') || '0');
+    var requested = {};
+    try {
+      var raw = window.iclawUI ? window.iclawUI.get(KEY) : null;
+      requested = raw ? (JSON.parse(raw) || {}) : {};
+    } catch (e) { requested = {}; }
+    function save() { try { if (window.iclawUI) window.iclawUI.set(KEY, JSON.stringify(requested)); } catch (e) {} }
+
+    function paint(li) {
+      var id = li.getAttribute('data-provider');
+      var btn = li.querySelector('[data-connect]');
+      if (!btn) return;
+      if (requested[id]) {
+        btn.textContent = 'On the list ✓';
+        btn.classList.add('is-requested');
+        btn.title = "We'll switch this on soon — you're on the list.";
+      } else {
+        btn.textContent = 'Connect';
+        btn.classList.remove('is-requested');
+        btn.title = 'Coming soon';
+      }
+    }
+
+    root.querySelectorAll('.inbox-provider').forEach(function (li) {
+      paint(li);
+      var btn = li.querySelector('[data-connect]');
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        var id = li.getAttribute('data-provider');
+        requested[id] = !requested[id];
+        save();
+        paint(li);
+      });
+    });
+  })();
+  </script>
+</section>

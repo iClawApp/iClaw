@@ -259,17 +259,25 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Find people looking for a tool like ours on Reddit',
       "Who's complaining about <competitor> right now?",
       'Draft a first message for this lead',
+      'Remind me to follow up with these leads in 3 days',
     ],
     playbook:
-      "Start from the user's offer + ICP (ask once if unknown). Find intent — never a cold list:\n" +
-      "- social_search is the core tool: search Reddit / Hacker News / StackExchange / GitHub for intent phrases — 'recommend a tool for…', 'alternative to <competitor>', 'how do I <problem you solve>', 'frustrated with <competitor>'. ONE discovery call per angle, small limit.\n" +
-      "- web_search for forums, Quora, IndieHackers and review sites — a G2/Capterra complaint about a competitor is switching intent.\n" +
-      "- deep_research to vet a promising lead or their company before outreach.\n" +
-      "- write_file to save the qualified leads as a list: who · where · the exact signal (quote + link) · fit · a drafted opener.\n" +
-      "Qualify each lead against the offer and note WHY it fits, with the quote/link as evidence. Draft a short, specific first message that references their actual post — never a template, never salesy. You draft; the user sends. Skip anything where promoting would break the community's rules.",
+      "1) Intake first: get the offer + ICP (who it's for, the pain it kills, the main competitors). Ask ONCE if unknown, then go.\n" +
+      "2) Hunt INTENT, never a cold list — search for the moment someone reveals need:\n" +
+      "   - social_search (core): Reddit / Hacker News / StackExchange / GitHub for intent phrases — 'recommend a tool for…', 'alternative to <competitor>', 'how do I <the problem you solve>', 'anyone else frustrated with <competitor>'. ONE discovery call per angle, small limit.\n" +
+      "   - web_search: forums, Quora, IndieHackers and review sites — a G2/Capterra complaint about a competitor is switching intent.\n" +
+      "   - deep_research: vet a promising lead or their company before you draft.\n" +
+      "3) Qualify + score each lead: HOT (active need, fits ICP) / WARM (adjacent) / SKIP. Always attach the exact quote + link as evidence and one line on WHY it fits.\n" +
+      "4) Draft a short, specific opener that references their ACTUAL post — lead with their problem, not your pitch; no template, no 'Hi, I came across your post', no salesy fluff, one soft ask.\n" +
+      "5) Save with write_file as a lead list — one row each: name/handle · where (link) · signal (quote) · score · fit · drafted opener.\n" +
+      "6) Follow-up: once the user says they reached out, use set_reminder to ping them to follow up (e.g. in 3 days), one reminder per lead.\n" +
+      "Rules: you FIND and DRAFT — never send, never mass-blast, never astroturf. Skip any community where promo breaks the rules. Never invent a person, quote or link.",
     // Research the web + communities for intent signals, read context, save lead
-    // lists + drafts. (deep_research is offered on top for vetting prospects.)
-    tools: ['web_search', 'web_fetch', 'read_summary', 'social_search', 'list_files', 'read_file', 'search_files', 'write_file'],
+    // lists + drafts, and set follow-up reminders. (deep_research is offered on top
+    // for vetting prospects.)
+    tools: ['web_search', 'web_fetch', 'read_summary', 'social_search', 'list_files', 'read_file', 'search_files', 'write_file', 'set_reminder'],
+    // His own UI: connect a CRM to push qualified leads into the pipeline (scaffold).
+    panels: ['leads'],
   },
 ];
 
@@ -334,6 +342,7 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
   calendar: { id: 'calendar', partial: 'partials/panelCalendar', label: 'Content calendar', sub: 'Open the planner' },
   replies: { id: 'replies', partial: 'partials/panelReplies', label: 'Saved replies', sub: 'Open your templates' },
   inbox: { id: 'inbox', partial: 'partials/panelInbox', label: 'Connect inbox', sub: 'Gmail · Outlook · IMAP' },
+  leads: { id: 'leads', partial: 'partials/panelLeads', label: 'Connect CRM', sub: 'HubSpot · Pipedrive · Notion' },
 };
 
 /** Resolve a character's declared panel ids to their defs (unknown ids dropped). */
