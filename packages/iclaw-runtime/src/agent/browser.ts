@@ -86,12 +86,20 @@ async function ensureBrowser(projectId: number | null | undefined, visible: bool
   ensureLifecycle();
   const key = projectKey(projectId);
   const existing = handles.get(key);
-  if (existing && existing.visible === visible && !existing.context.pages()[0]?.isClosed()) {
-    existing.lastUsed = Date.now();
-    return existing;
-  }
-  // Mode changed (headful↔headless) → relaunch with the new mode.
   if (existing) {
+    // Same mode + a usable context → reuse it, refreshing the active page if the
+    // user closed the tab. A dead context falls through to a relaunch.
+    if (existing.visible === visible) {
+      try {
+        if (existing.page.isClosed()) {
+          const alive = existing.context.pages().find((p) => !p.isClosed());
+          existing.page = alive ?? (await existing.context.newPage());
+        }
+        existing.lastUsed = Date.now();
+        return existing;
+      } catch { /* context is gone → relaunch below */ }
+    }
+    // Mode changed (headful↔headless) or the context died → close + relaunch.
     handles.delete(key);
     await existing.context.close().catch(() => {});
   }

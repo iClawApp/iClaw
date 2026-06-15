@@ -900,7 +900,10 @@ export async function* runAgentTurn(
       yield { type: 'tool_start', name: tc.name, input: parsedArgs };
 
       // Guardrail: refuse to re-run an identical call that's already looping.
-      const blocked = guard.check(tc.name, tc.arguments);
+      // Browser tools are STATEFUL — browser_read/elements/screenshot take no args
+      // yet return different results as the page changes, so the repeat-guard
+      // (which assumes same args → same result) must not apply to them.
+      const blocked = tc.name.startsWith('browser_') ? null : guard.check(tc.name, tc.arguments);
       let result: string;
       if (blocked != null) {
         result = blocked;
