@@ -586,6 +586,15 @@
     else { try { localStorage.setItem(workFoldersKey(), val); } catch { /* ignore */ } }
   }
 
+  // Single source of truth for the wire shape the server expects: {path, readonly}.
+  // The UI stores `write` (read & write); the server speaks `readonly`. Both the
+  // Work send and the Incognito send go through here so the two can never drift
+  // apart (a past divergence had one path hardcode readonly:true). Incognito forces
+  // read-only — its sandbox roots are always read-only.
+  function workFoldersWire(forceReadonly) {
+    return getWorkFolders().map((f) => ({ path: f.path, readonly: forceReadonly ? true : !f.write }));
+  }
+
   function escAttr(s) {
     return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
@@ -5794,8 +5803,7 @@
       streamShownLen = 0;
       currentStreamEl = ensureStreamEl();
       setStopVisible(true);
-      const wf = (typeof getWorkFolders === 'function' ? getWorkFolders() : [])
-        .map((f) => ({ path: f.path, readonly: true }));
+      const wf = (typeof workFoldersWire === 'function' ? workFoldersWire(true) : []);
       const ok = wsSend({
         type: 'incognito-send',
         key: activeIncognitoKey,
@@ -5842,9 +5850,9 @@
     };
     if (item.mode) payload.mode = item.mode;
     if (item.mode === 'work') {
-      const wf = getWorkFolders ? getWorkFolders() : [];
+      const wf = typeof workFoldersWire === 'function' ? workFoldersWire(false) : [];
       if (wf.length > 0) {
-        payload.workFolders = wf.map((f) => ({ path: f.path, readonly: !f.write }));
+        payload.workFolders = wf;
       }
     }
     if (item.mode === 'secure') {

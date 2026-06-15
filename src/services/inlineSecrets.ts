@@ -155,6 +155,47 @@ function redactPrefixFragments(text: string, value: string, label: string): stri
   return out;
 }
 
+// A KEY name whose decisive suffix marks the value as sensitive (case-insensitive,
+// matched as a whole `_`-delimited word). Deliberately NOT broad words like API /
+// ACCESS / SESSION / URL — those produce false positives (KIE_API_BASE, BASE_URL);
+// the real secrets still end in KEY/TOKEN/SECRET/etc. (ACCESS_KEY, API_TOKEN…).
+const SECRET_KEY_HINT =
+  /(?:^|_)(?:KEY|TOKEN|SECRET|PASS|PASSWORD|PWD|APIKEY|CRED|CREDS|CREDENTIAL|CREDENTIALS|PRIVATE|BEARER|SIGNING|WEBHOOK|DSN|PAT)(?:_|$)/i;
+
+/** A VALUE that looks like a credential: long, mixed letters+digits, token charset. */
+function looksTokenish(v: string): boolean {
+  const s = v.replace(/^['"]|['"]$/g, '');
+  return s.length >= 16 && /[A-Za-z]/.test(s) && /[0-9]/.test(s) && /^[A-Za-z0-9_\-.\/+:=~]+$/.test(s);
+}
+
+/** A connection string with embedded credentials: scheme://user:password@host. */
+function hasEmbeddedCredentials(v: string): boolean {
+  return /^[A-Za-z][\w+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/.test(v.replace(/^['"]|['"]$/g, ''));
+}
+
+/**
+ * Mask the VALUE in `KEY=VALUE` lines that look like secrets — the shape you get
+ * from `cat .env` / `printenv`. INDEPENDENT of the vault: a never-registered key
+ * (a fresh `.env` the agent just read) is caught before it lands in chat history
+ * or the live UI, which `redactSecretValuesForChat` (vault-scoped) can't do.
+ * Conservative — only fires on a secret-ish KEY or a token-shaped VALUE, so plain
+ * config like `NODE_ENV=production` or `PORT=3000` survives untouched.
+ */
+export function redactEnvAssignments(text: string): string {
+  if (!text) return text;
+  return text.replace(
+    /^([ \t]*(?:export[ \t]+)?)([A-Za-z_][A-Za-z0-9_]*)([ \t]*=[ \t]*)(['"]?)([^\n'"#]+?)\4([ \t]*(?:#[^\n]*)?)$/gm,
+    (full: string, pre: string, key: string, eq: string, quote: string, val: string, post: string) => {
+      const v = val.trim();
+      if (!v) return full;
+      if (SECRET_KEY_HINT.test(key) || looksTokenish(v) || hasEmbeddedCredentials(v)) {
+        return `${pre}${key}${eq}${quote}[redacted]${quote}${post}`;
+      }
+      return full;
+    },
+  );
+}
+
 /** Strip client/server secret markers so auto-titles never echo token-shaped text. */
 export function stripSecretMarkersForTitle(text: string): string {
   return String(text ?? '')

@@ -156,7 +156,7 @@ export type WorkEvent =
   | { type: 'image'; path: string; mime: string; fileName: string; bytes: number }
   | { type: 'create_task'; title: string; goal: string }
   | { type: 'plan'; steps: { step: string; status: 'pending' | 'in_progress' | 'done' }[] }
-  | { type: 'set_timer'; minutes: number; note: string }
+  | { type: 'set_timer'; seconds: number; note: string }
   | { type: 'calendar'; entries: { date: string; text: string; platform: string; status: 'idea' | 'draft' }[] }
   | { type: 'reminder'; event: string; date: string; leadDays: number[]; recurring: 'none' | 'yearly' }
   | { type: 'done'; tokens?: number; cached?: number }

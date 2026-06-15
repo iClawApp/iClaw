@@ -368,6 +368,90 @@ async function rawExec(name: string, command: string, cwd: string): Promise<stri
   }
 }
 
+// ── Background jobs ───────────────────────────────────────────────────────────
+// Long work (image/video generation, big installs) can't fit the foreground
+// COMMAND_TIMEOUT. A background job is launched DETACHED inside the long-lived
+// work container (`nohup … &` → reparented to the container's init), so it keeps
+// running across turns — the agent ends its turn with set_timer and re-polls via
+// readJob. Output + exit code land in /tmp/.iclaw-jobs/<id>/ INSIDE the container
+// (never the user's bind-mounted folders), read back on demand.
+const JOBS_DIR = '/tmp/.iclaw-jobs';
+/** Launch/poll execs are sub-second — well under COMMAND_TIMEOUT. */
+const JOB_CTL_TIMEOUT = 15_000;
+/** Max chars of a job's output tail returned per poll. */
+const JOB_OUTPUT_TAIL = 4_000;
+
+export interface JobStatus {
+  status: 'running' | 'done' | 'missing';
+  /** Set only when status === 'done'. */
+  exitCode: number | null;
+  /** Tail of the job's combined stdout/stderr so far. */
+  output: string;
+}
+
+/**
+ * Launch `command` detached inside the work container at HOST cwd `hostCwd`.
+ * Paths are translated to `/work/<n>` exactly like execInWorkContainer. Returns
+ * a short job id; the process survives turn boundaries until it exits or the
+ * container is destroyed. Read progress/exit with readJob.
+ */
+export async function launchBackgroundJob(
+  name: string,
+  command: string,
+  hostCwd: string,
+  mounts: WorkMount[],
+): Promise<string> {
+  let containerCwd = hostCwd;
+  if (mounts.length) {
+    const mapped = hostToContainer(hostCwd, mounts);
+    if (mapped) containerCwd = mapped;
+    else if (!hostCwd.startsWith('/work/') && hostCwd !== '/') {
+      throw new Error(`working directory "${hostCwd}" is outside the folders you allowed for this chat`);
+    }
+  }
+  const containerCmd = translateCommandPaths(command, mounts);
+  const jobId = randomUUID().slice(0, 8);
+  const dir = `${JOBS_DIR}/${jobId}`;
+  // Wrapper cds, runs the (translated) command, then records its exit code.
+  // base64-encoded so arbitrary command text needs zero shell quoting in the exec.
+  const wrapper = `cd ${containerCwd} 2>/dev/null\n${containerCmd}\necho $? > ${dir}/exit\n`;
+  const b64 = Buffer.from(wrapper, 'utf8').toString('base64');
+  // Setup (mkdir + decode) runs SYNCHRONOUSLY; only the job itself is backgrounded
+  // via `{ … & }`, so the launcher exec returns once run.sh exists and the job is
+  // detached (nohup + reparented to the container's init → survives this exec).
+  const exec =
+    `mkdir -p ${dir} && echo ${b64} | base64 -d > ${dir}/run.sh && ` +
+    `{ nohup bash ${dir}/run.sh > ${dir}/out.log 2>&1 < /dev/null & } && echo __STARTED__`;
+  await execFileAsync('docker', ['exec', name, 'bash', '-lc', exec], { timeout: JOB_CTL_TIMEOUT });
+  return jobId;
+}
+
+/** Read a background job's current output tail + completion state. */
+export async function readJob(name: string, jobId: string): Promise<JobStatus> {
+  if (!/^[a-f0-9]{4,12}$/.test(jobId)) return { status: 'missing', exitCode: null, output: '' };
+  const dir = `${JOBS_DIR}/${jobId}`;
+  // Print the output tail, THEN a trailing marker the launcher's tail can't have
+  // produced — so completion state is unambiguous regardless of job output.
+  const exec =
+    `D=${dir}; if [ ! -d "$D" ]; then echo __NOJOB__; else ` +
+    `tail -c ${JOB_OUTPUT_TAIL} "$D/out.log" 2>/dev/null; ` +
+    `if [ -f "$D/exit" ]; then printf '\\n__DONE__%s\\n' "$(cat "$D/exit")"; else printf '\\n__RUNNING__\\n'; fi; fi`;
+  let raw: string;
+  try {
+    const { stdout } = await execFileAsync('docker', ['exec', name, 'bash', '-lc', exec], { timeout: JOB_CTL_TIMEOUT });
+    raw = stdout;
+  } catch (err) {
+    raw = (err as { stdout?: string }).stdout ?? '';
+  }
+  if (raw.includes('__NOJOB__')) return { status: 'missing', exitCode: null, output: '' };
+  const done = raw.match(/\n__DONE__(-?\d+)\n?\s*$/);
+  if (done) {
+    return { status: 'done', exitCode: Number(done[1]), output: raw.slice(0, done.index).trimEnd() };
+  }
+  const runIdx = raw.lastIndexOf('\n__RUNNING__');
+  return { status: 'running', exitCode: null, output: (runIdx >= 0 ? raw.slice(0, runIdx) : raw).trimEnd() };
+}
+
 type FileSnapshot = Map<string, string>; // container path → mtime (epoch float)
 
 /**

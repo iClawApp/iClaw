@@ -13,7 +13,10 @@ import { scheduledMessages } from './store';
 import { sendMessage } from './chatRunner';
 import { wsHub } from './wsHub';
 
-const TICK_MS = 15_000;
+// 4s so seconds-granularity self-timers (set_timer, e.g. "re-check in 10s" while
+// polling a background job) fire promptly. The sweep is a cheap indexed query +
+// the `sweeping` guard prevents overlap, so the tighter cadence is negligible.
+const TICK_MS = 4_000;
 
 let timer: NodeJS.Timeout | null = null;
 let sweeping = false;

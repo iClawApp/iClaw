@@ -4,6 +4,7 @@ import { chats, messages, projectSecrets, projects } from '../../src/services/st
 import {
   findSelectionSpanInMessageContent,
   redactSecretValuesForChat,
+  redactEnvAssignments,
   redactSelectionInMessageContent,
 } from '../../src/services/inlineSecrets';
 
@@ -94,5 +95,39 @@ describe('redactSecretValuesForChat', () => {
     expect(out).toContain('12345'); // < 6 chars — too collision-prone to scrub
     expect(out).toContain('[secret:tok]');
     expect(out).not.toContain('long-enough-token');
+  });
+});
+
+describe('redactEnvAssignments (vault-independent .env scrub)', () => {
+  it('masks a never-registered .env key with NO project scope (the kie.ai leak)', () => {
+    // Exactly the shape that leaked: a `cat .env` dump, no vault entry, no project.
+    const dump = 'KIE_API_KEY=576e5a38e0fbfeac629c5a1f0eab20c2\nKIE_API_BASE=https://api.kie.ai';
+    const out = redactEnvAssignments(dump);
+    expect(out).not.toContain('576e5a38e0fbfeac629c5a1f0eab20c2');
+    expect(out).toContain('KIE_API_KEY=[redacted]');
+    // Non-secret config (a plain URL, neutral key) is left readable.
+    expect(out).toContain('KIE_API_BASE=https://api.kie.ai');
+  });
+
+  it('fires on a secret-ish KEY even when the value is short', () => {
+    expect(redactEnvAssignments('DB_PASSWORD=hunter2')).toBe('DB_PASSWORD=[redacted]');
+    expect(redactEnvAssignments('export OPENAI_API_KEY=sk-abc')).toBe('export OPENAI_API_KEY=[redacted]');
+  });
+
+  it('fires on a token-shaped VALUE even with a neutral key, and keeps quotes', () => {
+    expect(redactEnvAssignments('FOO="ghp_E4I0Hzmuk5buuYDgO6MX1234"')).toBe('FOO="[redacted]"');
+  });
+
+  it('masks a connection string with embedded credentials, keeps a plain URL', () => {
+    expect(redactEnvAssignments('DATABASE_URL=postgres://user:s3cretpw@host:5432/db'))
+      .toBe('DATABASE_URL=[redacted]');
+    // Neutral key + digit-bearing-but-no-userinfo URL is borderline; a credential-
+    // free https URL with no digits stays readable.
+    expect(redactEnvAssignments('API_BASE=https://api.example.com')).toBe('API_BASE=https://api.example.com');
+  });
+
+  it('leaves ordinary config untouched', () => {
+    const cfg = 'NODE_ENV=production\nPORT=3000\nLOG_LEVEL=debug\nHOST=localhost';
+    expect(redactEnvAssignments(cfg)).toBe(cfg);
   });
 });

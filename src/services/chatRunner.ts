@@ -29,12 +29,13 @@ import {
 import { resolve as resolvePath, sep as pathSep, join as joinPath } from 'node:path';
 import { homedir } from 'node:os';
 import type { ChatMode, Message, MessageAttachment, ToolTraceEntry } from '../types';
-import { DEFAULT_MODE } from './chatModes';
+import { normalizeChatMode } from './chatModes';
 import { buildCompactedHistory } from './contextCompaction';
 import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession, abortWorkSession, exportSandbox, type ExportResult } from './workRuntime';
 import {
   expandStoredSecretPlaceholdersForGateway,
   redactSecretValuesForChat,
+  redactEnvAssignments,
   resolveInlineSecretMarkersInContent,
   stripSecretMarkersForTitle,
   type InlineSecretWire,
@@ -50,6 +51,39 @@ const DEFAULT_AGENT = 'openclaw/default';
 export interface WorkFolder {
   path: string;
   readonly: boolean;
+}
+
+/**
+ * Reconstruct a chat's Work folders from the project-keyed UI store the browser
+ * persists them in (`ui.iclaw:work-folders:project:<id>` / `:no-project`). Used
+ * when a turn arrives WITHOUT folders — a set_timer auto-resume fired by the
+ * scheduler — so the resumed Work turn keeps the same sandbox it paused in.
+ * Mirrors the frontend's getWorkFolders parsing ({path, write} or bare string).
+ */
+function loadProjectWorkFolders(projectId: number | null): WorkFolder[] | undefined {
+  const key = projectId
+    ? `ui.iclaw:work-folders:project:${projectId}`
+    : 'ui.iclaw:work-folders:no-project';
+  const raw = kvGet(key);
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return undefined;
+    const out: WorkFolder[] = [];
+    for (const f of parsed) {
+      if (typeof f === 'string') {
+        if (f) out.push({ path: f, readonly: false }); // legacy bare path = writable
+      } else if (f && typeof f === 'object') {
+        const o = f as { path?: unknown; write?: unknown };
+        if (typeof o.path === 'string' && o.path) {
+          out.push({ path: o.path, readonly: o.write !== true });
+        }
+      }
+    }
+    return out.length ? out : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -257,9 +291,16 @@ async function runTurnLocked(opts: {
     prePersistedAttachments,
     inlineSecrets,
   } = opts;
-  const mode: ChatMode = opts.mode ?? DEFAULT_MODE;
   const chat = chats.get(chatId)!;
   const projectId = chat.project_id ?? null;
+  // A scheduled set_timer auto-resume calls sendMessage with neither mode nor
+  // workFolders. Fall back to the chat's persisted send-mode (set via POST
+  // /chats/:id/mode) and its project's saved Work folders, so the agent resumes
+  // in the SAME mode + sandbox it paused in — otherwise a Work poll loop would
+  // resume in execute mode with no sandbox and lose its background job.
+  const mode: ChatMode = opts.mode ?? normalizeChatMode(chat.mode);
+  const workFolders: WorkFolder[] | undefined =
+    opts.workFolders ?? (mode === 'work' ? loadProjectWorkFolders(projectId) : undefined);
 
   let storedUserContent = content;
   let newSecretIds: number[] = [];
@@ -469,7 +510,7 @@ async function runTurnLocked(opts: {
     // Specialists are autonomous agents: high round ceiling + set_timer self-
     // scheduling. Same gate as create_task (a named character, not task plumbing).
     const autonomous = canCreateTasks;
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders: opts.workFolders, secure: mode === 'secure', canCreateTasks, autonomous, networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders, secure: mode === 'secure', canCreateTasks, autonomous, networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }
@@ -1029,8 +1070,14 @@ async function runWorkModeTurn(opts: {
     // live status detail AND the stored trace — or the placeholder system
     // would leak the plaintext into the DB and the UI.
     const chatScopeForRedact = chats.get(chatId);
-    const redact = (s: string): string =>
-      chatScopeForRedact ? redactSecretValuesForChat(s, chatScopeForRedact) : s;
+    // Two layers: (1) vault values usable in this chat → [secret:label]; (2) raw
+    // `KEY=VALUE` .env-shaped lines → [redacted], which fires even with NO project
+    // and for never-registered keys (a fresh `cat .env`) — the gap that leaked the
+    // kie.ai key into no-project chats. Layer 2 runs regardless of chat scope.
+    const redact = (s: string): string => {
+      const v = chatScopeForRedact ? redactSecretValuesForChat(s, chatScopeForRedact) : s;
+      return redactEnvAssignments(v);
+    };
     // Savings notes arrive mid-stream (when a tool truncates), but we want them
     // rendered BELOW the assistant's reply, not above it. So buffer them and
     // flush as system rows only after the assistant row is appended on `done`.
@@ -1099,11 +1146,12 @@ async function runWorkModeTurn(opts: {
           // server side stateless here, mirroring the calendar/replies panels.
           wsHub.broadcastToChat(chatId, { type: 'chat-plan', chatId, steps: event.steps });
         } else if (event.type === 'set_timer') {
-          // Autonomous self-scheduling: resume THIS chat after the delay. We
-          // schedule a normal scheduled_message — the scheduler fires it through
-          // sendMessage, so the resume looks exactly like a user nudge — and
-          // broadcast it so the UI shows the pending timer. Re-clamp defensively.
-          const minutes = Math.max(1, Math.min(1440, Math.round(event.minutes) || 0));
+          // Self-scheduling: resume THIS chat after the delay. We schedule a normal
+          // scheduled_message — the scheduler fires it through sendMessage, so the
+          // resume looks exactly like a user nudge — and broadcast it so the UI
+          // shows the pending timer. Seconds granularity (5 s … 24 h) so the agent
+          // can poll a background job tightly. Re-clamp defensively.
+          const seconds = Math.max(5, Math.min(86_400, Math.round(event.seconds) || 0));
           const note = (event.note || '').trim();
           const content = note
             ? `[Auto-resume] ${note}`
@@ -1112,7 +1160,7 @@ async function runWorkModeTurn(opts: {
             const row = scheduledMessages.create({
               chatId,
               content,
-              scheduledAt: new Date(Date.now() + minutes * 60_000),
+              scheduledAt: new Date(Date.now() + seconds * 1000),
             });
             wsHub.broadcastToChat(chatId, { type: 'scheduled-added', chatId, scheduled: row });
           } catch { /* never break the turn over a timer */ }
@@ -1232,12 +1280,16 @@ async function runWorkModeTurn(opts: {
             if (att) turnAttachments.push(att);
           }
         } else if (event.type === 'done') {
-          if (accumulated.trim() || turnAttachments.length > 0) {
+          // Redact before persistence: if the model echoed a secret value or a
+          // raw `.env` line into its reply, scrub it so the plaintext never lands
+          // in messages.content (or the skill-review pipeline downstream).
+          const persistedAssistant = redact(accumulated);
+          if (persistedAssistant.trim() || turnAttachments.length > 0) {
             // Stamp the assistant row with the actual turn mode (secure/work),
             // not the append() default of 'execute'. Keeps history + UI honest.
             // `tokens` powers the dev-mode usage badge (null when not reported).
             const assistantMsg = messages.append(
-              chatId, 'assistant', accumulated, null, null,
+              chatId, 'assistant', persistedAssistant, null, null,
               turnAttachments.length > 0 ? turnAttachments : null,
               opts.secure ? 'secure' : 'work', event.tokens ?? null, event.cached ?? null,
               toolTrace.length > 0 ? toolTrace : null,
@@ -1261,7 +1313,7 @@ async function runWorkModeTurn(opts: {
                 sharesToProject: Boolean(chatNow.shares_to_project),
                 substantive: true,
                 userMessage: opts.reviewUserMessage ?? content,
-                assistantText: accumulated,
+                assistantText: persistedAssistant,
                 assistantMessageId: assistantMsg.id,
                 untrusted: Boolean(opts.networkEnabled),
                 interval: WORK_SKILL_REVIEW_INTERVAL,

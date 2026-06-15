@@ -16,6 +16,7 @@ import {
 } from './secure-runner.js';
 import {
   resolveWorkImage, startWorkContainer, execInWorkContainer,
+  launchBackgroundJob, readJob,
   toWorkMounts, type WorkMount,
 } from './work-container.js';
 import { ingestSources, describeIngest, type IngestSource } from './secure-ingest.js';
@@ -98,7 +99,14 @@ interface Session {
    * secureContainer — a session is exactly one mode). Holds the user's chosen
    * folders bind-mounted :ro/:rw; only run_command runs inside it.
    */
-  workContainer?: { name: string; lastUsed: number; inUse: boolean } | undefined;
+  // `activeJobs` = uncollected background commands (run_command background:true)
+  // still running in this container. While > 0 the idle reaper / LRU must NOT
+  // free the container, or the detached job dies mid-flight.
+  // `mountKey` = signature of the bind mounts (path + :ro/:rw) baked into the
+  // running container. When folderAccess changes (e.g. the user toggles a folder
+  // to read-write), the desired mounts no longer match and the container is
+  // recreated — otherwise it keeps enforcing the OLD read-only flag.
+  workContainer?: { name: string; lastUsed: number; inUse: boolean; activeJobs: number; mountKey: string } | undefined;
   /** Stable identity for reconnection across restarts. */
   key?: string | undefined;
   /** Last activity timestamp (ms). Updated on each message. */
@@ -273,7 +281,7 @@ export function reapIdleContainers(): number {
       reaped++;
     }
     const w = session.workContainer;
-    if (w && !w.inUse && now - w.lastUsed > CONTAINER_IDLE_MS) {
+    if (w && !w.inUse && w.activeJobs === 0 && now - w.lastUsed > CONTAINER_IDLE_MS) {
       stopContainer(w.name);
       session.workContainer = undefined;
       reaped++;
@@ -328,7 +336,7 @@ function evictWarmContainersIfNeeded(keep: Session): void {
     if (s.secureContainer && !s.secureContainer.inUse) {
       warm.push({ session: s, kind: 'secure', name: s.secureContainer.name, lastUsed: s.secureContainer.lastUsed });
     }
-    if (s.workContainer && !s.workContainer.inUse) {
+    if (s.workContainer && !s.workContainer.inUse && s.workContainer.activeJobs === 0) {
       warm.push({ session: s, kind: 'work', name: s.workContainer.name, lastUsed: s.workContainer.lastUsed });
     }
   }
@@ -343,14 +351,22 @@ function evictWarmContainersIfNeeded(keep: Session): void {
 }
 
 /**
+/** Signature of a container's bind mounts — path + :ro/:rw, order-stable. */
+function mountsKey(mounts: WorkMount[]): string {
+  return mounts.map((m) => `${m.containerPath}=${m.path}:${m.readonly ? 'ro' : 'rw'}`).join('|');
+}
+
+/**
  * Ensure the Work session has a running command sandbox with `mounts`. Reuses
- * the warm container when alive; recreates it if it died. Throws (fail-closed)
- * if Docker can't start it, so run_command surfaces the error instead of
- * leaking to the host.
+ * the warm container when alive AND its mounts still match; recreates it if it
+ * died OR the mounts changed (e.g. the user toggled a folder to read-write — the
+ * old container still has the :ro flag baked in). Throws (fail-closed) if Docker
+ * can't start it, so run_command surfaces the error instead of leaking to host.
  */
 async function ensureWorkContainer(session: Session, mounts: WorkMount[], image: string): Promise<string> {
   const existing = session.workContainer;
-  if (existing && await isContainerRunning(existing.name)) {
+  const wantKey = mountsKey(mounts);
+  if (existing && existing.mountKey === wantKey && await isContainerRunning(existing.name)) {
     existing.lastUsed = Date.now();
     existing.inUse = true;
     return existing.name;
@@ -361,7 +377,7 @@ async function ensureWorkContainer(session: Session, mounts: WorkMount[], image:
   }
   evictWarmContainersIfNeeded(session);
   const name = await startWorkContainer(mounts, image);
-  session.workContainer = { name, lastUsed: Date.now(), inUse: true };
+  session.workContainer = { name, lastUsed: Date.now(), inUse: true, activeJobs: 0, mountKey: wantKey };
   return name;
 }
 
@@ -695,6 +711,8 @@ export async function sendMessage(sessionId: string, content: string, networkEna
   // kernel rejects all writes, matching the read-only contract.
   const incognito = !!session.opts.incognito;
   let runShell: ((command: string, cwd: string) => Promise<string>) | undefined;
+  let startJob: ((command: string, cwd: string) => Promise<string>) | undefined;
+  let checkJob: ((jobId: string) => Promise<string>) | undefined;
   let linkSandbox: ((command: string) => Promise<string>) | undefined;
 
   // Validate the explicitly-chosen folders into bind mounts (empty when none
@@ -745,6 +763,38 @@ export async function sendMessage(sessionId: string, content: string, networkEna
       // user sees exactly what changed inside their allowed folders.
       return execInWorkContainer(name, command, cwd, { mounts, scan: true });
     };
+    // Background mode: launch detached in the same long-lived container and bump
+    // activeJobs so the reaper keeps it alive across the set_timer wait. The count
+    // is decremented when check_job observes the job has finished.
+    startJob = async (command, cwd) => {
+      if (!(await ensureSandbox())) {
+        throw new Error('Docker sandbox is not running and could not be started automatically.');
+      }
+      const image = await resolveWorkImage();
+      const name = await ensureWorkContainer(session, mounts, image);
+      const jobId = await launchBackgroundJob(name, command, cwd, mounts);
+      if (session.workContainer) session.workContainer.activeJobs += 1;
+      return jobId;
+    };
+    checkJob = async (jobId) => {
+      const container = session.workContainer;
+      if (!container || !(await isContainerRunning(container.name))) {
+        return `The background sandbox is no longer running, so job "${jobId}" was lost. Re-run the command if you still need it.`;
+      }
+      const job = await readJob(container.name, jobId);
+      // Keep the container warm while we're actively polling.
+      container.lastUsed = Date.now();
+      if (job.status === 'missing') {
+        return `No background job "${jobId}" found (wrong id, or it was cleaned up). Re-run the command if needed.`;
+      }
+      if (job.status === 'done') {
+        if (container.activeJobs > 0) container.activeJobs -= 1;
+        const verdict = job.exitCode === 0 ? 'finished SUCCESSFULLY (exit 0)' : `FAILED (exit ${job.exitCode})`;
+        return `Job "${jobId}" is DONE — ${verdict}.\n\n${job.output || '(no output)'}`;
+      }
+      return `Job "${jobId}" is still RUNNING. Output so far:\n\n${job.output || '(no output yet)'}\n\n` +
+        `Use set_timer to wait a bit, then check_job again.`;
+    };
   }
 
   const gen = runAgentTurn(session.history, messageText, {
@@ -753,6 +803,8 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     allowedFolders: session.opts.allowedFolders,
     folderAccess: session.opts.folderAccess,
     runShell,
+    startJob,
+    checkJob,
     linkSandbox,
     incognito,
     characterTools: session.opts.characterTools,

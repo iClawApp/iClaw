@@ -5,6 +5,7 @@ import {
   toolResultVerdict,
   normalizePlanSteps,
   clampTimerMinutes,
+  clampTimerSeconds,
   normalizeCalendarEntries,
   normalizeReminder,
   type Message,
@@ -128,6 +129,25 @@ describe('clampTimerMinutes (set_timer tool)', () => {
     expect(clampTimerMinutes('soon')).toBeNull();
     expect(clampTimerMinutes(undefined)).toBeNull();
     expect(clampTimerMinutes(NaN)).toBeNull();
+  });
+});
+
+describe('clampTimerSeconds (set_timer tool — seconds granularity)', () => {
+  it('prefers seconds and clamps to the 5s…24h range', () => {
+    expect(clampTimerSeconds(30, undefined)).toBe(30);
+    expect(clampTimerSeconds(10.6, undefined)).toBe(11);
+    expect(clampTimerSeconds(1, undefined)).toBe(5); // floor 5s
+    expect(clampTimerSeconds(999999, undefined)).toBe(86_400); // 24h cap
+  });
+  it('falls back to minutes×60 when seconds is absent/invalid', () => {
+    expect(clampTimerSeconds(undefined, 2)).toBe(120);
+    expect(clampTimerSeconds('soon', 1)).toBe(60);
+    expect(clampTimerSeconds(0, 5)).toBe(300);
+  });
+  it('returns null when neither is usable', () => {
+    expect(clampTimerSeconds(undefined, undefined)).toBeNull();
+    expect(clampTimerSeconds('nope', 'nope')).toBeNull();
+    expect(clampTimerSeconds(0, 0)).toBeNull();
   });
 });
 

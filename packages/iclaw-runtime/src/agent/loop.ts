@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, CREATE_TASK_TOOL, UPDATE_PLAN_TOOL, SET_TIMER_TOOL, UPDATE_CALENDAR_TOOL, SET_REMINDER_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, CREATE_TASK_TOOL, UPDATE_PLAN_TOOL, SET_TIMER_TOOL, CHECK_JOB_TOOL, UPDATE_CALENDAR_TOOL, SET_REMINDER_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
 import { SOCIAL_SEARCH_TOOL } from './social.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 import { resolveTurnModel } from './model-capabilities.js';
@@ -19,6 +19,10 @@ export interface AgentOptions {
   folderAccess?: { path: string; readonly: boolean }[] | undefined;
   /** Shell backend for run_command (Docker sandbox). Omit to disable commands. */
   runShell?: ((command: string, cwd: string) => Promise<string>) | undefined;
+  /** Background-job backend (run_command background:true). Wired with runShell. */
+  startJob?: ((command: string, cwd: string) => Promise<string>) | undefined;
+  /** Background-job poller (check_job). Wired with runShell. */
+  checkJob?: ((jobId: string) => Promise<string>) | undefined;
   /**
    * Sandbox backend for analyze_link (yt-dlp). Runs in the session's container
    * so yt-dlp never parses untrusted data on the host. Omit to drop the tool
@@ -107,7 +111,7 @@ export type AgentEvent =
   | { type: 'approval_request'; changeId: string; path: string; content: string }
   | { type: 'create_task'; title: string; goal: string }
   | { type: 'plan'; steps: PlanStep[] }
-  | { type: 'set_timer'; minutes: number; note: string }
+  | { type: 'set_timer'; seconds: number; note: string }
   | { type: 'calendar'; entries: CalendarEntry[] }
   | { type: 'reminder'; event: string; date: string; leadDays: number[]; recurring: 'none' | 'yearly' }
   | { type: 'done'; tokens?: number | undefined; cached?: number | undefined }
@@ -196,6 +200,18 @@ export function clampTimerMinutes(raw: unknown): number | null {
   return Math.min(m, 1440);
 }
 
+/**
+ * Resolve a set_timer delay (seconds) from a `seconds` and/or `minutes` arg.
+ * `seconds` wins; falls back to minutes×60. Clamped 5 s … 24 h; null if neither
+ * is a usable number — so the model can poll tightly (10–30 s) or wait long.
+ */
+export function clampTimerSeconds(secondsRaw: unknown, minutesRaw: unknown): number | null {
+  const s = typeof secondsRaw === 'number' ? secondsRaw : Number(secondsRaw);
+  if (Number.isFinite(s) && s > 0) return Math.min(Math.max(Math.round(s), 5), 86_400);
+  const m = clampTimerMinutes(minutesRaw);
+  return m == null ? null : Math.min(m * 60, 86_400);
+}
+
 /** Turn a provider/SDK error into a concise, user-facing message. */
 export function describeApiError(err: unknown): string {
   const e = err as {
@@ -211,6 +227,15 @@ export function describeApiError(err: unknown): string {
       'or switch to a model with higher limits (ICLAW_MODEL).';
   }
   const msg = e?.message || String(err);
+  // Model request timed out (the SDK's literal "Request timed out." or a connection
+  // timeout) — usually a slow/stalled provider. Already auto-retried; give the user
+  // something actionable instead of the bare SDK string.
+  if (/request timed out|timed out|ETIMEDOUT|ECONNRESET|connection error/i.test(msg)) {
+    return 'The model provider took too long to respond and the request timed out (it was retried). ' +
+      'This is usually a temporary OpenRouter/provider stall — try again, or switch ICLAW_MODEL to a faster/more ' +
+      'reliable model. For long work (image/video generation) run it in the background (run_command background:true) ' +
+      'so a slow turn never blocks on it.';
+  }
   // Non-vision model handed an image → OpenRouter 404 "No endpoints found that
   // support image input". The vision gate (resolveTurnModel) pre-empts this for
   // confirmed text-only models; this is the safety net for the unknown-capability
@@ -475,6 +500,12 @@ export async function* runAgentTurn(
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey: opts.apiKey,
+    // Without an explicit timeout the SDK waits its 10-minute default, so a
+    // stalled provider hangs the whole turn before surfacing "Request timed out".
+    // Cap a single completion at ICLAW_MODEL_TIMEOUT_MS (default 3 min) and let
+    // the SDK retry transient failures (timeouts, 429s, 5xx) a couple of times.
+    timeout: Number(process.env.ICLAW_MODEL_TIMEOUT_MS) || 180_000,
+    maxRetries: Number(process.env.ICLAW_MODEL_MAX_RETRIES ?? 2),
   });
 
   // A tool may emit a savings note mid-call (analyze_link). Collect it here and
@@ -485,6 +516,8 @@ export async function* runAgentTurn(
     allowedFolders: opts.allowedFolders,
     folderAccess: opts.folderAccess,
     runShell: opts.runShell,
+    startJob: opts.startJob,
+    checkJob: opts.checkJob,
     linkSandbox: opts.linkSandbox,
     readOnly: opts.incognito,
     readAnywhere: opts.incognito,
@@ -532,9 +565,13 @@ export async function* runAgentTurn(
     // update_plan renders + persists in Work-mode chats; Incognito is ephemeral
     // (nothing to render to), so skip it there.
     ...(opts.incognito ? [] : [UPDATE_PLAN_TOOL]),
-    // set_timer needs a persistent chat to resume into — autonomous Work turns
-    // only (not incognito).
-    ...(opts.autonomous && !opts.incognito ? [SET_TIMER_TOOL] : []),
+    // set_timer needs a persistent chat to resume into (any Work/specialist chat
+    // is one — only Incognito is ephemeral). Offered for ALL non-incognito turns
+    // so a normal Work chat can poll a background job, not just autonomous runs.
+    ...(opts.incognito ? [] : [SET_TIMER_TOOL]),
+    // check_job polls a background command — only useful when the sandbox (and so
+    // run_command background mode) is wired.
+    ...(opts.runShell && !opts.incognito ? [CHECK_JOB_TOOL] : []),
     // update_calendar — only the calendar-panel specialists (Soshie/Ava) carry
     // it in their allowlist; gate on that, Work turns only.
     ...(opts.characterTools?.includes('update_calendar') && !opts.incognito
@@ -769,15 +806,16 @@ export async function* runAgentTurn(
         // message that resumes THIS chat after the delay. The agent should wrap
         // up this turn now, so force a conclusion next round (tools off) — the
         // scheduled resume picks the work back up.
-        const a = parsedArgs as { minutes?: unknown; note?: unknown };
-        const minutes = clampTimerMinutes(a.minutes);
+        const a = parsedArgs as { seconds?: unknown; minutes?: unknown; note?: unknown };
+        const seconds = clampTimerSeconds(a.seconds, a.minutes);
         const note = typeof a.note === 'string' ? a.note.trim().slice(0, 500) : '';
-        if (minutes == null) {
-          result = 'set_timer needs "minutes" as a number between 1 and 1440.';
+        if (seconds == null) {
+          result = 'set_timer needs "seconds" (5–86400) or "minutes" (1–1440) as a number.';
         } else {
-          yield { type: 'set_timer', minutes, note };
+          yield { type: 'set_timer', seconds, note };
           forceConclude = true;
-          result = `Timer set — this chat will resume in ${minutes} minute${minutes === 1 ? '' : 's'} with your note. ` +
+          const human = seconds < 90 ? `${seconds} second${seconds === 1 ? '' : 's'}` : `${Math.round(seconds / 60)} minute${Math.round(seconds / 60) === 1 ? '' : 's'}`;
+          result = `Timer set — this chat will resume in ${human} with your note. ` +
             `Briefly tell the user what you're waiting for, then stop; you'll continue automatically when it resumes.`;
         }
       } else if (tc.name === 'update_calendar') {

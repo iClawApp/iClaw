@@ -191,12 +191,18 @@ export const TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'run_command',
-      description: 'Run a shell command in an allowed folder. Chain steps with && to save calls.',
+      description:
+        'Run a shell command in an allowed folder. Chain steps with && to save calls. ' +
+        'Foreground commands are killed after a timeout (~60s) — for anything that legitimately ' +
+        'takes longer (image/video generation, long installs/builds, polling a remote job) set ' +
+        'background:true. That returns a job_id immediately; then use set_timer to wait and check_job ' +
+        'to poll it. Do NOT run long jobs in the foreground and assume they finished.',
       parameters: {
         type: 'object',
         properties: {
           command: { type: 'string', description: 'Command' },
           cwd: { type: 'string', description: 'Working dir (allowed folder)' },
+          background: { type: 'boolean', description: 'Run detached and return a job_id immediately (for long-running work). Poll with check_job; wait with set_timer.' },
         },
         required: ['command', 'cwd'],
       },
@@ -294,28 +300,52 @@ export const UPDATE_PLAN_TOOL = {
 } as const;
 
 /**
- * set_timer — self-scheduling for autonomous runs. The runtime does NOT execute
- * it; it emits a 'set_timer' AgentEvent and the host schedules a message that
- * resumes THIS chat after the delay (via scheduler.ts / scheduled_messages). Lets
- * a long task pause and pick itself back up — "kick off a process, wait 5 min,
- * re-check, continue". Offered only in autonomous turns (opts.autonomous).
+ * set_timer — self-scheduling. The runtime does NOT execute it; it emits a
+ * 'set_timer' AgentEvent and the host schedules a message that resumes THIS chat
+ * after the delay (via scheduler.ts / scheduled_messages). Lets a long task pause
+ * and pick itself back up — "kick off a background job, wait 30s, re-check,
+ * continue". Seconds granularity so it pairs with check_job for tight polling.
  */
 export const SET_TIMER_TOOL = {
   type: 'function' as const,
   function: {
     name: 'set_timer',
     description:
-      'Pause and resume yourself later. Use ONLY when the right next step is to WAIT — you started a long ' +
-      'process, you want to re-check a file/metrics after some time, or you are rate-limited. The chat resumes ' +
-      'automatically after the delay with your note, and you continue from there. Do NOT use it to stall on work ' +
-      'you can do right now.',
+      'Pause and resume yourself later. Use ONLY when the right next step is to WAIT — you started a long/background ' +
+      'process, you want to re-check a job/file after some time, or you are rate-limited. The chat resumes ' +
+      'automatically after the delay with your note, and you continue from there. Typical poll loop: start a ' +
+      'background job → set_timer 30s → check_job → if still running, set_timer 10s → repeat. Do NOT use it to ' +
+      'stall on work you can do right now.',
     parameters: {
       type: 'object',
       properties: {
-        minutes: { type: 'number', description: 'How long to wait before resuming, in minutes (1–1440).' },
-        note: { type: 'string', description: 'A short instruction to your future self — what to do/check when you resume.' },
+        seconds: { type: 'number', description: 'How long to wait before resuming, in seconds (5–86400). Use this for polling.' },
+        minutes: { type: 'number', description: 'Alternative to seconds, for longer waits (1–1440). Ignored if seconds is set.' },
+        note: { type: 'string', description: 'A short instruction to your future self — what to do/check when you resume (e.g. the job_id to poll).' },
       },
-      required: ['minutes'],
+    },
+  },
+} as const;
+
+/**
+ * check_job — poll a background command started with run_command(background:true).
+ * Executes directly in the runtime (reads the job's output tail + exit state from
+ * the sandbox container). Offered only when a sandbox backend is wired.
+ */
+export const CHECK_JOB_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'check_job',
+    description:
+      'Check on a background command (started via run_command with background:true). Returns its output so far ' +
+      'plus whether it is still RUNNING or DONE (with exit code). If still running, set_timer for a bit and check ' +
+      'again — do not assume it finished.',
+    parameters: {
+      type: 'object',
+      properties: {
+        job_id: { type: 'string', description: 'The job_id returned by run_command(background:true).' },
+      },
+      required: ['job_id'],
     },
   },
 } as const;
@@ -505,7 +535,7 @@ export const ANALYZE_LINK_TOOL = {
 
 export type ToolName =
   | 'list_files' | 'read_file' | 'read_summary' | 'search_files' | 'write_file' | 'edit_file'
-  | 'run_command' | 'web_fetch' | 'web_search' | 'analyze_link' | 'social_search' | 'show_image';
+  | 'run_command' | 'check_job' | 'web_fetch' | 'web_search' | 'analyze_link' | 'social_search' | 'show_image';
 
 /** A host image the agent asked to display inline (via show_image). */
 export interface ImageRef {
@@ -585,6 +615,15 @@ export interface ToolContext {
    */
   runShell?: ((command: string, cwd: string) => Promise<string>) | undefined;
   /**
+   * Launch a long-running command in the BACKGROUND (detached in the sandbox
+   * container) and return a short job id immediately — for work that can't fit
+   * the foreground command timeout (image/video generation, big installs). The
+   * process survives turn boundaries; the agent re-polls with checkJob. Wired
+   * only when runShell is (both need the container). */
+  startJob?: ((command: string, cwd: string) => Promise<string>) | undefined;
+  /** Poll a background job started by startJob: returns its output tail + state. */
+  checkJob?: ((jobId: string) => Promise<string>) | undefined;
+  /**
    * Runs an analyze_link helper command inside the session's sandbox container
    * (warm-reused; yt-dlp self-installs once). Injected so yt-dlp — which parses
    * untrusted YouTube data — never runs on the host. Omitted when no Docker →
@@ -647,6 +686,7 @@ export async function executeTool(
       case 'write_file': return await writeFile(args, ctx);
       case 'edit_file': return await editFile(args, ctx);
       case 'run_command': return await runCommand(args, ctx);
+      case 'check_job': return await checkJobTool(args, ctx);
       case 'web_fetch': return await webFetch(args, ctx);
       case 'web_search': return await webSearch(args);
       case 'show_image': return showImage(args, ctx);
@@ -969,6 +1009,23 @@ async function runCommand(args: Record<string, unknown>, ctx: ToolContext): Prom
       'Ask the user to start Docker and/or add a folder. Meanwhile read_file / search_files / write_file still work.';
   }
 
+  // Background mode: launch detached and return a job id immediately, so work
+  // that outlives the foreground timeout (image/video gen, long builds) isn't
+  // killed mid-flight. The agent polls with check_job and waits with set_timer.
+  if (args.background === true) {
+    if (!ctx.startJob) {
+      return 'Background commands need the Docker sandbox (same as run_command). It is unavailable here; run the command in the foreground instead.';
+    }
+    try {
+      const jobId = await ctx.startJob(command, cwd);
+      return `Started in the background — job_id "${jobId}". It is RUNNING now and will keep running between turns. ` +
+        `Do NOT assume it finished: use set_timer to wait (e.g. 30s) and check_job with job_id "${jobId}" to poll its ` +
+        `output and exit code. Re-check (shorter waits) until it is DONE.`;
+    } catch (err) {
+      return `Could not start background job: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
   // The sandbox mounts read-only folders as :ro, so the kernel — not us —
   // rejects any write outside the read & write folders. Commands may freely
   // read from read-only folders.
@@ -980,6 +1037,15 @@ async function runCommand(args: Record<string, unknown>, ctx: ToolContext): Prom
   // saving (the model would otherwise ingest all of it, every round).
   emitTruncationSaving(ctx, 'run_command', 'command output', out.length, delivered.length);
   return delivered;
+}
+
+/** check_job — poll a background command launched by run_command(background:true). */
+async function checkJobTool(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+  const jobId = typeof args.job_id === 'string' ? args.job_id.trim() : '';
+  if (!jobId) return 'check_job needs a "job_id" (the id run_command returned when you started it in the background).';
+  if (!ctx.checkJob) return 'check_job needs the Docker sandbox, which is unavailable here.';
+  const raw = await ctx.checkJob(jobId);
+  return clampMiddle(compressCommandOutput(raw), MAX_CMD_OUTPUT_CHARS);
 }
 
 // ── web_fetch (read-only research) ────────────────────────────────────────────
