@@ -801,6 +801,12 @@ export interface ToolContext {
    * by the loop; absent → compaction falls back to a "re-run the tool" stub.
    */
   recallStore?: Map<string, string> | undefined;
+  /**
+   * Active project id (or null = no project). Picks the per-project, persistent
+   * browser profile for the browser_* tools so logins/cookies are isolated per
+   * project and never touch the user's main browser.
+   */
+  projectId?: number | null | undefined;
 }
 
 /** Folders to validate reads against — empty (anywhere) for Incognito. */
@@ -816,6 +822,12 @@ export async function executeTool(
   ctx: ToolContext,
 ): Promise<string> {
   try {
+    // Browser tools live in their own (lazily-loaded) module — Playwright only
+    // loads when the agent actually drives a browser.
+    if (name.startsWith('browser_')) {
+      const { executeBrowserTool } = await import('./browser.js');
+      return await executeBrowserTool(name, args, ctx);
+    }
     switch (name) {
       case 'list_files': return await listFiles(args, ctx);
       case 'read_file': return await readFile(args, ctx);

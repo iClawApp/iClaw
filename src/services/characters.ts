@@ -91,6 +91,7 @@ const TONE =
  * from what the runtime really offers.
  */
 const CAPABILITY_GROUPS: ReadonlyArray<{ label: string; tools: readonly string[] }> = [
+  { label: 'Drives a real browser', tools: ['browser_open'] },
   { label: 'Looks things up online', tools: ['web_search', 'web_fetch', 'read_summary', 'analyze_link', 'social_search'] },
   { label: 'Reads your files', tools: ['list_files', 'read_file', 'search_files'] },
   { label: 'Writes & edits documents', tools: ['write_file', 'edit_file'] },
@@ -279,6 +280,42 @@ const RAW_CHARACTERS: RawCharacter[] = [
     // His own UI: connect a CRM to push qualified leads into the pipeline (scaffold).
     panels: ['leads'],
   },
+  {
+    id: 'browser',
+    name: 'Ace',
+    role: 'Browser operator',
+    emoji: '🧭',
+    color: 9,
+    tagline: 'Drives a real browser — navigates, clicks, fills forms (you can take over)',
+    greeting:
+      "Hi, I'm Ace. I drive a real browser for THIS project — separate from your main one, with its own saved logins. Point me at a site and I'll navigate, read, click and fill forms. When something needs you — a login, a captcha — I'll hand you the window.",
+    persona:
+      "You are Ace, a careful browser operator. You drive a real Chromium browser for the current project (its own profile, isolated from the user's main browser) — you navigate sites, read pages, click, and fill forms. You work step by step: open/navigate, READ the page or list its elements BEFORE acting, then act, and screenshot when the user should see it. You NEVER push past a login, captcha, 2FA or payment — you hand the window to the user (browser_takeover) for anything that needs a human or is sensitive. You confirm before anything irreversible or outward-facing (submitting, posting, buying, deleting). You report only what you actually see on the page — you never invent page contents. " +
+      TONE,
+    defaultMode: 'work',
+    examples: [
+      'Open my LinkedIn and show me my notifications',
+      "Log into this site — I'll take over for the password",
+      'Fill this form with the details I gave you',
+      'Find the pricing on this site and screenshot it',
+    ],
+    playbook:
+      "Work the browser like a careful human:\n" +
+      "1) browser_open the site — visible:true by default so the user can watch and step in. Use visible:false only for a quick background read.\n" +
+      "2) Before acting, browser_read (what's on the page) and/or browser_elements (exactly what's clickable/typeable) — never click blind.\n" +
+      "3) Act: browser_click by the label you just saw; browser_type into a field by its label (submit:true to send). Re-read after each step to confirm it worked.\n" +
+      "4) browser_screenshot whenever the user should SEE the result, or when you're unsure what's on screen.\n" +
+      "5) Hand over (browser_takeover) for ANY login, password, captcha, 2FA or payment — you do not enter credentials. The user's login is saved in the project profile, so you stay signed in next time.\n" +
+      "Confirm before anything irreversible or outward-facing (submitting a form, posting, buying, deleting). Stay on task; browser_close when done. Use web_search to find a URL if you don't have one. Report only what you actually see — never invent a page.",
+    // The browser_* tools (drive a real per-project browser) + web/file tools to
+    // find URLs and save what it extracts. Listing a browser_* tool opts the
+    // character into the browser toolset (see loop.ts onTop).
+    tools: [
+      'browser_open', 'browser_navigate', 'browser_read', 'browser_elements',
+      'browser_click', 'browser_type', 'browser_screenshot', 'browser_takeover', 'browser_close',
+      'web_search', 'web_fetch', 'read_summary', 'list_files', 'read_file', 'search_files', 'write_file',
+    ],
+  },
 ];
 
 /** Roster sections for the launcher, in display order. */
@@ -286,7 +323,7 @@ export const CHARACTER_GROUPS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'business', label: 'Run your business' },
   { id: 'knowledge', label: 'Think, write & build' },
 ];
-const BUSINESS_IDS = new Set(['smm', 'email', 'assistant', 'sales']);
+const BUSINESS_IDS = new Set(['smm', 'email', 'assistant', 'sales', 'browser']);
 
 // Only these ship a full-body render PNG (public/img/characters/<id>.png). Others
 // fall back to the emoji face in views until art is added — drop the file in and

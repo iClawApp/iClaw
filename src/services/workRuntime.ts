@@ -68,6 +68,8 @@ export interface CreateSessionOptions {
   secure?: boolean | undefined;
   /** Incognito: read-only, read-anywhere, web_fetch enabled. Mutually exclusive with secure. */
   incognito?: boolean | undefined;
+  /** Active project id (or null) — picks the per-project browser profile for browser_* tools. */
+  projectId?: number | null | undefined;
   /** Character tool allowlist (by name) — narrows the turn's tools to the character's job. */
   characterTools?: string[] | undefined;
   /** Specialist chat: offer the create_task tool so the model can spin up a task. */
@@ -85,6 +87,7 @@ export interface CreateSessionOptions {
 export async function createWorkSession(opts: CreateSessionOptions = {}): Promise<string> {
   const body: Record<string, unknown> = { allowedFolders: opts.allowedFolders, secure: opts.secure };
   if (opts.incognito) body.incognito = true;
+  if (opts.projectId != null) body.projectId = opts.projectId;
   if (opts.characterTools?.length) body.characterTools = opts.characterTools;
   if (opts.canCreateTasks) body.canCreateTasks = true;
   if (opts.autonomous) body.autonomous = true;

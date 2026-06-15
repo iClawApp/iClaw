@@ -8,6 +8,7 @@ import OpenAI from 'openai';
 
 import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, GENERATE_IMAGE_TOOL, EDIT_IMAGE_TOOL, CREATE_TASK_TOOL, UPDATE_PLAN_TOOL, SET_TIMER_TOOL, CHECK_JOB_TOOL, UPDATE_CALENDAR_TOOL, SET_REMINDER_TOOL, RECALL_TOOL_OUTPUT_TOOL, DEEP_RESEARCH_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
 import { SOCIAL_SEARCH_TOOL } from './social.js';
+import { BROWSER_TOOLS } from './browser.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 import { resolveTurnModel } from './model-capabilities.js';
 
@@ -77,6 +78,11 @@ export interface AgentOptions {
    * the sub-agent's own nested turn sets this false to prevent recursive nesting.
    */
   allowDeepResearch?: boolean | undefined;
+  /**
+   * Active project id (or null) — threaded to ToolContext so the browser_* tools
+   * pick the per-project browser profile. Omitted → the "shared" profile.
+   */
+  projectId?: number | null | undefined;
 }
 
 /** A single step in the agent's live task plan (update_plan tool). */
@@ -620,6 +626,8 @@ export async function* runAgentTurn(
     // Fresh per turn → holds full bodies of tool results that mid-turn compaction
     // stubs, so recall_tool_output can bring them back instead of re-running.
     recallStore: new Map<string, string>(),
+    // Picks the per-project browser profile for the browser_* tools.
+    projectId: opts.projectId,
   };
 
   // Per-mode tool set. Incognito is read-only, so don't ship write_file/edit_file
@@ -682,6 +690,12 @@ export async function* runAgentTurn(
     // gate on that, Work turns only.
     ...(opts.characterTools?.includes('set_reminder') && !opts.incognito
       ? [SET_REMINDER_TOOL]
+      : []),
+    // Browser tools — a character opts in by listing any browser_* tool in its
+    // allowlist (the browser operator does). Non-incognito only: a persistent,
+    // logged-in browser profile contradicts the ephemeral incognito contract.
+    ...(opts.characterTools?.some((t) => t.startsWith('browser_')) && !opts.incognito
+      ? BROWSER_TOOLS
       : []),
   ];
   const tools = onTop.length ? [...allowed, ...onTop] : allowed;

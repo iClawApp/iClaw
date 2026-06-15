@@ -7,6 +7,15 @@ export function toolActivityLabel(name: string): string {
   switch (n) {
     case 'deep_research': return 'Researching in depth…';
     case 'recall_tool_output': return 'Recalling an earlier result…';
+    case 'browser_open': return 'Opening the browser…';
+    case 'browser_navigate': return 'Browsing…';
+    case 'browser_read': return 'Reading the page…';
+    case 'browser_elements': return 'Scanning the page…';
+    case 'browser_click': return 'Clicking…';
+    case 'browser_type': return 'Typing…';
+    case 'browser_screenshot': return 'Capturing the page…';
+    case 'browser_takeover': return 'Handing you the browser…';
+    case 'browser_close': return 'Closing the browser…';
     case 'social_search': return 'Searching social media…';
     case 'web_search': return 'Searching the web…';
     case 'web_fetch': return 'Reading the web…';

@@ -1054,6 +1054,8 @@ async function runWorkModeTurn(opts: {
         folderAccess,
         copyFolders,
         secure: opts.secure,
+        // Per-project browser profile for the browser_* tools (isolated logins).
+        projectId: chats.get(chatId)?.project_id ?? null,
         characterTools,
         canCreateTasks: opts.canCreateTasks,
         autonomous: opts.autonomous,

@@ -50,6 +50,11 @@ export interface SessionOptions {
   incognito?: boolean | undefined;
   networkEnabled?: boolean | undefined;
   systemPrompt?: string | undefined;
+  /**
+   * Active project id (or null) — threaded to the turn so the browser_* tools
+   * pick the per-project, persistent browser profile (isolated logins/cookies).
+   */
+  projectId?: number | null | undefined;
   /** Character tool allowlist (by name) — narrows the turn's tools. */
   characterTools?: string[] | undefined;
   /** Specialist chat: offer the create_task tool (model decides chat vs task). */
@@ -844,6 +849,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     checkJob,
     linkSandbox,
     incognito,
+    projectId: session.opts.projectId,
     characterTools: session.opts.characterTools,
     canCreateTasks: session.opts.canCreateTasks,
     autonomous: session.opts.autonomous,

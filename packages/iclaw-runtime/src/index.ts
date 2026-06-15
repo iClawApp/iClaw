@@ -79,7 +79,7 @@ const server = http.createServer(async (req, res) => {
 
   // POST /sessions
   if (req.method === 'POST' && parts[0] === 'sessions' && parts.length === 1) {
-    const body = await readBody(req) as { allowedFolders?: string[]; folderAccess?: { path: string; readonly: boolean }[]; copyFolders?: string[]; model?: string; secure?: boolean; incognito?: boolean; characterTools?: string[]; canCreateTasks?: boolean; autonomous?: boolean; systemPrompt?: string; key?: string; history?: { role: string; content: string }[] };
+    const body = await readBody(req) as { allowedFolders?: string[]; folderAccess?: { path: string; readonly: boolean }[]; copyFolders?: string[]; model?: string; secure?: boolean; incognito?: boolean; projectId?: number | null; characterTools?: string[]; canCreateTasks?: boolean; autonomous?: boolean; systemPrompt?: string; key?: string; history?: { role: string; content: string }[] };
     // folderAccess (when present) is the source of truth for per-folder read/
     // write; derive allowedFolders paths from it so the two never drift.
     const folderAccess = Array.isArray(body.folderAccess)
@@ -101,6 +101,7 @@ const server = http.createServer(async (req, res) => {
       apiKey: API_KEY,
       secure: body.secure ?? false,
       incognito: body.incognito ?? false,
+      projectId: body.projectId ?? null,
       characterTools: body.characterTools,
       canCreateTasks: body.canCreateTasks ?? false,
       autonomous: body.autonomous ?? false,
