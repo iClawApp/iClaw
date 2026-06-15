@@ -285,7 +285,7 @@ const AGENT_IMAGE_MIME: Record<string, string> = {
  * Path TRUST is the caller's job: only pass a host path already confirmed to lie
  * inside an allowed root. This copies (never moves) so the original is untouched.
  */
-export function persistAgentImage(chatId: number, hostPath: string): MessageAttachment | null {
+export function persistAgentImage(chatId: number, hostPath: string, displayName?: string): MessageAttachment | null {
   let st;
   try { st = statSync(hostPath); } catch { return null; }
   if (!st.isFile() || st.size === 0 || st.size > MAX_ATTACHMENT_BYTES) return null;
@@ -305,7 +305,7 @@ export function persistAgentImage(chatId: number, hostPath: string): MessageAtta
   return {
     url: `/uploads/${chatId}/${onDiskName}`,
     mimeType,
-    fileName: sanitizeFileName(basename(hostPath)),
+    fileName: sanitizeFileName(displayName || basename(hostPath)),
     sizeBytes: st.size,
   };
 }

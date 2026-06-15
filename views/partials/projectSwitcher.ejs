@@ -19,6 +19,7 @@
   <button type="button"
           class="hps-chip<%= p.id === _aid ? ' on' : '' %>"
           data-drawer-project="<%= p.id %>"
+          data-logo-color="<%= typeof p.logo_color === 'number' ? p.logo_color : 0 %>"
           aria-pressed="<%= p.id === _aid ? 'true' : 'false' %>"
           title="<%= p.name %>">
     <%- include('projectLogo', { emojiIndex: typeof p.logo_emoji === 'number' ? p.logo_emoji : 0, colorIndex: typeof p.logo_color === 'number' ? p.logo_color : 0 }) %>

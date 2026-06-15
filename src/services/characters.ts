@@ -28,6 +28,8 @@ export interface CharacterDef {
   emoji: string;
   /** Illustrated avatar under /img/characters; the emoji is the fallback. */
   avatar?: string;
+  /** Full-body 3D render (transparent PNG) for the themed hero + launcher tiles. */
+  art?: string;
   /** Accent colour index 0–11, reused from the project-logo palette. */
   color: number;
   /** One-line "what I do", shown on the roster card. */
@@ -307,6 +309,9 @@ const BUSINESS_IDS = new Set(['smm', 'support', 'email', 'assistant', 'bookkeepe
 
 export const CHARACTERS: CharacterDef[] = RAW_CHARACTERS.map((c) => ({
   ...c,
+  // Full-body render lives at /img/characters/<id>.png (transparent cutout) —
+  // drives the themed hero + launcher tiles; falls back to avatar/emoji in views.
+  art: `/img/characters/${c.id}.png`,
   capabilities: deriveCapabilities(c.tools),
   group: c.id === 'generalist' ? undefined : BUSINESS_IDS.has(c.id) ? 'business' : 'knowledge',
 }));

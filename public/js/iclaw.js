@@ -1720,24 +1720,34 @@
     return best;
   }
 
-  async function commitDraftFromCard(card) {
-    if (!card || draftProjectLocked || draftChatCreating) return;
+  /** Project colour (logo_color index) for tinting, read from the header switcher chip. */
+  function projectColorOf(id) {
+    if (id == null) return null;
+    const chip = document.querySelector('.hps-chip[data-drawer-project="' + id + '"]');
+    return chip ? chip.getAttribute('data-logo-color') : null;
+  }
+  /** Tint the launcher (header + background + input) with the selected project's
+   *  colour. Set on .col-main so the rule reaches the header (a sibling of the body). */
+  function applyLauncherTone(color) {
+    const main = draftBody ? draftBody.closest('.col-main') : null;
+    if (!main) return;
+    if (color == null || color === '') main.removeAttribute('data-logo-color');
+    else main.setAttribute('data-logo-color', String(color));
+  }
+
+  function commitDraftFromCard(card) {
+    if (!card || draftProjectLocked) return;
     const rawId = card.getAttribute('data-project-id');
     draftChosenProjectId =
       rawId == null || String(rawId).trim() === '' ? null : Number(rawId);
     if (draftChosenProjectId != null && !Number.isFinite(draftChosenProjectId)) {
       draftChosenProjectId = null;
     }
-    draftChatCreating = true;
-    try {
-      await ensureDraftChatRow();
-    } catch (err) {
-      alert(err && err.message ? err.message : 'Could not start chat');
-      return;
-    } finally {
-      draftChatCreating = false;
-    }
+    // The chat row is created server-side on the FIRST message (the send payload
+    // carries agent + projectId when there is no chatId — see ws.ts), so opening
+    // the launcher no longer spawns empty chats or rewrites the URL to /chats/<id>.
     draftProjectLocked = true;
+    applyLauncherTone(draftChosenProjectId == null ? null : projectColorOf(draftChosenProjectId));
     if (projectPickEl) projectPickEl.hidden = true;
     if (draftPickStage) draftPickStage.hidden = true;
     draftBody?.classList.remove('is-picking');
@@ -1838,6 +1848,24 @@
       // straight on the welcome greeting + composer (No project).
       const card = projectPickEl.querySelector('.project-pick-card--none');
       if (card) queueMicrotask(() => void commitDraftFromCard(card));
+    }
+
+    // Header project switcher → pick the project for the NEXT chat + tint the
+    // launcher. Row creation is deferred to the first message, so this only
+    // updates draftChosenProjectId (no navigation, no empty chat spawned).
+    document.addEventListener('click', (e) => {
+      const chip = e.target && e.target.closest ? e.target.closest('[data-drawer-project]') : null;
+      if (!chip) return;
+      const pid = (chip.getAttribute('data-drawer-project') || '').trim();
+      draftChosenProjectId = pid === '' ? null : Number(pid);
+      if (draftChosenProjectId != null && !Number.isFinite(draftChosenProjectId)) draftChosenProjectId = null;
+      applyLauncherTone(pid === '' ? null : chip.getAttribute('data-logo-color'));
+    });
+    // Initial tint from whichever switcher chip is active on load.
+    const activeChip = document.querySelector('.header-project-switcher .hps-chip.on');
+    if (activeChip) {
+      const pid = (activeChip.getAttribute('data-drawer-project') || '').trim();
+      applyLauncherTone(pid === '' ? null : activeChip.getAttribute('data-logo-color'));
     }
   }
 
@@ -2673,15 +2701,20 @@
     el.hidden = false;
   }
 
-  /** Dev mode: show token usage (+cache hits) on a message bubble + chat total. */
-  function applyTokenBadge(el, tokens, cached) {
+  /** Dev mode: show token usage (+think/cache splits) on a message bubble + chat total. */
+  function applyTokenBadge(el, tokens, cached, reasoning) {
     if (!window.__ICLAW_DEV__ || !tokens || !el) return;
     if (el.querySelector(':scope > .msg-tokens')) return;
     const c = Number(cached) || 0;
+    const r = Number(reasoning) || 0;
     const span = document.createElement('span');
     span.className = 'msg-tokens';
-    span.title = 'Tokens spent on this reply' + (c ? ' (' + c.toLocaleString() + ' served from cache)' : '');
-    span.textContent = Number(tokens).toLocaleString() + ' tok' + (c ? ' · ' + c.toLocaleString() + ' cached' : '');
+    span.title = 'Tokens spent on this reply'
+      + (r ? ' (' + r.toLocaleString() + ' on reasoning)' : '')
+      + (c ? ' (' + c.toLocaleString() + ' served from cache)' : '');
+    span.textContent = Number(tokens).toLocaleString() + ' tok'
+      + (r ? ' · ' + r.toLocaleString() + ' think' : '')
+      + (c ? ' · ' + c.toLocaleString() + ' cached' : '');
     el.appendChild(span);
     bumpChatTokenTotal(tokens);
   }
@@ -2761,7 +2794,7 @@
       attachmentsHtml(msg.attachments) +
       (msg.role === 'assistant' ? toolTraceHtml(msg.tool_trace) : '');
     decorateMessageBody(div);
-    applyTokenBadge(div, msg.tokens, msg.cached_tokens);
+    applyTokenBadge(div, msg.tokens, msg.cached_tokens, msg.reasoning_tokens);
     messagesAppendRoot().appendChild(div);
     scrollToBottom();
     return div;
@@ -5044,7 +5077,7 @@
               target.querySelector('.msg-tool-trace')?.remove();
               target.insertAdjacentHTML('beforeend', toolTraceHtml(msg.message.tool_trace));
             }
-            applyTokenBadge(target, msg.message.tokens, msg.message.cached_tokens);
+            applyTokenBadge(target, msg.message.tokens, msg.message.cached_tokens, msg.message.reasoning_tokens);
             currentStreamEl = null;
             currentStreamFullText = '';
           } else {
@@ -5269,7 +5302,7 @@
         if (msg.key !== activeIncognitoKey) return;
         const finishedEl = currentStreamEl;
         finalizeIncognitoStream();
-        applyTokenBadge(finishedEl, msg.tokens, msg.cached);
+        applyTokenBadge(finishedEl, msg.tokens, msg.cached, msg.reasoning);
         return;
       }
 

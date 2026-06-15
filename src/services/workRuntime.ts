@@ -109,7 +109,7 @@ export interface RuntimeAttachmentInput {
 }
 
 /** Send a user message to a work session. */
-export async function sendWorkMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number, attachments?: RuntimeAttachmentInput[], copyFolders?: string[]): Promise<void> {
+export async function sendWorkMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number, attachments?: RuntimeAttachmentInput[], copyFolders?: string[], chatImages?: { path: string; fileName: string }[]): Promise<void> {
   const body: Record<string, unknown> = { content };
   if (networkEnabled !== undefined) body.networkEnabled = networkEnabled;
   if (ttlDays !== undefined) body.ttlDays = ttlDays;
@@ -117,6 +117,9 @@ export async function sendWorkMessage(sessionId: string, content: string, networ
   // Safe Mode: lets the runtime copy folders the user added mid-chat into the
   // sandbox on this turn (ignored in Work Mode / by non-secure sessions).
   if (copyFolders?.length) body.copyFolders = copyFolders;
+  // Work Mode: this chat's earlier photos (uploaded or agent-generated) as host
+  // paths, so a follow-up "edit it" turn can reach them via edit_image.
+  if (chatImages?.length) body.chatImages = chatImages;
   const res = await request('POST', `/sessions/${sessionId}/messages`, body);
   if (res.status !== 202) {
     throw new Error(`Failed to send work message: ${JSON.stringify(res.data)}`);
@@ -153,13 +156,13 @@ export type WorkEvent =
   | { type: 'tool_start'; name: string; input?: unknown }
   | { type: 'tool_result'; name: string; result?: string }
   | { type: 'note'; note: RuntimeSavingsNote }
-  | { type: 'image'; path: string; mime: string; fileName: string; bytes: number }
+  | { type: 'image'; path: string; mime: string; fileName: string; bytes: number; generated?: boolean }
   | { type: 'create_task'; title: string; goal: string }
   | { type: 'plan'; steps: { step: string; status: 'pending' | 'in_progress' | 'done' }[] }
   | { type: 'set_timer'; seconds: number; note: string }
   | { type: 'calendar'; entries: { date: string; text: string; platform: string; status: 'idea' | 'draft' }[] }
   | { type: 'reminder'; event: string; date: string; leadDays: number[]; recurring: 'none' | 'yearly' }
-  | { type: 'done'; tokens?: number; cached?: number }
+  | { type: 'done'; tokens?: number; cached?: number; reasoning?: number }
   | { type: 'error'; message: string };
 
 /**

@@ -115,7 +115,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'messages') {
     const sessionId = parts[1]!;
     if (!getSession(sessionId)) return json(res, 404, { error: 'session not found' });
-    const body = await readBody(req) as { content?: string; networkEnabled?: boolean; ttlDays?: number; attachments?: RuntimeAttachment[]; copyFolders?: string[] };
+    const body = await readBody(req) as { content?: string; networkEnabled?: boolean; ttlDays?: number; attachments?: RuntimeAttachment[]; copyFolders?: string[]; chatImages?: { path: string; fileName: string }[] };
     if (!body.content?.trim()) return json(res, 400, { error: 'content required' });
     const attachments = Array.isArray(body.attachments)
       ? body.attachments.filter(
@@ -127,7 +127,13 @@ const server = http.createServer(async (req, res) => {
     const copyFolders = Array.isArray(body.copyFolders)
       ? body.copyFolders.filter((p) => typeof p === 'string' && p)
       : undefined;
-    sendMessage(sessionId, body.content, body.networkEnabled, body.ttlDays, attachments, copyFolders).catch(console.error);
+    const chatImages = Array.isArray(body.chatImages)
+      ? body.chatImages.filter(
+          (a): a is { path: string; fileName: string } =>
+            !!a && typeof a.path === 'string' && !!a.path && typeof a.fileName === 'string',
+        )
+      : undefined;
+    sendMessage(sessionId, body.content, body.networkEnabled, body.ttlDays, attachments, copyFolders, chatImages).catch(console.error);
     return json(res, 202, { queued: true });
   }
 

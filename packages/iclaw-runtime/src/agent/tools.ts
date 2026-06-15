@@ -4,6 +4,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
@@ -492,6 +494,77 @@ export const SHOW_IMAGE_TOOL = {
 } as const;
 
 /**
+ * generate_image — create a NEW image from a text prompt and show it inline.
+ *
+ * Kept OUT of TOOL_DEFINITIONS and appended by the loop (like show_image). Runs
+ * host-side: a chat/completions call to OpenRouter with modalities:["image"] on
+ * the SAME key the runtime uses for chat. Default model is Nano Banana
+ * (google/gemini-2.5-flash-image); override with ICLAW_IMAGE_GEN_MODEL. Not in
+ * Secure (network is gated inside the container) or Incognito (ephemeral turn,
+ * nothing to attach to).
+ */
+export const GENERATE_IMAGE_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'generate_image',
+    description:
+      'Generate NEW image(s) from text description(s) and show them to the user inline. Use when asked to ' +
+      'create/draw/make a picture, illustration, logo, icon, social graphic, or mockup. For ONE image pass ' +
+      '"prompt"; for SEVERAL at once pass "prompts" (an array) — they are generated IN PARALLEL, far faster ' +
+      'than calling this tool repeatedly (use it for variants, sets, or multiple characters; up to 6 per call). ' +
+      'Each prompt should be detailed — subject, style, composition, colours, any aspect ratio as words ' +
+      '(e.g. "16:9 widescreen"). This makes images from TEXT ONLY — if the request relies on an existing or ' +
+      'attached photo (edit/restyle it, or combine photos), use edit_image instead, even if the user says "generate".',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'Detailed description of ONE image to create.' },
+        prompts: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Detailed descriptions of SEVERAL images to create at once, in parallel (up to 6). Use instead of "prompt" when the user wants multiple images/variants.',
+        },
+      },
+    },
+  },
+} as const;
+
+/**
+ * edit_image — transform an EXISTING image file with a text instruction.
+ *
+ * Same host-side OpenRouter path as generate_image; the source image is sent as
+ * a base64 image_url alongside the instruction. Default model is Nano Banana
+ * (google/gemini-2.5-flash-image), which edits natively; override with
+ * ICLAW_IMAGE_EDIT_MODEL. The `path` is validated against allowedFolders exactly
+ * like show_image.
+ */
+export const EDIT_IMAGE_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'edit_image',
+    description:
+      'Edit or COMBINE existing photo(s) with a text instruction and show the result inline — restyle, ' +
+      'add/remove elements, change the background, inpaint, OR fuse several images (e.g. put the person from ' +
+      'one photo into the outfit/scene from another). Pass 1..N raster images (png/jpg/webp/gif) in "paths"; ' +
+      'for photos the user attached to the chat, use the EXACT path(s) from the "[The user attached…]" note. ' +
+      '"prompt" describes the result. Use this even when the user says "generate" if their request relies on ' +
+      'existing or attached photos. For a brand-new image from only a text description, use generate_image.',
+    parameters: {
+      type: 'object',
+      properties: {
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'One or more source image paths (png/jpg/webp/gif) inside an allowed folder. Several paths → Nano Banana fuses them into one image.',
+        },
+        prompt: { type: 'string', description: 'What the resulting image should be — the edit, or how to combine the inputs.' },
+      },
+      required: ['paths', 'prompt'],
+    },
+  },
+} as const;
+
+/**
  * analyze_link — extract the *content* behind a URL (not the raw HTML).
  *
  * Kept OUT of TOOL_DEFINITIONS and appended by the loop, like the web tools.
@@ -535,15 +608,20 @@ export const ANALYZE_LINK_TOOL = {
 
 export type ToolName =
   | 'list_files' | 'read_file' | 'read_summary' | 'search_files' | 'write_file' | 'edit_file'
-  | 'run_command' | 'check_job' | 'web_fetch' | 'web_search' | 'analyze_link' | 'social_search' | 'show_image';
+  | 'run_command' | 'check_job' | 'web_fetch' | 'web_search' | 'analyze_link' | 'social_search' | 'show_image'
+  | 'generate_image' | 'edit_image';
 
-/** A host image the agent asked to display inline (via show_image). */
+/** A host image the agent asked to display inline (via show_image / generate_image). */
 export interface ImageRef {
-  /** Absolute HOST path of the image (already inside an allowed folder). */
+  /** Absolute HOST path of the image. show_image: inside an allowed folder (re-
+   *  validated host-side). generate_image/edit_image: a runtime-created temp file
+   *  (path is NOT model-controlled — the host trusts it and deletes it after). */
   path: string;
   mime: string;
   fileName: string;
   bytes: number;
+  /** True for generate_image/edit_image output (temp file, not folder-gated). */
+  generated?: boolean | undefined;
 }
 
 /**
@@ -690,6 +768,8 @@ export async function executeTool(
       case 'web_fetch': return await webFetch(args, ctx);
       case 'web_search': return await webSearch(args);
       case 'show_image': return showImage(args, ctx);
+      case 'generate_image': return await generateImage(args, ctx);
+      case 'edit_image': return await editImage(args, ctx);
       case 'analyze_link':
         if (!ctx.linkSandbox) {
           return 'analyze_link needs a sandbox container (Docker), which is unavailable here. Use web_fetch/web_search instead.';
@@ -953,6 +1033,229 @@ function showImage(args: Record<string, unknown>, ctx: ToolContext): string {
   if (!ctx.onImage) return 'Showing images inline is not available in this mode.';
   ctx.onImage({ path: filePath, mime, fileName: path.basename(filePath), bytes: st.size });
   return `Displayed ${path.basename(filePath)} to the user in the chat.`;
+}
+
+// ── Image generation / editing (OpenRouter, host-side) ───────────────────────
+// Mirrors web_fetch/web_search: a host→OpenRouter call on the SAME key the chat
+// uses. Nano Banana (google/gemini-2.5-flash-image) both generates from text and
+// edits an input image — the cheapest quality option, so it's the hard default;
+// override per-op only for a different STYLE via ICLAW_IMAGE_GEN_MODEL /
+// ICLAW_IMAGE_EDIT_MODEL.
+const DEFAULT_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
+const IMAGE_GEN_TIMEOUT_MS = Number(process.env.ICLAW_IMAGE_TIMEOUT_MS) || 120_000;
+const IMAGE_GEN_MAX_BYTES = 20 * 1024 * 1024;
+// generate_image can take a "prompts" array → all fired AT ONCE (Promise.allSettled).
+// Generation is independent (each its own OpenRouter call, own temp file), so it's
+// safe to parallelize; the rest of the tool loop stays sequential. Capped to keep
+// concurrent OpenRouter requests (and the round's image count) sane.
+const IMAGE_GEN_MAX_BATCH = Math.max(1, Number(process.env.ICLAW_IMAGE_MAX_BATCH) || 6);
+// edit_image multi-image input. Nano Banana fuses several photos (e.g. put a
+// person from one into a scene from another). Gemini's inline request cap is
+// ~20MB INCLUDING base64 (which inflates raw bytes by ~4/3), so cap combined RAW
+// input at ~14MB to stay safely under it. Count cap is a quality/abuse guard —
+// fidelity drops past a handful of inputs.
+const IMAGE_EDIT_TOTAL_RAW_BYTES = 14 * 1024 * 1024;
+const IMAGE_EDIT_MAX_INPUTS = 8;
+// Generated-image data: URL mime → temp-file extension. persistAgentImage on the
+// host re-derives the mime from this extension, so it must be one it supports.
+const IMAGE_DATA_EXT: Record<string, string> = {
+  'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif',
+};
+
+type ImageContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
+/**
+ * POST a chat/completions request with modalities:["image","text"] and pull the
+ * first image out of choices[0].message.images[].image_url.url. Returns the raw
+ * data: URL, or throws with a user-facing reason.
+ */
+async function openRouterImage(model: string, content: string | ImageContentPart[]): Promise<string> {
+  const key = process.env.ICLAW_OPENROUTER_API_KEY || '';
+  if (!key) throw new Error('no OpenRouter API key (ICLAW_OPENROUTER_API_KEY set?) — image generation is unavailable here.');
+  const base = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), IMAGE_GEN_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${base}/chat/completions`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model, modalities: ['image', 'text'], messages: [{ role: 'user', content }] }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`OpenRouter HTTP ${res.status}${body ? ` — ${body.replace(/\s+/g, ' ').slice(0, 300)}` : ''}`);
+    }
+    const data = await res.json() as {
+      choices?: { message?: { images?: { image_url?: { url?: string } }[] } }[];
+    };
+    const url = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+    if (!url || !url.startsWith('data:')) {
+      throw new Error(`model "${model}" returned no image (it may not support image output — set ICLAW_IMAGE_GEN_MODEL to one that does).`);
+    }
+    return url;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Shared tail for every generate/edit result — kills the "where's my file?"
+ *  hunt (chat-453/459): generated images live in chat uploads, OUTSIDE the work
+ *  sandbox, so run_command can't see them. */
+const GENERATED_IMAGE_NOTE =
+  `It's delivered to the user and saved with the chat — you do NOT manage it as a file and CANNOT locate it on ` +
+  `disk: generated images live outside the work sandbox, so run_command / find / ls will never see them — do not ` +
+  `search. To change one, call edit_image (its path is listed under this chat's photos on your next message); put ` +
+  `any framing/background/layout in the prompt. Never paste base64 or a data: URL.`;
+
+/**
+ * Decode ONE generated data: URL to a host temp file and signal the host to show
+ * it inline (generated:true → not folder-gated; the host deletes the temp after
+ * copying it into the chat). Returns the display fileName, or an error string.
+ */
+function stageGeneratedImage(
+  dataUrl: string,
+  ctx: ToolContext,
+  kind: 'generate_image' | 'edit_image',
+): { fileName: string } | { error: string } {
+  const m = /^data:([^;,]+)(;base64)?,([\s\S]*)$/.exec(dataUrl);
+  if (!m) return { error: 'the model returned an unreadable image payload.' };
+  const mime = (m[1] || 'image/png').toLowerCase();
+  const ext = IMAGE_DATA_EXT[mime] ?? '.png';
+  const buf = m[2] ? Buffer.from(m[3]!, 'base64') : Buffer.from(decodeURIComponent(m[3]!), 'binary');
+  if (buf.byteLength === 0) return { error: 'the generated image came back empty.' };
+  if (buf.byteLength > IMAGE_GEN_MAX_BYTES) return { error: `the generated image is too large to show (${buf.byteLength.toLocaleString()} bytes).` };
+  if (!ctx.onImage) return { error: 'showing images inline is not available in this mode.' };
+  // Random suffix on top of the uuid temp path: parallel batch calls land in the
+  // same millisecond, so Date.now() alone would collide the display names.
+  const fileName = `${kind === 'edit_image' ? 'edited' : 'generated'}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}${ext}`;
+  const tmpPath = path.join(os.tmpdir(), `iclaw-img-${crypto.randomUUID()}${ext}`);
+  try {
+    fs.writeFileSync(tmpPath, buf);
+  } catch (e) {
+    return { error: `could not save the generated image (${e instanceof Error ? e.message : String(e)}).` };
+  }
+  ctx.onImage({ path: tmpPath, mime, fileName, bytes: buf.byteLength, generated: true });
+  return { fileName };
+}
+
+/** Single-image convenience: stage one + the full directive result message. */
+function emitGeneratedImage(dataUrl: string, ctx: ToolContext, kind: 'generate_image' | 'edit_image'): string {
+  const r = stageGeneratedImage(dataUrl, ctx, kind);
+  if ('error' in r) return `${kind}: ${r.error}`;
+  return `Created "${r.fileName}" and showed it to the user inline. ${GENERATED_IMAGE_NOTE}`;
+}
+
+async function generateImage(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+  // Accept "prompt" (one) and/or "prompts" (several → generated in parallel).
+  const list: string[] = [];
+  if (Array.isArray(args.prompts)) {
+    for (const p of args.prompts) if (typeof p === 'string' && p.trim()) list.push(p.trim());
+  }
+  if (typeof args.prompt === 'string' && args.prompt.trim()) list.push(args.prompt.trim());
+  const prompts = [...new Set(list)];
+  if (prompts.length === 0) {
+    return 'generate_image needs a "prompt" (one image) or "prompts" (an array, several images at once).';
+  }
+  if (prompts.length > IMAGE_GEN_MAX_BATCH) {
+    return `generate_image makes at most ${IMAGE_GEN_MAX_BATCH} images per call (got ${prompts.length}); split the rest into another call.`;
+  }
+  const model = process.env.ICLAW_IMAGE_GEN_MODEL || DEFAULT_IMAGE_MODEL;
+
+  // One image: simple path + the full directive message.
+  if (prompts.length === 1) {
+    let dataUrl: string;
+    try {
+      dataUrl = await openRouterImage(model, prompts[0]!);
+    } catch (e) {
+      return `generate_image failed: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    return emitGeneratedImage(dataUrl, ctx, 'generate_image');
+  }
+
+  // Several: fire all prompts AT ONCE — each is an independent OpenRouter call,
+  // so N images come back in ~one image's time instead of N× sequential.
+  // allSettled → one failure doesn't sink the batch; we show what succeeded.
+  const settled = await Promise.allSettled(prompts.map((p) => openRouterImage(model, p)));
+  let ok = 0;
+  const failures: string[] = [];
+  settled.forEach((s, i) => {
+    if (s.status === 'fulfilled') {
+      const r = stageGeneratedImage(s.value, ctx, 'generate_image');
+      if ('error' in r) failures.push(`#${i + 1}: ${r.error}`);
+      else ok++;
+    } else {
+      failures.push(`#${i + 1}: ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`);
+    }
+  });
+  if (ok === 0) return `generate_image failed for all ${prompts.length} prompts:\n${failures.join('\n')}`;
+  const failNote = failures.length ? ` (${failures.length} failed — ${failures.join('; ')})` : '';
+  return `Generated ${ok}/${prompts.length} images in parallel and showed them to the user inline${failNote}. ${GENERATED_IMAGE_NOTE}`;
+}
+
+async function editImage(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+  const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : '';
+  if (!prompt) return 'edit_image needs a "prompt" describing the result.';
+
+  // Accept `paths` (array — Nano Banana fuses several photos) and/or a legacy
+  // single `path`. Dropped chat photos work too: staging already whitelisted
+  // their folder and the "[The user attached…]" notice gives the model the path.
+  const rawList: string[] = [];
+  if (Array.isArray(args.paths)) {
+    for (const p of args.paths) if (typeof p === 'string' && p.trim()) rawList.push(p.trim());
+  }
+  if (typeof args.path === 'string' && args.path.trim()) rawList.push(args.path.trim());
+  const uniqueRaw = [...new Set(rawList)]; // model sometimes repeats a path across both args
+  if (uniqueRaw.length === 0) {
+    return 'edit_image needs at least one image — pass "paths" (array of image file paths inside an allowed folder) plus a "prompt".';
+  }
+  if (uniqueRaw.length > IMAGE_EDIT_MAX_INPUTS) {
+    return `edit_image takes at most ${IMAGE_EDIT_MAX_INPUTS} input images at once (got ${uniqueRaw.length}); pick the most relevant few.`;
+  }
+
+  // Validate + read each image exactly like show_image (real HOST path inside an
+  // allowed folder, not a /work/N path), then send them all as image_url blocks.
+  const parts: ImageContentPart[] = [{ type: 'text', text: prompt }];
+  let totalRaw = 0;
+  for (const raw of uniqueRaw) {
+    let filePath: string;
+    try {
+      filePath = validatePath(raw, ctx.allowedFolders);
+    } catch (e) {
+      if (e instanceof SecurityError) {
+        return `Security error on "${raw}": ${e.message}. Pass each image's host path inside an allowed folder` +
+          `${ctx.allowedFolders.length ? ` (${ctx.allowedFolders.join(', ')})` : ''}.`;
+      }
+      throw e;
+    }
+    const ext = path.extname(filePath).toLowerCase();
+    const inMime = SHOW_IMAGE_MIME[ext];
+    if (!inMime || inMime === 'image/svg+xml') {
+      return `edit_image needs raster images (png/jpg/webp/gif); "${path.basename(filePath)}" is "${ext || 'no extension'}".`;
+    }
+    let buf: Buffer;
+    try {
+      const st = fs.statSync(filePath);
+      if (!st.isFile() || st.size === 0) return `Not a readable image file: ${filePath}`;
+      buf = fs.readFileSync(filePath);
+    } catch { return `No such file: ${filePath}`; }
+    totalRaw += buf.byteLength;
+    if (totalRaw > IMAGE_EDIT_TOTAL_RAW_BYTES) {
+      return `Those images are too large combined (over ${Math.round(IMAGE_EDIT_TOTAL_RAW_BYTES / 1024 / 1024)}MB) — use fewer or smaller images.`;
+    }
+    parts.push({ type: 'image_url', image_url: { url: `data:${inMime};base64,${buf.toString('base64')}` } });
+  }
+
+  const model = process.env.ICLAW_IMAGE_EDIT_MODEL || DEFAULT_IMAGE_MODEL;
+  let dataUrl: string;
+  try {
+    dataUrl = await openRouterImage(model, parts);
+  } catch (e) {
+    return `edit_image failed: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  return emitGeneratedImage(dataUrl, ctx, 'edit_image');
 }
 
 async function editFile(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {

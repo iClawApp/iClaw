@@ -27,7 +27,8 @@ import {
   type ProcessedAttachment,
 } from './uploads';
 import { resolve as resolvePath, sep as pathSep, join as joinPath } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
+import { existsSync, unlinkSync } from 'node:fs';
 import type { ChatMode, Message, MessageAttachment, ToolTraceEntry } from '../types';
 import { normalizeChatMode } from './chatModes';
 import { buildCompactedHistory } from './contextCompaction';
@@ -931,6 +932,43 @@ function imagePathAllowed(hostPath: string, opts: { workFolders?: WorkFolder[] |
 }
 
 /**
+ * generate_image/edit_image hand us a runtime-created TEMP file (the path is the
+ * runtime's, never model-controlled). Trust it only if it really sits under the
+ * OS temp dir, then we copy it into the chat and delete the original.
+ */
+function isGeneratedTmpPath(hostPath: string): boolean {
+  const abs = resolvePath(hostPath);
+  const tmp = resolvePath(tmpdir());
+  return abs === tmp || abs.startsWith(tmp + pathSep);
+}
+
+/**
+ * This chat's recent image attachments — user-uploaded AND agent-generated —
+ * newest first, as host paths + names. Passed to the runtime every Work turn so
+ * a follow-up ("now edit it") can edit_image a photo shared earlier, even though
+ * attachments otherwise ride only their own message (and don't survive a runtime
+ * restart). Skips files no longer on disk; capped so the prompt note stays small.
+ */
+function recentChatImages(chatId: number, limit = 6): { path: string; fileName: string }[] {
+  const out: { path: string; fileName: string }[] = [];
+  const seen = new Set<string>();
+  const msgs = messages.listByChat(chatId);
+  for (let i = msgs.length - 1; i >= 0 && out.length < limit; i--) {
+    const atts = msgs[i]!.attachments;
+    if (!atts?.length) continue;
+    const images = atts.filter((a) => (a.mimeType ?? '').startsWith('image/'));
+    if (!images.length) continue;
+    for (const r of runtimeAttachmentsFromPersisted(chatId, images)) {
+      if (out.length >= limit) break;
+      if (seen.has(r.path) || !existsSync(r.path)) continue;
+      seen.add(r.path);
+      out.push({ path: r.path, fileName: r.fileName });
+    }
+  }
+  return out;
+}
+
+/**
  * Route a Work Mode turn to iclaw-runtime.
  * Reuses the session across turns to preserve conversation history.
  */
@@ -1041,7 +1079,10 @@ async function runWorkModeTurn(opts: {
       ? opts.workFolders.map((f) => f.path)
       : undefined;
   try {
-    await sendWorkMessage(sessionId, content, opts.networkEnabled, opts.ttlDays, opts.attachments, turnCopyFolders);
+    // Work mode: hand the runtime this chat's earlier photos (by path, no bytes)
+    // so a "now edit it" turn can reach them. Secure works on /workspace copies.
+    const chatImages = opts.secure ? undefined : recentChatImages(chatId);
+    await sendWorkMessage(sessionId, content, opts.networkEnabled, opts.ttlDays, opts.attachments, turnCopyFolders, chatImages);
   } catch (err) {
     // Session may have expired — retry with a fresh one
     workSessions.delete(chatId);
@@ -1271,14 +1312,21 @@ async function runWorkModeTurn(opts: {
               : `iClaw обробив це економніше, ніж звичайні помічники 💚`;
           if (!savingsTexts.includes(text)) savingsTexts.push(text); // dedupe within a turn
         } else if (event.type === 'image') {
-          // show_image: copy the agent's image (already on the host — a Work
-          // bind-mount or a Secure workspace) into this chat's uploads and queue
-          // it as an attachment. Re-validate the path host-side before touching
-          // the file; silently skip anything that fails (never break the turn).
-          if (imagePathAllowed(event.path, opts)) {
-            const att = persistAgentImage(chatId, event.path);
+          // Copy the agent's image into this chat's uploads and queue it as an
+          // attachment. Two sources, two trust paths (silently skip failures —
+          // never break the turn):
+          //  • show_image — a host file the MODEL chose (a Work bind-mount or a
+          //    Secure workspace); re-validate it sits inside an allowed folder.
+          //  • generate_image/edit_image — a temp file the RUNTIME wrote (path
+          //    not model-controlled); trust it if under the OS temp dir, copy it
+          //    in under a friendly name, then delete the temp original.
+          const generated = event.generated === true;
+          const ok = generated ? isGeneratedTmpPath(event.path) : imagePathAllowed(event.path, opts);
+          if (ok) {
+            const att = persistAgentImage(chatId, event.path, generated ? event.fileName : undefined);
             if (att) turnAttachments.push(att);
           }
+          if (generated) { try { unlinkSync(event.path); } catch { /* best-effort cleanup */ } }
         } else if (event.type === 'done') {
           // Redact before persistence: if the model echoed a secret value or a
           // raw `.env` line into its reply, scrub it so the plaintext never lands
@@ -1292,6 +1340,7 @@ async function runWorkModeTurn(opts: {
               chatId, 'assistant', persistedAssistant, null, null,
               turnAttachments.length > 0 ? turnAttachments : null,
               opts.secure ? 'secure' : 'work', event.tokens ?? null, event.cached ?? null,
+              event.reasoning ?? null,
               toolTrace.length > 0 ? toolTrace : null,
             );
             wsHub.broadcastToChat(chatId, { type: 'message-appended', chatId, message: assistantMsg });
@@ -1365,7 +1414,7 @@ export async function runIncognitoTurn(opts: {
   content: string;
   workFolders?: WorkFolder[] | undefined;
   onEvent: (event: IncognitoEvent) => void;
-}): Promise<{ tokens?: number | undefined; cached?: number | undefined }> {
+}): Promise<{ tokens?: number | undefined; cached?: number | undefined; reasoning?: number | undefined }> {
   const { key, content, onEvent } = opts;
 
   // Recreate the runtime session if the selected folders changed (the shell's
@@ -1405,7 +1454,7 @@ export async function runIncognitoTurn(opts: {
     return {};
   }
 
-  return await new Promise<{ tokens?: number | undefined; cached?: number | undefined }>((resolve) => {
+  return await new Promise<{ tokens?: number | undefined; cached?: number | undefined; reasoning?: number | undefined }>((resolve) => {
     const unsubscribe = subscribeWorkEvents(
       sessionId!,
       (event) => {
@@ -1415,7 +1464,7 @@ export async function runIncognitoTurn(opts: {
           onEvent({ type: 'tool', name: event.name });
         } else if (event.type === 'done') {
           unsubscribe();
-          resolve({ tokens: event.tokens, cached: event.cached });
+          resolve({ tokens: event.tokens, cached: event.cached, reasoning: event.reasoning });
         } else if (event.type === 'error') {
           onEvent({ type: 'error', message: event.message });
           unsubscribe();

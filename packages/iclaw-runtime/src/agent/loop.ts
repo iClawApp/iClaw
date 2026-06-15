@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, CREATE_TASK_TOOL, UPDATE_PLAN_TOOL, SET_TIMER_TOOL, CHECK_JOB_TOOL, UPDATE_CALENDAR_TOOL, SET_REMINDER_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, GENERATE_IMAGE_TOOL, EDIT_IMAGE_TOOL, CREATE_TASK_TOOL, UPDATE_PLAN_TOOL, SET_TIMER_TOOL, CHECK_JOB_TOOL, UPDATE_CALENDAR_TOOL, SET_REMINDER_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
 import { SOCIAL_SEARCH_TOOL } from './social.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 import { resolveTurnModel } from './model-capabilities.js';
@@ -107,14 +107,14 @@ export type AgentEvent =
   | { type: 'tool_start'; name: string; input: unknown }
   | { type: 'tool_result'; name: string; result: string }
   | { type: 'note'; note: SavingsNote }
-  | { type: 'image'; path: string; mime: string; fileName: string; bytes: number }
+  | { type: 'image'; path: string; mime: string; fileName: string; bytes: number; generated?: boolean | undefined }
   | { type: 'approval_request'; changeId: string; path: string; content: string }
   | { type: 'create_task'; title: string; goal: string }
   | { type: 'plan'; steps: PlanStep[] }
   | { type: 'set_timer'; seconds: number; note: string }
   | { type: 'calendar'; entries: CalendarEntry[] }
   | { type: 'reminder'; event: string; date: string; leadDays: number[]; recurring: 'none' | 'yearly' }
-  | { type: 'done'; tokens?: number | undefined; cached?: number | undefined }
+  | { type: 'done'; tokens?: number | undefined; cached?: number | undefined; reasoning?: number | undefined }
   | { type: 'error'; message: string };
 
 export type Message = OpenAI.Chat.ChatCompletionMessageParam;
@@ -473,6 +473,17 @@ function buildSystemPrompt(opts: AgentOptions): string {
 
   const parts = [identityLine(opts.model), DEFAULT_SYSTEM, HOST_INSTALL_POLICY, CITATION_POLICY];
 
+  // Image tools: steer the model to edit/compose existing photos rather than
+  // regenerate from scratch — a common miss. Paths to this chat's photos, when
+  // any exist, are appended below via opts.systemPrompt.
+  parts.push(
+    '\nImages: generate_image makes a NEW image from TEXT ONLY. To edit, restyle, dress, place, or COMBINE ' +
+      'an existing or attached photo, call edit_image with its path(s) — never generate_image, even if the ' +
+      'user says "generate". Images you generate/edit are delivered inline and saved with the chat, NOT in the ' +
+      'work folders — never hunt for them with run_command/find/ls; reference them via the paths listed under ' +
+      "this chat's photos, and bake any background/framing into the prompt.",
+  );
+
   const folders = opts.folderAccess?.length
     ? opts.folderAccess
     : opts.allowedFolders.map((path) => ({ path, readonly: false }));
@@ -542,7 +553,7 @@ export async function* runAgentTurn(
     ...fileTools, READ_SUMMARY_TOOL, WEB_FETCH_TOOL, WEB_SEARCH_TOOL,
     // show_image lets the agent surface a real image file inline. Not in
     // Incognito — that turn is ephemeral, so there's no message to attach to.
-    ...(opts.incognito ? [] : [SHOW_IMAGE_TOOL]),
+    ...(opts.incognito ? [] : [SHOW_IMAGE_TOOL, GENERATE_IMAGE_TOOL, EDIT_IMAGE_TOOL]),
     // analyze_link + social_search both run in the session container, so both
     // are offered only when a sandbox backend is wired.
     ...(opts.linkSandbox ? [ANALYZE_LINK_TOOL, SOCIAL_SEARCH_TOOL] : []),
@@ -621,9 +632,11 @@ export async function* runAgentTurn(
   const effectiveModel = modelDecision.model;
 
   // Token usage across all rounds (dev-mode display). `turnCached` = how many
-  // prompt tokens were served from the provider's prefix cache.
+  // prompt tokens were served from the provider's prefix cache; `turnReasoning`
+  // = how many completion tokens the model spent on hidden reasoning/thinking.
   let turnTokens = 0;
   let turnCached = 0;
+  let turnReasoning = 0;
   const dumpTurnId = newTurnId();
   const dumpMode = opts.incognito ? 'incognito' : 'work';
   const guard = makeToolGuard();
@@ -648,7 +661,7 @@ export async function* runAgentTurn(
   for (let round = 0; round < maxRounds; round++) {
     // User pressed Stop between rounds → end cleanly (partial text already sent).
     if (opts.signal?.aborted) {
-      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined, reasoning: turnReasoning || undefined };
       return;
     }
     let textBuffer = '';
@@ -681,7 +694,7 @@ export async function* runAgentTurn(
     } catch (err) {
       // Aborted by the user → not an error; end the turn cleanly.
       if (opts.signal?.aborted) {
-        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined, reasoning: turnReasoning || undefined };
         return;
       }
       yield { type: 'error', message: describeApiError(err) };
@@ -700,6 +713,12 @@ export async function* runAgentTurn(
         const cached = (chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
           ?.prompt_tokens_details?.cached_tokens;
         if (cached) turnCached += cached;
+        // OpenRouter mirrors OpenAI's shape: hidden reasoning tokens are a subset
+        // of completion_tokens, broken out here. Present only when the model
+        // actually reasoned (absent for non-reasoning models / disabled thinking).
+        const reasoning = (chunk.usage as { completion_tokens_details?: { reasoning_tokens?: number } } | undefined)
+          ?.completion_tokens_details?.reasoning_tokens;
+        if (reasoning) turnReasoning += reasoning;
         const choice = chunk.choices[0];
         if (!choice) continue;
 
@@ -733,7 +752,7 @@ export async function* runAgentTurn(
     } catch (err) {
       // Aborted by the user → not an error; end the turn cleanly.
       if (opts.signal?.aborted) {
-        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined, reasoning: turnReasoning || undefined };
         return;
       }
       yield { type: 'error', message: describeApiError(err) };
@@ -747,7 +766,7 @@ export async function* runAgentTurn(
       if (textBuffer) {
         messages.push({ role: 'assistant', content: textBuffer });
       }
-      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined, reasoning: turnReasoning || undefined };
       return;
     }
 
@@ -850,7 +869,7 @@ export async function* runAgentTurn(
       while (pendingNotes.length) yield { type: 'note', note: pendingNotes.shift()! };
       while (pendingImages.length) {
         const im = pendingImages.shift()!;
-        yield { type: 'image', path: im.path, mime: im.mime, fileName: im.fileName, bytes: im.bytes };
+        yield { type: 'image', path: im.path, mime: im.mime, fileName: im.fileName, bytes: im.bytes, generated: im.generated };
       }
 
       messages.push({

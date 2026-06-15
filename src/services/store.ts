@@ -240,6 +240,8 @@ export const messages = {
     tokens: number | null = null,
     /** Of `tokens`, prompt tokens served from cache (dev-mode). */
     cachedTokens: number | null = null,
+    /** Of `tokens`, completion tokens spent on hidden reasoning (dev-mode). */
+    reasoningTokens: number | null = null,
     /** Verified tool outcomes for the turn (assistant rows in runtime modes). */
     toolTrace: ToolTraceEntry[] | null = null,
   ): Message {
@@ -252,9 +254,9 @@ export const messages = {
       toolTrace && toolTrace.length > 0 ? JSON.stringify(toolTrace) : null;
     const info = db
       .prepare(
-        'INSERT INTO messages (chat_id, role, content, finish_reason, reply_to_message_id, reply_quote, reply_to_role, attachments, mode, tokens, cached_tokens, tool_trace) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO messages (chat_id, role, content, finish_reason, reply_to_message_id, reply_quote, reply_to_role, attachments, mode, tokens, cached_tokens, reasoning_tokens, tool_trace) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(chatId, role, content, finishReason, rid, rq, rrole, att, mode, tokens, cachedTokens, trace);
+      .run(chatId, role, content, finishReason, rid, rq, rrole, att, mode, tokens, cachedTokens, reasoningTokens, trace);
     // chats.updated_at is bumped by the trg_chats_touch_on_message SQLite
     // trigger; no manual touch() needed here. We keep chats.touch() public
     // for callers that mutate parents without writing a message (e.g.

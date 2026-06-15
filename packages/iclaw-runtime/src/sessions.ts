@@ -580,7 +580,35 @@ function stageAttachments(
   return { noticeText, images };
 }
 
-export async function sendMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number, attachments?: RuntimeAttachment[], copyFolders?: string[]): Promise<void> {
+/**
+ * Photos shared earlier in THIS chat (user-uploaded or agent-generated), passed
+ * by the host every Work turn. Attachments otherwise ride only their own message
+ * (and vanish after a runtime restart), so a follow-up like "now edit it" had no
+ * path to them. We don't re-send the bytes (no vision cost): just grant the
+ * session read access to their folder and tell the model the exact path(s) to
+ * feed edit_image. Work mode only (Secure works on copies in /workspace).
+ * Returns a note to append to the turn's system prompt.
+ */
+function stageChatImages(
+  session: Session,
+  chatImages: { path: string; fileName: string }[] | undefined,
+): string {
+  if (!chatImages?.length || session.opts.secure) return '';
+  const lines: string[] = [];
+  for (const img of chatImages) {
+    const dir = dirname(img.path);
+    if (!session.opts.allowedFolders.includes(dir)) {
+      session.opts.allowedFolders = [...session.opts.allowedFolders, dir];
+    }
+    lines.push(`- "${img.fileName}" → ${img.path}`);
+  }
+  return `\n\n[Photos available in THIS chat — the user uploaded them, or you generated them on an earlier turn. ` +
+    `To edit, restyle, dress, place, or COMBINE any of them, call edit_image with the exact path(s) below ` +
+    `(pass several paths to fuse them); do NOT use generate_image, which ignores these and makes a fresh image ` +
+    `from text. Do this even if the user says "generate":\n${lines.join('\n')}]`;
+}
+
+export async function sendMessage(sessionId: string, content: string, networkEnabled?: boolean, ttlDays?: number, attachments?: RuntimeAttachment[], copyFolders?: string[], chatImages?: { path: string; fileName: string }[]): Promise<void> {
   const session = sessions.get(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
 
@@ -797,6 +825,15 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     };
   }
 
+  // Make this chat's earlier photos reachable (whitelist their folder) and tell
+  // the model their exact paths via the turn's system prompt — so "now edit it"
+  // works even though the bytes only rode their original message. Not stored in
+  // history (the list reflects the CURRENT set each turn; avoids stale copies).
+  const chatImagesNote = stageChatImages(session, chatImages);
+  const turnSystemPrompt = chatImagesNote
+    ? `${session.opts.systemPrompt ?? ''}${chatImagesNote}`
+    : session.opts.systemPrompt;
+
   const gen = runAgentTurn(session.history, messageText, {
     apiKey: session.opts.apiKey,
     model: session.opts.model,
@@ -810,7 +847,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     characterTools: session.opts.characterTools,
     canCreateTasks: session.opts.canCreateTasks,
     autonomous: session.opts.autonomous,
-    systemPrompt: session.opts.systemPrompt,
+    systemPrompt: turnSystemPrompt,
     signal: abort.signal,
     images,
     onWriteApproval: async (filePath, fileContent) => {

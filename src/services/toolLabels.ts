@@ -11,6 +11,8 @@ export function toolActivityLabel(name: string): string {
     case 'read_summary': return 'Skimming a file…';
     case 'analyze_link': return 'Analyzing the link…';
     case 'show_image': return 'Sharing an image…';
+    case 'generate_image': return 'Generating an image…';
+    case 'edit_image': return 'Editing the image…';
     case 'search_files': return 'Searching files…';
     case 'list_files': return 'Listing files…';
     case 'read_file': return 'Reading a file…';
@@ -79,6 +81,12 @@ export function toolActivityDetail(
     }
   } else if (str(a.path)) {
     raw = str(a.path);
+  } else if (str(a.prompt)) {
+    // generate_image: surface a snippet of the image description as the detail.
+    raw = str(a.prompt);
+  } else if (Array.isArray(a.prompts) && typeof a.prompts[0] === 'string') {
+    // generate_image batch: first prompt + how many in the parallel batch.
+    raw = a.prompts.length > 1 ? `${a.prompts[0]} (+${a.prompts.length - 1} more)` : a.prompts[0];
   } else if (str(a.name)) {
     raw = str(a.name);
   }

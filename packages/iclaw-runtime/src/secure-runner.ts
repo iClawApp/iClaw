@@ -463,6 +463,7 @@ async function* runSecureAgentLoop(
 
   let turnTokens = 0;
   let turnCached = 0;
+  let turnReasoning = 0;
   const dumpTurnId = newTurnId();
   const guard = makeToolGuard();
   // Paragraph break for the first text of a post-tool round, so streamed
@@ -471,7 +472,7 @@ async function* runSecureAgentLoop(
   for (let round = 0; round < MAX_ROUNDS; round++) {
     // User pressed Stop between rounds → end cleanly (partial text already sent).
     if (opts.signal?.aborted) {
-      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined, reasoning: turnReasoning || undefined };
       return;
     }
     let textBuffer = '';
@@ -496,7 +497,7 @@ async function* runSecureAgentLoop(
       );
     } catch (err) {
       if (opts.signal?.aborted) {
-        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined, reasoning: turnReasoning || undefined };
         return;
       }
       yield { type: 'error', message: describeApiError(err) };
@@ -508,6 +509,7 @@ async function* runSecureAgentLoop(
       for await (const chunk of stream) {
         if (chunk.usage?.total_tokens) turnTokens += chunk.usage.total_tokens;
         if (chunk.usage?.prompt_tokens_details?.cached_tokens) turnCached += chunk.usage.prompt_tokens_details.cached_tokens;
+        if (chunk.usage?.completion_tokens_details?.reasoning_tokens) turnReasoning += chunk.usage.completion_tokens_details.reasoning_tokens;
         const choice = chunk.choices[0];
         if (!choice) continue;
         finishReason = choice.finish_reason ?? finishReason;
@@ -532,7 +534,7 @@ async function* runSecureAgentLoop(
     } catch (err) {
       // Stop pressed mid-stream → clean end; otherwise surface the error.
       if (opts.signal?.aborted) {
-        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+        yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined, reasoning: turnReasoning || undefined };
         return;
       }
       yield { type: 'error', message: describeApiError(err) };
@@ -542,7 +544,7 @@ async function* runSecureAgentLoop(
     const toolCalls = Object.values(toolCallBuffers);
     if (toolCalls.length === 0 || finishReason === 'stop') {
       if (textBuffer) messages.push({ role: 'assistant', content: textBuffer });
-      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined };
+      yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined, reasoning: turnReasoning || undefined };
       return;
     }
 

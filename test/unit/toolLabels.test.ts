@@ -46,6 +46,8 @@ describe('toolActivityLabel', () => {
     expect(toolActivityLabel('read_summary')).toBe('Skimming a file…');
     expect(toolActivityLabel('analyze_link')).toBe('Analyzing the link…');
     expect(toolActivityLabel('show_image')).toBe('Sharing an image…');
+    expect(toolActivityLabel('generate_image')).toBe('Generating an image…');
+    expect(toolActivityLabel('edit_image')).toBe('Editing the image…');
     expect(toolActivityLabel('search_files')).toBe('Searching files…');
     expect(toolActivityLabel('list_files')).toBe('Listing files…');
     expect(toolActivityLabel('read_file')).toBe('Reading a file…');
@@ -78,6 +80,10 @@ describe('toolActivityDetail', () => {
     expect(toolActivityDetail('web_search', { query: 'openclaw traffic', count: 5 })).toBe('openclaw traffic');
     expect(toolActivityDetail('run_command', { command: 'ls -la' })).toBe('ls -la');
     expect(toolActivityDetail('read_file', { path: '/a/b/c.ts' })).toBe('/a/b/c.ts');
+    // generate_image surfaces the prompt; edit_image prefers the file path.
+    expect(toolActivityDetail('generate_image', { prompt: 'a red fox in snow' })).toBe('a red fox in snow');
+    expect(toolActivityDetail('generate_image', { prompts: ['a fox', 'a cat', 'a dog'] })).toBe('a fox (+2 more)');
+    expect(toolActivityDetail('edit_image', { path: '/a/b/pic.png', prompt: 'make it night' })).toBe('/a/b/pic.png');
   });
 
   it('reduces a URL to host + path (trailing slash trimmed)', () => {

@@ -3837,6 +3837,22 @@ code {
 }
 .draft-body.is-launcher .chat-roster { padding-bottom: var(--space-7, 40px); }
 
+/* Selected-project tint on the launcher (tone is set on .col-main so it reaches
+   the header too). Background + header take a light shade; the input box itself
+   (.composer-field) takes a stronger one. No tint for "No project". */
+.col-main[data-logo-color] .draft-body.is-launcher {
+  background: color-mix(in srgb, var(--logo-tone) 9%, var(--bg));
+}
+.col-main[data-logo-color] .draft-header {
+  background: color-mix(in srgb, var(--logo-tone) 13%, var(--header-surface, var(--surface)));
+}
+/* Tint the rounded input box itself (.composer-field) — NOT the outer .composer
+   wrapper, which would paint an ugly square block around it. */
+.col-main[data-logo-color] .draft-body.is-launcher .composer-field {
+  background: color-mix(in srgb, var(--logo-tone) 18%, var(--surface));
+  border-color: color-mix(in srgb, var(--logo-tone) 36%, var(--border));
+}
+
 /* New-chat screen (launcher, no messages yet): the chat title and the share /
    delete actions are meaningless before a chat exists — hide them until the
    first message creates the row (then `.is-launcher` drops and they reappear). */
@@ -3862,16 +3878,17 @@ code {
   padding: 0 24px;
   box-sizing: border-box;
 }
-/* Cards fill the width and WRAP to the next row (no horizontal scroll), centred
-   so left/right gutters match. Cards keep their fixed 224px width. */
+/* Up to 5 tiles per row, centred; the rest wrap to the next row. */
 .chat-roster-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 200px));
   justify-content: center;
   align-content: flex-start;
   gap: var(--space-5);
   width: 100%;
 }
+@media (max-width: 980px) { .chat-roster-grid { grid-template-columns: repeat(3, minmax(0, 200px)); } }
+@media (max-width: 620px) { .chat-roster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* Once a chat starts, the launcher class is dropped → hide the teammate strip. */
 .draft-body:not(.is-launcher) .chat-roster { display: none; }
 /* No drop-file overlay on the launcher composer (drag-drop still works in chats). */
@@ -9025,46 +9042,72 @@ body.incognito-mode .composer-mode-btn__label {
   background: color-mix(in srgb, var(--muted) 26%, transparent);
   border-radius: 99px;
 }
+/* "AI Employees" tile: themed gradient with name/role on top and the character
+   render peeking up from the bottom edge. */
 .chat-launcher-card {
+  position: relative;
+  overflow: hidden;
+  width: auto;
+  height: 268px;
+  scroll-snap-align: start;
+  text-decoration: none;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(
+    158deg,
+    color-mix(in srgb, var(--logo-tone) 88%, #fff) 0%,
+    color-mix(in srgb, var(--logo-tone) 70%, #140e26) 100%
+  );
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+.chat-launcher-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+.chat-launcher-card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* Character render fills the tile (face + upper body); legs run off the bottom. */
+.chat-launcher-card-art {
+  position: absolute;
+  left: 50%;
+  top: 9%;
+  transform: translateX(-50%);
+  width: 100%;
+  height: auto;
+  max-width: none;
+  z-index: 1;
+  pointer-events: none;
+  filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.22));
+}
+/* Colour scrim so the bottom name/role stays readable over the character. */
+.chat-launcher-card::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 52%;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--logo-tone) 80%, #140e26) 0%,
+    color-mix(in srgb, var(--logo-tone) 70%, #140e26) 28%,
+    transparent 100%
+  );
+}
+.chat-launcher-card-head {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  padding: 12px 14px 14px;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
-  flex: 0 0 224px;
-  scroll-snap-align: start;
-  padding: var(--space-6);
-  text-align: left;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+  gap: 2px;
 }
-.chat-launcher-card:hover {
-  border-color: color-mix(in srgb, var(--logo-tone, var(--accent)) 60%, var(--border));
-  background: var(--hover);
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
-}
-.chat-launcher-card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.chat-launcher-face {
-  width: 44px;
-  height: 44px;
-  margin-bottom: var(--space-2);
-  font-size: 1.35rem;
-}
-.chat-launcher-card-name { font-weight: 650; font-size: var(--text-base); }
-.chat-launcher-card-role {
-  font-weight: 550;
-  font-size: var(--text-sm);
-  color: var(--accent);
-}
-.chat-launcher-card-tagline {
-  font-size: var(--text-sm);
-  line-height: 1.4;
-  color: var(--muted);
-}
+.chat-launcher-card-name { font-weight: 700; font-size: var(--text-md); line-height: 1.12; }
+.chat-launcher-card-role { font-weight: 500; font-size: var(--text-sm); color: rgba(255, 255, 255, 0.85); }
+.chat-launcher-card-face { position: absolute; left: 50%; top: 30px; transform: translateX(-50%); z-index: 1; }
+.chat-launcher-face { width: 96px; height: 96px; }
 
 /* Illustrated avatar — sized by the caller's face class (chat-launcher-face,
    character-welcome-face, chat-character-face, team-card-face); the SVG carries
@@ -9579,27 +9622,72 @@ body.incognito-mode .composer-mode-btn__label {
   background: color-mix(in srgb, var(--logo-tone) 82%, #1b1430);
   color: #fff;
   border-right: none;
-}
-.specialist-hero {
-  position: relative;
-  padding: 16px 16px 14px;
-  background: color-mix(in srgb, var(--logo-tone) 70%, #140e26);
   display: flex;
   flex-direction: column;
+  min-height: 0;
+}
+/* Full-bleed character render on a themed gradient — the standing teammate. */
+.specialist-hero {
+  position: relative;
+  flex: none;
+  height: 240px;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background:
+    radial-gradient(125% 85% at 50% 0%, color-mix(in srgb, var(--logo-tone) 55%, transparent), transparent 72%),
+    color-mix(in srgb, var(--logo-tone) 58%, #140e26);
 }
 .specialist-hero-back {
-  align-self: flex-start;
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  z-index: 2;
   font-size: var(--text-sm);
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(255, 255, 255, 0.85);
   text-decoration: none;
-  margin-bottom: 10px;
 }
 .specialist-hero-back:hover { color: #fff; }
-.specialist-hero-avatar { width: 96px; height: 96px; margin-bottom: 10px; }
+.specialist-hero-art {
+  position: relative;
+  display: block;
+  height: 102%;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: bottom center;
+  filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.3));
+}
+/* Fallback when a character has no render: the old avatar badge, centred. */
+.specialist-hero-avatar { align-self: center; width: 96px; height: 96px; margin-bottom: 22px; }
 .specialist-hero-face { width: 96px; height: 96px; border-radius: 16px; }
-.specialist-hero-name { font-size: 1.25rem; font-weight: 650; line-height: 1.1; }
-.specialist-hero-role { font-size: var(--text-sm); color: rgba(255, 255, 255, 0.7); }
-.specialist-sb-body { padding: 14px 12px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+
+/* Name + role + settings, on a row below the hero. */
+.specialist-id {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 4px;
+}
+.specialist-id-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.specialist-id-name { font-size: 1.3rem; font-weight: 650; line-height: 1.1; }
+.specialist-id-role { font-size: var(--text-sm); color: rgba(255, 255, 255, 0.7); }
+.specialist-id-gear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: rgba(255, 255, 255, 0.85);
+  border-radius: var(--radius-circle);
+}
+.specialist-id-gear svg { width: 20px; height: 20px; }
+.specialist-id-gear:hover { color: #fff; background: rgba(255, 255, 255, 0.14); }
+
+.specialist-sb-body { flex: 1; min-height: 0; padding: 12px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
 .specialist-newchat-form { margin: 0; }
 .specialist-newchat {
   width: 100%;
@@ -9616,18 +9704,31 @@ body.incognito-mode .composer-mode-btn__label {
 .specialist-powerup {
   text-align: left;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-lg);
   padding: 10px 12px;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: 10px;
   color: #fff;
 }
 .specialist-powerup:hover { background: rgba(255, 255, 255, 0.16); }
-.specialist-powerup-label { font-size: var(--text-sm); font-weight: 500; }
-.specialist-powerup-sub { font-size: var(--text-xs); color: rgba(255, 255, 255, 0.65); }
+.specialist-powerup-icon {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.18);
+}
+.specialist-powerup-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.specialist-powerup-label { font-size: var(--text-sm); font-weight: 550; }
+.specialist-powerup-sub { font-size: var(--text-xs); color: rgba(255, 255, 255, 0.7); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.specialist-powerup-chevron { flex: none; font-size: 1.3rem; line-height: 1; color: rgba(255, 255, 255, 0.6); }
 .specialist-recents-label { margin: 6px 0; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.55); }
 .specialist-recents-empty { margin: 0; font-size: var(--text-sm); color: rgba(255, 255, 255, 0.6); }
 .specialist-recent {
@@ -9771,11 +9872,15 @@ body.incognito-mode .composer-mode-btn__label {
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 .hps-chip:hover { background: color-mix(in srgb, var(--text) 8%, var(--surface)); color: var(--text); }
+/* Active chip = the project's saturated colour (each chip carries its own
+   data-logo-color → --logo-tone; "No project" has none → falls back to accent). */
 .hps-chip.on {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--text) 32%, var(--border));
-  background: color-mix(in srgb, var(--text) 10%, var(--surface));
+  color: #fff;
+  border-color: transparent;
+  background: var(--logo-tone, var(--accent));
 }
+.hps-chip.on:hover { color: #fff; background: var(--logo-tone, var(--accent)); filter: brightness(1.05); }
+.hps-chip.on .hps-name { color: #fff; }
 .hps-chip .project-logo { width: 22px; height: 22px; font-size: 12px; flex: none; }
 .hps-name { font-size: var(--text-sm); max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
 

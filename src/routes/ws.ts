@@ -154,6 +154,7 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
       if (!key || !content) return;
       let endedTokens: number | undefined;
       let endedCached: number | undefined;
+      let endedReasoning: number | undefined;
       try {
         const res = await runIncognitoTurn({
           key,
@@ -167,11 +168,12 @@ async function handleClientMsg(socket: WebSocket, msg: ClientMsg): Promise<void>
         });
         endedTokens = res.tokens;
         endedCached = res.cached;
+        endedReasoning = res.reasoning;
       } catch (err) {
         send(socket, { type: 'incognito-error', key, message: err instanceof Error ? err.message : String(err) });
       }
       // Always close the turn so the client can re-enable the composer.
-      send(socket, { type: 'incognito-turn-ended', key, tokens: endedTokens, cached: endedCached });
+      send(socket, { type: 'incognito-turn-ended', key, tokens: endedTokens, cached: endedCached, reasoning: endedReasoning });
       return;
     }
 

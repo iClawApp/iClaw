@@ -1,15 +1,14 @@
-<%# One teammate card for the launcher. A plain link to /start/:id — the server
-    opens (or reuses) that teammate's no-project chat. `ch` is the CharacterDef. %>
+<%# One teammate tile for the launcher ("AI Employees" style): a themed gradient
+    card with the character render filling it (face + upper body) and the name/role
+    at the bottom over a colour scrim. A plain link to /start/:id. `ch` = CharacterDef. %>
 <a class="chat-launcher-card" href="/start/<%= ch.id %>" data-character="<%= ch.id %>" data-logo-color="<%= ch.color %>">
-  <%- include('characterFace', { character: ch, faceClass: 'chat-launcher-face' }) %>
-  <span class="chat-launcher-card-name"><%= ch.name %></span>
-  <span class="chat-launcher-card-role"><%= ch.role %></span>
-  <span class="chat-launcher-card-tagline"><%= ch.tagline %></span>
-  <% if (Array.isArray(ch.capabilities) && ch.capabilities.length) { %>
-  <span class="chat-launcher-caps">
-    <% ch.capabilities.forEach(function (cap) { %>
-    <span class="chat-launcher-cap"><%= cap %></span>
-    <% }); %>
-  </span>
+  <% if (ch.art) { %>
+    <img class="chat-launcher-card-art" src="<%= ch.art %>" alt="" aria-hidden="true" loading="lazy" />
+  <% } else { %>
+    <span class="chat-launcher-card-face"><%- include('characterFace', { character: ch, faceClass: 'chat-launcher-face' }) %></span>
   <% } %>
+  <span class="chat-launcher-card-head">
+    <span class="chat-launcher-card-name"><%= ch.name %></span>
+    <% if (ch.role) { %><span class="chat-launcher-card-role"><%= ch.role %></span><% } %>
+  </span>
 </a>

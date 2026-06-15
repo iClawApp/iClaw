@@ -302,6 +302,8 @@ export interface Message {
   tokens?: number | null;
   /** Of `tokens`, how many prompt tokens were served from the provider cache. Dev-mode. */
   cached_tokens?: number | null;
+  /** Of `tokens`, how many completion tokens the model spent on hidden reasoning. Dev-mode. */
+  reasoning_tokens?: number | null;
   /** Verified tool outcomes for the turn that produced this (assistant) row. */
   tool_trace?: ToolTraceEntry[] | null;
   created_at: string;
