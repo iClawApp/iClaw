@@ -3835,7 +3835,7 @@ code {
      the viewport centre (≈50vh) minus the header + gap + half the composer. */
   min-height: calc(50vh - 150px);
 }
-.draft-body.is-launcher .chat-roster { padding-bottom: var(--space-7, 40px); }
+.draft-body.is-launcher .chat-roster { margin-top: var(--space-6); padding-bottom: var(--space-7, 40px); }
 
 /* Selected-project tint on the launcher (tone is set on .col-main so it reaches
    the header too). Background + header take a light shade; the input box itself
@@ -3878,17 +3878,19 @@ code {
   padding: 0 24px;
   box-sizing: border-box;
 }
-/* Up to 5 tiles per row, centred; the rest wrap to the next row. */
+/* Tiles centred (any count), wrapping to the next row; capped at 5 per row via
+   the container max-width. Flex (not grid) so 4 cards centre instead of leaving
+   an empty 5th column on the right. */
 .chat-roster-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 200px));
+  display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   align-content: flex-start;
   gap: var(--space-5);
   width: 100%;
+  max-width: calc(200px * 5 + var(--space-5) * 4);
+  margin: 0 auto;
 }
-@media (max-width: 980px) { .chat-roster-grid { grid-template-columns: repeat(3, minmax(0, 200px)); } }
-@media (max-width: 620px) { .chat-roster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* Once a chat starts, the launcher class is dropped → hide the teammate strip. */
 .draft-body:not(.is-launcher) .chat-roster { display: none; }
 /* No drop-file overlay on the launcher composer (drag-drop still works in chats). */
@@ -9047,7 +9049,7 @@ body.incognito-mode .composer-mode-btn__label {
 .chat-launcher-card {
   position: relative;
   overflow: hidden;
-  width: auto;
+  flex: 0 0 200px;
   height: 268px;
   scroll-snap-align: start;
   text-decoration: none;
@@ -9319,6 +9321,59 @@ body.incognito-mode .composer-mode-btn__label {
 .sr-act:hover { background: var(--hover); color: var(--text); }
 .sr-act--rm { font-size: 1rem; line-height: 1; padding: 0 var(--space-3); }
 .sr-item-body { margin: 0; font-size: var(--text-sm); line-height: 1.5; color: var(--muted); white-space: pre-wrap; }
+
+/* "Connect inbox" panel (Emmie) — provider rows + a coming-soon note. */
+.inbox-providers { list-style: none; margin: 0 0 var(--space-4); padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.inbox-provider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.inbox-provider-icon {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  color: #fff;
+  font-weight: 700;
+  font-size: var(--text-md);
+}
+.inbox-provider-icon--gmail { background: #ea4335; }
+.inbox-provider-icon--outlook { background: #0a78d4; }
+.inbox-provider-icon--imap { background: color-mix(in srgb, var(--text) 55%, var(--surface)); }
+.inbox-provider-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.inbox-provider-name { font-weight: 600; font-size: var(--text-sm); color: var(--text); }
+.inbox-provider-desc { font-size: var(--text-xs); color: var(--muted); }
+.inbox-connect-btn {
+  flex: none;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-pill);
+  padding: 5px 14px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.inbox-connect-btn:hover { background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
+.inbox-connect-btn.is-requested {
+  color: var(--approve, #16a34a);
+  border-color: color-mix(in srgb, var(--approve, #16a34a) 45%, var(--border));
+  background: color-mix(in srgb, var(--approve, #16a34a) 10%, var(--surface));
+}
+.inbox-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--muted);
+}
 .sr-add { display: flex; flex-direction: column; gap: var(--space-3); }
 .sr-textarea {
   border: 1px solid var(--border);
@@ -9619,6 +9674,7 @@ body.incognito-mode .composer-mode-btn__label {
 
 /* --- Specialist themed chat (Sintra-style sidebar + power-up overlay) ----- */
 .specialist-sidebar[data-logo-color] {
+  position: relative;
   background: color-mix(in srgb, var(--logo-tone) 82%, #1b1430);
   color: #fff;
   border-right: none;
@@ -9626,18 +9682,75 @@ body.incognito-mode .composer-mode-btn__label {
   flex-direction: column;
   min-height: 0;
 }
-/* Full-bleed character render on a themed gradient — the standing teammate. */
+/* Minimalist tab on the left edge (vertically centred) → opens the chats menu. */
+.specialist-drawer-tab {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 6;
+  width: 20px;
+  height: 54px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  transition: background 0.15s ease, width 0.12s ease;
+}
+.specialist-drawer-tab:hover { background: rgba(255, 255, 255, 0.26); width: 24px; }
+.specialist-drawer-tab svg { width: 16px; height: 16px; }
+/* "+" new-chat button in the name row (replaces the old settings gear). */
+.specialist-id-new-form { margin: 0; flex: none; display: inline-flex; }
+.specialist-id-new {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--radius-circle);
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 1.45rem;
+  line-height: 1;
+  cursor: pointer;
+  text-decoration: none;
+}
+.specialist-id-new:hover { background: rgba(255, 255, 255, 0.3); }
+/* Hide the "+" (start another chat) until this chat has at least one message —
+   a fresh, empty chat doesn't need a "New chat" affordance. :has() makes it
+   appear live the moment the first (optimistic) message lands in the thread. */
+.app:not(:has(.messages .msg)) .specialist-id-new,
+.app:not(:has(.messages .msg)) .specialist-id-new-form { display: none; }
+/* Full-bleed character render on a studio-style themed backdrop: a soft top
+   spotlight, a darkening base, and a ground-shadow ellipse so the teammate reads
+   as standing in a space rather than floating on flat colour. */
 .specialist-hero {
   position: relative;
   flex: none;
-  height: 240px;
+  height: 264px;
   overflow: hidden;
   display: flex;
   align-items: flex-end;
   justify-content: center;
   background:
-    radial-gradient(125% 85% at 50% 0%, color-mix(in srgb, var(--logo-tone) 55%, transparent), transparent 72%),
-    color-mix(in srgb, var(--logo-tone) 58%, #140e26);
+    radial-gradient(72% 24% at 50% 100%, rgba(0, 0, 0, 0.5), transparent 72%),
+    radial-gradient(125% 78% at 50% -8%, color-mix(in srgb, var(--logo-tone) 72%, #fff) 0%, transparent 58%),
+    linear-gradient(180deg, color-mix(in srgb, var(--logo-tone) 60%, #1b1430) 0%, color-mix(in srgb, var(--logo-tone) 40%, #140e26) 100%);
+}
+/* Soft corner vignette for depth (kept off the centred character). */
+.specialist-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(115% 95% at 50% 42%, transparent 62%, rgba(0, 0, 0, 0.22) 100%);
 }
 .specialist-hero-back {
   position: absolute;
@@ -9651,13 +9764,14 @@ body.incognito-mode .composer-mode-btn__label {
 .specialist-hero-back:hover { color: #fff; }
 .specialist-hero-art {
   position: relative;
+  z-index: 1;
   display: block;
-  height: 102%;
+  height: 105%;
   width: auto;
-  max-width: 100%;
+  max-width: 104%;
   object-fit: contain;
   object-position: bottom center;
-  filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.3));
+  filter: drop-shadow(0 16px 20px rgba(0, 0, 0, 0.42));
 }
 /* Fallback when a character has no render: the old avatar badge, centred. */
 .specialist-hero-avatar { align-self: center; width: 96px; height: 96px; margin-bottom: 22px; }
@@ -9704,33 +9818,55 @@ body.incognito-mode .composer-mode-btn__label {
 .specialist-powerup {
   text-align: left;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.1);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.07));
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: var(--radius-lg);
-  padding: 10px 12px;
+  padding: 10px 11px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   color: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
+  transition: background 0.15s ease, transform 0.12s ease;
 }
-.specialist-powerup:hover { background: rgba(255, 255, 255, 0.16); }
+.specialist-powerup:hover {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.11));
+  transform: translateY(-1px);
+}
 .specialist-powerup-icon {
   flex: none;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
+  font-size: 19px;
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.18);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.14));
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
 .specialist-powerup-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .specialist-powerup-label { font-size: var(--text-sm); font-weight: 550; }
 .specialist-powerup-sub { font-size: var(--text-xs); color: rgba(255, 255, 255, 0.7); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .specialist-powerup-chevron { flex: none; font-size: 1.3rem; line-height: 1; color: rgba(255, 255, 255, 0.6); }
 .specialist-recents-label { margin: 6px 0; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.55); }
-.specialist-recents-empty { margin: 0; font-size: var(--text-sm); color: rgba(255, 255, 255, 0.6); }
+/* No chats yet → a placeholder centred (vertically + horizontally) in the space. */
+.specialist-recents.is-empty {
+  flex: 1;
+  min-height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.specialist-recents-placeholder {
+  margin: 0;
+  max-width: 80%;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.5);
+}
 .specialist-recent {
   display: block;
   text-decoration: none;
@@ -9881,6 +10017,13 @@ body.incognito-mode .composer-mode-btn__label {
 }
 .hps-chip.on:hover { color: #fff; background: var(--logo-tone, var(--accent)); filter: brightness(1.05); }
 .hps-chip.on .hps-name { color: #fff; }
+/* "No project" has no colour → a neutral light selected state (not the dark accent). */
+.hps-chip.on[data-drawer-project=""] {
+  background: color-mix(in srgb, var(--text) 12%, var(--surface));
+  color: var(--text);
+}
+.hps-chip.on[data-drawer-project=""] .hps-name { color: var(--text); }
+.hps-chip.on[data-drawer-project=""]:hover { background: color-mix(in srgb, var(--text) 16%, var(--surface)); filter: none; }
 .hps-chip .project-logo { width: 22px; height: 22px; font-size: 12px; flex: none; }
 .hps-name { font-size: var(--text-sm); max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
 
@@ -9958,12 +10101,14 @@ body.incognito-mode .composer-mode-btn__label {
 .project-drawer-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
-.project-drawer-title { font-size: var(--text-base); font-weight: 600; color: var(--text); }
+.project-drawer-head .header-project-switcher { flex: 1; min-width: 0; padding-bottom: 2px; }
+.project-drawer-title { flex: 1; min-width: 0; font-size: var(--text-base); font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .project-drawer-close {
+  flex: none;
   background: none;
   border: none;
   color: var(--muted);
@@ -9973,6 +10118,76 @@ body.incognito-mode .composer-mode-btn__label {
   padding: 0 4px;
 }
 .project-drawer-close:hover { color: var(--text); }
+
+/* Minimalist edge tab on the left border (vertically centred) — the single
+   opener for the drawer on every page. */
+/* A tall, transparent hit strip on the left border so touching the edge anywhere
+   near the arrow (~100px above/below) opens the drawer — not just the small pill. */
+.drawer-edge-tab {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: var(--z-sticky, 20);
+  width: 30px;
+  height: 254px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+/* The only visible part: a small pill centred in the tall hit strip. */
+.drawer-edge-tab::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 54px;
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: width 0.12s ease, background 0.12s ease;
+}
+.drawer-edge-tab svg { position: relative; z-index: 1; width: 16px; height: 16px; margin-left: 2px; }
+.drawer-edge-tab:hover { color: var(--text); }
+.drawer-edge-tab:hover::before { width: 25px; background: color-mix(in srgb, var(--text) 5%, var(--surface)); }
+body.is-pdrawer-open .drawer-edge-tab { opacity: 0; pointer-events: none; }
+
+/* Global nav row inside the drawer (Projects · Team · Tasks · Settings). */
+.pdrawer-nav {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.pdrawer-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.pdrawer-nav-item svg { width: 20px; height: 20px; }
+.pdrawer-nav-item:hover { background: var(--bg); color: var(--text); }
+.pdrawer-nav-item.on { background: color-mix(in srgb, var(--text) 8%, var(--surface)); color: var(--text); }
+
+/* Update / gateway banners, pinned to the drawer bottom. */
+.pdrawer-banners { flex: none; }
+.pdrawer-banners .sidebar-update-banner { margin: 10px 12px; }
+.pdrawer-banners .sidebar-update-banner[hidden] { display: none; }
 
 /* New chat + an expandable search, on one row (search collapses to an icon at
    the right and opens to full width on click). */

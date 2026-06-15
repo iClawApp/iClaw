@@ -19,12 +19,14 @@ import {
 } from '../services/config';
 import { openRouterEnabled, fetchUsage, isOpenRouterFailure, validateKey } from '../services/openRouter';
 import { runtimeProcess } from '../services/runtimeProcess';
+import { buildDrawerLocals } from '../services/drawerNav';
 
 export const settingsRouter = Router();
 
-/** Locals every settings sub-page needs for the shared sidebar + shell. */
+/** Locals every settings sub-page needs for the shared shell + left-nav drawer. */
 function sidebarLocals() {
   return {
+    ...buildDrawerLocals({ activeNav: 'settings' }),
     title: 'Settings — iClaw',
     chats: chats.list(),
     workingIds: chatStatus.workingIds(),

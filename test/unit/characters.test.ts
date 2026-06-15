@@ -48,9 +48,9 @@ describe('characters', () => {
   it('prepends the persona only for non-generalist characters', () => {
     const msg = 'hello';
     expect(applyCharacterPrompt(msg, 'generalist')).toBe(msg);
-    const withPersona = applyCharacterPrompt(msg, 'writer');
+    const withPersona = applyCharacterPrompt(msg, 'smm');
     expect(withPersona.endsWith('\n\n' + msg)).toBe(true);
-    expect(withPersona).toContain('You are Penn');
+    expect(withPersona).toContain('You are Soshie');
   });
 
   it('every character has the required preset fields', () => {
@@ -84,22 +84,19 @@ describe('characters', () => {
     expect(remi).not.toContain('write_file');
     expect(remi).not.toContain('edit_file');
     expect(remi).not.toContain('run_command');
-    // Support drafts replies — reads + writes, but never runs code.
-    const cleo = characterToolAllowlist('support')!;
-    expect(cleo).toContain('write_file');
-    expect(cleo).not.toContain('run_command');
-    // The bookkeeper crunches numbers, so it does get the shell.
-    expect(characterToolAllowlist('bookkeeper')).toContain('run_command');
+    // Emmie drafts email replies — reads + writes, but never runs code.
+    const emmie = characterToolAllowlist('email')!;
+    expect(emmie).toContain('write_file');
+    expect(emmie).not.toContain('run_command');
   });
 
-  it('covers the essential SMB roles (support, email, assistant, bookkeeper)', () => {
-    for (const id of ['support', 'email', 'assistant', 'bookkeeper']) {
+  it('covers the core roles (researcher, smm, email, assistant)', () => {
+    for (const id of ['researcher', 'smm', 'email', 'assistant']) {
       expect(isKnownCharacter(id)).toBe(true);
     }
-    // The personal assistant carries the calendar panel, like the social manager.
+    // The planner-style specialists carry the calendar panel.
     expect(getCharacter('assistant').panels).toContain('calendar');
-    // Support carries the saved-replies panel.
-    expect(getCharacter('support').panels).toContain('replies');
+    expect(getCharacter('smm').panels).toContain('calendar');
   });
 
   it('resolves panels through the registry (modular — no hardcoded switch)', () => {
@@ -122,8 +119,6 @@ describe('characters', () => {
     expect(remi.capabilities).toContain('Looks things up online');
     expect(remi.capabilities).toContain('Reads your files');
     expect(remi.capabilities).not.toContain('Runs code & tasks');
-    const milli = getCharacter('bookkeeper');
-    expect(milli.capabilities).toContain('Runs code & tasks');
     // Soshie makes visuals and plans the content calendar.
     const soshie = getCharacter('smm');
     expect(soshie.capabilities).toContain('Makes charts & images');

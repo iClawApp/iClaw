@@ -1,13 +1,33 @@
-<%# Slide-out overlay listing every agent's chats in the current project, with a
-    project switcher on top. Sits over the themed specialist sidebar (additive —
-    the sidebar stays). The toggle button lives in specialistSidebar.ejs
-    (#project-drawer-toggle); this renders the panel + backdrop + behaviour.
-    Body is partials/projectDrawerBody — re-fetched in place on project switch. %>
-<aside class="project-drawer" id="project-drawer" hidden aria-hidden="true" aria-label="All project chats">
-  <div class="project-drawer-head">
-    <span class="project-drawer-title">All project chats</span>
-    <button type="button" class="project-drawer-close" data-pdrawer-close aria-label="Close">&times;</button>
-  </div>
+<%# The single left navigation, app-wide. A minimalist edge tab (fixed, left
+    border, vertically centred) opens this slide-out. Head: project switcher +
+    global nav (Projects/Team/Tasks/Settings). Body (partials/projectDrawerBody,
+    re-fetched on project switch) lists chats grouped by agent. Update/gateway
+    banners sit at the bottom. Behaviour + the open/close + filter JS is below. %>
+<% var _nav = (typeof drawerActiveNav !== 'undefined' ? drawerActiveNav : ''); %>
+<button type="button" class="drawer-edge-tab" id="project-drawer-toggle"
+        aria-controls="project-drawer" aria-expanded="false" aria-label="Open menu" title="Menu">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+    <polyline points="9 6 15 12 9 18" />
+  </svg>
+</button>
+<aside class="project-drawer" id="project-drawer" hidden aria-hidden="true" aria-label="Menu">
+  <%# No head bar — closing is via backdrop / Esc / navigation / mouse-out. The
+      menu opens straight into the global nav row. %>
+  <nav class="pdrawer-nav" aria-label="Navigation">
+    <a class="pdrawer-nav-item<%= _nav === 'projects' ? ' on' : '' %>" href="/projects">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span>Projects</span>
+    </a>
+    <a class="pdrawer-nav-item<%= _nav === 'tasks' ? ' on' : '' %>" href="/tasks">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6h11"/><path d="M9 12h11"/><path d="M9 18h11"/><path d="M4 6l1 1 2-2"/><path d="M4 12l1 1 2-2"/><path d="M4 18l1 1 2-2"/></svg>
+      <span>Tasks</span>
+    </a>
+    <a class="pdrawer-nav-item<%= _nav === 'settings' ? ' on' : '' %>" href="/settings/voice-ask">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span>Settings</span>
+    </a>
+  </nav>
+
   <div class="project-drawer-body" id="project-drawer-body">
     <%- include('projectDrawerBody', {
           drawerProjectId: typeof drawerProjectId !== 'undefined' ? drawerProjectId : null,
@@ -17,6 +37,20 @@
           drawerActiveChatId: typeof drawerActiveChatId !== 'undefined' ? drawerActiveChatId : 0,
           drawerWorkingIds: typeof drawerWorkingIds !== 'undefined' ? drawerWorkingIds : [],
         }) %>
+  </div>
+
+  <%# System status (moved from the old sidebar — same ids so iclaw.js drives them). %>
+  <div class="pdrawer-banners">
+    <div id="sidebar-update-banner" class="sidebar-update-banner" hidden role="status" aria-live="polite">
+      <p class="sidebar-update-banner__title">Update ready</p>
+      <p class="sidebar-update-banner__subtitle" id="sidebar-update-status">Your chats keep working</p>
+      <button type="button" class="sidebar-update-banner__run" id="sidebar-update-run">Update now</button>
+    </div>
+    <div id="sidebar-gateway-banner" class="sidebar-update-banner sidebar-gateway-banner" hidden role="status" aria-live="polite">
+      <p class="sidebar-update-banner__title">OpenClaw is off</p>
+      <p class="sidebar-update-banner__subtitle" id="sidebar-gateway-status">Your chats keep working</p>
+      <button type="button" class="sidebar-update-banner__run" id="sidebar-gateway-start">Start OpenClaw</button>
+    </div>
   </div>
 </aside>
 <div class="project-drawer-backdrop" id="project-drawer-backdrop" hidden aria-hidden="true"></div>
@@ -29,6 +63,10 @@
     var toggle = document.getElementById('project-drawer-toggle');
     if (!panel || !backdrop || !bodyEl) return;
 
+    var hoverOpen = false; // revealed by hovering the edge (vs an explicit click)
+    var hoverCloseTimer = null;
+    function cancelHoverClose() { if (hoverCloseTimer) { clearTimeout(hoverCloseTimer); hoverCloseTimer = null; } }
+
     function setOpen(open) {
       panel.classList.toggle('is-open', open);
       panel.hidden = !open;
@@ -37,9 +75,21 @@
       backdrop.classList.toggle('is-open', open);
       if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
       document.body.classList.toggle('is-pdrawer-open', open);
+      if (!open) { hoverOpen = false; cancelHoverClose(); }
     }
     function open() { setOpen(true); }
     function close() { setOpen(false); }
+
+    // Hover-to-open: brushing the tall left-edge strip with a mouse slides the
+    // menu out — no click needed. It then auto-closes a moment after the pointer
+    // leaves it, UNLESS opened by a deliberate click (which pins it: only
+    // ×/backdrop/Esc/navigation close it then). Pointer-having devices only.
+    var canHover = !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
+    function scheduleHoverClose() {
+      if (!hoverOpen) return;
+      cancelHoverClose();
+      hoverCloseTimer = setTimeout(function () { if (hoverOpen) close(); }, 280);
+    }
 
     // Live filter over the listed chats (by title). The search lives inside the
     // (re-rendered) menu body, so read it fresh and bind via delegation on the
@@ -82,8 +132,20 @@
     });
 
     // The toggle's job is to OPEN the menu (closing is ×/backdrop/Esc/navigation).
-    // Idempotent-open keeps it robust against stray double clicks.
-    if (toggle) toggle.addEventListener('click', open);
+    // A click pins it open; brushing it with the mouse opens it as a hover flyout.
+    if (toggle) {
+      toggle.addEventListener('click', function () { hoverOpen = false; cancelHoverClose(); open(); });
+      if (canHover) toggle.addEventListener('mouseenter', function () {
+        if (panel.classList.contains('is-open')) return;
+        hoverOpen = true;
+        open();
+      });
+    }
+    if (canHover) {
+      // While hover-opened, keep it open over the panel; close shortly after leaving.
+      panel.addEventListener('mouseenter', cancelHoverClose);
+      panel.addEventListener('mouseleave', scheduleHoverClose);
+    }
     backdrop.addEventListener('click', close);
     var closeBtn = panel.querySelector('[data-pdrawer-close]');
     if (closeBtn) closeBtn.addEventListener('click', close);

@@ -40,14 +40,6 @@
       <% } %>
       </div>
 
-      <%# Centered project switcher — re-renders the slide-out menu in place. %>
-      <div class="chat-header-center">
-        <%- include('partials/projectSwitcher', {
-              switcherProjects: typeof drawerProjects !== 'undefined' ? drawerProjects : (typeof allProjects !== 'undefined' ? allProjects : []),
-              switcherActiveId: typeof drawerProjectId !== 'undefined' ? drawerProjectId : null,
-            }) %>
-      </div>
-
       <div class="chat-header-tools">
       <form class="agent-form header-field" method="post" action="/chats/<%= activeChat.id %>/agent">
         <label class="header-field-label" for="chat-agent-select">Agent</label>

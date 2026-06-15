@@ -1,0 +1,82 @@
+<%# Per-character UI panel: "Connect inbox" for the email persona (Emmie). A
+    scaffold — lists the providers an email agent connects (Gmail / Outlook /
+    IMAP). Real OAuth sync is not wired yet, so "Connect" registers interest
+    ("Requested") and the panel makes clear it's coming. Self-contained; the
+    requested-providers set is persisted server-side (window.iclawUI) keyed by
+    chat so it survives the desktop app's changing origin port. %>
+<section class="char-panel inbox-panel" id="inbox-connect" data-chat-id="<%= (typeof panelKey !== 'undefined' && panelKey) ? panelKey : (typeof activeChat !== 'undefined' && activeChat ? activeChat.id : '0') %>" aria-label="Connect inbox">
+  <div class="char-panel-head">
+    <span class="char-panel-title">Connect your inbox</span>
+    <span class="char-panel-sub">Let Emmie work straight from your real emails</span>
+  </div>
+  <div class="char-panel-body">
+    <ul class="inbox-providers" data-inbox-list>
+      <li class="inbox-provider" data-provider="gmail">
+        <span class="inbox-provider-icon inbox-provider-icon--gmail" aria-hidden="true">M</span>
+        <span class="inbox-provider-info">
+          <span class="inbox-provider-name">Gmail</span>
+          <span class="inbox-provider-desc">Read &amp; draft from your Google inbox</span>
+        </span>
+        <button type="button" class="inbox-connect-btn" data-connect>Connect</button>
+      </li>
+      <li class="inbox-provider" data-provider="outlook">
+        <span class="inbox-provider-icon inbox-provider-icon--outlook" aria-hidden="true">O</span>
+        <span class="inbox-provider-info">
+          <span class="inbox-provider-name">Outlook</span>
+          <span class="inbox-provider-desc">Microsoft 365 &amp; Outlook.com</span>
+        </span>
+        <button type="button" class="inbox-connect-btn" data-connect>Connect</button>
+      </li>
+      <li class="inbox-provider" data-provider="imap">
+        <span class="inbox-provider-icon inbox-provider-icon--imap" aria-hidden="true">@</span>
+        <span class="inbox-provider-info">
+          <span class="inbox-provider-name">IMAP / other</span>
+          <span class="inbox-provider-desc">Any IMAP/SMTP mailbox</span>
+        </span>
+        <button type="button" class="inbox-connect-btn" data-connect>Connect</button>
+      </li>
+    </ul>
+    <p class="inbox-note">Inbox sync is coming soon. For now, paste an email or thread and Emmie will summarise it and draft a reply.</p>
+  </div>
+  <script>
+  (function () {
+    var root = document.getElementById('inbox-connect');
+    if (!root || root.dataset.inboxInit) return;
+    root.dataset.inboxInit = '1';
+    var KEY = 'inbox-requested:' + (root.getAttribute('data-chat-id') || '0');
+    var requested = {};
+    try {
+      var raw = window.iclawUI ? window.iclawUI.get(KEY) : null;
+      requested = raw ? (JSON.parse(raw) || {}) : {};
+    } catch (e) { requested = {}; }
+    function save() { try { if (window.iclawUI) window.iclawUI.set(KEY, JSON.stringify(requested)); } catch (e) {} }
+
+    function paint(li) {
+      var id = li.getAttribute('data-provider');
+      var btn = li.querySelector('[data-connect]');
+      if (!btn) return;
+      if (requested[id]) {
+        btn.textContent = 'On the list ✓';
+        btn.classList.add('is-requested');
+        btn.title = "We'll switch this on soon — you're on the list.";
+      } else {
+        btn.textContent = 'Connect';
+        btn.classList.remove('is-requested');
+        btn.title = 'Coming soon';
+      }
+    }
+
+    root.querySelectorAll('.inbox-provider').forEach(function (li) {
+      paint(li);
+      var btn = li.querySelector('[data-connect]');
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        var id = li.getAttribute('data-provider');
+        requested[id] = !requested[id];
+        save();
+        paint(li);
+      });
+    });
+  })();
+  </script>
+</section>

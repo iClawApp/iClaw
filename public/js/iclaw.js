@@ -56,6 +56,9 @@
   const rawChatId = messagesEl?.dataset.chatId;
   const startedOnDraft = messagesEl?.dataset.draft === '1' || !rawChatId;
   let activeChatId = startedOnDraft ? null : Number(rawChatId);
+  // Declared early (before workFoldersKey reads it during init): the project the
+  // launcher draft will belong to. null = no project; set by the project switcher.
+  let draftChosenProjectId = null;
 
   // -------------------------------------------------------------------------
   // composer mode (Ask / Execute). Mode rides along with each sent message.
@@ -542,7 +545,13 @@
   const workFoldersCount = document.getElementById('composer-work-folders-count');
 
   function workFoldersKey() {
-    const pid = messagesEl?.dataset.projectId;
+    // On the launcher the chat row doesn't exist yet, so messagesEl has no
+    // project_id — the chosen project lives in draftChosenProjectId. Fall back to
+    // it so each project remembers its own last-used folders (not a shared set).
+    let pid = messagesEl?.dataset.projectId;
+    if ((pid == null || pid === '') && draftChosenProjectId != null) {
+      pid = String(draftChosenProjectId);
+    }
     if (pid) return `iclaw:work-folders:project:${pid}`;
     return 'iclaw:work-folders:no-project';
   }
@@ -1450,8 +1459,7 @@
       replyJumpHighlightFadeTimer = null;
     }
   }
-  /** After project pick on draft home: null = no project, number = id. Meaningful only when `draftProjectLocked`. */
-  let draftChosenProjectId = null;
+  // draftChosenProjectId is declared near the top (used by workFoldersKey at init).
   let draftProjectLocked = false;
 
   let composerSecretNextSlot = 0;
@@ -1860,6 +1868,10 @@
       draftChosenProjectId = pid === '' ? null : Number(pid);
       if (draftChosenProjectId != null && !Number.isFinite(draftChosenProjectId)) draftChosenProjectId = null;
       applyLauncherTone(pid === '' ? null : chip.getAttribute('data-logo-color'));
+      // Work folders are remembered per project — refresh the picker for the
+      // newly-selected project (its own last-used set, not a shared one).
+      if (typeof updateWorkFoldersButton === 'function') updateWorkFoldersButton();
+      if (typeof renderWorkFoldersList === 'function') renderWorkFoldersList();
     });
     // Initial tint from whichever switcher chip is active on load.
     const activeChip = document.querySelector('.header-project-switcher .hps-chip.on');

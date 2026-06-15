@@ -18,6 +18,7 @@ import { probeGateway } from '../services/gatewayProbe';
 import { mountProjectTasksRoutes } from './tasks';
 import { listCharacters, isKnownCharacter } from '../services/characters';
 import { createTask } from '../services/taskRunner';
+import { buildDrawerLocals } from '../services/drawerNav';
 
 export const projectsRouter: Router = Router();
 
@@ -44,6 +45,7 @@ projectsRouter.get('/', async (_req, res) => {
   }));
   const { gatewayUp, agentsError } = await probeGateway('projects');
   res.render('projects', {
+    ...buildDrawerLocals({ activeNav: 'projects' }),
     chats: chats.list(),
     workingIds: chatStatus.workingIds(),
     allProjects,
@@ -92,6 +94,7 @@ projectsRouter.get('/:id', (req, res) => {
   }
   const linkGroups = listProjectLinkGroups(id);
   res.render('project', {
+    ...buildDrawerLocals({ projectId: id, activeNav: 'projects' }),
     chats: chats.list(),
     workingIds: chatStatus.workingIds(),
     hasAnyTasks: tasks.hasAny(),

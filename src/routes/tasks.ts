@@ -28,6 +28,7 @@ import {
 } from '../services/taskRunner';
 import { wsHub } from '../services/wsHub';
 import { getCharacter } from '../services/characters';
+import { buildDrawerLocals } from '../services/drawerNav';
 import type { TaskContextSnapshotPayload, TaskStepActor } from '../types';
 
 export const tasksRouter: Router = Router();
@@ -117,6 +118,7 @@ tasksRouter.get('/', async (req, res) => {
   const filterProject = filterProjectId != null ? projects.get(filterProjectId) : null;
   res.render('tasks', {
     ...locals,
+    ...buildDrawerLocals({ activeNav: 'tasks' }),
     tasks: enriched,
     board,
     orphanOnly,
@@ -191,6 +193,7 @@ tasksRouter.get('/:id', async (req, res) => {
       : null;
   res.render('task', {
     ...locals,
+    ...buildDrawerLocals({ projectId: task.project_id ?? null, activeNav: 'tasks' }),
     task: enriched,
     character: getCharacter(task.character_id),
     humanAsk,

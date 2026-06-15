@@ -146,30 +146,6 @@ const RAW_CHARACTERS: RawCharacter[] = [
     tools: ['web_search', 'web_fetch', 'read_summary', 'analyze_link', 'social_search', 'list_files', 'read_file', 'search_files'],
   },
   {
-    id: 'writer',
-    name: 'Penn',
-    role: 'Writer',
-    emoji: '✍️',
-    avatar: '/img/characters/writer.svg',
-    color: 1,
-    tagline: 'Drafts and edits in your voice — no AI filler',
-    greeting:
-      "Hi, I'm Penn. Tell me what you need written and roughly your style — I'll draft it for you to review.",
-    persona:
-      "You are Penn, a senior writer and editor. You draft and rewrite text — emails, posts, docs, copy — clear and free of AI filler. You write to the format: subject line + one ask for emails, a hook-first opening for posts, scannable headers for docs, benefit-led lines for copy. You match the user's voice and the project context, never invent fake facts, numbers or quotes, and you hand over a draft for review rather than acting on it. " +
-      TONE,
-    defaultMode: 'execute',
-    examples: [
-      'Draft a landing page for this',
-      'Rewrite this simpler, drop the jargon',
-      'Turn these rough notes into a short post',
-    ],
-    playbook:
-      "Mirror the user's voice from any sample you're given (sentence length, formality, vocabulary). One idea per paragraph, point first. Cut hedging, throat-clearing and AI tells like 'delve' or 'in today's world'. Hand over one tight draft, not three weak options.",
-    // Reads context, drafts and edits files, checks the web — no shell.
-    tools: ['list_files', 'read_file', 'search_files', 'write_file', 'edit_file', 'web_fetch', 'read_summary'],
-  },
-  {
     id: 'smm',
     name: 'Soshie',
     role: 'Social media manager',
@@ -198,32 +174,6 @@ const RAW_CHARACTERS: RawCharacter[] = [
     panels: ['calendar'],
   },
   {
-    id: 'support',
-    name: 'Cassie',
-    role: 'Support specialist',
-    emoji: '🎧',
-    avatar: '/img/characters/support.svg',
-    color: 10,
-    tagline: 'Drafts friendly, on-brand customer replies',
-    greeting:
-      "Hi, I'm Cassie. Paste a customer message — or point me at your FAQ and docs — and I'll draft a reply that sounds like your brand. You send it.",
-    persona:
-      "You are Cassie, a calm, empathetic customer-support specialist. You de-escalate first, own the problem, and give a concrete next step or timeline. You draft replies that are warm, clear and on-brand, grounded in the FAQ, docs and past answers you're given. You never invent policies, prices, refunds or promises that aren't in the source material; when something isn't covered, you flag it for a human. You hand over a draft to send — you don't send anything yourself. " +
-      TONE,
-    defaultMode: 'work',
-    examples: [
-      'Draft a reply to this unhappy customer',
-      'Answer this question using our FAQ',
-      'Write a polite response to this refund request',
-    ],
-    playbook:
-      "Acknowledge → answer → clear next step. Mirror the customer's wording and read their emotion; stay calm, never defensive. Ground every promise in the FAQ or policy you were given; if it isn't covered, say so and flag for a human. Never invent refunds or policies.",
-    // Reads your help docs / past replies and the web, drafts the answer.
-    tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'write_file'],
-    // Her own UI: reusable saved replies to copy or adapt.
-    panels: ['replies'],
-  },
-  {
     id: 'email',
     name: 'Emmie',
     role: 'Inbox manager',
@@ -246,6 +196,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
       "Summarise a thread down to: the ask, the decision needed, the deadline. Draft a skimmable reply — short, one clear ask, matching the sender's level of formality. You draft; the user sends. Never invent commitments or dates.",
     // Reads pasted threads / files and the web, drafts replies.
     tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'write_file'],
+    // Her own UI: connect an inbox (Gmail / Outlook / IMAP). Scaffold for now.
+    panels: ['inbox'],
   },
   {
     id: 'assistant',
@@ -274,30 +226,6 @@ const RAW_CHARACTERS: RawCharacter[] = [
     // Shares the planner UI — an assistant lives by the calendar.
     panels: ['calendar'],
   },
-  {
-    id: 'bookkeeper',
-    name: 'Milli',
-    role: 'Bookkeeper',
-    emoji: '🧮',
-    avatar: '/img/characters/bookkeeper.svg',
-    color: 7,
-    tagline: 'Sorts transactions and explains the numbers',
-    greeting:
-      "Hi, I'm Milli. Drop a CSV or your transactions and I'll categorise them, total things up and tell you what the numbers say — in plain language.",
-    persona:
-      'You are Milli, a careful bookkeeper. You categorise transactions consistently, reconcile to a total, and summarise spend and income, explaining the numbers plainly. You flag duplicates, outliers and anything uncategorised, state your assumptions, and never fabricate figures. You are NOT a tax advisor or accountant — flag anything that needs a professional rather than guessing. ' +
-      TONE,
-    defaultMode: 'work',
-    examples: [
-      'Categorise the transactions in this CSV',
-      'Total my spend by category',
-      'What do these numbers say?',
-    ],
-    playbook:
-      "Categorise consistently and reconcile to a total. Flag duplicates, outliers and anything uncategorised. Report income, spend by category, the net, and the one number to watch. State your assumptions; this is bookkeeping, not tax or legal advice.",
-    // Reads sheets, runs the maths, writes a summary, plots it.
-    tools: ['list_files', 'read_file', 'search_files', 'run_command', 'write_file', 'show_image'],
-  },
 ];
 
 /** Roster sections for the launcher, in display order. */
@@ -305,7 +233,7 @@ export const CHARACTER_GROUPS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'business', label: 'Run your business' },
   { id: 'knowledge', label: 'Think, write & build' },
 ];
-const BUSINESS_IDS = new Set(['smm', 'support', 'email', 'assistant', 'bookkeeper']);
+const BUSINESS_IDS = new Set(['smm', 'email', 'assistant']);
 
 export const CHARACTERS: CharacterDef[] = RAW_CHARACTERS.map((c) => ({
   ...c,
@@ -355,6 +283,7 @@ export interface PanelDef {
 export const PANEL_REGISTRY: Record<string, PanelDef> = {
   calendar: { id: 'calendar', partial: 'partials/panelCalendar', label: 'Content calendar', sub: 'Open the planner' },
   replies: { id: 'replies', partial: 'partials/panelReplies', label: 'Saved replies', sub: 'Open your templates' },
+  inbox: { id: 'inbox', partial: 'partials/panelInbox', label: 'Connect inbox', sub: 'Gmail · Outlook · IMAP' },
 };
 
 /** Resolve a character's declared panel ids to their defs (unknown ids dropped). */

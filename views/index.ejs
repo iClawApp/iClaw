@@ -5,15 +5,6 @@
     <header class="chat-header draft-header chat-header--with-switcher">
       <div class="chat-header-left">
       <%- include('partials/mobile-nav-toggle') %>
-      <%# Opens the slide-out menu of every agent's chats (partials/projectDrawer). %>
-      <button type="button" class="pdrawer-launch-btn" id="project-drawer-toggle"
-              aria-controls="project-drawer" aria-expanded="false" aria-label="All project chats" title="All project chats">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-          <line x1="4" y1="7" x2="20" y2="7" />
-          <line x1="4" y1="12" x2="20" y2="12" />
-          <line x1="4" y1="17" x2="20" y2="17" />
-        </svg>
-      </button>
       <form class="rename-form" id="chat-rename-form" onsubmit="return false">
         <input
           type="text"
@@ -25,7 +16,9 @@
       </form>
       </div>
 
-      <%# Centered project switcher — re-renders the slide-out menu in place. %>
+      <%# On the launcher (not yet in a chat) the project chooser sits at the top
+          centre — pick which project the new chat belongs to. Syncs with the
+          drawer's switcher (same data-drawer-project chips). %>
       <div class="chat-header-center">
         <%- include('partials/projectSwitcher', {
               switcherProjects: typeof drawerProjects !== 'undefined' ? drawerProjects : (typeof allProjects !== 'undefined' ? allProjects : []),

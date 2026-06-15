@@ -80,8 +80,8 @@
 %>
 <%- include('partials/head', { title: task.title + ' — iClaw' }) %>
 
-<div class="app">
-  <%- include('partials/sidebar') %>
+<div class="app app--solo">
+  <%- include('partials/projectDrawer') %>
 
   <main class="col col-main task-page" data-task-id="<%= task.id %>">
     <div class="task-shell">

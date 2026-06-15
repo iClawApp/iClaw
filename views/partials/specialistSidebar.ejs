@@ -1,12 +1,12 @@
 <%# Themed per-specialist sidebar (Sintra-style): replaces the app sidebar when a
-    chat belongs to a specialist. Reuses .col-left for sizing, themed by the
-    specialist's colour. Full-bleed character render hero, name/role + settings,
-    New chat, an integration/power-up card, and this specialist's recent chats. %>
+    chat belongs to a specialist. Full-bleed character render hero, name/role +
+    a "+" new-chat button, the agent's power-up, and recents. A minimalist edge
+    tab (left border, vertically centred) opens the all-project-chats menu. %>
 <% var _pid = (typeof specialistProject !== 'undefined' && specialistProject) ? specialistProject.id : null; %>
 <% var _recents = (typeof specialistChats !== 'undefined' && Array.isArray(specialistChats)) ? specialistChats : []; %>
 <aside class="col col-left specialist-sidebar" id="app-sidebar" data-logo-color="<%= character.color %>">
   <div class="specialist-hero">
-    <a class="specialist-hero-back" href="<%= _pid ? ('/team?projectId=' + _pid) : '/' %>" aria-label="<%= _pid ? 'Back to team' : 'Back to home' %>">&lsaquo; <%= _pid ? 'Team' : 'iClaw' %></a>
+    <a class="specialist-hero-back" href="<%= _pid ? ('/projects/' + _pid) : '/' %>" aria-label="<%= _pid ? 'Back to project' : 'Back to home' %>">&lsaquo; <%= _pid ? 'Project' : 'iClaw' %></a>
     <% if (character.art) { %>
       <img class="specialist-hero-art" src="<%= character.art %>" alt="" aria-hidden="true" />
     <% } else { %>
@@ -19,25 +19,18 @@
       <span class="specialist-id-name"><%= character.name %></span>
       <% if (character.role) { %><span class="specialist-id-role"><%= character.role %></span><% } %>
     </span>
-    <a class="specialist-id-gear" href="/settings/voice-ask" aria-label="Settings" title="Settings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-      </svg>
-    </a>
+    <%# "+" = start a new chat with this specialist (fresh). %>
+    <% if (_pid) { %>
+    <form method="post" action="/projects/<%= _pid %>/team/<%= character.id %>/chat" class="specialist-id-new-form">
+      <input type="hidden" name="fresh" value="1" />
+      <button type="submit" class="specialist-id-new" aria-label="New chat" title="New chat">+</button>
+    </form>
+    <% } else { %>
+    <a class="specialist-id-new" href="/start/<%= character.id %>?fresh=1" aria-label="New chat" title="New chat">+</a>
+    <% } %>
   </div>
 
   <div class="specialist-sb-body">
-    <% if (_pid) { %>
-    <form method="post" action="/projects/<%= _pid %>/team/<%= character.id %>/chat" class="specialist-newchat-form">
-      <input type="hidden" name="fresh" value="1" />
-      <button type="submit" class="specialist-newchat">+ New chat</button>
-    </form>
-    <% } else { %>
-    <a class="specialist-newchat" href="/start/<%= character.id %>?fresh=1">+ New chat</a>
-    <% } %>
-
-    <%# Power-up surfaced as an integration-style card (icon · title/sub · chevron). %>
     <% var _panels = resolveCharacterPanels(character.id); %>
     <% if (_panels.length) { %>
     <button type="button" class="specialist-powerup" data-open-panel>
@@ -50,22 +43,11 @@
     </button>
     <% } %>
 
-    <%# Slide-out menu of every agent's chats in this project (partials/projectDrawer). %>
-    <button type="button" class="specialist-allchats" id="project-drawer-toggle"
-            aria-controls="project-drawer" aria-expanded="false">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-        <line x1="4" y1="7" x2="20" y2="7" />
-        <line x1="4" y1="12" x2="20" y2="12" />
-        <line x1="4" y1="17" x2="20" y2="17" />
-      </svg>
-      <span>All project chats</span>
-    </button>
-
-    <div class="specialist-recents">
-      <p class="specialist-recents-label">Recents</p>
+    <div class="specialist-recents<%= _recents.length ? '' : ' is-empty' %>">
       <% if (!_recents.length) { %>
-      <p class="specialist-recents-empty">No chats yet.</p>
+      <p class="specialist-recents-placeholder">Your chats will appear here</p>
       <% } else { %>
+      <p class="specialist-recents-label">Recents</p>
       <% _recents.forEach(function (c) { %>
       <a class="specialist-recent<%= c.id === activeChat.id ? ' on' : '' %>" href="/chats/<%= c.id %>"><%= c.title %></a>
       <% }); %>

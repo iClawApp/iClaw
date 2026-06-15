@@ -93,31 +93,6 @@
   <% }); %>
 
   <% if (!_anyChats) { %>
-  <p class="pdrawer-empty muted">No chats in <%= _selProject ? _selProject.name : 'this space' %> yet. Pick an agent below to start.</p>
-  <% } %>
-
-  <%# ---- Start a chat with any specialist (choose agent → new chat) ---- %>
-  <% var _specialists = _roster.filter(function (c) { return c.id !== 'generalist'; }); %>
-  <% if (_specialists.length) { %>
-  <section class="pdrawer-start">
-    <p class="pdrawer-start-label">Start a chat with</p>
-    <div class="pdrawer-start-grid">
-      <% _specialists.forEach(function (ch) { %>
-        <% if (_pid != null) { %>
-        <form method="post" action="/projects/<%= _pid %>/team/<%= ch.id %>/chat" class="pdrawer-start-form">
-          <button type="submit" class="pdrawer-start-agent" data-logo-color="<%= ch.color %>" title="Chat with <%= ch.name %> — <%= ch.role %>">
-            <%- include('characterFace', { character: ch, faceClass: 'pdrawer-start-face' }) %>
-            <span class="pdrawer-start-name"><%= ch.name %></span>
-          </button>
-        </form>
-        <% } else { %>
-        <a class="pdrawer-start-agent" href="/start/<%= ch.id %>" data-logo-color="<%= ch.color %>" title="Chat with <%= ch.name %> — <%= ch.role %>">
-          <%- include('characterFace', { character: ch, faceClass: 'pdrawer-start-face' }) %>
-          <span class="pdrawer-start-name"><%= ch.name %></span>
-        </a>
-        <% } %>
-      <% }); %>
-    </div>
-  </section>
+  <p class="pdrawer-empty muted">No chats in <%= _selProject ? _selProject.name : 'this space' %> yet.</p>
   <% } %>
 </div>
