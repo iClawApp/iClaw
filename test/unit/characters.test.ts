@@ -65,11 +65,13 @@ describe('characters', () => {
       // Palette has 12 hues (0–11; see [data-logo-color] in style.css).
       expect(c.color).toBeLessThanOrEqual(11);
       expect(['execute', 'work', 'secure', 'incognito']).toContain(c.defaultMode);
-      // Non-default characters are personified (have a role + persona + avatar).
+      // Non-default characters are personified (have a role + persona).
       if (c.id !== 'generalist') {
         expect(c.role.length).toBeGreaterThan(0);
         expect(c.persona.length).toBeGreaterThan(0);
-        expect(c.avatar).toMatch(/^\/img\/characters\/.+\.svg$/);
+        // avatar is optional — a new agent with no photo yet falls back to its
+        // emoji face; if present it must be a real svg under /img/characters.
+        if (c.avatar) expect(c.avatar).toMatch(/^\/img\/characters\/.+\.svg$/);
         // Every specialist carries a concrete method playbook (vertical depth).
         expect((c.playbook ?? '').length).toBeGreaterThan(0);
       }

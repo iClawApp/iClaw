@@ -28,8 +28,9 @@ export interface CharacterDef {
   emoji: string;
   /** Illustrated avatar under /img/characters; the emoji is the fallback. */
   avatar?: string;
-  /** Full-body 3D render (transparent PNG) for the themed hero + launcher tiles. */
-  art?: string;
+  /** Full-body 3D render (transparent PNG) for the themed hero + launcher tiles.
+   *  undefined when the agent has no photo yet → views fall back to the emoji face. */
+  art?: string | undefined;
   /** Accent colour index 0–11, reused from the project-logo palette. */
   color: number;
   /** One-line "what I do", shown on the roster card. */
@@ -241,6 +242,35 @@ const RAW_CHARACTERS: RawCharacter[] = [
     // Shares the planner UI — an assistant lives by the calendar.
     panels: ['calendar'],
   },
+  {
+    id: 'sales',
+    name: 'Leo',
+    role: 'Sales scout',
+    emoji: '🎯',
+    color: 7,
+    tagline: 'Finds people with buying intent and drafts the first message',
+    greeting:
+      "Hi, I'm Leo. Tell me what you sell and who it's for — I'll dig up people showing intent in public communities, qualify them, and draft a first message you can actually send.",
+    persona:
+      "You are Leo, a sharp sales scout (SDR). You find people showing BUYING INTENT in public communities — asking for a tool, frustrated with a competitor, hunting an alternative — qualify them against the user's offer and ICP, and draft a personal, specific first message. You FIND and DRAFT: you never send, never mass-blast, and never astroturf. You respect each community's norms — no promo where it isn't welcome. Lead with the best-fit leads and the evidence. " +
+      TONE,
+    defaultMode: 'work',
+    examples: [
+      'Find people looking for a tool like ours on Reddit',
+      "Who's complaining about <competitor> right now?",
+      'Draft a first message for this lead',
+    ],
+    playbook:
+      "Start from the user's offer + ICP (ask once if unknown). Find intent — never a cold list:\n" +
+      "- social_search is the core tool: search Reddit / Hacker News / StackExchange / GitHub for intent phrases — 'recommend a tool for…', 'alternative to <competitor>', 'how do I <problem you solve>', 'frustrated with <competitor>'. ONE discovery call per angle, small limit.\n" +
+      "- web_search for forums, Quora, IndieHackers and review sites — a G2/Capterra complaint about a competitor is switching intent.\n" +
+      "- deep_research to vet a promising lead or their company before outreach.\n" +
+      "- write_file to save the qualified leads as a list: who · where · the exact signal (quote + link) · fit · a drafted opener.\n" +
+      "Qualify each lead against the offer and note WHY it fits, with the quote/link as evidence. Draft a short, specific first message that references their actual post — never a template, never salesy. You draft; the user sends. Skip anything where promoting would break the community's rules.",
+    // Research the web + communities for intent signals, read context, save lead
+    // lists + drafts. (deep_research is offered on top for vetting prospects.)
+    tools: ['web_search', 'web_fetch', 'read_summary', 'social_search', 'list_files', 'read_file', 'search_files', 'write_file'],
+  },
 ];
 
 /** Roster sections for the launcher, in display order. */
@@ -248,13 +278,18 @@ export const CHARACTER_GROUPS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'business', label: 'Run your business' },
   { id: 'knowledge', label: 'Think, write & build' },
 ];
-const BUSINESS_IDS = new Set(['smm', 'email', 'assistant']);
+const BUSINESS_IDS = new Set(['smm', 'email', 'assistant', 'sales']);
+
+// Only these ship a full-body render PNG (public/img/characters/<id>.png). Others
+// fall back to the emoji face in views until art is added — drop the file in and
+// add the id here. (Avoids a broken <img> for a brand-new agent with no photo yet.)
+const HAVE_ART = new Set(['generalist', 'researcher', 'smm', 'email', 'assistant']);
 
 export const CHARACTERS: CharacterDef[] = RAW_CHARACTERS.map((c) => ({
   ...c,
-  // Full-body render lives at /img/characters/<id>.png (transparent cutout) —
-  // drives the themed hero + launcher tiles; falls back to avatar/emoji in views.
-  art: `/img/characters/${c.id}.png`,
+  // Full-body render (transparent cutout) drives the themed hero + launcher tiles;
+  // undefined when there's no PNG → views fall back to avatar/emoji.
+  art: HAVE_ART.has(c.id) ? `/img/characters/${c.id}.png` : undefined,
   capabilities: deriveCapabilities(c.tools),
   group: c.id === 'generalist' ? undefined : BUSINESS_IDS.has(c.id) ? 'business' : 'knowledge',
 }));
