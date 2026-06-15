@@ -606,10 +606,34 @@ export const ANALYZE_LINK_TOOL = {
   },
 } as const;
 
+/**
+ * recall_tool_output — bring back the full body of an earlier tool result that
+ * mid-turn compaction stubbed out of context (see shrinkOldToolOutputs). Lets the
+ * model retrieve a result by id instead of re-running the tool, so compaction is
+ * lossless. The id is the stub's message index, stashed in ctx.recallStore.
+ */
+export const RECALL_TOOL_OUTPUT_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'recall_tool_output',
+    description:
+      'Bring back the FULL result of an earlier tool call that was shortened to save context. ' +
+      'When you see a stub like \'[earlier tool output omitted … call recall_tool_output with id "42" …]\', ' +
+      'call this with that id to get the original content back — cheaper and faster than re-running the tool.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The id shown in the omitted-output stub (e.g. "42").' },
+      },
+      required: ['id'],
+    },
+  },
+} as const;
+
 export type ToolName =
   | 'list_files' | 'read_file' | 'read_summary' | 'search_files' | 'write_file' | 'edit_file'
   | 'run_command' | 'check_job' | 'web_fetch' | 'web_search' | 'analyze_link' | 'social_search' | 'show_image'
-  | 'generate_image' | 'edit_image';
+  | 'generate_image' | 'edit_image' | 'recall_tool_output';
 
 /** A host image the agent asked to display inline (via show_image / generate_image). */
 export interface ImageRef {
@@ -741,6 +765,14 @@ export interface ToolContext {
    * fresh per turn by the loop; absent → caching off (each fetch goes to network).
    */
   fetchCache?: Map<string, string> | undefined;
+  /**
+   * Within-turn store of full tool outputs that mid-turn compaction stubbed out
+   * of context, keyed by the stub's id (the tool message's array index). The
+   * recall_tool_output tool reads from it, so shrinking is LOSSLESS — the model
+   * can pull a result back instead of re-running the tool. Created fresh per turn
+   * by the loop; absent → compaction falls back to a "re-run the tool" stub.
+   */
+  recallStore?: Map<string, string> | undefined;
 }
 
 /** Folders to validate reads against — empty (anywhere) for Incognito. */
@@ -781,6 +813,11 @@ export async function executeTool(
         }
         const { socialSearch } = await import('./social.js');
         return await socialSearch(args, { runInSandbox: ctx.linkSandbox, networkEnabled: true, onNote: ctx.onNote });
+      }
+      case 'recall_tool_output': {
+        const id = String(args.id ?? '').trim();
+        const hit = ctx.recallStore?.get(id);
+        return hit ?? `No saved output for id "${id}" — it may never have existed or wasn't compacted. Re-run the original tool if you still need that data.`;
       }
       default: return `Unknown tool: ${name}`;
     }

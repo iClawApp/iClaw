@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, GENERATE_IMAGE_TOOL, EDIT_IMAGE_TOOL, CREATE_TASK_TOOL, UPDATE_PLAN_TOOL, SET_TIMER_TOOL, CHECK_JOB_TOOL, UPDATE_CALENDAR_TOOL, SET_REMINDER_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, GENERATE_IMAGE_TOOL, EDIT_IMAGE_TOOL, CREATE_TASK_TOOL, UPDATE_PLAN_TOOL, SET_TIMER_TOOL, CHECK_JOB_TOOL, UPDATE_CALENDAR_TOOL, SET_REMINDER_TOOL, RECALL_TOOL_OUTPUT_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
 import { SOCIAL_SEARCH_TOOL } from './social.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 import { resolveTurnModel } from './model-capabilities.js';
@@ -254,7 +254,11 @@ export function describeApiError(err: unknown): string {
 // whole history was resent every round (O(n²) tokens). Like Hermes' compressor we
 // keep the FIRST few tool outputs (early task context) as well as the last few.
 const INTURN_COMPACT_CHARS = Number(process.env.ICLAW_INTURN_COMPACT_CHARS) || 16_000;
-const INTURN_KEEP_TOOL_MSGS = Number(process.env.ICLAW_INTURN_KEEP_TOOL_MSGS) || 6;
+// Keep only the last 3 tool outputs full (was 6). With heavy results (social_search
+// ≈14k chars each) keeping 6 meant ~84k of full output re-sent EVERY round — the
+// dominant token sink on research turns. The stubbed ones stay retrievable via
+// recall_tool_output (see shrinkOldToolOutputs), so 3 is safe, not lossy.
+const INTURN_KEEP_TOOL_MSGS = Number(process.env.ICLAW_INTURN_KEEP_TOOL_MSGS) || 3;
 const INTURN_KEEP_FIRST_TOOL_MSGS = Number(process.env.ICLAW_INTURN_KEEP_FIRST_TOOL_MSGS) || 2;
 
 /**
@@ -267,7 +271,7 @@ const INTURN_KEEP_FIRST_TOOL_MSGS = Number(process.env.ICLAW_INTURN_KEEP_FIRST_T
  * tool outputs; only the middle gets stubbed (mirrors Hermes' protect_first_n /
  * protect_last_n).
  */
-export function shrinkOldToolOutputs(messages: Message[]): void {
+export function shrinkOldToolOutputs(messages: Message[], recallStore?: Map<string, string>): void {
   let total = 0;
   for (const m of messages) total += typeof m.content === 'string' ? m.content.length : 0;
   if (total <= INTURN_COMPACT_CHARS) return;
@@ -280,10 +284,19 @@ export function shrinkOldToolOutputs(messages: Message[]): void {
     const i = toolIdx[k]!;
     const content = (messages[i] as { content?: unknown }).content;
     if (typeof content === 'string' && content.length > 160) {
-      messages[i] = {
-        ...messages[i],
-        content: `[earlier tool output omitted to save context — was ${content.length.toLocaleString()} chars; verdict: "${toolResultVerdict(content)}"; re-run the tool if you need it again]`,
-      } as Message;
+      // With a recall store, stash the full body (keyed by message index) so the
+      // model can pull it back via recall_tool_output — lossless. Without one,
+      // fall back to telling it to re-run the tool. The verdict line survives
+      // either way (preserves FAILED markers; see toolResultVerdict).
+      const head = `[earlier tool output omitted to save context — was ${content.length.toLocaleString()} chars; verdict: "${toolResultVerdict(content)}"; `;
+      let stub: string;
+      if (recallStore) {
+        recallStore.set(String(i), content);
+        stub = `${head}call recall_tool_output with id "${i}" to get the full result back]`;
+      } else {
+        stub = `${head}re-run the tool if you need it again]`;
+      }
+      messages[i] = { ...messages[i], content: stub } as Message;
     }
   }
 }
@@ -539,6 +552,9 @@ export async function* runAgentTurn(
     // Fresh per turn → web_fetch dedups repeat pulls of the same URL within this
     // turn (and never leaks fetched bodies across turns).
     fetchCache: new Map<string, string>(),
+    // Fresh per turn → holds full bodies of tool results that mid-turn compaction
+    // stubs, so recall_tool_output can bring them back instead of re-running.
+    recallStore: new Map<string, string>(),
   };
 
   // Per-mode tool set. Incognito is read-only, so don't ship write_file/edit_file
@@ -573,6 +589,10 @@ export async function* runAgentTurn(
   //    keeps long multi-step / autonomous runs coherent and makes "what does
   //    done look like" explicit. Offered in every tool-capable turn.
   const onTop = [
+    // recall_tool_output — infrastructure: lets the model pull back a tool result
+    // that mid-turn compaction stubbed. Must survive character narrowing, so it
+    // sits on top of the allowlist (every tool-capable turn can compact).
+    RECALL_TOOL_OUTPUT_TOOL,
     ...(opts.canCreateTasks ? [CREATE_TASK_TOOL] : []),
     // update_plan renders + persists in Work-mode chats; Incognito is ephemeral
     // (nothing to render to), so skip it there.
@@ -885,8 +905,9 @@ export async function* runAgentTurn(
     if (textBuffer && !/\n\s*$/.test(textBuffer)) pendingSeparator = '\n\n';
 
     // Mid-turn compaction: on a long multi-round task the accumulated tool
-    // outputs would be resent every round (O(n²) tokens). Stub out old ones.
-    shrinkOldToolOutputs(messages);
+    // outputs would be resent every round (O(n²) tokens). Stub out old ones,
+    // stashing them in recallStore so recall_tool_output can bring them back.
+    shrinkOldToolOutputs(messages, toolCtx.recallStore);
 
     // Dead-round circuit-breaker: if EVERY tool result this round was empty/
     // failed/timed-out/guard-blocked, the agent made no progress. After

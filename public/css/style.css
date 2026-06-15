@@ -3847,8 +3847,16 @@ code {
   background: color-mix(in srgb, var(--logo-tone) 13%, var(--header-surface, var(--surface)));
 }
 /* Tint the rounded input box itself (.composer-field) — NOT the outer .composer
-   wrapper, which would paint an ugly square block around it. */
-.col-main[data-logo-color] .draft-body.is-launcher .composer-field {
+   wrapper, which would paint an ugly square block around it. Applies on the
+   launcher AND inside an agent chat (any col-main carrying a tone) so the input
+   matches the agent's theme instead of being plain white. */
+.col-main[data-logo-color] .composer-field {
+  background: color-mix(in srgb, var(--logo-tone) 18%, var(--surface));
+  border-color: color-mix(in srgb, var(--logo-tone) 36%, var(--border));
+}
+/* The user's message bubble takes the same tone wash (assistant replies are flat
+   prose with no fill, so only the user bubble needs tinting). */
+.col-main[data-logo-color] .msg.user {
   background: color-mix(in srgb, var(--logo-tone) 18%, var(--surface));
   border-color: color-mix(in srgb, var(--logo-tone) 36%, var(--border));
 }

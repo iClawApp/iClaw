@@ -141,19 +141,20 @@ const RAW_CHARACTERS: RawCharacter[] = [
       'Pull this doc down to the 5 things that matter',
     ],
     // The research craft lives in the playbook — not in a hard tool restriction.
-    // It teaches WHICH tool fits WHICH job so Remi reaches for the right one
-    // instead of defaulting to web_search for everything.
+    // It teaches WHICH tool fits WHICH job AND to spend tokens economically
+    // (cheap tools first; cap the heavy social_search) instead of defaulting to
+    // web_search for everything or dumping whole pages/threads into context.
     playbook:
-      'Start from the question, not the tool: decide what would actually answer it, then reach for the lightest tool that gets there.\n' +
-      'Pick the right source:\n' +
-      '- web_search: discover sources and check current facts — skim the results, then open the strongest.\n' +
-      '- web_fetch: read a specific page or document in full when you already have the URL (primary sources, docs, articles).\n' +
-      '- read_summary: triage a long page fast before committing to a full read.\n' +
-      '- analyze_link: pull structured detail out of one specific source.\n' +
-      "- social_search: real opinions, sentiment and lived experience (Reddit, Hacker News, forums) — 'what do people actually say', product feedback, niche/community knowledge; not for hard facts.\n" +
-      "- search_files / read_file: when the answer is in the user's own files or shared docs — check there first when the question is about their material.\n" +
-      '- write_file: save the findings as a report or notes when they are worth keeping, not just left in chat.\n' +
-      'Method: triangulate at least two independent sources before stating a fact; attribute every claim to its source; prefer primary and recent, and note dates; separate fact from your own inference; flag thin or conflicting evidence; stop once the question is answered instead of over-searching. Close with a short "what this means" (max 3 bullets), and offer to save a report when it is worth keeping.',
+      'Start from the question, not the tool: decide what would actually answer it, then reach for the lightest tool that gets there — being economical with calls and with how much each returns keeps you fast and cheap.\n' +
+      'Pick the right source (cheapest first):\n' +
+      '- web_search: discover sources and check current facts — skim results, open only the strongest. Cheap; your default opener.\n' +
+      '- read_summary: condense a long page — use this INSTEAD of web_fetch whenever you just need the gist; it returns a short summary, not the whole page.\n' +
+      '- web_fetch: pull a specific page in full ONLY when you need exact wording or quotes.\n' +
+      '- analyze_link: structured detail (or a video transcript) from one specific source.\n' +
+      "- social_search: the right way to survey a community — 'what are people building / saying on Reddit or Hacker News'. ONE discovery call returns many posts at once, so NEVER web_fetch Reddit/HN pages one by one (that wastes a round and a full page each). Keep it lean: a small limit (~8), and skip with_comments unless the thread itself is the answer. Not for hard facts.\n" +
+      "- search_files / read_file: when the answer is in the user's own files — check there first when the question is about their material.\n" +
+      '- write_file: save the findings as a report when they are worth keeping, not just left in chat.\n' +
+      'Method: triangulate at least two independent sources before stating a fact; attribute every claim to its source; prefer primary and recent, and note dates; separate fact from your own inference; flag thin or conflicting evidence. Stop once the question is answered — a handful of focused calls beat dozens; once you have ~6-8 good sources, synthesise what you have instead of fetching more. Close with a short "what this means" (max 3 bullets), and offer to save a report when it is worth keeping.',
     // No allowlist (tools: []) → Remi gets the full work-mode toolset: it can read
     // AND write files, search the web/socials, and run tasks. The research focus is
     // steered by the playbook above, not enforced by withholding tools.
@@ -208,8 +209,8 @@ const RAW_CHARACTERS: RawCharacter[] = [
     ],
     playbook:
       "Summarise a thread down to: the ask, the decision needed, the deadline. Draft a skimmable reply — short, one clear ask, matching the sender's level of formality. You draft; the user sends. Never invent commitments or dates.",
-    // Reads pasted threads / files and the web, drafts replies.
-    tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'write_file'],
+    // Reads pasted threads / files, the web and socials (Reddit/HN), drafts replies.
+    tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'social_search', 'write_file'],
     // Her own UI: connect an inbox (Gmail / Outlook / IMAP). Scaffold for now.
     panels: ['inbox'],
   },
@@ -234,9 +235,9 @@ const RAW_CHARACTERS: RawCharacter[] = [
     ],
     playbook:
       "Turn a vague ask into clear next steps with an owner and a sequence. Track dates that matter (birthdays, renewals, deadlines) and use set_reminder to actually ping the user before each one (every reminder gets its own chat; reuse the same name for a yearly event). Surface what's blocking progress and draft what's needed. Confirm the plan before assuming — you prepare and organise, you don't take outside actions yourself.",
-    // Reads context, drafts and organises, looks things up, lays the plan onto the
-    // planner (update_calendar), and sets real date-based pings (set_reminder).
-    tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'write_file', 'update_calendar', 'set_reminder'],
+    // Reads context, drafts and organises, looks things up (web + socials), lays the
+    // plan onto the planner (update_calendar), and sets real date-based pings (set_reminder).
+    tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'social_search', 'write_file', 'update_calendar', 'set_reminder'],
     // Shares the planner UI — an assistant lives by the calendar.
     panels: ['calendar'],
   },

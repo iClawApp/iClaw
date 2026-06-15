@@ -199,4 +199,29 @@ describe('shrinkOldToolOutputs', () => {
     shrinkOldToolOutputs(messages);
     expect((messages[0] as { content?: unknown }).content).toBe('short');
   });
+
+  it('with a recall store: stashes the full body by message-index id (lossless)', () => {
+    const big = toolMsg('IMPORTANT FINDINGS\n' + 'detail line\n'.repeat(2_000));
+    const filler = () => toolMsg('z'.repeat(2_000));
+    // keepFirst=2, keepLast=3 → only the middle (index 2) gets stubbed.
+    const messages: Message[] = [filler(), filler(), big, filler(), filler(), filler()];
+    const store = new Map<string, string>();
+    shrinkOldToolOutputs(messages, store);
+    const stubbed = String((messages[2] as { content?: unknown }).content);
+    expect(stubbed).toContain('omitted to save context');
+    expect(stubbed).toContain('recall_tool_output');
+    expect(stubbed).toContain('id "2"'); // keyed by the tool message's array index
+    // The full body is retrievable from the store — compaction is lossless.
+    expect(store.get('2')).toContain('IMPORTANT FINDINGS');
+    expect((store.get('2') ?? '').length).toBeGreaterThan(1_000);
+  });
+
+  it('without a store: falls back to the "re-run" stub (no regression)', () => {
+    const filler = () => toolMsg('z'.repeat(3_000));
+    const messages: Message[] = [filler(), filler(), toolMsg('y'.repeat(6_000)), filler(), filler(), filler()];
+    shrinkOldToolOutputs(messages);
+    const stubbed = String((messages[2] as { content?: unknown }).content);
+    expect(stubbed).toContain('re-run the tool');
+    expect(stubbed).not.toContain('recall_tool_output');
+  });
 });
