@@ -630,6 +630,34 @@ export const RECALL_TOOL_OUTPUT_TOOL = {
   },
 } as const;
 
+/**
+ * deep_research — delegate a multi-source investigation to an isolated research
+ * sub-agent (context isolation, à la gpt-researcher / open_deep_research). The
+ * sub-agent runs its own tool loop in a throwaway context and returns only a
+ * cited synthesis, so the MAIN chat never accumulates the dozens of raw
+ * search/fetch results. Handled inline in the loop (spawns a nested runAgentTurn),
+ * not via executeTool — so it is NOT in ToolName.
+ */
+export const DEEP_RESEARCH_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'deep_research',
+    description:
+      'Delegate a research question to an isolated research sub-agent: it runs many searches/reads in its OWN context and returns a single self-contained, cited synthesis — so THIS chat never piles up dozens of raw results. ' +
+      'Prefer this for any multi-source investigation ("research X", "compare A vs B", "what do people say about Y") instead of running many web_search / web_fetch / social_search calls here yourself. For one quick lookup, just use web_search directly.',
+    parameters: {
+      type: 'object',
+      properties: {
+        brief: {
+          type: 'string',
+          description: 'The research question/goal with any needed context. The sub-agent sees ONLY this — make it self-contained.',
+        },
+      },
+      required: ['brief'],
+    },
+  },
+} as const;
+
 export type ToolName =
   | 'list_files' | 'read_file' | 'read_summary' | 'search_files' | 'write_file' | 'edit_file'
   | 'run_command' | 'check_job' | 'web_fetch' | 'web_search' | 'analyze_link' | 'social_search' | 'show_image'

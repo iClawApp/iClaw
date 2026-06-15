@@ -5,6 +5,8 @@ export function toolActivityLabel(name: string): string {
   // Exact matches for iClaw's own runtime tools — checked first so a specific
   // tool (e.g. social_search) doesn't fall into the generic "search" bucket.
   switch (n) {
+    case 'deep_research': return 'Researching in depth…';
+    case 'recall_tool_output': return 'Recalling an earlier result…';
     case 'social_search': return 'Searching social media…';
     case 'web_search': return 'Searching the web…';
     case 'web_fetch': return 'Reading the web…';

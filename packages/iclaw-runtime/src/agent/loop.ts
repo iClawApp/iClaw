@@ -6,7 +6,7 @@
  */
 import OpenAI from 'openai';
 
-import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, GENERATE_IMAGE_TOOL, EDIT_IMAGE_TOOL, CREATE_TASK_TOOL, UPDATE_PLAN_TOOL, SET_TIMER_TOOL, CHECK_JOB_TOOL, UPDATE_CALENDAR_TOOL, SET_REMINDER_TOOL, RECALL_TOOL_OUTPUT_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
+import { TOOL_DEFINITIONS, WEB_FETCH_TOOL, WEB_SEARCH_TOOL, READ_SUMMARY_TOOL, ANALYZE_LINK_TOOL, SHOW_IMAGE_TOOL, GENERATE_IMAGE_TOOL, EDIT_IMAGE_TOOL, CREATE_TASK_TOOL, UPDATE_PLAN_TOOL, SET_TIMER_TOOL, CHECK_JOB_TOOL, UPDATE_CALENDAR_TOOL, SET_REMINDER_TOOL, RECALL_TOOL_OUTPUT_TOOL, DEEP_RESEARCH_TOOL, executeTool, normalizeFetchUrl, normalizeSearchQuery, type ToolContext, type ToolName, type SavingsNote, type ImageRef } from './tools.js';
 import { SOCIAL_SEARCH_TOOL } from './social.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 import { resolveTurnModel } from './model-capabilities.js';
@@ -72,6 +72,11 @@ export interface AgentOptions {
   /** Abort the in-flight turn (user pressed Stop). Stops the model stream and
    *  ends the loop cleanly between rounds. */
   signal?: AbortSignal | undefined;
+  /**
+   * Offer the deep_research tool (context-isolation sub-agent). Defaults to on;
+   * the sub-agent's own nested turn sets this false to prevent recursive nesting.
+   */
+  allowDeepResearch?: boolean | undefined;
 }
 
 /** A single step in the agent's live task plan (update_plan tool). */
@@ -517,6 +522,66 @@ function buildSystemPrompt(opts: AgentOptions): string {
  * Run one user turn. Yields events as the agent works.
  * Handles multi-step tool loops automatically.
  */
+/** Research toolset for the deep_research sub-agent: search + read only (no
+ *  write/run) — narrows the sub-agent to pure investigation. */
+const RESEARCH_TOOLSET = [
+  'web_search', 'web_fetch', 'read_summary', 'analyze_link', 'social_search',
+  'list_files', 'read_file', 'search_files',
+];
+
+const RESEARCH_SUBAGENT_PROMPT =
+  'You are a research sub-agent. Investigate the brief thoroughly but economically, then return a SELF-CONTAINED synthesis — your entire reply is handed straight back to the main assistant as the research result, so make it complete and standalone and do NOT ask questions. ' +
+  'Use web_search to find sources and read_summary for long pages; use social_search (ONE discovery call, small limit) to survey Reddit/Hacker News — never fetch community pages one by one. Triangulate at least two independent sources per claim, prefer primary and recent, and cite each claim with its source URL as an inline markdown link. Lead with the answer, then the key findings as bullets. A handful of focused calls, not dozens.';
+
+/**
+ * deep_research sub-agent (context isolation, like gpt-researcher /
+ * open_deep_research). Runs a FRESH agent turn on `brief` with the research
+ * toolset in its OWN throwaway context — only the final synthesis returns to the
+ * caller, so the main chat never holds the dozens of raw search/fetch results.
+ * The sub-turn's own context is itself compacted (shrinkOldToolOutputs), so
+ * isolation compounds with mid-turn compaction. allowDeepResearch:false prevents
+ * recursive nesting. Errors fold into the synthesis — a failed sub-agent must
+ * never crash the parent turn.
+ */
+async function runIsolatedResearch(
+  brief: string,
+  opts: AgentOptions,
+): Promise<{ synthesis: string; tokens: number; cached: number; reasoning: number }> {
+  let synthesis = '';
+  let tokens = 0;
+  let cached = 0;
+  let reasoning = 0;
+  try {
+    for await (const ev of runAgentTurn([], brief, {
+      ...opts,
+      systemPrompt: RESEARCH_SUBAGENT_PROMPT,
+      characterTools: RESEARCH_TOOLSET, // pure research/read — no write/run
+      canCreateTasks: false,
+      autonomous: false,
+      images: undefined,
+      allowDeepResearch: false, // no recursive sub-agents
+    })) {
+      if (ev.type === 'text') synthesis += ev.content;
+      else if (ev.type === 'done') {
+        tokens = ev.tokens ?? 0;
+        cached = ev.cached ?? 0;
+        reasoning = ev.reasoning ?? 0;
+      } else if (ev.type === 'error') {
+        synthesis += `\n\n[research sub-agent error: ${ev.message}]`;
+      }
+    }
+  } catch (err) {
+    synthesis += `\n\n[research sub-agent failed: ${err instanceof Error ? err.message : String(err)}]`;
+  }
+  const out = synthesis.trim();
+  return {
+    synthesis: out || '(the research sub-agent returned no synthesis — try a narrower brief)',
+    tokens,
+    cached,
+    reasoning,
+  };
+}
+
 export async function* runAgentTurn(
   history: Message[],
   userMessage: string,
@@ -593,6 +658,10 @@ export async function* runAgentTurn(
     // that mid-turn compaction stubbed. Must survive character narrowing, so it
     // sits on top of the allowlist (every tool-capable turn can compact).
     RECALL_TOOL_OUTPUT_TOOL,
+    // deep_research — context-isolation sub-agent. On top of the allowlist so any
+    // research-capable turn can delegate; off inside the sub-agent itself (no
+    // recursive nesting).
+    ...(opts.allowDeepResearch === false ? [] : [DEEP_RESEARCH_TOOL]),
     ...(opts.canCreateTasks ? [CREATE_TASK_TOOL] : []),
     // update_plan renders + persists in Work-mode chats; Incognito is ephemeral
     // (nothing to render to), so skip it there.
@@ -880,6 +949,21 @@ export async function* runAgentTurn(
             .map((d) => (d === 0 ? 'on the day' : d === 1 ? '1 day before' : `${d} days before`))
             .join(', ');
           result = `Reminder set for "${rem.event}" on ${rem.date} — I'll ping you ${leads}${rem.recurring === 'yearly' ? ', every year' : ''}, in its own chat.`;
+        }
+      } else if (tc.name === 'deep_research') {
+        const brief = String((parsedArgs as { brief?: unknown }).brief ?? '').trim();
+        if (!brief) {
+          result = 'deep_research needs a "brief" — the research question or goal to investigate.';
+        } else {
+          // Context isolation: a fresh sub-agent does the multi-tool research in
+          // its OWN throwaway context; only the synthesis comes back here, so this
+          // chat never accumulates the raw results. Its tokens still count toward
+          // this turn so the cost stays visible.
+          const r = await runIsolatedResearch(brief, opts);
+          turnTokens += r.tokens;
+          turnCached += r.cached;
+          turnReasoning += r.reasoning;
+          result = r.synthesis;
         }
       } else {
         result = await executeTool(tc.name as ToolName, parsedArgs, toolCtx);
