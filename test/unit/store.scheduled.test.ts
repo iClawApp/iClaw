@@ -22,6 +22,26 @@ describe('store.scheduledMessages', () => {
     expect(row2.scheduled_at).toBe('2026-12-31 23:59:00');
   });
 
+  it('create() persists mode and round-trips it; defaults to null', () => {
+    const c = chats.create('openclaw/default');
+    const work = scheduledMessages.create({
+      chatId: c.id,
+      content: '[Auto-resume] keep polling the job',
+      scheduledAt: '2026-06-01T10:00:00Z',
+      mode: 'work',
+    });
+    expect(work.mode).toBe('work');
+    // survives a fresh read (column is selected back, not just echoed)
+    expect(scheduledMessages.get(work.id)?.mode).toBe('work');
+
+    const plain = scheduledMessages.create({
+      chatId: c.id,
+      content: 'no mode given',
+      scheduledAt: '2026-06-01T10:00:00Z',
+    });
+    expect(plain.mode).toBeNull();
+  });
+
   it('create() rejects empty content and invalid datetime', () => {
     const c = chats.create('openclaw/default');
     expect(() =>

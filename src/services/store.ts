@@ -1216,15 +1216,17 @@ export const scheduledMessages = {
     chatId: number;
     content: string;
     scheduledAt: string | Date;
+    /** Send mode to fire with (e.g. 'work' for a set_timer auto-resume). */
+    mode?: string | null;
   }): ScheduledMessage {
     const trimmed = opts.content.trim();
     if (!trimmed) throw new Error('content required');
     const at = toSqliteUtc(opts.scheduledAt);
     const info = db
       .prepare(
-        'INSERT INTO scheduled_messages (chat_id, content, scheduled_at) VALUES (?, ?, ?)',
+        'INSERT INTO scheduled_messages (chat_id, content, scheduled_at, mode) VALUES (?, ?, ?, ?)',
       )
-      .run(opts.chatId, trimmed, at);
+      .run(opts.chatId, trimmed, at, opts.mode ?? null);
     return this.get(Number(info.lastInsertRowid))!;
   },
   remove(id: number): void {

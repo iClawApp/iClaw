@@ -30,7 +30,7 @@ import { resolve as resolvePath, sep as pathSep, join as joinPath } from 'node:p
 import { homedir, tmpdir } from 'node:os';
 import { existsSync, unlinkSync } from 'node:fs';
 import type { ChatMode, Message, MessageAttachment, ToolTraceEntry } from '../types';
-import { normalizeChatMode } from './chatModes';
+import { normalizeChatMode, isEphemeralMode } from './chatModes';
 import { buildCompactedHistory } from './contextCompaction';
 import { createWorkSession, sendWorkMessage, subscribeWorkEvents, stopWorkSession, abortWorkSession, exportSandbox, type ExportResult } from './workRuntime';
 import {
@@ -303,6 +303,19 @@ async function runTurnLocked(opts: {
   const workFolders: WorkFolder[] | undefined =
     opts.workFolders ?? (mode === 'work' ? loadProjectWorkFolders(projectId) : undefined);
 
+  // Seed the chat's sticky send-mode from the FIRST real send that carries one,
+  // but only when it's still unset. The composer's POST /chats/:id/mode is
+  // SKIPPED while a chat is a draft ("mode rides along with the first message"),
+  // so a draft's first Work turn would otherwise leave chats.mode empty — and a
+  // later set_timer auto-resume (which arrives with no mode) would fall back to
+  // Execute and lose its sandbox. We only write when unset so we never overwrite
+  // an explicit later selection (e.g. a Work message queued, then the chat
+  // switched to Execute before it flushes). Ephemeral (incognito) is never
+  // persisted, mirroring the POST /mode route.
+  if (opts.mode && !isEphemeralMode(mode) && !chat.mode) {
+    chats.setChatMode(chatId, mode);
+  }
+
   let storedUserContent = content;
   let newSecretIds: number[] = [];
   if (/\[\[iclaw:s\d+\]\]/.test(content)) {
@@ -511,7 +524,7 @@ async function runTurnLocked(opts: {
     // Specialists are autonomous agents: high round ceiling + set_timer self-
     // scheduling. Same gate as create_task (a named character, not task plumbing).
     const autonomous = canCreateTasks;
-    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, workFolders, secure: mode === 'secure', canCreateTasks, autonomous, networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
+    await runWorkModeTurn({ chatId, content: gatewayMessageBase, onEvent, mode, workFolders, secure: mode === 'secure', canCreateTasks, autonomous, networkEnabled: opts.networkEnabled, ttlDays: opts.ttlDays, beforeMsgId: userMsg.id, reviewUserMessage: storedUserContent, attachments: runtimeAttachments });
     wsHub.broadcastAll({ type: 'turn-ended', chatId, title: chats.get(chatId)?.title ?? '', aborted: false });
     return;
   }
@@ -976,6 +989,9 @@ async function runWorkModeTurn(opts: {
   chatId: number;
   content: string;
   onEvent: (event: TurnEvent) => void;
+  /** The resolved runtime mode ('work' | 'secure' | …) — stamped onto any
+   * set_timer auto-resume so it fires back in the same mode. */
+  mode: ChatMode;
   workFolders?: WorkFolder[] | undefined;
   secure?: boolean | undefined;
   /** Specialist chat: let the model spin a multi-step request into a task. */
@@ -1204,6 +1220,10 @@ async function runWorkModeTurn(opts: {
               chatId,
               content,
               scheduledAt: new Date(Date.now() + seconds * 1000),
+              // Resume in the SAME mode that scheduled the poll. Without this a
+              // Work background-job loop resumes in Execute (no sandbox, no
+              // check_job) and loses the job it was polling.
+              mode: opts.mode,
             });
             wsHub.broadcastToChat(chatId, { type: 'scheduled-added', chatId, scheduled: row });
           } catch { /* never break the turn over a timer */ }

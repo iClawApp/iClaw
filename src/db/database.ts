@@ -132,6 +132,10 @@ CREATE TABLE IF NOT EXISTS scheduled_messages (
   content      TEXT NOT NULL,
   /** Stored as 'YYYY-MM-DD HH:MM:SS' UTC — comparable with datetime('now'). */
   scheduled_at TEXT NOT NULL,
+  /** Send mode captured when the row was scheduled (e.g. a Work set_timer
+   * auto-resume). NULL = unknown → the scheduler falls back to the chat's
+   * persisted mode, so a Work poll loop resumes in Work, not Execute. */
+  mode         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -315,6 +319,10 @@ ensureColumn('messages', 'cached_tokens', 'INTEGER'); // dev-mode: prompt tokens
 ensureColumn('messages', 'reasoning_tokens', 'INTEGER'); // dev-mode: completion tokens spent on hidden reasoning
 ensureColumn('messages', 'tool_trace', 'TEXT'); // JSON ToolTraceEntry[] — verified tool outcomes (runtime modes)
 ensureColumn('queued_messages', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
+// Send mode captured at schedule time (set_timer auto-resume). Nullable on
+// purpose: rows that predate this column read back NULL and fall through to the
+// chat's persisted mode in the scheduler, preserving old behaviour.
+ensureColumn('scheduled_messages', 'mode', 'TEXT');
 ensureColumn('chats', 'chat_kind', "TEXT NOT NULL DEFAULT 'normal'");
 // Sticky composer send-mode per chat (null = use UI default). Persisted on change
 // so it survives page navigation and syncs across devices — previously only the

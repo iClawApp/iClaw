@@ -29,6 +29,8 @@ export interface ScheduledMessage {
   content: string;
   /** ISO-ish 'YYYY-MM-DD HH:MM:SS' UTC string from SQLite datetime(). */
   scheduled_at: string;
+  /** Send mode captured at schedule time; NULL → scheduler falls back to chat.mode. */
+  mode: ChatMode | null;
   created_at: string;
 }
 

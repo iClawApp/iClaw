@@ -36,7 +36,16 @@ async function sweepOnce(): Promise<void> {
         scheduledId: row.id,
       });
       try {
-        await sendMessage({ chatId: row.chat_id, content: row.content });
+        // Fire in the mode the row was scheduled with (a Work set_timer resumes
+        // in Work). Passed straight through like the queued-message flush — NOT
+        // re-normalized, so it isn't downgraded to Execute by a transient
+        // selectability check. NULL/legacy rows → undefined → runTurnLocked falls
+        // back to the chat's persisted mode, exactly as before.
+        await sendMessage({
+          chatId: row.chat_id,
+          content: row.content,
+          mode: row.mode ?? undefined,
+        });
       } catch (err) {
         console.error(
           '[scheduler] fire failed',

@@ -62,6 +62,23 @@ describe('scheduler', () => {
     });
   });
 
+  it('fires with the row\'s stored mode so a Work auto-resume stays in Work', async () => {
+    const c = chats.create('openclaw/default');
+    scheduledMessages.create({
+      chatId: c.id,
+      content: '[Auto-resume] re-check the background job',
+      scheduledAt: '2020-01-01T00:00:00Z',
+      mode: 'work',
+    });
+    scheduler.start();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sendMessageMock).toHaveBeenCalledWith({
+      chatId: c.id,
+      content: '[Auto-resume] re-check the background job',
+      mode: 'work',
+    });
+  });
+
   it('broadcasts scheduled-deleted BEFORE the send fires', async () => {
     const c = chats.create('openclaw/default');
     scheduledMessages.create({

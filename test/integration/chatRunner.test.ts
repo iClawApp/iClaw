@@ -140,6 +140,32 @@ describe('sendMessage — new chat path', () => {
   });
 });
 
+describe('sendMessage — sticky mode seeding (draft gap)', () => {
+  it('seeds chats.mode from the first send when it is still unset', async () => {
+    // A draft never POSTs /chats/:id/mode (mode rides the first message), so its
+    // mode column starts empty — the exact gap that made a later set_timer
+    // auto-resume fall back to Execute and lose its Work sandbox.
+    const draft = chats.create('openclaw/default', null, { chatKind: 'draft' });
+    expect(chats.get(draft.id)!.mode).toBeFalsy();
+    openclawWsMock.runTurn.mockResolvedValueOnce({ runId: 'r', text: 'ok' });
+
+    await sendMessage({ chatId: draft.id, content: 'hi', mode: 'execute' });
+
+    expect(chats.get(draft.id)!.mode).toBe('execute');
+  });
+
+  it('does NOT overwrite an explicitly-set chats.mode', async () => {
+    const c = chats.create('openclaw/default');
+    chats.setChatMode(c.id, 'secure'); // user's explicit sticky choice
+    openclawWsMock.runTurn.mockResolvedValueOnce({ runId: 'r', text: 'ok' });
+
+    // A later send in a different mode must not clobber the explicit selection.
+    await sendMessage({ chatId: c.id, content: 'hi', mode: 'execute' });
+
+    expect(chats.get(c.id)!.mode).toBe('secure');
+  });
+});
+
 describe('sendMessage — existing chat', () => {
   it('persists into existing chat and broadcasts chat-updated to reorder sidebar', async () => {
     openclawWsMock.runTurn.mockResolvedValueOnce({ runId: 'r1', text: 'reply A' });
