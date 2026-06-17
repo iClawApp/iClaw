@@ -1535,6 +1535,7 @@
     }
     history.replaceState(null, '', '/chats/' + id);
     promoteDraftHeaderTools(id, payload.projectId);
+    promoteDraftShell(id);
     // Migrate mode from the draft fallback key to the per-chat key (window.iclawUI).
     if (window.iclawUI) {
       const draftMode = window.iclawUI.get('iclaw:composer-mode');
@@ -1584,6 +1585,74 @@
     if (sharesForm && hasProject) {
       sharesForm.setAttribute('action', '/chats/' + id + '/shares');
       sharesForm.hidden = false;
+    }
+    // The launcher's centre project-switcher has no place in a committed chat —
+    // chat.ejs has no header switcher (project changes go through the drawer), so
+    // drop it for parity with the reloaded view. Inline display:none because the
+    // [hidden] attribute loses to the .chat-header-center { display:flex } rule.
+    const center = document.querySelector('.chat-header-center');
+    if (center) center.style.display = 'none';
+  }
+
+  /**
+   * Re-run <script> tags inside a freshly-injected fragment. Nodes inserted via
+   * innerHTML don't execute their scripts; clone-replacing them does. The Brain
+   * panel's init IIFE guards on data-brain-init, so this is safe to call even if
+   * the panel was somehow already wired.
+   */
+  function runInjectedScripts(root) {
+    if (!root) return;
+    root.querySelectorAll('script').forEach(function (old) {
+      const s = document.createElement('script');
+      for (const a of Array.from(old.attributes)) s.setAttribute(a.name, a.value);
+      s.textContent = old.textContent;
+      old.replaceWith(s);
+    });
+  }
+
+  /**
+   * Promote a freshly-adopted draft to the full chat layout WITHOUT a reload. The
+   * draft (views/index.ejs) is a single-column shell with no left sidebar — that
+   * lives only in chat.ejs. We fetch the chat's server-rendered chrome (same
+   * partial as chat.ejs → no template drift) and splice the specialist sidebar in
+   * as the first grid column. Idempotent + guarded against the (rare) double adopt.
+   */
+  let draftShellPromoted = false;
+  async function promoteDraftShell(id) {
+    if (!startedOnDraft || draftShellPromoted) return;
+    const app = document.querySelector('.app');
+    if (!app || app.querySelector('.col-left')) {
+      draftShellPromoted = true;
+      return;
+    }
+    draftShellPromoted = true; // optimistic — block a concurrent second adopt
+    let data;
+    try {
+      const res = await fetch('/chats/' + id + '/chrome', { headers: { Accept: 'application/json' } });
+      if (!res.ok) {
+        draftShellPromoted = false;
+        return;
+      }
+      data = await res.json();
+    } catch (_) {
+      draftShellPromoted = false;
+      return;
+    }
+    const main = app.querySelector('.col-main');
+    if (data.sidebarHtml) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = data.sidebarHtml.trim();
+      const aside = tmp.firstElementChild;
+      if (aside) {
+        // First grid child → left column; drop the single-column launcher layout.
+        app.insertBefore(aside, app.firstElementChild);
+        app.classList.remove('app--solo');
+        runInjectedScripts(aside);
+      }
+    }
+    if (data.isSpec && main) {
+      main.classList.add('specialist-main');
+      if (data.logoColor != null) main.setAttribute('data-logo-color', String(data.logoColor));
     }
   }
 
@@ -1868,6 +1937,12 @@
       draftChosenProjectId = pid === '' ? null : Number(pid);
       if (draftChosenProjectId != null && !Number.isFinite(draftChosenProjectId)) draftChosenProjectId = null;
       applyLauncherTone(pid === '' ? null : chip.getAttribute('data-logo-color'));
+      // Keep the launcher URL in sync with the chosen project so a reload
+      // restores it (the server reads ?project=). Only on the launcher itself —
+      // never rewrite a /chats/:id URL (this listener also lives post-adopt).
+      if (location.pathname === '/' || location.pathname === '') {
+        history.replaceState(null, '', pid === '' ? '/' : '/?project=' + encodeURIComponent(pid));
+      }
       // Work folders are remembered per project — refresh the picker for the
       // newly-selected project (its own last-used set, not a shared one).
       if (typeof updateWorkFoldersButton === 'function') updateWorkFoldersButton();
@@ -1878,6 +1953,25 @@
     if (activeChip) {
       const pid = (activeChip.getAttribute('data-drawer-project') || '').trim();
       applyLauncherTone(pid === '' ? null : activeChip.getAttribute('data-logo-color'));
+    }
+
+    // Teammate roster cards are static /start/:id links (no project). When a
+    // project is selected for the launcher, keep the new specialist chat INSIDE
+    // that project — otherwise picking a project then a teammate silently dropped
+    // the chat into the no-project space. Read the project live at click time.
+    const roster = document.querySelector('.chat-roster');
+    if (roster) {
+      roster.addEventListener('click', (e) => {
+        const card = e.target.closest && e.target.closest('.chat-launcher-card');
+        if (!card) return;
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // keep open-in-new-tab
+        if (draftChosenProjectId == null || !Number.isFinite(draftChosenProjectId)) return;
+        const cid = card.getAttribute('data-character');
+        if (!cid) return;
+        e.preventDefault();
+        window.location.href =
+          '/start/' + encodeURIComponent(cid) + '?project=' + draftChosenProjectId;
+      });
     }
   }
 
@@ -9034,7 +9128,10 @@
     const taskAskModal = document.getElementById('task-ask-modal');
     if (taskAskModal && !taskAskModal.hidden) return;
     if (location.pathname === '/' || location.pathname === '') return;
-    goTo('/');
+    // Mirror the "‹ Project" back button: keep the project so Esc lands on the
+    // project's home launcher, not the bare (no-project) home that "resets" it.
+    const escPid = (messagesEl && messagesEl.dataset.projectId ? messagesEl.dataset.projectId : '').trim();
+    goTo(escPid ? '/?project=' + encodeURIComponent(escPid) : '/');
   });
 
   function renderSlashMenu() {

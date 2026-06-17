@@ -86,17 +86,6 @@
     </script>
     <% } %>
 
-    <%# Project "Brain" — shared memory (facts + skills). Not shown in a specialist
-        chat (the agent already reads project memory; the panel just adds noise). %>
-    <% if (!_isSpec && typeof activeChat !== 'undefined' && activeChat && activeChat.project_id != null) { %>
-      <%- include('partials/brainPanel', {
-            brainFacts: typeof brainFacts !== 'undefined' ? brainFacts : [],
-            brainSkills: typeof brainSkills !== 'undefined' ? brainSkills : [],
-            projectId: activeChat.project_id,
-            chatId: activeChat.id,
-          }) %>
-    <% } %>
-
     <aside
       class="iclaw-inline-banner iclaw-inline-banner--warn card"
       id="reset-policy-banner"

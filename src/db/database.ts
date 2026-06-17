@@ -332,6 +332,20 @@ ensureColumn('remote_access_tunnels', 'opaque_registration_record', 'TEXT');
 // the relay only ever sees SHA-256(owner_secret).
 ensureColumn('remote_access_tunnels', 'owner_secret', 'TEXT');
 
+// One-time data hygiene (idempotent — safe to run on every boot):
+// 1. The generalist persona is stored as character_id = NULL. A bug in the
+//    team-chat route briefly wrote the literal 'generalist'; normalise those rows
+//    so they group with the rest of the generalist's history (otherwise their
+//    sidebar recents rendered empty).
+db.prepare("UPDATE chats SET character_id = NULL WHERE character_id = 'generalist'").run();
+// 2. Prune abandoned empty drafts — message-less drafts untouched for > 7 days. A
+//    draft is created whenever a teammate chat is opened and is promoted to
+//    'normal' on the first message, so an old message-less draft is just clutter.
+//    New ones no longer accumulate (opening a teammate reuses its empty draft).
+db.prepare(
+  "DELETE FROM chats WHERE chat_kind = 'draft' AND updated_at < datetime('now', '-7 days') AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = chats.id)",
+).run();
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS iclaw_kv (
     key TEXT PRIMARY KEY NOT NULL,

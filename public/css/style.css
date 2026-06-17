@@ -9070,6 +9070,25 @@ body.incognito-mode .composer-mode-btn__label {
 .chat-launcher-card-role { font-weight: 500; font-size: var(--text-sm); color: rgba(255, 255, 255, 0.85); }
 .chat-launcher-card-face { position: absolute; left: 50%; top: 30px; transform: translateX(-50%); z-index: 1; }
 .chat-launcher-face { width: 96px; height: 96px; }
+/* Default teammate: a corner star (no label) marks the one used when you pick
+   nobody — the generalist behind the centre composer. */
+.chat-launcher-card-default {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #f5a623;
+  font-size: 15px;
+  line-height: 1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+}
 
 /* Illustrated avatar — sized by the caller's face class (chat-launcher-face,
    character-welcome-face, chat-character-face, team-card-face); the SVG carries

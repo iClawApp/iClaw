@@ -96,6 +96,48 @@ export const chats = {
       .run(id);
     return info.changes > 0;
   },
+  /**
+   * Most recent EMPTY chat for a character in a space (project or no-project).
+   * A draft is always message-less — it's promoted to 'normal' on the first turn
+   * (promoteFromDraft) — so a draft IS an empty chat. The launcher reuses one when
+   * opening a teammate, so you land on a clean chat without piling up a new empty
+   * draft on every click. null characterId = the generalist.
+   */
+  findReusableDraft(projectId: number | null, characterId: string | null): Chat | undefined {
+    const charMatch = "COALESCE(character_id, '') = COALESCE(?, '')";
+    const row =
+      projectId != null
+        ? db
+            .prepare(
+              `SELECT * FROM chats WHERE chat_kind = 'draft' AND project_id = ? AND ${charMatch} ORDER BY updated_at DESC, id DESC LIMIT 1`,
+            )
+            .get(projectId, characterId)
+        : db
+            .prepare(
+              `SELECT * FROM chats WHERE chat_kind = 'draft' AND project_id IS NULL AND ${charMatch} ORDER BY updated_at DESC, id DESC LIMIT 1`,
+            )
+            .get(characterId);
+    return row as Chat | undefined;
+  },
+  /**
+   * Open a teammate's CLEAN chat in a space: reuse its existing empty draft (so
+   * clicks never pile up duplicate empties — see findReusableDraft), else create
+   * one. `characterId` null = the generalist (its chats are always character_id =
+   * NULL). Asserts the persona + Work mode (idempotent). Returns the chat id.
+   * Shared by GET /start/:characterId and POST /projects/:id/team/:characterId/chat
+   * so the two entry points can't drift.
+   */
+  openReusableDraft(projectId: number | null, characterId: string | null): number {
+    const reuse = this.findReusableDraft(projectId, characterId);
+    const id = reuse
+      ? reuse.id
+      : this.create('openclaw/default', projectId, { chatKind: 'draft' }).id;
+    if (characterId) {
+      this.setCharacter(id, characterId);
+      this.setChatMode(id, 'work');
+    }
+    return id;
+  },
   /** Rename only — does not touch `updated_at` so sidebar order stays put. */
   rename(id: number, title: string, opts?: { manual?: boolean }): void {
     const next = title.trim() || 'New chat';

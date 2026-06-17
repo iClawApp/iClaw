@@ -21,8 +21,6 @@ import { buildDrawerLocals } from '../services/drawerNav';
 
 export const projectsRouter: Router = Router();
 
-/** Fallback agent for new chats (mirrors routes/chats.ts). */
-const DEFAULT_AGENT = 'openclaw/default';
 mountProjectTasksRoutes(projectsRouter);
 
 function wantsJson(req: import('express').Request): boolean {
@@ -112,10 +110,11 @@ projectsRouter.get('/:id', (req, res) => {
 });
 
 /**
- * POST /projects/:id/team/:characterId/chat — open the specialist's themed chat.
- * Reuses their most recent interactive chat in this project, or opens a new one
- * (?fresh=1 forces new). The chat runs in Work mode (iClaw runtime) so the
- * specialist's persona + playbook + tool allowlist + create_task all apply.
+ * POST /projects/:id/team/:characterId/chat — open the teammate's themed chat in
+ * this project. Always a CLEAN chat: reuses the teammate's existing empty draft
+ * here, else opens a new one (chats.openReusableDraft). The chat runs in Work
+ * mode (iClaw runtime) so the persona + playbook + tool allowlist + create_task
+ * all apply. Past conversations live in the sidebar recents, not here.
  */
 projectsRouter.post('/:id/team/:characterId/chat', (req, res) => {
   const id = Number(req.params.id);
@@ -129,23 +128,11 @@ projectsRouter.post('/:id/team/:characterId/chat', (req, res) => {
     res.status(404).send('unknown specialist');
     return;
   }
-  const fresh = req.body?.fresh === '1' || req.body?.fresh === true;
-  const existing = fresh
-    ? undefined
-    : chats
-        .listByProject(id)
-        .filter((c) => c.character_id === cid && c.chat_kind !== 'task_execution')
-        .sort((a, b) => b.id - a.id)[0];
-  let chatId: number;
-  if (existing) {
-    chatId = existing.id;
-  } else {
-    const chat = chats.create(DEFAULT_AGENT, id, { chatKind: 'draft' });
-    chats.setCharacter(chat.id, cid);
-    chats.setChatMode(chat.id, 'work');
-    chatId = chat.id;
-  }
-  res.redirect(`/chats/${chatId}`);
+  // The generalist lives as character_id = NULL (its chats group under null) — map
+  // it so the new chat matches the rest of the generalist's history. Writing the
+  // literal 'generalist' here was the bug that emptied the sidebar recents.
+  const targetChar = cid === 'generalist' ? null : cid;
+  res.redirect(`/chats/${chats.openReusableDraft(id, targetChar)}`);
 });
 
 projectsRouter.post('/:id/rename', (req, res) => {

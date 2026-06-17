@@ -1,7 +1,13 @@
 <%# One teammate tile for the launcher ("AI Employees" style): a themed gradient
     card with the character render filling it (face + upper body) and the name/role
-    at the bottom over a colour scrim. A plain link to /start/:id. `ch` = CharacterDef. %>
-<a class="chat-launcher-card" href="/start/<%= ch.id %>" data-character="<%= ch.id %>" data-logo-color="<%= ch.color %>">
+    at the bottom over a colour scrim. A plain link to /start/:id. `ch` = CharacterDef.
+    `isDefault` marks the teammate used when none is picked — shown as a corner star
+    (no label), so it reads as "the default" at a glance. %>
+<% var _isDefault = (typeof isDefault !== 'undefined' && isDefault); %>
+<a class="chat-launcher-card<%= _isDefault ? ' is-default' : '' %>" href="/start/<%= ch.id %>" data-character="<%= ch.id %>" data-logo-color="<%= ch.color %>">
+  <% if (_isDefault) { %>
+    <span class="chat-launcher-card-default" title="Default — used unless you pick a teammate" aria-label="Default assistant">&#9733;</span>
+  <% } %>
   <% if (ch.art) { %>
     <img class="chat-launcher-card-art" src="<%= ch.art %>" alt="" aria-hidden="true" loading="lazy" />
   <% } else { %>

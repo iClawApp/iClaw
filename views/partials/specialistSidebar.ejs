@@ -6,7 +6,10 @@
 <% var _recents = (typeof specialistChats !== 'undefined' && Array.isArray(specialistChats)) ? specialistChats : []; %>
 <aside class="col col-left specialist-sidebar" id="app-sidebar" data-logo-color="<%= character.color %>">
   <div class="specialist-hero">
-    <a class="specialist-hero-back" href="<%= _pid ? ('/projects/' + _pid) : '/' %>" aria-label="<%= _pid ? 'Back to project' : 'Back to home' %>">&lsaquo; <%= _pid ? 'Project' : 'iClaw' %></a>
+    <%# "‹ Project" goes to the project's home (the launcher scoped to this
+        project — new-chat screen + its recents/drawer), NOT the /projects/:id
+        overview page. No project → global home. %>
+    <a class="specialist-hero-back" href="<%= _pid ? ('/?project=' + _pid) : '/' %>" aria-label="<%= _pid ? 'Back to project home' : 'Back to home' %>">&lsaquo; <%= _pid ? 'Project' : 'iClaw' %></a>
     <% if (character.art) { %>
       <img class="specialist-hero-art" src="<%= character.art %>" alt="" aria-hidden="true" />
     <% } else { %>

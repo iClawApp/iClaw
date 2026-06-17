@@ -17,11 +17,15 @@ const execFileAsync = promisify(execFile);
 export const indexRouter: Router = Router();
 
 /**
- * Persona launcher entry: open (or reuse) a no-project chat with a character.
- * The home is a roster of personas; clicking one lands you straight in that
- * teammate's Work-mode chat (persona + tools apply). `?fresh=1` forces a new one.
- * Reuses the most recent no-project interactive chat for that character so a
- * teammate's history stays in one place (its recents). Never touches old data.
+ * Persona launcher entry: open a CLEAN chat with a character. The home is a
+ * roster of personas; clicking one lands you straight in that teammate's
+ * Work-mode chat (persona + tools apply) — always an empty chat, never a past
+ * conversation (those live in the sidebar recents). Reuses the teammate's
+ * existing empty draft in this space so clicks don't pile up duplicate empties,
+ * else starts a new one (chats.openReusableDraft). `?project=<id>` scopes the
+ * chat to a project — a teammate clicked from a project-scoped launcher stays
+ * INSIDE that project (without it the chat fell into the no-project space,
+ * silently dropping the user's picked project).
  */
 indexRouter.get('/start/:characterId', (req, res) => {
   const cid = req.params.characterId;
@@ -32,25 +36,10 @@ indexRouter.get('/start/:characterId', (req, res) => {
   // The generalist is the default (no persona) — it lives as character_id = null,
   // same as a chat started from the centre composer, so recents stay unified.
   const targetChar = cid === 'generalist' ? null : cid;
-  const fresh = req.query.fresh === '1';
-  const existing = fresh
-    ? undefined
-    : chats
-        .listOrphans()
-        .filter((c) => (c.character_id ?? null) === targetChar && c.chat_kind !== 'task_execution')
-        .sort((a, b) => b.id - a.id)[0];
-  let chatId: number;
-  if (existing) {
-    chatId = existing.id;
-  } else {
-    const chat = chats.create('openclaw/default', null, { chatKind: 'draft' });
-    if (targetChar) {
-      chats.setCharacter(chat.id, targetChar);
-      chats.setChatMode(chat.id, 'work');
-    }
-    chatId = chat.id;
-  }
-  res.redirect(`/chats/${chatId}`);
+  const rawProject = typeof req.query.project === 'string' ? Number(req.query.project) : NaN;
+  const projectId =
+    Number.isFinite(rawProject) && rawProject > 0 && projects.get(rawProject) ? rawProject : null;
+  res.redirect(`/chats/${chats.openReusableDraft(projectId, targetChar)}`);
 });
 
 /**

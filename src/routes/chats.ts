@@ -287,6 +287,32 @@ chatsRouter.post('/:id/skill-suggestions/:suggestionId/reject', (req, res) => {
   res.type('application/json').json({ ok: true });
 });
 
+/**
+ * The "themed shell" a chat needs beyond its messages: the specialist sidebar
+ * (character avatar + recents + project). Shared by the full chat render AND the
+ * `/:id/chrome` fragment endpoint, which promotes a freshly-adopted draft to the
+ * full chat layout in place — no reload — by rendering this exact partial.
+ * Keeping the data in one place stops the fragment from drifting out of sync
+ * with chat.ejs.
+ */
+function chatShellData(chat: NonNullable<ReturnType<typeof chats.get>>) {
+  // Sidebar recents: chats for the same teammate in the same space. The
+  // generalist is character_id = null, so match null-to-null — gating on a
+  // truthy character_id (as before) dropped EVERY generalist chat under a
+  // project to [], so a project's default "Assistant" showed no recents at all.
+  // listByProject/listOrphans already exclude drafts + task_execution rows.
+  const specialistChats = (
+    chat.project_id != null ? chats.listByProject(chat.project_id) : chats.listOrphans()
+  )
+    .filter((c) => (c.character_id ?? null) === (chat.character_id ?? null))
+    .sort((a, b) => b.id - a.id);
+  return {
+    character: getCharacter(chat.character_id),
+    specialistChats,
+    specialistProject: chat.project_id != null ? projects.get(chat.project_id) : null,
+  };
+}
+
 chatsRouter.get('/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -323,6 +349,7 @@ chatsRouter.get('/:id', async (req, res, next) => {
         }
       }
     }
+    const shell = chatShellData(chat);
     res.render('chat', {
       chats: chats.list(),
       allProjects: projects.list(),
@@ -331,22 +358,10 @@ chatsRouter.get('/:id', async (req, res, next) => {
       activeChat: chat,
       // Specialist theming: when the chat belongs to a character, the view swaps
       // to that specialist's themed shell (avatar, colour, power-up, recents).
-      character: getCharacter(chat.character_id),
-      specialistChats:
-        chat.project_id != null && chat.character_id
-          ? chats
-              .listByProject(chat.project_id)
-              .filter((c) => c.character_id === chat.character_id && c.chat_kind !== 'task_execution')
-              .sort((a, b) => b.id - a.id)
-          : chat.project_id == null
-            ? // No-project chats (generalist = null, or a specialist opened from the
-              // launcher) — recents for the same teammate, drawn from orphan chats.
-              chats
-                .listOrphans()
-                .filter((c) => (c.character_id ?? null) === (chat.character_id ?? null))
-                .sort((a, b) => b.id - a.id)
-            : [],
-      specialistProject: chat.project_id != null ? projects.get(chat.project_id) : null,
+      // Shared with the /:id/chrome fragment via chatShellData (see helper).
+      character: shell.character,
+      specialistChats: shell.specialistChats,
+      specialistProject: shell.specialistProject,
       // Slide-out "all project chats" menu: every agent's chats in this chat's
       // project (or the no-project space), grouped by agent in the view, plus a
       // project switcher. listByProject/listOrphans already exclude drafts and
@@ -360,8 +375,6 @@ chatsRouter.get('/:id', async (req, res, next) => {
       drawerWorkingIds: chatStatus.workingIds(),
       // The project's shared "Brain" (semantic + procedural memory) — surfaced so
       // the user can SEE what every teammate in this project already knows.
-      brainFacts: chat.project_id != null ? projectFacts.listByProject(chat.project_id, 8) : [],
-      brainSkills: chat.project_id != null ? projectSkills.listByProject(chat.project_id) : [],
       chatMessages,
       agents,
       agentsError,
@@ -388,6 +401,44 @@ chatsRouter.get('/:id', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+/**
+ * Server-rendered chat "chrome" for in-place draft promotion. A draft starts on
+ * the single-column launcher (views/index.ejs) with no left sidebar — it lives
+ * only in chat.ejs. The first message adopts the draft client-side without a
+ * reload, so the frontend fetches this fragment and splices the sidebar into the
+ * live DOM. Renders the SAME partial chat.ejs uses (res.render with a callback →
+ * HTML string), so there's no client/template drift.
+ */
+chatsRouter.get('/:id/chrome', (req, res, next) => {
+  const id = Number(req.params.id);
+  const chat = chats.get(id);
+  if (!chat) {
+    res.status(404).json({ error: 'chat not found' });
+    return;
+  }
+  const shell = chatShellData(chat);
+  res.render(
+    'partials/specialistSidebar',
+    {
+      character: shell.character,
+      specialistProject: shell.specialistProject,
+      specialistChats: shell.specialistChats,
+      activeChat: chat,
+    },
+    (err: Error | null, sidebarHtml: string) => {
+      if (err) {
+        next(err);
+        return;
+      }
+      res.type('application/json').json({
+        sidebarHtml,
+        isSpec: shell.character.id !== 'generalist',
+        logoColor: shell.character.color ?? null,
+      });
+    },
+  );
 });
 
 chatsRouter.patch('/:id', (req, res) => {
