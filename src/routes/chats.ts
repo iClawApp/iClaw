@@ -301,11 +301,13 @@ function chatShellData(chat: NonNullable<ReturnType<typeof chats.get>>) {
   // truthy character_id (as before) dropped EVERY generalist chat under a
   // project to [], so a project's default "Assistant" showed no recents at all.
   // listByProject/listOrphans already exclude drafts + task_execution rows.
+  // listByProject/listOrphans already return newest-active first (updated_at DESC)
+  // — keep that so recent chats stay on top. The chat you're in is intentionally
+  // NOT added while it's still an empty draft; it joins the list only once the
+  // first message promotes it (the frontend slots it in on top — see iclaw.js).
   const specialistChats = (
     chat.project_id != null ? chats.listByProject(chat.project_id) : chats.listOrphans()
-  )
-    .filter((c) => (c.character_id ?? null) === (chat.character_id ?? null))
-    .sort((a, b) => b.id - a.id);
+  ).filter((c) => (c.character_id ?? null) === (chat.character_id ?? null));
   return {
     character: getCharacter(chat.character_id),
     specialistChats,
@@ -426,6 +428,7 @@ chatsRouter.get('/:id/chrome', (req, res, next) => {
       specialistProject: shell.specialistProject,
       specialistChats: shell.specialistChats,
       activeChat: chat,
+      workingIds: chatStatus.workingIds(),
     },
     (err: Error | null, sidebarHtml: string) => {
       if (err) {

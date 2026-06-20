@@ -4084,9 +4084,12 @@
     link?.remove();
     if (searchMatchSet !== null) applySidebarSearchFilter();
   }
-  function statusDot(id) {
-    return document.querySelector(
-      '.chat-item[data-chat-id="' + id + '"] .chat-item-avatar-wrap .status-dot',
+  /** All status dots for a chat — the main sidebar item AND the themed-sidebar
+   *  recents row — so working/unread/scheduled stays in sync across both. */
+  function statusDots(id) {
+    return document.querySelectorAll(
+      '.chat-item[data-chat-id="' + id + '"] .chat-item-avatar-wrap .status-dot, ' +
+        '.specialist-recent[data-chat-id="' + id + '"] .status-dot',
     );
   }
   /** chatId → pending scheduled row count (sidebar muted dot). */
@@ -4102,26 +4105,27 @@
   })();
 
   function reconcileStatusDot(id) {
-    const dot = statusDot(id);
-    if (!dot) return;
-    const working = dot.classList.contains('working');
-    const unread = dot.classList.contains('unread');
-    dot.classList.remove('scheduled');
-    if (working || unread) {
-      dot.setAttribute('aria-hidden', 'true');
-      dot.removeAttribute('aria-label');
-      scheduleFaviconUpdate();
-      return;
-    }
+    const dots = statusDots(id);
+    if (!dots.length) return;
     const pending = scheduledPendingCount.get(id) || 0;
-    if (pending > 0) {
-      dot.classList.add('scheduled');
-      dot.removeAttribute('aria-hidden');
-      dot.setAttribute('aria-label', 'Scheduled message pending');
-    } else {
-      dot.setAttribute('aria-hidden', 'true');
-      dot.removeAttribute('aria-label');
-    }
+    dots.forEach(function (dot) {
+      const working = dot.classList.contains('working');
+      const unread = dot.classList.contains('unread');
+      dot.classList.remove('scheduled');
+      if (working || unread) {
+        dot.setAttribute('aria-hidden', 'true');
+        dot.removeAttribute('aria-label');
+        return;
+      }
+      if (pending > 0) {
+        dot.classList.add('scheduled');
+        dot.removeAttribute('aria-hidden');
+        dot.setAttribute('aria-label', 'Scheduled message pending');
+      } else {
+        dot.setAttribute('aria-hidden', 'true');
+        dot.removeAttribute('aria-label');
+      }
+    });
     scheduleFaviconUpdate();
   }
 
@@ -4148,22 +4152,24 @@
     }
   }
 
+  /** Per-chat status dot in the themed sidebar recents — green pulse while that
+   *  chat is working a turn, gray when idle. */
   function setWorkingDot(id, on) {
-    const dot = statusDot(id);
-    if (!dot) return;
-    if (on) {
-      dot.classList.add('working');
-      dot.classList.remove('unread');
-    } else {
-      dot.classList.remove('working');
-    }
+    statusDots(id).forEach(function (dot) {
+      if (on) {
+        dot.classList.add('working');
+        dot.classList.remove('unread');
+      } else {
+        dot.classList.remove('working');
+      }
+    });
     reconcileStatusDot(id);
   }
   function setUnreadDot(id, on) {
-    const dot = statusDot(id);
-    if (!dot) return;
-    if (on) dot.classList.add('unread');
-    else dot.classList.remove('unread');
+    statusDots(id).forEach(function (dot) {
+      if (on) dot.classList.add('unread');
+      else dot.classList.remove('unread');
+    });
     reconcileStatusDot(id);
   }
 
@@ -4865,12 +4871,68 @@
     });
   }
 
+  /** Keep a chat's themed-sidebar recents row in sync (e.g. New chat → real title). */
+  function setRecentTitle(id, title) {
+    if (title == null) return;
+    const el = document.querySelector(
+      '.specialist-recent[data-chat-id="' + id + '"] .specialist-recent-title',
+    );
+    if (el) el.textContent = title;
+  }
+
+  /**
+   * Slot the chat you're in into the themed recents, on top — called when its
+   * first message promotes it from a draft (it's intentionally absent until then,
+   * so an empty draft never shows). Also bubbles an existing chat back to the top
+   * on new activity. Idempotent.
+   */
+  function promoteActiveRecentToTop() {
+    const recents = document.querySelector('.specialist-recents');
+    if (!recents || activeChatId == null) return;
+    let row = recents.querySelector('.specialist-recent[data-chat-id="' + activeChatId + '"]');
+    if (!row) {
+      row = document.createElement('a');
+      row.className = 'specialist-recent';
+      row.href = '/chats/' + activeChatId;
+      row.setAttribute('data-chat-id', String(activeChatId));
+      const title = document.createElement('span');
+      title.className = 'specialist-recent-title';
+      title.textContent = (titleInput && titleInput.value) || 'New chat';
+      const dot = document.createElement('span');
+      dot.className = 'status-dot'; // state added by setWorkingDot after this
+      dot.setAttribute('aria-hidden', 'true');
+      row.appendChild(title);
+      row.appendChild(dot);
+    }
+    // Turn an empty "Your chats will appear here" panel into a real list.
+    if (recents.classList.contains('is-empty')) {
+      recents.classList.remove('is-empty');
+      const ph = recents.querySelector('.specialist-recents-placeholder');
+      if (ph) ph.remove();
+      if (!recents.querySelector('.specialist-recents-label')) {
+        const label = document.createElement('p');
+        label.className = 'specialist-recents-label';
+        label.textContent = 'Recents';
+        recents.appendChild(label);
+      }
+    }
+    // Only this chat is active; move it to the top (just under the "Recents" label).
+    recents.querySelectorAll('.specialist-recent.on').forEach(function (el) {
+      if (el !== row) el.classList.remove('on');
+    });
+    row.classList.add('on');
+    const label = recents.querySelector('.specialist-recents-label');
+    if (label) label.insertAdjacentElement('afterend', row);
+    else recents.insertBefore(row, recents.firstChild);
+  }
+
   function applyTitleForActive(title) {
     if (titleInput && activeChatId != null) {
       titleInput.value = title;
       titleInput.defaultValue = title;
       titleInput.disabled = false;
     }
+    setRecentTitle(activeChatId, title);
     document.title = (title || 'iClaw') + ' — iClaw';
   }
 
@@ -5084,6 +5146,8 @@
           });
         }
         if (msg.chatId === activeChatId && msg.title != null) applyTitleForActive(msg.title);
+        // Background chats in the themed recents also get their renamed title live.
+        if (msg.chatId !== activeChatId && msg.title != null) setRecentTitle(msg.chatId, msg.title);
         // Composer mode changed elsewhere (another tab/device) → mirror it here
         // without re-persisting (avoids a broadcast loop).
         if (msg.chatId === activeChatId && msg.mode !== undefined) {
@@ -5213,6 +5277,9 @@
         return;
 
       case 'turn-started':
+        // First message just promoted this draft → it now belongs in the recents
+        // (on top). Do this before setWorkingDot so the new row's dot can turn on.
+        if (msg.chatId === activeChatId) promoteActiveRecentToTop();
         setWorkingDot(msg.chatId, true);
         if (msg.chatId !== activeChatId) return;
         setStopVisible(true);

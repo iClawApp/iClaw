@@ -9602,7 +9602,9 @@ body.incognito-mode .composer-mode-btn__label {
   color: rgba(255, 255, 255, 0.5);
 }
 .specialist-recent {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   text-decoration: none;
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
@@ -9610,15 +9612,29 @@ body.incognito-mode .composer-mode-btn__label {
   padding: 8px 10px;
   margin-bottom: 6px;
   font-size: var(--text-sm);
+}
+.specialist-recent-title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .specialist-recent:hover { background: rgba(255, 255, 255, 0.18); }
 .specialist-recent.on { background: rgba(255, 255, 255, 0.24); }
+/* Mirror the chat-list: the right-hand dot only shows for an active state
+   (working / unread / scheduled), nothing when idle. */
+.specialist-recent .status-dot:not(.working):not(.unread):not(.scheduled) { display: none; }
 
 .specialist-main { position: relative; }
 .specialist-main[data-logo-color] { background: color-mix(in srgb, var(--logo-tone) 5%, var(--surface)); }
+/* Tint the chat header to match the input box + message bubbles (the 18% wash)
+   instead of the plain white surface, so the whole specialist pane reads as one
+   theme rather than a white bar over a tinted body. */
+.specialist-main[data-logo-color] .chat-header {
+  background: color-mix(in srgb, var(--logo-tone) 18%, var(--surface));
+  border-bottom-color: color-mix(in srgb, var(--logo-tone) 26%, var(--border));
+}
 
 .specialist-panel-overlay {
   position: absolute;

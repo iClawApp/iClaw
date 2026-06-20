@@ -7,7 +7,7 @@
     <%# Every chat — including the default (generalist) — gets the themed left menu
         (recents / back / New chat). The specialist colour wash + panels below stay
         gated on _isSpec, so the generalist stays neutral. %>
-    <%- include('partials/specialistSidebar', { character: character, specialistProject: (typeof specialistProject !== 'undefined' ? specialistProject : null), specialistChats: (typeof specialistChats !== 'undefined' ? specialistChats : []), activeChat: activeChat }) %>
+    <%- include('partials/specialistSidebar', { character: character, specialistProject: (typeof specialistProject !== 'undefined' ? specialistProject : null), specialistChats: (typeof specialistChats !== 'undefined' ? specialistChats : []), activeChat: activeChat, workingIds: (typeof workingIds !== 'undefined' ? workingIds : []) }) %>
   <% } else { %>
     <%- include('partials/sidebar') %>
   <% } %>

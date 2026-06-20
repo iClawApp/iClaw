@@ -4,6 +4,8 @@
     tab (left border, vertically centred) opens the all-project-chats menu. %>
 <% var _pid = (typeof specialistProject !== 'undefined' && specialistProject) ? specialistProject.id : null; %>
 <% var _recents = (typeof specialistChats !== 'undefined' && Array.isArray(specialistChats)) ? specialistChats : []; %>
+<% var _workingIds = (typeof workingIds !== 'undefined' && Array.isArray(workingIds)) ? workingIds : []; %>
+<% var _scheduledChatIds = (typeof scheduledChatIds !== 'undefined' && Array.isArray(scheduledChatIds)) ? scheduledChatIds : []; %>
 <aside class="col col-left specialist-sidebar" id="app-sidebar" data-logo-color="<%= character.color %>">
   <div class="specialist-hero">
     <%# "‹ Project" goes to the project's home (the launcher scoped to this
@@ -51,8 +53,18 @@
       <p class="specialist-recents-placeholder">Your chats will appear here</p>
       <% } else { %>
       <p class="specialist-recents-label">Recents</p>
-      <% _recents.forEach(function (c) { %>
-      <a class="specialist-recent<%= c.id === activeChat.id ? ' on' : '' %>" href="/chats/<%= c.id %>"><%= c.title %></a>
+      <% _recents.forEach(function (c) {
+           var _dw = _workingIds.indexOf(c.id) >= 0;
+           var _du = !_dw && c.unread;
+           var _ds = !_dw && !_du && _scheduledChatIds.indexOf(c.id) >= 0;
+      %>
+      <%# Per-chat status dot on the RIGHT — same .status-dot system as the main
+          sidebar: green pulse working · blue unread · brown scheduled · hidden
+          when idle. Live-updated by setWorkingDot/setUnreadDot in iclaw.js. %>
+      <a class="specialist-recent<%= c.id === activeChat.id ? ' on' : '' %>" href="/chats/<%= c.id %>" data-chat-id="<%= c.id %>">
+        <span class="specialist-recent-title"><%= c.title %></span>
+        <span class="status-dot<%= _dw ? ' working' : (_du ? ' unread' : (_ds ? ' scheduled' : '')) %>"<% if (_ds) { %> aria-label="Scheduled message pending"<% } else { %> aria-hidden="true"<% } %>></span>
+      </a>
       <% }); %>
       <% } %>
     </div>
