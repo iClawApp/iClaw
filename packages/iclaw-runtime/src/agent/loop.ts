@@ -136,6 +136,13 @@ const MAX_ROUNDS = Math.max(1, Number(process.env.ICLAW_MAX_ROUNDS) || 40);
  *  done (the dead-round breaker + repeat guard still cut off a stuck loop). */
 const AUTONOMOUS_MAX_ROUNDS = Math.max(1, Number(process.env.ICLAW_AUTONOMOUS_MAX_ROUNDS) || 200);
 
+/** Per-turn token budget (#2): the round ceiling caps STEPS (200), this caps SPEND.
+ *  Once a turn's cumulative usage passes this, we force a conclusion (tools off next
+ *  round) so a long autonomous run can't burn unbounded cost — the dead-round breaker
+ *  only fires on FAILURE, so a genuinely productive-but-expensive run needs this too.
+ *  Default 1,000,000 tokens; set ICLAW_TOKEN_BUDGET=0 to disable. */
+const TOKEN_BUDGET = Math.max(0, Number(process.env.ICLAW_TOKEN_BUDGET ?? 1_000_000));
+
 /** A planned post the agent adds to the content calendar (update_calendar tool). */
 export interface CalendarEntry {
   /** Day as YYYY-MM-DD. */
@@ -417,6 +424,54 @@ export function makeToolGuard(): { check(name: string, rawArgs: string): string 
   };
 }
 
+/**
+ * In-round tool parallelism (#5): when a single round emits several independent,
+ * side-effect-FREE read calls, run their executeTool work concurrently instead of
+ * one at a time — a pure latency win (research turns fan out 3–4 web_fetch/search
+ * per round). STRICT allowlist: only idempotent reads with no host/FS/shell
+ * mutation and no control-flow events. Everything else (write_file/edit_file,
+ * run_command, browser_* [stateful], the host-fulfilled event tools, deep_research)
+ * stays sequential. A NEW tool defaults to sequential — opt in here explicitly,
+ * never opt out elsewhere. social_search qualifies only because its sandbox script
+ * now writes a UNIQUE temp file per call (buildSocialCommand); a fixed filename
+ * would let two concurrent calls race.
+ */
+const PARALLEL_SAFE_TOOLS = new Set<string>([
+  'web_search', 'web_fetch', 'read_file', 'read_summary', 'list_files',
+  'search_files', 'social_search', 'recall_tool_output',
+]);
+export function isParallelSafeTool(name: string): boolean {
+  return PARALLEL_SAFE_TOOLS.has(name);
+}
+/** Max concurrent parallel-safe calls per round (bounds sandbox / network load). 4 is
+ *  plenty for the handful of reads a round fans out; change in code if ever needed. */
+const TOOL_PARALLEL_LIMIT = 4;
+
+/**
+ * Minimal concurrency limiter: at most `limit` wrapped fns run at once; the rest
+ * queue and start as slots free up. No deps — the in-round batch is tiny (≤ a
+ * handful of calls), so a fancier pool isn't worth it.
+ */
+export function makeLimiter(limit: number): <T>(fn: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const queue: (() => void)[] = [];
+  const release = () => { active--; queue.shift()?.(); };
+  return async function run<T>(fn: () => Promise<T>): Promise<T> {
+    if (active >= limit) await new Promise<void>((res) => queue.push(res));
+    active++;
+    try { return await fn(); } finally { release(); }
+  };
+}
+
+/**
+ * Host-fulfilled scheduling/plan tools whose result is just an ack (not real
+ * evidence) — kept OUT of the verifier's evidence pool. deep_research's synthesis
+ * and every executeTool data result ARE evidence, so they're not listed here.
+ */
+const NON_EVIDENCE_TOOLS = new Set<string>([
+  'create_task', 'update_plan', 'set_timer', 'update_calendar', 'set_reminder', 'verify',
+]);
+
 /** Dead-round circuit-breaker (#3): this many CONSECUTIVE rounds whose tool calls
  *  ALL came back empty / failed / timed-out / guard-blocked means the agent is
  *  spinning on data it can't get (e.g. login-gated stats). We then force it to
@@ -586,6 +641,104 @@ async function runIsolatedResearch(
     cached,
     reasoning,
   };
+}
+
+// ── Independent verification (#1) ─────────────────────────────────────────────
+//
+// Gated to the autonomous/task path (opts.autonomous): on an interactive turn the
+// HUMAN is the verifier, so we don't double cost/latency there. When the model
+// declares it's done, a FRESH pass checks the answer's concrete claims against the
+// evidence this turn actually gathered; on a 'revise' verdict we feed the issues
+// back and loop so the agent corrects / searches more. Capped (VERIFY_MAX_REVISIONS)
+// and fail-open (a broken verifier never blocks the turn). The token budget (#2) is
+// the hard backstop against a verify→revise→verify spiral.
+
+/** Stronger model for the independent check; defaults to the turn's own model. Set
+ *  ICLAW_VERIFY_MODEL to a different/stronger model for a truly independent verdict. */
+const VERIFY_MODEL = process.env.ICLAW_VERIFY_MODEL || '';
+/** How many verifier-driven revisions one turn may take before we accept the answer
+ *  (the flag stays visible). 1 = at most one correction loop; the token budget is the
+ *  hard backstop against a verify→revise spiral. */
+const VERIFY_MAX_REVISIONS = 1;
+/** Cap the evidence (this turn's tool outputs) handed to the verifier, newest first.
+ *  Matches the summarizer's input budget — a comfortable single-call size. */
+const VERIFY_EVIDENCE_CHARS = 60_000;
+
+const VERIFIER_SYSTEM =
+  "You are an independent fact-checker for another AI assistant's answer. You are given its ANSWER and the " +
+  'EVIDENCE it actually gathered this turn (tool outputs / sources). Check ONLY concrete, checkable claims: ' +
+  'specific numbers, dates, names, quotes, URLs, and assertions that an action happened (a push, PR, file ' +
+  'change, message, or API call). For each, is it directly supported by the EVIDENCE? Ignore writing style, ' +
+  'opinions, and ordinary general knowledge. Reply with ONLY a JSON object: ' +
+  '{"verdict":"pass"|"revise","issues":"<one short line per unsupported or contradicted claim; empty when pass>"}. ' +
+  'Use "revise" only when a concrete claim is unsupported by or contradicts the evidence — be strict but fair.';
+
+/**
+ * Parse the verifier's reply into a verdict. Fails OPEN (→ pass) on anything
+ * malformed so a flaky verifier can never block a turn. A 'revise' with no stated
+ * issue is downgraded to pass (nothing actionable). Exported for tests.
+ */
+export function parseVerifierVerdict(raw: string): { verdict: 'pass' | 'revise'; issues: string } {
+  if (!raw) return { verdict: 'pass', issues: '' };
+  const m = raw.replace(/```(?:json)?/gi, '').match(/\{[\s\S]*\}/);
+  if (!m) return { verdict: 'pass', issues: '' };
+  try {
+    const o = JSON.parse(m[0]) as { verdict?: unknown; issues?: unknown };
+    const verdict = String(o.verdict).toLowerCase() === 'revise' ? 'revise' : 'pass';
+    const issues = typeof o.issues === 'string'
+      ? o.issues.trim()
+      : Array.isArray(o.issues) ? o.issues.map(String).join('; ') : '';
+    if (verdict === 'revise' && !issues) return { verdict: 'pass', issues: '' };
+    return { verdict, issues };
+  } catch {
+    return { verdict: 'pass', issues: '' };
+  }
+}
+
+/**
+ * Assemble the evidence string for the verifier: this turn's tool results, newest
+ * first, capped at `cap` chars. Returns '' when there's nothing to check against
+ * (so a no-tool answer is never "verified" against nothing). Exported for tests.
+ */
+export function buildVerifierEvidence(toolResults: string[], cap = VERIFY_EVIDENCE_CHARS): string {
+  let out = '';
+  for (let i = toolResults.length - 1; i >= 0; i--) {
+    const piece = (toolResults[i] ?? '').trim();
+    if (!piece) continue;
+    const sep = out ? '\n\n---\n' : '';
+    const room = cap - out.length - sep.length;
+    if (room <= 0) break;
+    if (piece.length > room) { out += sep + piece.slice(0, room); break; }
+    out += sep + piece;
+  }
+  return out;
+}
+
+/** Run one verifier completion. Returns the verdict + tokens spent. Never throws. */
+async function runVerification(
+  client: OpenAI,
+  model: string,
+  answer: string,
+  evidence: string,
+  signal: AbortSignal | undefined,
+): Promise<{ verdict: 'pass' | 'revise'; issues: string; tokens: number }> {
+  try {
+    const res = await client.chat.completions.create(
+      {
+        model,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: VERIFIER_SYSTEM },
+          { role: 'user', content: `ANSWER:\n${answer}\n\n---\nEVIDENCE (this turn's tool outputs):\n${evidence}` },
+        ],
+      },
+      signal ? { signal } : {},
+    );
+    const out = res.choices?.[0]?.message?.content;
+    return { ...parseVerifierVerdict(typeof out === 'string' ? out : ''), tokens: res.usage?.total_tokens ?? 0 };
+  } catch {
+    return { verdict: 'pass', issues: '', tokens: 0 };
+  }
 }
 
 export async function* runAgentTurn(
@@ -761,6 +914,13 @@ export async function* runAgentTurn(
   // above (dead-round breaker, repeat guard) still stop a stuck loop early.
   const maxRounds = Math.max(1, opts.maxRounds ?? (opts.autonomous ? AUTONOMOUS_MAX_ROUNDS : MAX_ROUNDS));
 
+  // Independent verification (#1) state: collect this turn's tool outputs as
+  // evidence, and cap verifier-driven revisions. Scoped to the autonomous/task path
+  // (interactive turns are human-verified); off with ICLAW_VERIFY=off.
+  const allToolResults: string[] = [];
+  let verifyRevisions = 0;
+  const shouldVerify = opts.autonomous === true && process.env.ICLAW_VERIFY !== 'off';
+
   // Max tool-call rounds to prevent infinite loops (env-tunable: ICLAW_MAX_ROUNDS).
   for (let round = 0; round < maxRounds; round++) {
     // User pressed Stop between rounds → end cleanly (partial text already sent).
@@ -870,6 +1030,41 @@ export async function* runAgentTurn(
       if (textBuffer) {
         messages.push({ role: 'assistant', content: textBuffer });
       }
+      // Independent verification (#1): autonomous/task path only, and not while we're
+      // already force-concluding (budget/dead-round — adding revisions would fight the
+      // stop). A fresh pass checks the answer's concrete claims against the evidence
+      // gathered this turn; a 'revise' verdict feeds the issues back and loops so the
+      // agent corrects or searches more. NOTE: the flagged answer was already streamed,
+      // so on the autonomous path the correction shows as a visible follow-up (the host
+      // concatenates it) — acceptable for a reviewed deliverable, and transparent.
+      if (
+        shouldVerify &&
+        !forceConclude &&
+        verifyRevisions < VERIFY_MAX_REVISIONS &&
+        textBuffer.trim().length > 0 &&
+        !opts.signal?.aborted
+      ) {
+        const evidence = buildVerifierEvidence(allToolResults);
+        if (evidence) {
+          yield { type: 'tool_start', name: 'verify', input: {} };
+          const v = await runVerification(client, VERIFY_MODEL || effectiveModel, textBuffer, evidence, opts.signal);
+          turnTokens += v.tokens;
+          yield { type: 'tool_result', name: 'verify', result: v.verdict === 'revise' ? `revise — ${v.issues}` : 'pass' };
+          if (v.verdict === 'revise') {
+            verifyRevisions++;
+            messages.push({
+              role: 'user',
+              content:
+                `[verifier] An independent check flagged claims in your answer that aren't supported by this ` +
+                `turn's tool results:\n${v.issues}\n` +
+                `Fix or remove ONLY those claims — gather the missing evidence with a tool if you can, then give ` +
+                `the corrected answer. Don't repeat the parts that were already fine.`,
+            });
+            pendingSeparator = '\n\n';
+            continue; // loop again so the model revises
+          }
+        }
+      }
       yield { type: 'done', tokens: turnTokens || undefined, cached: turnCached || undefined, reasoning: turnReasoning || undefined };
       return;
     }
@@ -886,27 +1081,62 @@ export async function* runAgentTurn(
     };
     messages.push(assistantMsg);
 
-    // Execute each tool call
+    // Pre-parse every call's args once (used by the parallel kickoff and dispatch).
+    const parsedArgsAll = toolCalls.map((tc) => {
+      try { return JSON.parse(tc.arguments) as Record<string, unknown>; } catch { return {}; }
+    });
+    // Guard verdicts, computed IN ORDER so the repeat-counter is deterministic even
+    // though some calls run concurrently below. Browser tools are STATEFUL
+    // (browser_read/screenshot take no args yet return different results as the page
+    // changes), so the repeat-guard — which assumes same args → same result — must
+    // not apply to them.
+    const verdicts = toolCalls.map((tc) =>
+      tc.name.startsWith('browser_') ? null : guard.check(tc.name, tc.arguments),
+    );
+
+    // In-round parallelism (#5): kick off the side-effect-free, non-blocked read
+    // calls concurrently (bounded). Each gets its OWN note/image buffer (the shared
+    // fetchCache / recallStore stay shared by reference via the spread) so a tool's
+    // savings-notes / images stay attributed to it when we emit results in order.
+    // Only bother when ≥2 qualify; otherwise the existing sequential path runs.
+    const parallelIdx = toolCalls
+      .map((_tc, i) => i)
+      .filter((i) => verdicts[i] == null && isParallelSafeTool(toolCalls[i]!.name));
+    const parallel = new Map<number, Promise<{ result: string; notes: SavingsNote[]; images: ImageRef[] }>>();
+    if (parallelIdx.length >= 2) {
+      const limiter = makeLimiter(TOOL_PARALLEL_LIMIT);
+      for (const i of parallelIdx) {
+        const tc = toolCalls[i]!;
+        const notes: SavingsNote[] = [];
+        const images: ImageRef[] = [];
+        const localCtx: ToolContext = { ...toolCtx, onNote: (n) => notes.push(n), onImage: (im) => images.push(im) };
+        parallel.set(i, limiter(async () => {
+          const result = await executeTool(tc.name as ToolName, parsedArgsAll[i]!, localCtx);
+          return { result, notes, images };
+        }));
+      }
+    }
+
+    // Emit / collect each tool call IN ORDER (preserves tool_call_id pairing and the
+    // assistant↔tool message sequence the API requires).
     const roundResults: string[] = [];
     for (let i = 0; i < toolCalls.length; i++) {
       const tc = toolCalls[i]!;
-      let parsedArgs: Record<string, unknown> = {};
-      try {
-        parsedArgs = JSON.parse(tc.arguments);
-      } catch {
-        parsedArgs = {};
-      }
+      const parsedArgs = parsedArgsAll[i]!;
 
       yield { type: 'tool_start', name: tc.name, input: parsedArgs };
 
-      // Guardrail: refuse to re-run an identical call that's already looping.
-      // Browser tools are STATEFUL — browser_read/elements/screenshot take no args
-      // yet return different results as the page changes, so the repeat-guard
-      // (which assumes same args → same result) must not apply to them.
-      const blocked = tc.name.startsWith('browser_') ? null : guard.check(tc.name, tc.arguments);
       let result: string;
-      if (blocked != null) {
-        result = blocked;
+      if (verdicts[i] != null) {
+        // Guardrail blocked this repeat call — return the nudge instead of running it.
+        result = verdicts[i]!;
+      } else if (parallel.has(i)) {
+        // Side-effect-free read already running concurrently — await it and surface
+        // the notes/images it produced (queued for the in-order flush below).
+        const r = await parallel.get(i)!;
+        result = r.result;
+        for (const n of r.notes) pendingNotes.push(n);
+        for (const im of r.images) pendingImages.push(im);
       } else if (tc.name === 'create_task') {
         // Host-fulfilled: the runtime does not run this — it hands the job to the
         // host, which creates the iClaw task. Tell the model optimistically.
@@ -986,6 +1216,9 @@ export async function* runAgentTurn(
         result = await executeTool(tc.name as ToolName, parsedArgs, toolCtx);
       }
       roundResults.push(result);
+      // Feed the verifier's evidence pool (data results only; host-fulfilled acks
+      // carry no facts to check the answer against).
+      if (!NON_EVIDENCE_TOOLS.has(tc.name)) allToolResults.push(result);
 
       yield { type: 'tool_result', name: tc.name, result };
       while (pendingNotes.length) yield { type: 'note', note: pendingNotes.shift()! };
@@ -1024,6 +1257,22 @@ export async function* runAgentTurn(
           `[system] The last ${deadStreak} tool rounds all came back empty, failed, timed out, or ` +
           `duplicate — you're not getting closer. Stop calling tools and answer now with what you've ` +
           `gathered, stating plainly which parts you could NOT find or verify. Do not invent numbers.`,
+      });
+    }
+
+    // Token-budget breaker (#2): the round ceiling caps STEPS; this caps SPEND. Once
+    // the turn passes the budget, force a conclusion (tools off next round) so even a
+    // productive-but-expensive autonomous run wraps up instead of running to the
+    // round ceiling at full price. The dead-round breaker only fires on FAILURE, so
+    // this is the only stop for a run that keeps "succeeding" expensively.
+    if (TOKEN_BUDGET > 0 && turnTokens >= TOKEN_BUDGET && !forceConclude) {
+      forceConclude = true;
+      messages.push({
+        role: 'user',
+        content:
+          `[system] This turn has used ${turnTokens.toLocaleString()} tokens, past the ` +
+          `${TOKEN_BUDGET.toLocaleString()}-token budget. Stop calling tools and give your best final answer ` +
+          `now with what you've gathered, noting anything you couldn't finish. Do not invent data.`,
       });
     }
     // Continue loop — model will see tool results and respond

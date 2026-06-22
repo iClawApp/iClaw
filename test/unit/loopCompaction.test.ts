@@ -8,6 +8,10 @@ import {
   clampTimerSeconds,
   normalizeCalendarEntries,
   normalizeReminder,
+  isParallelSafeTool,
+  makeLimiter,
+  parseVerifierVerdict,
+  buildVerifierEvidence,
   type Message,
 } from '../../packages/iclaw-runtime/src/agent/loop';
 
@@ -223,5 +227,96 @@ describe('shrinkOldToolOutputs', () => {
     const stubbed = String((messages[2] as { content?: unknown }).content);
     expect(stubbed).toContain('re-run the tool');
     expect(stubbed).not.toContain('recall_tool_output');
+  });
+});
+
+describe('isParallelSafeTool (#5 in-round parallelism allowlist)', () => {
+  it('allows only idempotent, side-effect-free reads', () => {
+    for (const t of ['web_search', 'web_fetch', 'read_file', 'read_summary', 'list_files', 'search_files', 'social_search', 'recall_tool_output']) {
+      expect(isParallelSafeTool(t)).toBe(true);
+    }
+  });
+
+  it('keeps mutating / stateful / control-flow tools sequential', () => {
+    for (const t of ['write_file', 'edit_file', 'run_command', 'check_job', 'generate_image', 'edit_image', 'show_image', 'analyze_link', 'browser_open', 'browser_read', 'create_task', 'update_plan', 'set_timer', 'deep_research', 'verify']) {
+      expect(isParallelSafeTool(t)).toBe(false);
+    }
+  });
+
+  it('defaults an unknown / future tool to sequential (allowlist, not blocklist)', () => {
+    expect(isParallelSafeTool('some_new_tool')).toBe(false);
+    expect(isParallelSafeTool('')).toBe(false);
+  });
+});
+
+describe('makeLimiter (bounded concurrency)', () => {
+  it('never runs more than `limit` fns at once and still resolves all', async () => {
+    const limit = 3;
+    const run = makeLimiter(limit);
+    let active = 0;
+    let peak = 0;
+    const task = () => run(async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 5));
+      active--;
+      return true;
+    });
+    const results = await Promise.all(Array.from({ length: 12 }, task));
+    expect(results).toHaveLength(12);
+    expect(results.every(Boolean)).toBe(true);
+    expect(peak).toBeLessThanOrEqual(limit);
+    expect(peak).toBeGreaterThan(1); // genuinely concurrent, not serialized
+  });
+});
+
+describe('parseVerifierVerdict (#1 independent verification)', () => {
+  it('parses a clean pass verdict', () => {
+    expect(parseVerifierVerdict('{"verdict":"pass","issues":""}')).toEqual({ verdict: 'pass', issues: '' });
+  });
+
+  it('parses a revise verdict and keeps the issues', () => {
+    const v = parseVerifierVerdict('{"verdict":"revise","issues":"revenue $9B not in sources"}');
+    expect(v.verdict).toBe('revise');
+    expect(v.issues).toContain('revenue');
+  });
+
+  it('strips ```json fences and surrounding prose', () => {
+    const v = parseVerifierVerdict('Here is my check:\n```json\n{"verdict":"revise","issues":"dead link"}\n```\n');
+    expect(v.verdict).toBe('revise');
+    expect(v.issues).toBe('dead link');
+  });
+
+  it('joins an array of issues', () => {
+    const v = parseVerifierVerdict('{"verdict":"revise","issues":["a","b"]}');
+    expect(v.verdict).toBe('revise');
+    expect(v.issues).toBe('a; b');
+  });
+
+  it('fails OPEN (→ pass) on malformed / empty / non-JSON output', () => {
+    for (const raw of ['', 'not json at all', '{broken', '{"verdict":']) {
+      expect(parseVerifierVerdict(raw)).toEqual({ verdict: 'pass', issues: '' });
+    }
+  });
+
+  it('downgrades a "revise" with no stated issue to pass (nothing actionable)', () => {
+    expect(parseVerifierVerdict('{"verdict":"revise","issues":""}')).toEqual({ verdict: 'pass', issues: '' });
+  });
+});
+
+describe('buildVerifierEvidence', () => {
+  it('returns empty when there is nothing to check against', () => {
+    expect(buildVerifierEvidence([])).toBe('');
+    expect(buildVerifierEvidence(['', '   '])).toBe('');
+  });
+
+  it('includes results newest-first', () => {
+    const ev = buildVerifierEvidence(['oldest', 'middle', 'newest']);
+    expect(ev.indexOf('newest')).toBeLessThan(ev.indexOf('oldest'));
+  });
+
+  it('caps the evidence size', () => {
+    const big = ['a'.repeat(5_000), 'b'.repeat(5_000), 'c'.repeat(5_000)];
+    expect(buildVerifierEvidence(big, 6_000).length).toBeLessThanOrEqual(6_000);
   });
 });

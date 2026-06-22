@@ -6,6 +6,7 @@ export function toolActivityLabel(name: string): string {
   // tool (e.g. social_search) doesn't fall into the generic "search" bucket.
   switch (n) {
     case 'deep_research': return 'Researching in depth…';
+    case 'verify': return 'Fact-checking the answer…';
     case 'recall_tool_output': return 'Recalling an earlier result…';
     case 'browser_open': return 'Opening the browser…';
     case 'browser_navigate': return 'Browsing…';

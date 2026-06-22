@@ -115,7 +115,12 @@ function buildSocialCommand(p: {
   // HOST uid with folders at /work/<n> and NO writable /workspace, so a
   // /workspace path fails with EACCES there. $HOME is set in both (Work:
   // HOME=/tmp, Secure: /home/node), so it's the one path safe everywhere.
-  const script = '"$HOME/.iclaw-social-fetch.mjs"';
+  //
+  // UNIQUE filename per call ($$ = this docker-exec shell's PID, distinct across
+  // concurrent execs): two social_search calls can now run at once in the SAME
+  // container (in-round tool parallelism), and a fixed filename would let them race
+  // on the write — one node could read a half-written script. rm it after.
+  const script = '"$HOME/.iclaw-social-fetch.$$.mjs"';
   return [
     'set -e',
     `echo ${shQuote(getFetcherB64())} | base64 -d > ${script}`,
@@ -124,6 +129,7 @@ function buildSocialCommand(p: {
       `SOCIAL_WITH_COMMENTS=${shQuote(p.withComments ? '1' : '0')} ` +
       `SOCIAL_SUBREDDITS=${shQuote(p.subreddits)} ` +
       `node ${script}`,
+    `rm -f ${script}`,
   ].join('\n');
 }
 
