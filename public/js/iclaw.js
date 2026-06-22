@@ -2418,8 +2418,35 @@
     if (s.length > 60) s = s.slice(0, 42) + '…' + s.slice(-15);
     return s;
   }
+  /**
+   * Detect an agent-written LOCAL file path in a link href (absolute fs path or a
+   * file:// URL, optionally with a trailing :line ref) and return the clean path —
+   * else null. The server route does the real allowlist check; this just decides
+   * whether to point the link at it.
+   */
+  function localFilePath(href) {
+    if (!href) return null;
+    let p = String(href);
+    if (/^file:\/\//i.test(p)) { try { p = decodeURI(p.replace(/^file:\/\//i, '')); } catch (_e) {} }
+    // Absolute filesystem path (macOS/Linux roots) or ~/… — our own app routes
+    // (/uploads, /media, /chats…) never start with these, so they're left alone.
+    if (!/^(\/(Users|home|private|var|tmp|opt|mnt|media|srv|Volumes)\/|~\/)/.test(p)) return null;
+    return p.replace(/:\d+(?::\d+)?$/, ''); // strip a :line(:col) ref
+  }
   function decorateLinks(root) {
     root.querySelectorAll('a[href]').forEach((a) => {
+      // Agent-written local file (CSV report, script, …) linked by raw absolute path.
+      // The browser can't open /Users/… (Cannot GET); repoint it at the scoped
+      // /workspace-file route so it downloads/previews. Idempotent via data-file-chip.
+      if (!a.dataset.fileChip) {
+        const local = localFilePath(a.getAttribute('href') || '');
+        if (local) {
+          a.dataset.fileChip = '1';
+          a.href = '/workspace-file?path=' + encodeURIComponent(local);
+          a.classList.add('msg-file');
+          if (!a.title) a.title = local;
+        }
+      }
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
       // Inside tables, collapse long bare-URL link text to a compact, readable

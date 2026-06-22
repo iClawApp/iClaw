@@ -7,6 +7,7 @@ import { chatsRouter } from './routes/chats';
 import { projectsRouter } from './routes/projects';
 import { agentsRouter } from './routes/sessions';
 import { mediaRouter } from './routes/media';
+import { workspaceFileRouter } from './routes/workspaceFile';
 import { gatewayRouter } from './routes/gateway';
 import { dockerRouter } from './routes/docker';
 import { updateRouter } from './routes/update';
@@ -153,6 +154,7 @@ export function createApp(): express.Express {
   app.use('/api/update', updateRouter);
   app.use('/api/remote-access', remoteAccessApiRouter);
   app.use('/media', mediaRouter);
+  app.use('/', workspaceFileRouter); // GET /workspace-file — open agent-written files from chat
   app.use('/', shareRouter); // browser → local proxy → iClaw-cloud (CORS workaround)
   app.use('/', uiStateRouter); // POST /api/ui-state — persist window.iclawUI flags
 
