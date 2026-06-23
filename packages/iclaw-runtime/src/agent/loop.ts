@@ -781,6 +781,11 @@ export async function* runAgentTurn(
     recallStore: new Map<string, string>(),
     // Picks the per-project browser profile for the browser_* tools.
     projectId: opts.projectId,
+    // Let tools make their own model call when needed (browser_vision → vision model).
+    apiKey: opts.apiKey,
+    model: opts.model,
+    // Relevance hint for task-aware extraction (browser page summarization).
+    taskHint: userMessage.slice(0, 200),
   };
 
   // Per-mode tool set. Incognito is read-only, so don't ship write_file/edit_file

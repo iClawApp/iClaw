@@ -807,6 +807,21 @@ export interface ToolContext {
    * project and never touch the user's main browser.
    */
   projectId?: number | null | undefined;
+  /**
+   * OpenRouter API key + active model — threaded so a tool can make its OWN model
+   * call when it needs a different capability than the main turn. browser_vision
+   * uses these to route a screenshot to a vision model (ICLAW_VISION_MODEL) and
+   * return text, so the main loop stays text-only. Omitted in restricted contexts
+   * (e.g. the sandbox runner) → those tools degrade gracefully.
+   */
+  apiKey?: string | undefined;
+  model?: string | undefined;
+  /**
+   * The turn's user message (capped), used as a relevance hint so a tool can
+   * extract task-relevantly. browser_read/navigate summarize a long page keyed to
+   * this goal instead of dumping/truncating it. Omitted → generic summary.
+   */
+  taskHint?: string | undefined;
 }
 
 /** Folders to validate reads against — empty (anywhere) for Incognito. */
