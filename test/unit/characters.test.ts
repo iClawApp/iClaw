@@ -6,6 +6,7 @@ import {
   buildCharacterPromptBlock,
   buildCharacterSystemPrompt,
   characterToolAllowlist,
+  characterVerification,
   getCharacter,
   isKnownCharacter,
   resolveCharacterPanels,
@@ -25,6 +26,39 @@ describe('characters', () => {
     expect(getCharacter('nope').id).toBe('generalist');
     expect(isKnownCharacter('nope')).toBe(false);
     expect(isKnownCharacter('researcher')).toBe(true);
+  });
+
+  it('exposes declared verification only for characters that set it', () => {
+    // Generalist + unknown ids declare none → null (unchanged global verifier).
+    expect(characterVerification('generalist')).toBeNull();
+    expect(characterVerification(null)).toBeNull();
+    expect(characterVerification('nope')).toBeNull();
+    // Emmie declares a rubric for her drafted replies.
+    const emmie = characterVerification('email');
+    expect(emmie).not.toBeNull();
+    expect(emmie?.rubric).toMatch(/source thread/i);
+    // No character hard-codes a judgeModel (deployment config decides that).
+    expect(emmie?.judgeModel).toBeUndefined();
+  });
+
+  it('gives every deliverable-producing worker a rubric (and not the others)', () => {
+    // The five business/knowledge workers with a discrete deliverable carry one.
+    for (const id of ['email', 'researcher', 'smm', 'assistant', 'sales']) {
+      expect(characterVerification(id)?.rubric, `${id} should have a rubric`).toBeTruthy();
+    }
+    // The generalist (no fixed job) and Ace (browser, varies per task) declare none.
+    expect(characterVerification('generalist')).toBeNull();
+    expect(characterVerification('browser')).toBeNull();
+  });
+
+  it('keeps every declared verification rubric concrete (non-empty)', () => {
+    for (const c of CHARACTERS) {
+      if (!c.verification) continue;
+      const v = characterVerification(c.id);
+      expect(v, `${c.id} verification should resolve`).not.toBeNull();
+      // A declared block must carry at least a rubric or a judge model.
+      expect(Boolean(v?.rubric?.trim() || v?.judgeModel?.trim())).toBe(true);
+    }
   });
 
   it('builds a persona block (gateway bracket framing) for the character', () => {

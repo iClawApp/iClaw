@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { readdirSync, statSync, readFileSync, copyFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
-import { runAgentTurn, type Message } from './agent/loop.js';
+import { runAgentTurn, type Message, type TurnVerification } from './agent/loop.js';
 import type { AgentEvent } from './agent/loop.js';
 import { validateMountRoot } from './agent/security.js';
 import {
@@ -57,6 +57,8 @@ export interface SessionOptions {
   projectId?: number | null | undefined;
   /** Character tool allowlist (by name) — narrows the turn's tools. */
   characterTools?: string[] | undefined;
+  /** Character-declared verification (judge model + rubric) for the independent check. */
+  verification?: TurnVerification | undefined;
   /** Specialist chat: offer the create_task tool (model decides chat vs task). */
   canCreateTasks?: boolean | undefined;
   /** Autonomous run: raise the round ceiling (200) + offer the set_timer tool. */
@@ -851,6 +853,7 @@ export async function sendMessage(sessionId: string, content: string, networkEna
     incognito,
     projectId: session.opts.projectId,
     characterTools: session.opts.characterTools,
+    verification: session.opts.verification,
     canCreateTasks: session.opts.canCreateTasks,
     autonomous: session.opts.autonomous,
     systemPrompt: turnSystemPrompt,

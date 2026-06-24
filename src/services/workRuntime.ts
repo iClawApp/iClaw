@@ -72,6 +72,8 @@ export interface CreateSessionOptions {
   projectId?: number | null | undefined;
   /** Character tool allowlist (by name) — narrows the turn's tools to the character's job. */
   characterTools?: string[] | undefined;
+  /** Character-declared verification (judge model + rubric) for the independent check. */
+  verification?: { judgeModel?: string | undefined; rubric?: string | undefined } | undefined;
   /** Specialist chat: offer the create_task tool so the model can spin up a task. */
   canCreateTasks?: boolean | undefined;
   /** Autonomous run: raise the round ceiling (200) + offer the set_timer tool. */
@@ -89,6 +91,7 @@ export async function createWorkSession(opts: CreateSessionOptions = {}): Promis
   if (opts.incognito) body.incognito = true;
   if (opts.projectId != null) body.projectId = opts.projectId;
   if (opts.characterTools?.length) body.characterTools = opts.characterTools;
+  if (opts.verification && (opts.verification.judgeModel || opts.verification.rubric)) body.verification = opts.verification;
   if (opts.canCreateTasks) body.canCreateTasks = true;
   if (opts.autonomous) body.autonomous = true;
   if (opts.folderAccess?.length) body.folderAccess = opts.folderAccess;

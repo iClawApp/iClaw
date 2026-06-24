@@ -12,6 +12,25 @@ import { BROWSER_TOOLS } from './browser.js';
 import { dumpPrompt, newTurnId } from './prompt-dump.js';
 import { resolveTurnModel } from './model-capabilities.js';
 
+/**
+ * Per-turn verification spec a character can declare (see the host's
+ * CharacterDef.verification). Crosses the host→runtime HTTP boundary as plain
+ * JSON, so this is an independent copy of the host shape — keep them in sync.
+ * All fields optional; absent → today's behaviour (generic fact-checker, same
+ * model). The MVP threads judge model + rubric only; programmatic `checks` are
+ * a deliberate future addition (no code-doing character needs them yet).
+ */
+export interface TurnVerification {
+  /** Judge model for the independent check. Looper's core lesson: don't let the
+   *  worker grade its own homework — set a DIFFERENT family than the host here.
+   *  Only worth it for workers whose deliverable is consumed as-is. */
+  judgeModel?: string | undefined;
+  /** Plain-language definition-of-done the judge scores the deliverable against,
+   *  replacing the generic "are claims supported by evidence" with THIS worker's
+   *  bar. Empty → fall back to the evidence fact-checker. */
+  rubric?: string | undefined;
+}
+
 export interface AgentOptions {
   apiKey: string;
   model: string;
@@ -43,6 +62,13 @@ export interface AgentOptions {
    * allows, never widen it. Omit for no character restriction.
    */
   characterTools?: string[] | undefined;
+  /**
+   * Character-declared verification (judge model + rubric). When present on an
+   * autonomous turn, the independent check (#1) scores the deliverable against
+   * THIS character's rubric using THIS character's judge model, instead of the
+   * generic same-model fact-checker. Omit → unchanged global behaviour.
+   */
+  verification?: TurnVerification | undefined;
   /**
    * Specialist chat: offer the create_task tool so the model can decide to spin
    * a multi-step request into a tracked task (host-fulfilled) instead of doing
@@ -653,9 +679,15 @@ async function runIsolatedResearch(
 // and fail-open (a broken verifier never blocks the turn). The token budget (#2) is
 // the hard backstop against a verify→revise→verify spiral.
 
-/** Stronger model for the independent check; defaults to the turn's own model. Set
- *  ICLAW_VERIFY_MODEL to a different/stronger model for a truly independent verdict. */
-const VERIFY_MODEL = process.env.ICLAW_VERIFY_MODEL || '';
+/** Cross-family judge for the independent check. Looper's core lesson: a model
+ *  grading its OWN work is the blind spot — so by default the verifier runs on a
+ *  DIFFERENT family than the host (mirrors the vision default; cheap + fast, and
+ *  cross-family from the minimax/deepseek hosts). Override with ICLAW_VERIFY_MODEL;
+ *  to pin same-model self-check, set it to the host model id; ICLAW_VERIFY=off
+ *  disables the check entirely. Per-character `verification.judgeModel` wins over
+ *  this. Fail-open means an unavailable judge degrades to pass, never blocks. */
+export const DEFAULT_VERIFY_MODEL = 'google/gemini-2.5-flash';
+const VERIFY_MODEL = process.env.ICLAW_VERIFY_MODEL?.trim() || DEFAULT_VERIFY_MODEL;
 /** How many verifier-driven revisions one turn may take before we accept the answer
  *  (the flag stays visible). 1 = at most one correction loop; the token budget is the
  *  hard backstop against a verify→revise spiral. */
@@ -663,6 +695,10 @@ const VERIFY_MAX_REVISIONS = 1;
 /** Cap the evidence (this turn's tool outputs) handed to the verifier, newest first.
  *  Matches the summarizer's input budget — a comfortable single-call size. */
 const VERIFY_EVIDENCE_CHARS = 60_000;
+/** Cap the user's request handed to a rubric judge as the reference for what was
+ *  asked (e.g. Emmie's pasted thread). Smaller than the evidence cap — it's the
+ *  ask, not the corpus; a huge paste is truncated rather than blowing the call. */
+const VERIFY_REQUEST_CHARS = 24_000;
 
 const VERIFIER_SYSTEM =
   "You are an independent fact-checker for another AI assistant's answer. You are given its ANSWER and the " +
@@ -714,22 +750,57 @@ export function buildVerifierEvidence(toolResults: string[], cap = VERIFY_EVIDEN
   return out;
 }
 
-/** Run one verifier completion. Returns the verdict + tokens spent. Never throws. */
-async function runVerification(
+/** Build the judge system prompt: a rubric-scored reviewer when the character
+ *  declared a rubric, else the generic evidence fact-checker. Both must return
+ *  the same {verdict, issues} JSON so parseVerifierVerdict handles either. */
+export function verifierSystem(rubric: string | undefined): string {
+  if (!rubric || !rubric.trim()) return VERIFIER_SYSTEM;
+  return (
+    "You are an independent reviewer for another AI assistant's deliverable. Score the DELIVERABLE strictly " +
+    'against the RUBRIC below — judge only what the rubric asks for, and ignore writing style unless the rubric ' +
+    "calls for it. The REQUEST is what the user actually asked for and is the source of truth for whether the " +
+    "deliverable addresses it (and for spotting anything invented that the request never contained). Any EVIDENCE " +
+    "(the turn's tool outputs) is reference for checking claims. When a rubric point can't be judged from what " +
+    "you were given, don't fail it — judge only what's checkable.\n\n" +
+    `RUBRIC:\n${rubric.trim()}\n\n` +
+    'Reply with ONLY a JSON object: {"verdict":"pass"|"revise","issues":"<one short line per rubric point that ' +
+    'fails; empty when pass>"}. Use "revise" only when the deliverable concretely fails a rubric point — be strict but fair.'
+  );
+}
+
+/** Run one verifier completion. Returns the verdict + tokens spent. Never throws.
+ *  With a rubric → a rubric-scored judge of the deliverable; without → the
+ *  generic evidence fact-checker. */
+export async function runVerification(
   client: OpenAI,
   model: string,
   answer: string,
   evidence: string,
   signal: AbortSignal | undefined,
+  rubric?: string | undefined,
+  request?: string | undefined,
 ): Promise<{ verdict: 'pass' | 'revise'; issues: string; tokens: number }> {
+  // The fact-checker needs evidence to check against; a rubric judges the
+  // deliverable itself. A rubric judge also needs the REQUEST (e.g. Emmie's
+  // pasted thread) — the user's input is never in the evidence pool, so without
+  // it "answers every question in the thread" is unjudgeable. Only the rubric
+  // path carries it, keeping the fact-checker's tested prompt unchanged.
+  const label = rubric ? 'DELIVERABLE' : 'ANSWER';
+  const reqBlock =
+    rubric && request?.trim()
+      ? `REQUEST (what the user asked):\n${request.trim().slice(0, VERIFY_REQUEST_CHARS)}\n\n---\n`
+      : '';
+  const userContent = evidence
+    ? `${reqBlock}${label}:\n${answer}\n\n---\nEVIDENCE (this turn's tool outputs):\n${evidence}`
+    : `${reqBlock}${label}:\n${answer}`;
   try {
     const res = await client.chat.completions.create(
       {
         model,
         temperature: 0,
         messages: [
-          { role: 'system', content: VERIFIER_SYSTEM },
-          { role: 'user', content: `ANSWER:\n${answer}\n\n---\nEVIDENCE (this turn's tool outputs):\n${evidence}` },
+          { role: 'system', content: verifierSystem(rubric) },
+          { role: 'user', content: userContent },
         ],
       },
       signal ? { signal } : {},
@@ -1050,20 +1121,32 @@ export async function* runAgentTurn(
         !opts.signal?.aborted
       ) {
         const evidence = buildVerifierEvidence(allToolResults);
-        if (evidence) {
+        const rubric = opts.verification?.rubric;
+        // Run the check when there's tool evidence to fact-check, OR the character
+        // declared a rubric to score the deliverable against (a rubric applies
+        // even to a no-tool answer — it judges the deliverable, not the evidence).
+        if (evidence || rubric) {
+          // Looper's lesson: a DIFFERENT model than the host closes the
+          // grading-its-own-homework blind spot. Per-character judgeModel wins,
+          // else the cross-family VERIFY_MODEL default (effectiveModel is only a
+          // last-ditch fallback if VERIFY_MODEL were ever cleared to empty).
+          const judgeModel = opts.verification?.judgeModel || VERIFY_MODEL || effectiveModel;
           yield { type: 'tool_start', name: 'verify', input: {} };
-          const v = await runVerification(client, VERIFY_MODEL || effectiveModel, textBuffer, evidence, opts.signal);
+          const v = await runVerification(client, judgeModel, textBuffer, evidence, opts.signal, rubric, userMessage);
           turnTokens += v.tokens;
           yield { type: 'tool_result', name: 'verify', result: v.verdict === 'revise' ? `revise — ${v.issues}` : 'pass' };
           if (v.verdict === 'revise') {
             verifyRevisions++;
             messages.push({
               role: 'user',
-              content:
-                `[verifier] An independent check flagged claims in your answer that aren't supported by this ` +
-                `turn's tool results:\n${v.issues}\n` +
-                `Fix or remove ONLY those claims — gather the missing evidence with a tool if you can, then give ` +
-                `the corrected answer. Don't repeat the parts that were already fine.`,
+              content: rubric
+                ? `[verifier] An independent review scored your deliverable against your rubric and found it falls ` +
+                  `short on:\n${v.issues}\nAddress ONLY those points — use a tool to gather anything missing if you ` +
+                  `can, then give the corrected deliverable. Don't repeat the parts that were already fine.`
+                : `[verifier] An independent check flagged claims in your answer that aren't supported by this ` +
+                  `turn's tool results:\n${v.issues}\n` +
+                  `Fix or remove ONLY those claims — gather the missing evidence with a tool if you can, then give ` +
+                  `the corrected answer. Don't repeat the parts that were already fine.`,
             });
             pendingSeparator = '\n\n';
             continue; // loop again so the model revises

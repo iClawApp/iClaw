@@ -12,6 +12,9 @@ import {
   makeLimiter,
   parseVerifierVerdict,
   buildVerifierEvidence,
+  verifierSystem,
+  runVerification,
+  DEFAULT_VERIFY_MODEL,
   type Message,
 } from '../../packages/iclaw-runtime/src/agent/loop';
 
@@ -318,5 +321,81 @@ describe('buildVerifierEvidence', () => {
   it('caps the evidence size', () => {
     const big = ['a'.repeat(5_000), 'b'.repeat(5_000), 'c'.repeat(5_000)];
     expect(buildVerifierEvidence(big, 6_000).length).toBeLessThanOrEqual(6_000);
+  });
+});
+
+// A fake OpenAI-shaped client that records the request and returns canned content,
+// so the rubric-judge round-trip is exercised end-to-end without a network/key.
+function fakeClient(content: string, opts: { throws?: boolean; tokens?: number } = {}) {
+  const calls: Array<{ model: string; messages: Array<{ role: string; content: string }> }> = [];
+  const client = {
+    chat: {
+      completions: {
+        create: async (params: { model: string; messages: Array<{ role: string; content: string }> }) => {
+          calls.push(params);
+          if (opts.throws) throw new Error('network down');
+          return { choices: [{ message: { content } }], usage: { total_tokens: opts.tokens ?? 0 } };
+        },
+      },
+    },
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return { client: client as any, calls };
+}
+
+describe('cross-model rubric judge', () => {
+  it('defaults the judge to a different model family than the host', () => {
+    expect(DEFAULT_VERIFY_MODEL).toBe('google/gemini-2.5-flash');
+    // Host default is minimax — the independent judge must not share its family.
+    expect(DEFAULT_VERIFY_MODEL.split('/')[0]).not.toBe('minimax');
+  });
+
+  it('builds a rubric-scored system prompt referencing the rubric and request', () => {
+    const sys = verifierSystem('Every claim cites a source.');
+    expect(sys).toMatch(/RUBRIC:/);
+    expect(sys).toMatch(/Every claim cites a source\./);
+    expect(sys).toMatch(/REQUEST/);
+    // No rubric → the generic evidence fact-checker (no RUBRIC block).
+    expect(verifierSystem(undefined)).not.toMatch(/RUBRIC:/);
+  });
+
+  it('feeds REQUEST + DELIVERABLE + EVIDENCE and parses a gemini-style verdict', async () => {
+    const gemini = '```json\n{"verdict":"revise","issues":"invents a date not in the thread"}\n```';
+    const { client, calls } = fakeClient(gemini, { tokens: 42 });
+    const v = await runVerification(
+      client,
+      DEFAULT_VERIFY_MODEL,
+      'Here is your reply: …',
+      'EVIDENCE: search result A',
+      undefined,
+      'The reply answers every question in the source thread.',
+      'Original thread: can you confirm the date and the price?',
+    );
+    expect(v).toEqual({ verdict: 'revise', issues: 'invents a date not in the thread', tokens: 42 });
+    // The cross-family model id and the assembled prompt actually reached the client.
+    expect(calls[0]!.model).toBe(DEFAULT_VERIFY_MODEL);
+    const user = calls[0]!.messages.find((m) => m.role === 'user')!.content;
+    expect(user).toMatch(/REQUEST \(what the user asked\):/);
+    expect(user).toMatch(/Original thread: can you confirm/);
+    expect(user).toMatch(/DELIVERABLE:/);
+    expect(user).toMatch(/EVIDENCE/);
+    expect(calls[0]!.messages[0]!.content).toMatch(/RUBRIC:/);
+  });
+
+  it('omits the REQUEST block on the fact-checker path (no rubric)', async () => {
+    const { client, calls } = fakeClient('{"verdict":"pass","issues":""}');
+    await runVerification(client, DEFAULT_VERIFY_MODEL, 'answer', 'EVIDENCE: x', undefined, undefined, 'a user request');
+    const user = calls[0]!.messages.find((m) => m.role === 'user')!.content;
+    expect(user).not.toMatch(/REQUEST/);
+    expect(user.startsWith('ANSWER:')).toBe(true);
+  });
+
+  it('fails OPEN to pass when the judge errors or returns garbage', async () => {
+    const thrown = fakeClient('', { throws: true });
+    expect(await runVerification(thrown.client, DEFAULT_VERIFY_MODEL, 'a', 'e', undefined, 'r', 'q'))
+      .toEqual({ verdict: 'pass', issues: '', tokens: 0 });
+    const garbage = fakeClient('I think it is fine, no JSON here');
+    const v = await runVerification(garbage.client, DEFAULT_VERIFY_MODEL, 'a', 'e', undefined, 'r', 'q');
+    expect(v.verdict).toBe('pass');
   });
 });

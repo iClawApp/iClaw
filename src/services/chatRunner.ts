@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { chats, messages, projects, projectSecrets, projectFacts, scheduledMessages } from './store';
 import { kvGet, kvSet } from '../db/kv';
 import { buildGatewayUserMessage, scheduleProjectFactExtraction } from './projectMemory';
-import { applyCharacterPrompt, buildCharacterSystemPrompt, characterToolAllowlist } from './characters';
+import { applyCharacterPrompt, buildCharacterSystemPrompt, characterToolAllowlist, characterVerification } from './characters';
 import { buildSkillsPromptBlock, scheduleProjectSkillReview } from './projectSkills';
 import { projectSkills } from './store';
 import { chatStatus } from './chatStatus';
@@ -1065,6 +1065,9 @@ async function runWorkModeTurn(opts: {
       // The active character narrows the tool set to those fit for its job
       // (Remi reads only, Cody gets the full dev kit). null = no restriction.
       const characterTools = characterToolAllowlist(chats.get(chatId)?.character_id) ?? undefined;
+      // The character's declared bar (judge model + rubric) for its deliverable —
+      // scores the independent check against THIS worker's done-criteria.
+      const verification = characterVerification(chats.get(chatId)?.character_id) ?? undefined;
       sessionId = await createWorkSession({
         allowedFolders,
         folderAccess,
@@ -1073,6 +1076,7 @@ async function runWorkModeTurn(opts: {
         // Per-project browser profile for the browser_* tools (isolated logins).
         projectId: chats.get(chatId)?.project_id ?? null,
         characterTools,
+        verification,
         canCreateTasks: opts.canCreateTasks,
         autonomous: opts.autonomous,
         systemPrompt: buildWorkSystemPrompt(chatId),

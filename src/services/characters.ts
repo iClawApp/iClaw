@@ -18,6 +18,30 @@
 
 import type { ChatMode } from '../types';
 
+/**
+ * Declared, typed success criteria for a character's deliverable — the "is this
+ * good enough" bar, made explicit instead of left to the model's self-judgement.
+ * Wired into the runtime's independent check (#1): on this character's autonomous
+ * turns the judge scores the deliverable against `rubric` using `judgeModel`,
+ * instead of the generic same-model fact-checker. All fields optional; omit the
+ * whole block → unchanged global verifier behaviour.
+ *
+ * Looper's lesson, applied where it belongs: a pre-designed worker carries its
+ * own definition-of-done and a DIFFERENT-family judge, rather than grading its
+ * own homework. Programmatic `checks` (run a build/test, require exit 0) are a
+ * deliberate future addition — see docs/character-verification.md.
+ */
+export interface CharacterVerification {
+  /** Judge model for the independent check. Set a DIFFERENT family than the host
+   *  (e.g. host deepseek → judge google/gemini or anthropic/claude) so the review
+   *  is a real second opinion. Omit → global ICLAW_VERIFY_MODEL, then the turn's
+   *  own model. */
+  judgeModel?: string | undefined;
+  /** Plain-language definition-of-done the judge scores the deliverable against.
+   *  Be concrete and checkable — name the dimensions that matter for THIS job. */
+  rubric?: string | undefined;
+}
+
 export interface CharacterDef {
   /** Stable id stored in `chats.character_id`. */
   id: string;
@@ -72,6 +96,12 @@ export interface CharacterDef {
    * reason people bounce). 'business' | 'knowledge'; undefined for the generalist.
    */
   group?: string | undefined;
+  /**
+   * Optional declared verification for this worker's deliverable (judge model +
+   * rubric). Fed to the runtime's independent check on the character's autonomous
+   * turns. Omit for workers whose output the user always reviews inline.
+   */
+  verification?: CharacterVerification | undefined;
 }
 
 /**
@@ -161,6 +191,15 @@ const RAW_CHARACTERS: RawCharacter[] = [
     // AND write files, search the web/socials, and run tasks. The research focus is
     // steered by the playbook above, not enforced by withholding tools.
     tools: [],
+    verification: {
+      rubric:
+        'Every factual claim is attributed to a specific source (title or URL); ' +
+        'claims the user could act on rest on at least two independent sources, per the ' +
+        "triangulation promise; what the sources say is kept separate from Remi's own " +
+        'inference; thin or conflicting evidence is flagged, not smoothed over; no source, ' +
+        'quote, statistic or date is invented or misattributed; the answer leads with the ' +
+        'conclusion, then the support.',
+    },
   },
   {
     id: 'smm',
@@ -189,6 +228,14 @@ const RAW_CHARACTERS: RawCharacter[] = [
     tools: ['web_search', 'web_fetch', 'read_summary', 'social_search', 'list_files', 'read_file', 'search_files', 'write_file', 'edit_file', 'show_image', 'update_calendar'],
     // Her own UI: a content calendar to plan the week.
     panels: ['calendar'],
+    verification: {
+      rubric:
+        'Each post names its platform and reads native to it; each has a clear hook ' +
+        '(first line), value, and call to action; the voice matches the brand brief the user ' +
+        'gave; no invented metrics, statistics, quotes or fake urgency; hashtags appear only ' +
+        'where they earn a place; when a week is planned, the posts are placed on real ' +
+        'upcoming calendar dates, not left only in chat.',
+    },
   },
   {
     id: 'email',
@@ -215,6 +262,17 @@ const RAW_CHARACTERS: RawCharacter[] = [
     tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'social_search', 'write_file'],
     // Her own UI: connect an inbox (Gmail / Outlook / IMAP). Scaffold for now.
     panels: ['inbox'],
+    // Emmie hands over a draft the user will send — a concrete bar worth a second
+    // look. Rubric-only for now (uses the configured judge model); add a
+    // `judgeModel` to have a different-family model review. See docs.
+    verification: {
+      rubric:
+        'The reply answers every question and request raised in the source thread; ' +
+        "matches the tone and formality the user asked for (or the thread's own register); " +
+        'makes no commitment, promise or date the source thread did not contain; ' +
+        'invents no facts, names or numbers absent from the thread; ' +
+        'ends ready to send with nothing left as a placeholder or "[TBD]".',
+    },
   },
   {
     id: 'assistant',
@@ -242,6 +300,14 @@ const RAW_CHARACTERS: RawCharacter[] = [
     tools: ['list_files', 'read_file', 'search_files', 'web_fetch', 'read_summary', 'social_search', 'write_file', 'update_calendar', 'set_reminder'],
     // Shares the planner UI — an assistant lives by the calendar.
     panels: ['calendar'],
+    verification: {
+      rubric:
+        'Every date, renewal, deadline or commitment traces to something the user actually ' +
+        'provided — none invented; tasks have an owner and a sensible sequence; any reminder ' +
+        'or calendar entry uses a real, correct date; the reply never claims an outside action ' +
+        '(sending, booking) was taken — Ava only prepares and organises; blockers to progress ' +
+        'are surfaced, not hidden.',
+    },
   },
   {
     id: 'sales',
@@ -287,6 +353,15 @@ const RAW_CHARACTERS: RawCharacter[] = [
     ],
     // His own UI: connect a CRM to push qualified leads into the pipeline (scaffold).
     panels: ['leads'],
+    verification: {
+      rubric:
+        'Every lead cites a real, linked public source and the exact quote that shows ' +
+        'buying intent — none fabricated; each lead carries a HOT/WARM/SKIP score with a ' +
+        'one-line fit reason; enrichment details are specific, recent and true, not guessed; ' +
+        "outreach drafts reference the lead's actual words and lead with their problem, not a " +
+        'template; the output is a multi-touch sequence, not a one-shot; no person, handle, ' +
+        'quote, company detail or link is invented.',
+    },
   },
   {
     id: 'browser',
@@ -407,6 +482,19 @@ export function resolveCharacterPanels(id: string | null | undefined): PanelDef[
 export function characterToolAllowlist(id: string | null | undefined): string[] | null {
   const c = getCharacter(id);
   return c.tools.length ? c.tools : null;
+}
+
+/**
+ * Declared verification for a character (judge model + rubric), or null when the
+ * character declares none. Threaded to the runtime's independent check so the
+ * judge scores the deliverable against the character's own bar.
+ */
+export function characterVerification(
+  id: string | null | undefined,
+): CharacterVerification | null {
+  const v = getCharacter(id).verification;
+  if (!v || (!v.judgeModel && !v.rubric)) return null;
+  return v;
 }
 
 /**
