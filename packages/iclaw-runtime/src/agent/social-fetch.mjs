@@ -784,11 +784,20 @@ async function fetchHackerNews(query, limit, time, withComments) {
   let url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(core)}&tags=story&hitsPerPage=${limit}`;
   const tokens = core.split(' ');
   if (tokens.length > 1) url += `&optionalWords=${encodeURIComponent(tokens.slice(1).join(' '))}`;
-  // points>2 drops zero-engagement noise (their minimum-engagement filter).
-  const nf = ['points>2'];
+  // HN's Algolia index doesn't list `points`/`num_comments` as filterable numeric
+  // attributes — a server-side `points>N` 400s ("invalid numeric attribute(points),
+  // attribute not specified in numericAttributesForFiltering"). Only created_at_i is
+  // filterable, so the time window is the only server-side filter. Engagement
+  // demotion is left to finalScore's log10(score) term — same as the upstream
+  // last30days skill, which demotes low-point stories via a scoring boost rather
+  // than dropping them, keeping a fresh, on-topic 1-point story in play.
+  const nf = [];
   const secs = HN_WINDOW[time];
-  if (secs) nf.push(`created_at_i>${Math.floor(Date.now() / 1000) - secs}`);
-  url += `&numericFilters=${encodeURIComponent(nf.join(','))}`;
+  if (secs) {
+    const now = Math.floor(Date.now() / 1000);
+    nf.push(`created_at_i>${now - secs}`, `created_at_i<${now}`); // bounded window, both ends
+  }
+  if (nf.length) url += `&numericFilters=${encodeURIComponent(nf.join(','))}`;
   const data = JSON.parse(await get(url, { accept: 'application/json' }));
   const prep = prepQuery(query);
   const items = (data.hits || []).slice(0, limit).map((h) => ({
