@@ -25,6 +25,12 @@ const execFileAsync = promisify(execFile);
 const MAX_FILE_BYTES = Number(process.env.ICLAW_MAX_FILE_BYTES) || 5_000_000;
 const COMMAND_TIMEOUT = 30_000;
 const WEB_FETCH_TIMEOUT = 20_000;
+// web_search is NOT a plain HTTP GET like web_fetch — it's an OpenRouter
+// chat/completions round-trip with the `web` plugin (model searches, reads
+// pages, then emits url_citation annotations), which empirically runs ~30–40s
+// regardless of model. The 20s fetch budget timed out most searches, so search
+// gets its own, far roomier deadline. Override with ICLAW_WEB_SEARCH_TIMEOUT (ms).
+const WEB_SEARCH_TIMEOUT = Number(process.env.ICLAW_WEB_SEARCH_TIMEOUT) || 60_000;
 const WEB_FETCH_MAX_CHARS = 20_000;
 // web_fetch in Secure Mode runs the fetch as `curl` INSIDE the sandbox; cap the
 // body we pull back over the `docker exec` stdout pipe (well under its ~1MB
@@ -1832,7 +1838,7 @@ async function webSearch(args: Record<string, unknown>): Promise<string> {
   if (!query) return 'web_search requires a query.';
   const count = Math.min(10, Math.max(1, Number(args.count) || 6));
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), WEB_FETCH_TIMEOUT);
+  const timer = setTimeout(() => ctrl.abort(), WEB_SEARCH_TIMEOUT);
   try {
     // 1) OpenRouter web search — the zero-config default (reuses the chat key).
     if (process.env.ICLAW_OPENROUTER_API_KEY) {
@@ -1845,7 +1851,7 @@ async function webSearch(args: Record<string, unknown>): Promise<string> {
     return formatHits(query, await duckDuckGoSearch(query, count, ctrl.signal), 'DuckDuckGo');
   } catch (err) {
     const msg = err instanceof Error && err.name === 'AbortError'
-      ? `timed out after ${WEB_FETCH_TIMEOUT / 1000}s`
+      ? `timed out after ${WEB_SEARCH_TIMEOUT / 1000}s`
       : err instanceof Error ? err.message : String(err);
     return `Search failed for "${query}": ${msg}.`;
   } finally {
@@ -1875,12 +1881,12 @@ export async function webSearchSecure(
   }
   const count = Math.min(10, Math.max(1, Number(args.count) || 6));
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), WEB_FETCH_TIMEOUT);
+  const timer = setTimeout(() => ctrl.abort(), WEB_SEARCH_TIMEOUT);
   try {
     return formatHits(query, await openRouterSearch(query, count, ctrl.signal), 'OpenRouter');
   } catch (err) {
     const msg = err instanceof Error && err.name === 'AbortError'
-      ? `timed out after ${WEB_FETCH_TIMEOUT / 1000}s`
+      ? `timed out after ${WEB_SEARCH_TIMEOUT / 1000}s`
       : err instanceof Error ? err.message : String(err);
     return `Search failed for "${query}": ${msg}.`;
   } finally {
