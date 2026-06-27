@@ -1,0 +1,49 @@
+<%# Flat list of a project's chats, shown on the launcher directly under the
+    teammate roster. Re-rendered standalone by GET /api/launcher-chats when the
+    launcher's selected project changes. Locals:
+      launcherChats        Chat[]          — the project's (or orphan) chats, recent first
+      launcherProjectName  string | null   — selected project name (null = no project)
+      launcherCharacters   CharacterDef[]  — roster, to show each chat's teammate face
+      launcherWorkingIds   number[]        — chats with a turn in flight (status dot)
+%>
+<%
+  var _chats = (typeof launcherChats !== 'undefined' && Array.isArray(launcherChats)) ? launcherChats : [];
+  var _roster = (typeof launcherCharacters !== 'undefined' && Array.isArray(launcherCharacters)) ? launcherCharacters : [];
+  var _working = (typeof launcherWorkingIds !== 'undefined' && Array.isArray(launcherWorkingIds)) ? launcherWorkingIds : [];
+  var _name = (typeof launcherProjectName !== 'undefined' && launcherProjectName) ? launcherProjectName : null;
+  // Lookup teammate by id so each row can show whose chat it is. A no-character
+  // chat (character_id null) folds into the generalist (Assistant).
+  var _byId = {};
+  _roster.forEach(function (c) { _byId[c.id] = c; });
+  var _gen = _byId['generalist'];
+%>
+<% if (_chats.length) { %>
+<section class="launcher-chats" aria-label="<%= _name ? ('Chats in ' + _name) : 'Recent chats' %>">
+  <h2 class="launcher-chats-head"><%= _name ? _name : 'No project' %> · <%= _chats.length %> chat<%= _chats.length === 1 ? '' : 's' %></h2>
+  <ul class="launcher-chats-list iclaw-thin-scroll">
+    <% _chats.forEach(function (c) {
+         var _ch = _byId[c.character_id || 'generalist'] || _gen;
+         var _dotWorking = _working.indexOf(c.id) >= 0;
+         var _dotUnread = !_dotWorking && c.unread;
+    %>
+    <li>
+      <a class="launcher-chat" href="/chats/<%= c.id %>" data-chat-id="<%= c.id %>">
+        <%# Match the roster above: use the current 3D body render face-cropped (the
+            heads sit at the top of every PNG). Painted as a background so it dodges
+            the <img> object-fit decode/paint race. Fall back to the (older) flat
+            avatar svg only for characters with no render, then the emoji badge. %>
+        <% if (_ch && _ch.art) { %>
+          <span class="project-logo launcher-chat-avatar launcher-chat-avatar--art" data-logo-color="<%= _ch.color %>" style="background-image:url('<%= _ch.art %>'),linear-gradient(158deg,color-mix(in srgb,var(--logo-tone) 88%,#fff) 0%,color-mix(in srgb,var(--logo-tone) 70%,#140e26) 100%)" aria-hidden="true"></span>
+        <% } else if (_ch && _ch.avatar) { %>
+          <img class="launcher-chat-avatar" src="<%= _ch.avatar %>" alt="" aria-hidden="true" loading="lazy" />
+        <% } else if (_ch) { %>
+          <span class="project-logo launcher-chat-avatar" data-logo-color="<%= _ch.color %>" aria-hidden="true"><%- _ch.emoji %></span>
+        <% } %>
+        <span class="launcher-chat-title"><%= c.title %></span>
+        <span class="status-dot<%= _dotWorking ? ' working' : (_dotUnread ? ' unread' : '') %>" aria-hidden="true"></span>
+      </a>
+    </li>
+    <% }); %>
+  </ul>
+</section>
+<% } %>

@@ -136,6 +136,46 @@ indexRouter.get('/api/project-roster', (req, res) => {
   );
 });
 
+/**
+ * Flat chat list for the launcher's "chats in this project" strip (see
+ * partials/launcherChats). Re-rendered in place when the launcher's selected
+ * project changes — keeps the strip under the teammate roster in sync without a
+ * reload. `projectId` empty = the no-project space (orphan chats). Returns the
+ * rendered HTML fragment.
+ */
+indexRouter.get('/api/launcher-chats', (req, res) => {
+  const raw = typeof req.query.projectId === 'string' ? req.query.projectId.trim() : '';
+  let projectId: number | null = null;
+  let projectName: string | null = null;
+  if (raw !== '') {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) {
+      const p = projects.get(n);
+      if (p) {
+        projectId = n;
+        projectName = p.name;
+      }
+    }
+  }
+  const launcherChats = projectId != null ? chats.listByProject(projectId) : chats.listOrphans();
+  res.render(
+    'partials/launcherChats',
+    {
+      launcherChats,
+      launcherProjectName: projectName,
+      launcherCharacters: listCharacters(),
+      launcherWorkingIds: chatStatus.workingIds(),
+    },
+    (err, html) => {
+      if (err) {
+        res.status(500).type('text/plain').send('launcher chats render failed');
+        return;
+      }
+      res.type('html').send(html);
+    },
+  );
+});
+
 /** Map an upload mime to the container hint OpenRouter expects for input_audio. */
 function audioFormatFromMime(mime: string): string {
   const m = mime.toLowerCase();

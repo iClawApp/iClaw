@@ -3901,6 +3901,80 @@ code {
 }
 /* Once a chat starts, the launcher class is dropped → hide the teammate strip. */
 .draft-body:not(.is-launcher) .chat-roster { display: none; }
+
+/* "Chats in this project" — flat recents list under the teammate roster on the
+   launcher. Swapped in place when the project changes; hidden (like the roster)
+   once a chat starts. */
+.draft-body:not(.is-launcher) .launcher-chats-wrap { display: none; }
+.draft-body.is-launcher .launcher-chats-wrap {
+  width: 100%;
+  padding: 0 24px var(--space-7, 40px);
+  box-sizing: border-box;
+}
+.launcher-chats {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.launcher-chats-head {
+  margin: 0 0 var(--space-3, 8px);
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.launcher-chats-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.launcher-chat {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: var(--radius-md, 12px);
+  text-decoration: none;
+  color: var(--text);
+  transition: background 0.12s ease;
+}
+.launcher-chat:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.launcher-chat-avatar { flex: 0 0 auto; width: 28px; height: 28px; border-radius: var(--radius-sm); font-size: 15px; }
+/* 3D body render cropped to the face (generalist has no flat avatar) — painted as
+   a background so it doesn't hit the <img> object-fit decode/paint race. The
+   colour tint from data-logo-color shows through the render's transparent edges.
+   Selector outweighs `.project-logo[data-logo-color]`'s `background` shorthand so
+   size/position stick (the inline background-image wins on its own). */
+.launcher-chat .launcher-chat-avatar--art {
+  padding: 0;
+  background-size: cover;
+  background-position: top center;
+  background-repeat: no-repeat;
+}
+/* Emoji badge (character with no render, e.g. Leo/Ace) — same roster-tile gradient
+   so every chat badge's background matches its teammate card up top. */
+.launcher-chat .launcher-chat-avatar[data-logo-color]:not(.launcher-chat-avatar--art) {
+  background: linear-gradient(
+    158deg,
+    color-mix(in srgb, var(--logo-tone) 88%, #fff) 0%,
+    color-mix(in srgb, var(--logo-tone) 70%, #140e26) 100%
+  );
+}
+.launcher-chat-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1rem;
+}
+.launcher-chat .status-dot { flex: 0 0 7px; }
 /* No drop-file overlay on the launcher composer (drag-drop still works in chats). */
 .draft-body.is-launcher .composer-drop-overlay { display: none; }
 

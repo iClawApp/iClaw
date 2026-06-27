@@ -112,6 +112,18 @@
       <%# Teammate strip — sits below the centred composer on the launcher; CSS
           hides it once a chat starts. %>
       <%- include('partials/chatRoster', { characters: typeof characters !== 'undefined' ? characters : [] }) %>
+
+      <%# Recents for the selected project, directly under the roster. Swapped in
+          place (no reload) when the launcher's project changes — see
+          refreshLauncherChats / GET /api/launcher-chats. %>
+      <div id="launcher-chats-wrap" class="launcher-chats-wrap">
+        <%- include('partials/launcherChats', {
+              launcherChats: typeof drawerChats !== 'undefined' ? drawerChats : [],
+              launcherProjectName: preselectedProject ? preselectedProject.name : null,
+              launcherCharacters: typeof characters !== 'undefined' ? characters : [],
+              launcherWorkingIds: typeof workingIds !== 'undefined' ? workingIds : [],
+            }) %>
+      </div>
     </div>
 
     <% if (cloudShareBaseUrl) { %>

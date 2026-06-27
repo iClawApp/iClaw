@@ -1830,8 +1830,24 @@
     draftBody?.classList.remove('is-picking');
     if (draftEmptyHint) draftEmptyHint.hidden = false;
     if (composerWrap) composerWrap.hidden = false;
+    refreshLauncherChats(draftChosenProjectId);
     input?.focus();
     syncComposerSecretUi();
+  }
+
+  /** Swap the launcher's "chats in this project" strip (under the teammate
+   *  roster) to match the selected project. No-op off the launcher (the wrap only
+   *  exists there). Empty projectId = the no-project space (orphan chats). */
+  function refreshLauncherChats(projectId) {
+    const wrap = document.getElementById('launcher-chats-wrap');
+    if (!wrap) return;
+    const pid = projectId == null || String(projectId).trim() === '' ? '' : String(projectId);
+    fetch('/api/launcher-chats?projectId=' + encodeURIComponent(pid))
+      .then((r) => (r.ok ? r.text() : ''))
+      .then((html) => {
+        wrap.innerHTML = html;
+      })
+      .catch(() => {});
   }
 
   function initDraftProjectPick() {
@@ -1947,6 +1963,8 @@
       // newly-selected project (its own last-used set, not a shared one).
       if (typeof updateWorkFoldersButton === 'function') updateWorkFoldersButton();
       if (typeof renderWorkFoldersList === 'function') renderWorkFoldersList();
+      // Keep the recents strip under the roster in sync with the new project.
+      refreshLauncherChats(draftChosenProjectId);
     });
     // Initial tint from whichever switcher chip is active on load.
     const activeChip = document.querySelector('.header-project-switcher .hps-chip.on');
