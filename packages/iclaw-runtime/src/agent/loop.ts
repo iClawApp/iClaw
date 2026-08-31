@@ -928,6 +928,13 @@ export async function* runAgentTurn(
       : []),
   ];
   const tools = onTop.length ? [...allowed, ...onTop] : allowed;
+  // The character allowlist only narrows what we ADVERTISE to the model. Some
+  // models (and our own prompt text, which names run_command) lead the model to
+  // call a tool that wasn't offered — and the dispatch loop will run any name it
+  // gets. Enforce the boundary at execution too: a call to a tool outside this
+  // set is refused, not run. Without this, a browser-only character (Ace) could
+  // still invoke run_command / write_file / generate_image, etc.
+  const offeredToolNames = new Set<string>(tools.map((t) => t.function.name));
 
   // When the user dropped image(s), send the turn's user message as a
   // multimodal content array (text + image blocks) so a vision model sees them.
@@ -1179,7 +1186,11 @@ export async function* runAgentTurn(
     // changes), so the repeat-guard — which assumes same args → same result — must
     // not apply to them.
     const verdicts = toolCalls.map((tc) =>
-      tc.name.startsWith('browser_') ? null : guard.check(tc.name, tc.arguments),
+      !offeredToolNames.has(tc.name)
+        ? `Tool "${tc.name}" isn't available in this chat — use only the tools you were given.`
+        : tc.name.startsWith('browser_')
+          ? null
+          : guard.check(tc.name, tc.arguments),
     );
 
     // In-round parallelism (#5): kick off the side-effect-free, non-blocked read

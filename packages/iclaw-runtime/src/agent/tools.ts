@@ -209,10 +209,10 @@ export const TOOL_DEFINITIONS = [
         type: 'object',
         properties: {
           command: { type: 'string', description: 'Command' },
-          cwd: { type: 'string', description: 'Working dir (allowed folder)' },
+          cwd: { type: 'string', description: 'Working dir (an allowed folder). Optional — defaults to the first allowed folder if omitted.' },
           background: { type: 'boolean', description: 'Run detached and return a job_id immediately (for long-running work). Poll with check_job; wait with set_timer.' },
         },
-        required: ['command', 'cwd'],
+        required: ['command'],
       },
     },
   },
@@ -1396,19 +1396,28 @@ async function editFile(args: Record<string, unknown>, ctx: ToolContext): Promis
 }
 
 async function runCommand(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
-  // Validate cwd is inside an allowed folder up front (clear error before we
-  // hand off to the sandbox, and the container only mounts allowed folders).
-  const cwd = validatePath(args.cwd as string, ctx.allowedFolders);
-  const command = args.command as string;
-
-  // No sandbox available → run_command is disabled. We never fall back to host
-  // bash, because that can't enforce per-folder read-only. File tools still
-  // work (write_file is path-checked on the host).
+  // No sandbox available → run_command is disabled. Checked FIRST, before cwd
+  // validation: a chat with no folder selected has no sandbox, and the model
+  // (which often bakes the dir into the command and leaves cwd empty) would
+  // otherwise hit a cryptic "Empty path" loop instead of this actionable
+  // guidance. We never fall back to host bash, because that can't enforce
+  // per-folder read-only. File tools still work (write_file is path-checked).
   if (!ctx.runShell) {
     return 'run_command is unavailable. Shell commands run in a Docker sandbox, which needs both ' +
       '(1) Docker installed and running, and (2) at least one folder explicitly selected for this chat. ' +
       'Ask the user to start Docker and/or add a folder. Meanwhile read_file / search_files / write_file still work.';
   }
+
+  // cwd is optional. The model frequently bakes the working dir into the command
+  // (`cd /foo && …`) and leaves cwd empty; default to the first allowed folder so
+  // that doesn't hard-fail. An explicit cwd is still resolved + guarded against
+  // escaping the allowed roots (the container only mounts allowed folders).
+  const rawCwd =
+    typeof args.cwd === 'string' && args.cwd.trim()
+      ? (args.cwd as string)
+      : (ctx.allowedFolders[0] ?? '');
+  const cwd = validatePath(rawCwd, ctx.allowedFolders);
+  const command = args.command as string;
 
   // Background mode: launch detached and return a job id immediately, so work
   // that outlives the foreground timeout (image/video gen, long builds) isn't
